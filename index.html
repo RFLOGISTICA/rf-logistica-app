@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v94)</title>
+<title>RF Logística — Painel da Frota (v93)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2012,7 +2012,6 @@ function carregarPerfilEEntrar(sb, user) {
     state.sessao = {
       uid: user.id, email: user.email,
       nome: p.nome || "", papel: p.papel || "user",
-      placa: p.placa || "",
       modulos: Array.isArray(p.modulos) ? p.modulos : [],
     };
     salvarSessaoLocal();
@@ -2025,7 +2024,6 @@ function carregarPerfilEEntrar(sb, user) {
     }
     if (typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
     if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
-    if (state.sessao.papel === "motorista" && typeof carregarStatsMotorista === "function") { carregarStatsMotorista(); }
     const perm = abasPermitidas();
     state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
     render();
@@ -2087,7 +2085,7 @@ function carregarPerfis() {
   });
 }
 function criarUsuarioAbrir() {
-  state._novoUsuario = { nome: "", email: "", senha: "", papel: "user", placa: "", modulos: [] };
+  state._novoUsuario = { nome: "", email: "", senha: "", papel: "user", modulos: [], placa: "" };
   render();
 }
 function criarUsuarioFechar() {
@@ -2097,17 +2095,6 @@ function criarUsuarioFechar() {
 function criarUsuarioCampo(campo, valor) {
   if (!state._novoUsuario) return;
   state._novoUsuario[campo] = valor;
-}
-function criarUsuarioMudarPapel(valor) {
-  const nu = state._novoUsuario;
-  if (!nu) return;
-  // salva o que já foi digitado antes de redesenhar o formulário (o campo placa
-  // só aparece quando papel = motorista, então precisa recriar o HTML)
-  nu.nome = (document.getElementById("nuNome") || {}).value || nu.nome;
-  nu.email = (document.getElementById("nuEmail") || {}).value || nu.email;
-  nu.senha = (document.getElementById("nuSenha") || {}).value || nu.senha;
-  nu.papel = valor;
-  render();
 }
 function criarUsuarioToggleModulo(abaId, checked) {
   if (!state._novoUsuario) return;
@@ -2122,10 +2109,10 @@ function criarUsuarioSalvar() {
   const email = (document.getElementById("nuEmail") || {}).value || nu.email;
   const senha = (document.getElementById("nuSenha") || {}).value || nu.senha;
   const papel = (document.getElementById("nuPapel") || {}).value || nu.papel;
-  const placa = ((document.getElementById("nuPlaca") || {}).value || nu.placa || "").trim().toUpperCase();
+  const placa = ((document.getElementById("nuPlaca") || {}).value || nu.placa || "").toUpperCase().trim();
   if (!nome || !email || !senha) { alert("Preencha nome, e-mail e senha."); return; }
   if (senha.length < 6) { alert("A senha precisa ter pelo menos 6 caracteres."); return; }
-  if (papel === "motorista" && !placa) { alert("Informe a placa do caminhão que o motorista vai rodar."); return; }
+  if (papel === "motorista" && !placa) { alert("Informe a placa do caminhão que este motorista vai rodar. É obrigatório para o resumo de viagens/bônus dele."); return; }
   const btn = document.getElementById("nuBtnSalvar");
   if (btn) { btn.disabled = true; btn.textContent = "Criando..."; }
   rfGetClient().then(function (sb) {
@@ -2136,7 +2123,7 @@ function criarUsuarioSalvar() {
       fetch(RF_SB_URL + "/functions/v1/criar-usuario", {
         method: "POST",
         headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ nome: nome, email: email, senha: senha, papel: papel, placa: placa, modulos: nu.modulos }),
+        body: JSON.stringify({ nome: nome, email: email, senha: senha, papel: papel, modulos: nu.modulos, placa: papel === "motorista" ? placa : "" }),
       }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res2) {
           if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; }
@@ -2695,30 +2682,6 @@ function rfAbastDeletarLinha(id) {
   });
 }
 
-// v94: estatísticas do motorista (viagens do mês, pagas, a pagar, km rodado) — usado
-// pro bônus de fim de mês. Não dá pra ler a caixa geral de viagens direto (motorista
-// nunca recebe painel_dados por segurança), então isso vem de uma função no banco
-// (RPC rf_stats_motorista) que calcula só os números da placa dele e devolve pronto.
-function estatisticasMotorista() {
-  return state._statsMotorista || { viagensMes: 0, pagas: 0, aPagar: 0, kmMes: 0 };
-}
-function carregarStatsMotorista() {
-  rfGetClient().then(function (sb) {
-    if (!sb) return;
-    sb.rpc("rf_stats_motorista").then(function (res) {
-      if (res.error) { console.warn("rf_stats_motorista:", res.error.message); return; }
-      const d = (res.data && res.data[0]) || {};
-      state._statsMotorista = {
-        viagensMes: Number(d.viagens_mes) || 0,
-        pagas: Number(d.pagas) || 0,
-        aPagar: Number(d.a_pagar) || 0,
-        kmMes: Number(d.km_mes) || 0,
-      };
-      render();
-    });
-  });
-}
-
 function abastecimentosDoMotorista() {
   const uidLogado = state.sessao ? state.sessao.uid : null;
   return (state.abastecimentos || []).filter((a) => a.motoristaUid === uidLogado)
@@ -2821,38 +2784,6 @@ function exportarAbastecimentosExcel() {
   exportarCSV("rf-abastecimentos-" + hojeISO() + ".csv", cab, linhas);
 }
 
-// v94: tela do motorista — só logo, botão Sair, os números do mês (pro bônus) e a
-// aba de Abastecimento. Sem menu, sem indicadores da frota, sem seletor de mês:
-// o motorista não precisa (e não deve) ver o resto do painel.
-function renderMotorista() {
-  const root = document.getElementById("root");
-  if (!root) return;
-  const st = estatisticasMotorista();
-  const mesAtual = new Date().toISOString().slice(0, 7);
-  root.innerHTML = `
-    <div style="min-height:100vh;background:#000;">
-      <div style="border-bottom:2px solid ${GOLD}; padding:16px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <div>
-          <div style="font-size:20px; font-weight:800; color:#fff;">RF Logística</div>
-          <div style="font-size:10px; color:${GOLD}; letter-spacing:2px;">PAINEL DO MOTORISTA</div>
-        </div>
-        <button class="btn-outline" onclick="logout()" title="Sair">Sair</button>
-      </div>
-      <div style="padding:16px 20px 0;">
-        <div style="font-size:13px;color:#999;margin-bottom:10px;">Olá, <b style="color:#fff;">${esc((usuarioLogado() || {}).nome || "motorista")}</b> — resumo de ${mesLabel(mesAtual)}${state.sessao.placa ? ` · placa <b style="color:${GOLD};">${esc(state.sessao.placa)}</b>` : ""}</div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:10px; margin-bottom:18px;">
-          ${statCard("Viagens no mês", st.viagensMes, GOLD)}
-          ${statCard("Pagas", st.pagas, "#2E7D32")}
-          ${statCard("A pagar", st.aPagar, st.aPagar > 0 ? "#C0392B" : "#2E7D32")}
-          ${statCard("KM rodados", st.kmMes.toLocaleString("pt-BR"), GOLD)}
-        </div>
-      </div>
-      <div id="tabela-wrap" style="padding:0 20px 32px;"></div>
-    </div>
-  `;
-  renderTabela();
-}
-
 function render() {
   garantirAcesso();
   garantirMotoristas();
@@ -2862,9 +2793,6 @@ function render() {
     return;
   }
   guardAba();
-
-  if (ehMotorista()) { renderMotorista(); return; }
-
   const scrollY = window.scrollY;
   const oldWrap = document.getElementById("tabela-wrap");
   const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
@@ -3106,17 +3034,17 @@ function renderTabela() {
       <div style="border:1px solid ${GOLD};border-radius:10px;padding:16px;margin-bottom:18px;background:#0E0E0E;">
         <div style="font-size:14px;font-weight:800;color:${GOLD};margin-bottom:12px;">+ Novo usuário</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Nome</div><input id="nuNome" placeholder="Nome completo" value="${esc(state._novoUsuario.nome || "")}" style="width:200px;"></div>
-          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">E-mail</div><input id="nuEmail" type="email" placeholder="email@exemplo.com" value="${esc(state._novoUsuario.email || "")}" style="width:220px;"></div>
-          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Senha</div><input id="nuSenha" type="text" placeholder="mín. 6 caracteres" value="${esc(state._novoUsuario.senha || "")}" style="width:160px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Nome</div><input id="nuNome" placeholder="Nome completo" style="width:200px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">E-mail</div><input id="nuEmail" type="email" placeholder="email@exemplo.com" style="width:220px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Senha</div><input id="nuSenha" type="text" placeholder="mín. 6 caracteres" style="width:160px;"></div>
           <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Papel</div>
-            <select id="nuPapel" onchange="criarUsuarioMudarPapel(this.value)" style="width:130px;">
-              <option value="user" ${state._novoUsuario.papel === "user" ? "selected" : ""}>Usuário</option>
-              <option value="motorista" ${state._novoUsuario.papel === "motorista" ? "selected" : ""}>Motorista</option>
-              <option value="admin" ${state._novoUsuario.papel === "admin" ? "selected" : ""}>Admin</option>
+            <select id="nuPapel" onchange="criarUsuarioCampo('papel',this.value)" style="width:130px;">
+              <option value="user" selected>Usuário</option>
+              <option value="motorista">Motorista</option>
+              <option value="admin">Admin</option>
             </select>
           </div>
-          ${state._novoUsuario.papel === "motorista" ? `<div><div style="font-size:11px;color:${GOLD};margin-bottom:4px;">Placa do caminhão *</div><input id="nuPlaca" placeholder="Ex: QEN6J82" value="${esc(state._novoUsuario.placa || "")}" oninput="this.value=this.value.toUpperCase()" onchange="criarUsuarioCampo('placa',this.value)" style="width:130px;text-transform:uppercase;"></div>` : ""}
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Placa (obrigatório p/ motorista)</div><input id="nuPlaca" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;" oninput="criarUsuarioCampo('placa',this.value)"></div>
         </div>
         <div style="margin-bottom:12px;">
           <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas liberadas (ignorado se papel = motorista)</div>
@@ -3141,12 +3069,14 @@ function renderTabela() {
                 <option value="admin" ${p.papel === "admin" ? "selected" : ""}>Admin</option>
               </select>
             </div>
-            ${p.papel === "motorista" ? `<div><div style="${lbl}color:${GOLD};">Placa do caminhão</div><input value="${esc(p.placa || "")}" placeholder="Ex: QEN6J82" oninput="this.value=this.value.toUpperCase()" onchange="atualizarPerfilCampo('${p.id}','placa',this.value)" style="width:130px;text-transform:uppercase;"></div>` : ""}
             <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${p.ativo ? "#fff" : "#888"};">
               <input type="checkbox" ${p.ativo ? "checked" : ""} onchange="atualizarPerfilCampo('${p.id}','ativo',this.checked)"> Ativo
             </label>
           </div>
-          ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Motorista só vê a aba <b style="color:${GOLD};">⛽ Abastecimento</b> — lança lá os abastecimentos com foto do KM e da bomba. Não precisa marcar módulos.${!p.placa ? ` <b style="color:#C0392B;">Sem placa cadastrada — os totais de viagem dele não vão aparecer.</b>` : ""}</div>` : `
+          ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+            <div><div style="${lbl}">Placa que ele roda</div><input value="${esc(p.placa_motorista || "")}" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;${p.placa_motorista ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','placa_motorista',this.value.toUpperCase())"></div>
+            ${!p.placa_motorista ? `<div style="color:#C0392B;font-size:11px;">⚠ sem placa — motorista não verá o resumo de viagens</div>` : ""}
+          </div><div style="margin-top:6px;color:#999;font-size:12px;">Motorista só vê a aba <b style="color:${GOLD};">⛽ Abastecimento</b> e o resumo das próprias viagens (vinculado à placa acima). Não precisa marcar módulos.</div>` : `
           <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
             <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas que este usuário pode ver</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
