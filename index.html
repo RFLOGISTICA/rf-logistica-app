@@ -2,8 +2,9 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v95)</title>
+<title>RF Logística — Painel da Frota (v96)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
+<!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2030,6 +2031,38 @@ function carregarPerfilEEntrar(sb, user) {
     render();
   }).catch(function () {
     if (el) { el.textContent = "Falha ao carregar seu perfil. Tente novamente."; el.style.display = "block"; }
+  });
+}
+// v95: a sessao fica guardada em localStorage (rf-frota-sessao-v1) para abrir o
+// app rapido sem esperar rede. O problema: se o admin mudar o papel de alguem
+// (ex: de "user" para "motorista") DEPOIS que a pessoa ja tinha uma sessao salva
+// naquele aparelho, o aparelho continua mostrando o papel antigo indefinidamente
+// -- so corrige se a pessoa clicar em Sair e entrar de novo. Isso e o que causava
+// telefones diferentes mostrarem coisas diferentes para o MESMO usuario.
+// Esta funcao roda toda vez que o app abre (se ja tem sessao local) e busca o
+// perfil atual no banco, corrigindo a sessao local sem precisar deslogar.
+function revalidarSessaoAoAbrir() {
+  if (!state.sessao || !state.sessao.uid) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from("profiles").select("*").eq("id", state.sessao.uid).single().then(function (res) {
+      if (res.error || !res.data) { logout(); return; }
+      const p = res.data;
+      if (!p.ativo) { alert("Sua conta foi desativada. Voce sera desconectado."); logout(); return; }
+      const papelMudou = state.sessao.papel !== (p.papel || "user");
+      state.sessao.nome = p.nome || "";
+      state.sessao.papel = p.papel || "user";
+      state.sessao.modulos = Array.isArray(p.modulos) ? p.modulos : [];
+      salvarSessaoLocal();
+      if (papelMudou) {
+        const perm = abasPermitidas();
+        state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
+        if (state.sessao.papel !== "motorista" && typeof window.rfIniciarSyncEquipe === "function") {
+          window.rfIniciarSyncEquipe();
+        }
+      }
+      render();
+    }).catch(function () {});
   });
 }
 function logout() {
@@ -4413,6 +4446,7 @@ promoverReceitaRecorrente();
 migrarTrocasOleoFiltros();
 garantirAcesso();
 render();
+revalidarSessaoAoAbrir();
 </script>
 <!-- ============================================================= -->
 <!--  SINCRONIZACAO NA NUVEM (SUPABASE) - RF Logistica            -->
