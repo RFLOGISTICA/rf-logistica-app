@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v99)</title>
+<title>RF Logística — Painel da Frota (v100)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
 <!-- v98: motorista pode avisar "viagem finalizada" (placa/data/obs livre, sem vincular a cadastro previo) -- fica pendente, equipe aprova/rejeita na aba Abastecimento -->
 <!-- v99: aprovar cria a viagem de verdade (equipe so completa valor/km depois); resumo do motorista (viagens/pagas/km) agora vem de uma funcao segura no banco (RPC motorista_resumo_viagens), porque o celular do motorista nunca baixa a caixa geral -- por isso os cards sempre mostravam 0 antes -->
+<!-- v100: equipe agora tem botao "Excluir" de verdade em qualquer status (abastecimento e viagem finalizada) -- antes so existia enquanto pendente, entao depois de aprovar/rejeitar nao dava pra apagar nada; adicionado tambem "Reabrir" pra voltar um aviso de viagem pra pendente de proposito -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2465,6 +2466,7 @@ function rfAbastCard(a, souMotorista) {
         <span style="font-size:13px; color:${GOLD}; font-weight:700;">${esc(a.placa || "—")}</span>
       </div>
       ${editavel && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">✕ excluir</button>` : ""}
+      ${!souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">🗑 Excluir</button>` : ""}
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
       <div><div style="font-size:10px;color:#999;margin-bottom:3px;">Data</div>
@@ -2894,6 +2896,13 @@ function rejeitarViagemFim(id) {
   rfViagemFimSalvarLinha(a);
 }
 // Card de um aviso de viagem finalizada — usado tanto na visão do motorista quanto na da equipe
+function reabrirViagemFim(id) {
+  const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  a.status = "pendente"; a.motivoRejeicao = "";
+  render();
+  rfViagemFimSalvarLinha(a);
+}
 function rfViagemFimCard(a, souMotorista) {
   const cor = a.status === "pendente" ? GOLD : a.status === "aprovada" ? "#2E7D32" : "#C0392B";
   const txt = a.status === "pendente" ? "Pendente" : a.status === "aprovada" ? "Aprovada" : "Rejeitada";
@@ -2909,7 +2918,9 @@ function rfViagemFimCard(a, souMotorista) {
       <div style="display:flex; gap:8px;">
         ${!souMotorista && editavel ? `<button class="btn-outline" style="font-size:11px;color:#2E7D32;border-color:#2E7D32;" onclick="aprovarViagemFim('${a.id}')">✓ Aprovar</button>
           <button class="btn-outline" style="font-size:11px;color:#C0392B;border-color:#C0392B;" onclick="rejeitarViagemFim('${a.id}')">✕ Rejeitar</button>` : ""}
+        ${!souMotorista && !editavel ? `<button class="btn-outline" style="font-size:11px;" onclick="reabrirViagemFim('${a.id}')" title="Volta este aviso para pendente">↺ Reabrir</button>` : ""}
         ${editavel && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerViagemFim('${a.id}')">✕ excluir</button>` : ""}
+        ${!souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerViagemFim('${a.id}')">🗑 Excluir</button>` : ""}
       </div>
     </div>
     ${souMotorista && editavel ? `<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
