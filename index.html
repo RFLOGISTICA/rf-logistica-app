@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v93)</title>
+<title>RF Logística — Painel da Frota (v95)</title>
+<!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2147,7 +2148,32 @@ function atualizarPerfilCampo(id, campo, valor) {
     if (!sb) return;
     const upd = {}; upd[campo] = valor;
     sb.from("profiles").update(upd).eq("id", id).then(function (res) {
-      if (res.error) alert("Erro ao salvar: " + res.error.message);
+      if (res.error) { alert("Erro ao salvar: " + res.error.message); return; }
+      const el = document.getElementById("pfSalvo_" + id);
+      if (el) {
+        el.style.opacity = "1";
+        setTimeout(function () { el.style.opacity = "0"; }, 1800);
+      }
+    });
+  });
+}
+function excluirUsuarioClick(id, nome) {
+  if (!confirm("Excluir o usuario \"" + (nome || id) + "\"? Esta acao e permanente e remove o login e o perfil dele do sistema.")) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexao com o servidor."); return; }
+    sb.auth.getSession().then(function (res) {
+      const token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) { alert("Sessao expirada. Saia e entre de novo."); return; }
+      fetch(RF_SB_URL + "/functions/v1/excluir-usuario", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ id: id }),
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res2) {
+          if (!res2.ok) { alert("Erro: " + (res2.j.error || "falha ao excluir usuario")); return; }
+          alert("Usuario excluido.");
+          carregarPerfis();
+        }).catch(function (e) { alert("Erro de conexao: " + e.message); });
     });
   });
 }
@@ -3072,6 +3098,8 @@ function renderTabela() {
             <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${p.ativo ? "#fff" : "#888"};">
               <input type="checkbox" ${p.ativo ? "checked" : ""} onchange="atualizarPerfilCampo('${p.id}','ativo',this.checked)"> Ativo
             </label>
+            <span id="pfSalvo_${p.id}" style="font-size:12px;color:#2ecc71;opacity:0;transition:opacity .3s;">✓ salvo</span>
+            <button class="btn-outline-gray" style="margin-left:auto;color:#C0392B;border-color:#C0392B;" onclick="excluirUsuarioClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🗑 Excluir</button>
           </div>
           ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
             <div><div style="${lbl}">Placa que ele roda</div><input value="${esc(p.placa_motorista || "")}" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;${p.placa_motorista ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','placa_motorista',this.value.toUpperCase())"></div>
@@ -4436,11 +4464,13 @@ render();
   function status(txt, cor) { badge.textContent = txt; badge.style.color = cor || "#999"; }
   if (document.body) document.body.appendChild(badge);
 
-  // marcador discreto de versão (v69) — canto inferior esquerdo, bem pequeno
+  // marcador discreto de versão — canto inferior esquerdo, bem pequeno
+  // v95: antes ficava fixo em "v88" independente da versão real; agora lê do <title>
   var verTag = document.createElement("div");
   verTag.style.cssText = "position:fixed;bottom:6px;left:8px;z-index:99999;" +
     "font:9px Arial,sans-serif;color:#444;opacity:0.6;pointer-events:none;";
-  verTag.textContent = "v88";
+  var verMatch = (document.title || "").match(/\(v(\d+)\)/);
+  verTag.textContent = verMatch ? ("v" + verMatch[1]) : "";
   if (document.body) document.body.appendChild(verTag);
 
   // sobrescreve salvar() imediatamente (mantem localStorage + envia a nuvem — só se for equipe)
