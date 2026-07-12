@@ -2,9 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v96)</title>
+<title>RF Logística — Painel da Frota (v97)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
+<!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2015,6 +2016,7 @@ function carregarPerfilEEntrar(sb, user) {
       uid: user.id, email: user.email,
       nome: p.nome || "", papel: p.papel || "user",
       modulos: Array.isArray(p.modulos) ? p.modulos : [],
+      placa_motorista: p.placa_motorista || "",
     };
     salvarSessaoLocal();
     // v92: a "caixa geral" (painel_dados: financeiro, viagens, dívidas, frota etc.)
@@ -2053,6 +2055,7 @@ function revalidarSessaoAoAbrir() {
       state.sessao.nome = p.nome || "";
       state.sessao.papel = p.papel || "user";
       state.sessao.modulos = Array.isArray(p.modulos) ? p.modulos : [];
+      state.sessao.placa_motorista = p.placa_motorista || "";
       salvarSessaoLocal();
       if (papelMudou) {
         const perm = abasPermitidas();
@@ -2741,6 +2744,57 @@ function rfAbastDeletarLinha(id) {
   });
 }
 
+// v96: painel simplificado do motorista — resumo do mes (viagens, pagas, a
+// pagar, km) baseado na placa vinculada ao perfil dele + o modulo de
+// abastecimento (que ja existia). Nao usa nada do painel completo da frota.
+function viagensDoMotoristaNoMes() {
+  const placa = (state.sessao && state.sessao.placa_motorista) || "";
+  if (!placa) return [];
+  return state.viagens.filter((v) => v.placa === placa && (v.data || "").slice(0, 7) === state.mesAtivo);
+}
+function painelMotoristaHTML() {
+  const nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "motorista";
+  const placa = (state.sessao && state.sessao.placa_motorista) || "";
+  const viagens = viagensDoMotoristaNoMes();
+  const totalViagens = viagens.length;
+  const pagas = viagens.filter((v) => v.pago).length;
+  const aPagar = totalViagens - pagas;
+  const kmRodados = viagens.reduce((s, v) => s + (Number(v.km) || 0), 0);
+  const meus = abastecimentosDoMotorista();
+  return `
+    <div style="border-bottom:2px solid ${GOLD}; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#000;">
+      <div>
+        <div style="font-size:22px; font-weight:800; color:#fff;">RF Logística</div>
+        <div style="font-size:11px; color:${GOLD}; letter-spacing:2px; font-weight:700;">PAINEL DO MOTORISTA</div>
+      </div>
+      <button class="btn-outline" onclick="logout()" title="Sair / trocar de usuário">Sair</button>
+    </div>
+
+    <div style="padding:18px 24px 6px;">
+      <div style="font-size:15px;color:#ccc;">Olá, <b style="color:#fff;">${esc(nome)}</b> — resumo de ${mesLabel(state.mesAtivo)}${placa ? ` · <span style="color:${GOLD};">${esc(placa)}</span>` : ""}</div>
+      ${!placa ? `<div style="margin-top:8px;color:#C0392B;font-size:12px;">⚠ Sua conta ainda não tem uma placa vinculada. Fale com o administrador para liberar o resumo de viagens.</div>` : ""}
+    </div>
+
+    <div style="padding:12px 24px 0;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px;">
+        ${statCard("Viagens no mês", totalViagens, GOLD)}
+        ${statCard("Pagas", pagas, "#2E7D32")}
+        ${statCard("A pagar", aPagar, aPagar > 0 ? "#C0392B" : "#2E7D32")}
+        ${statCard("Km rodados", kmRodados.toLocaleString("pt-BR"), GOLD)}
+      </div>
+    </div>
+
+    <div style="padding:20px 24px 32px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:20px; font-weight:800; color:${GOLD};">⛽ Abastecimento</div>
+        <button class="btn-gold" onclick="adicionarAbastecimento()">+ Novo abastecimento</button>
+      </div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão, tire foto do painel (mostrando o KM) e da bomba/comprovante — o valor é lido sozinho. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
+      ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
+    </div>
+  `;
+}
+
 function abastecimentosDoMotorista() {
   const uidLogado = state.sessao ? state.sessao.uid : null;
   return (state.abastecimentos || []).filter((a) => a.motoristaUid === uidLogado)
@@ -2852,6 +2906,11 @@ function render() {
     return;
   }
   guardAba();
+  const root0 = document.getElementById("root");
+  if (ehMotorista()) {
+    if (root0) root0.innerHTML = painelMotoristaHTML();
+    return;
+  }
   const scrollY = window.scrollY;
   const oldWrap = document.getElementById("tabela-wrap");
   const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
