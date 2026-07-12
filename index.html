@@ -2,10 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v97)</title>
+<title>RF Logística — Painel da Frota (v98)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
+<!-- v98: motorista pode avisar "viagem finalizada" (placa/data/obs livre, sem vincular a cadastro previo) -- fica pendente, equipe aprova/rejeita na aba Abastecimento -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -201,6 +202,7 @@ function salvar() {
     localStorage.setItem("rf-frota-usuarios-v1", JSON.stringify(state.usuarios));
     localStorage.setItem("rf-frota-pagamotorista-v1", JSON.stringify(state.pagamentosMotorista));
     localStorage.setItem("rf-frota-abastecimentos-v1", JSON.stringify(state.abastecimentos));
+    localStorage.setItem("rf-frota-viagensfim-v1", JSON.stringify(state.viagensFinalizadas));
   } catch (e) {}
 }
 
@@ -219,6 +221,7 @@ let state = {
   usuarios: carregar("rf-frota-usuarios-v1", () => []),
   pagamentosMotorista: carregar("rf-frota-pagamotorista-v1", () => []),
   abastecimentos: carregar("rf-frota-abastecimentos-v1", () => []),
+  viagensFinalizadas: carregar("rf-frota-viagensfim-v1", () => []),
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -2028,6 +2031,8 @@ function carregarPerfilEEntrar(sb, user) {
     }
     if (typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
     if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
+    if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
+    if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
     const perm = abasPermitidas();
     state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
     render();
@@ -2079,12 +2084,12 @@ function logout() {
   state.veiculos = []; state.dividas = []; state.viagens = []; state.clientes = [];
   state.manutencoes = []; state.fechamentos = []; state.frotaMes = {}; state.config = {};
   state.almoxarifado = []; state.tarifas = {}; state.oleoTrocas = [];
-  state.usuarios = []; state.pagamentosMotorista = []; state.abastecimentos = [];
+  state.usuarios = []; state.pagamentosMotorista = []; state.abastecimentos = []; state.viagensFinalizadas = [];
   try {
     ["rf-frota-veiculos-v4", "rf-frota-dividas-v1", "rf-frota-viagens-v1", "rf-frota-clientes-v1",
      "rf-frota-manutencoes-v1", "rf-frota-fechamentos-v1", "rf-frota-frotames-v1", "rf-frota-config-v1",
      "rf-frota-almox-v1", "rf-frota-tarifas-v1", "rf-frota-oleotrocas-v1", "rf-frota-usuarios-v1",
-     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1"].forEach(function (k) { localStorage.removeItem(k); });
+     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1"].forEach(function (k) { localStorage.removeItem(k); });
   } catch (e) {}
   salvarSessaoLocal(); render();
 }
@@ -2744,6 +2749,164 @@ function rfAbastDeletarLinha(id) {
   });
 }
 
+/* ===================== VIAGEM FINALIZADA PELO MOTORISTA (v98) =====================
+   Mesma lógica do abastecimento: tabela própria (viagens_finalizadas_motorista),
+   fora da caixa geral, RLS garante que motorista só vê/edita as próprias. O
+   motorista NÃO cadastra a viagem inteira — só avisa "terminei com essa placa,
+   nesse dia, essas observações". Fica pendente até a equipe conferir e criar
+   a viagem de verdade (com valor, cliente etc.) usando isso como referência. */
+var RF_VIAGEMFIM_TABELA = "viagens_finalizadas_motorista";
+
+function rfViagemFimParaJS(r) {
+  return {
+    id: r.id,
+    motoristaUid: r.motorista_uid,
+    motoristaNome: r.motorista_nome || "",
+    placa: r.placa || "",
+    data: r.data || "",
+    cliente: r.cliente || "",
+    obs: r.obs || "",
+    status: r.status || "pendente",
+    motivoRejeicao: r.motivo_rejeicao || "",
+    criadoEm: Number(r.criado_em) || 0,
+  };
+}
+function rfViagemFimParaDB(a) {
+  return {
+    id: a.id,
+    motorista_uid: a.motoristaUid,
+    motorista_nome: a.motoristaNome || "",
+    placa: a.placa || "",
+    data: a.data || null,
+    cliente: a.cliente || "",
+    obs: a.obs || "",
+    status: a.status || "pendente",
+    motivo_rejeicao: a.motivoRejeicao || "",
+    criado_em: a.criadoEm || Date.now(),
+  };
+}
+function rfViagemFimCarregar() {
+  rfGetClient().then(function (sb) {
+    if (!sb || !sessaoValida()) return;
+    sb.from(RF_VIAGEMFIM_TABELA).select("*").then(function (res) {
+      if (res.error) { console.warn("viagens_finalizadas_motorista:", res.error.message); return; }
+      state.viagensFinalizadas = (res.data || []).map(rfViagemFimParaJS)
+        .sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
+      render();
+    });
+  });
+}
+function rfViagemFimAssinarTempoReal() {
+  rfGetClient().then(function (sb) {
+    if (!sb || window.__rfViagemFimCanal) return;
+    window.__rfViagemFimCanal = sb.channel("viagens-finalizadas-motorista-rf")
+      .on("postgres_changes", { event: "*", schema: "public", table: RF_VIAGEMFIM_TABELA }, function () {
+        rfViagemFimCarregar();
+      })
+      .subscribe();
+  });
+}
+function rfViagemFimSalvarLinha(a) {
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
+    sb.from(RF_VIAGEMFIM_TABELA).upsert(rfViagemFimParaDB(a)).then(function (res) {
+      if (res.error) alert("Não consegui salvar o aviso de viagem na nuvem: " + res.error.message);
+    });
+  });
+}
+function rfViagemFimDeletarLinha(id) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_VIAGEMFIM_TABELA).delete().eq("id", id).then(function (res) {
+      if (res.error) alert("Não consegui excluir na nuvem: " + res.error.message);
+    });
+  });
+}
+function viagensFimDoMotorista() {
+  const uidLogado = state.sessao ? state.sessao.uid : null;
+  return (state.viagensFinalizadas || []).filter((a) => a.motoristaUid === uidLogado)
+    .slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
+}
+function viagensFimFiltradas() {
+  const st = state.filtroStatusViagemFim || "pendente";
+  const lista = (state.viagensFinalizadas || []).slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
+  if (st === "todos") return lista;
+  return lista.filter((a) => a.status === st);
+}
+function adicionarViagemFim() {
+  if (!Array.isArray(state.viagensFinalizadas)) state.viagensFinalizadas = [];
+  const nova = {
+    id: uid(),
+    motoristaUid: state.sessao ? state.sessao.uid : "",
+    motoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
+    placa: (state.sessao && state.sessao.placa_motorista) || "",
+    data: hojeISO(), cliente: "", obs: "",
+    status: "pendente", motivoRejeicao: "",
+    criadoEm: Date.now(),
+  };
+  state.viagensFinalizadas.unshift(nova);
+  render();
+  rfViagemFimSalvarLinha(nova);
+}
+function atualizarViagemFim(id, campo, valor) {
+  const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  a[campo] = valor;
+  render();
+  rfViagemFimSalvarLinha(a);
+}
+function removerViagemFim(id) {
+  if (!confirm("Remover este aviso de viagem finalizada?")) return;
+  state.viagensFinalizadas = (state.viagensFinalizadas || []).filter((x) => String(x.id) !== String(id));
+  render();
+  rfViagemFimDeletarLinha(id);
+}
+function aprovarViagemFim(id) {
+  const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  a.status = "aprovada"; a.motivoRejeicao = "";
+  render();
+  rfViagemFimSalvarLinha(a);
+}
+function rejeitarViagemFim(id) {
+  const motivo = prompt("Motivo da rejeição (opcional):") || "";
+  const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  a.status = "rejeitada"; a.motivoRejeicao = motivo;
+  render();
+  rfViagemFimSalvarLinha(a);
+}
+// Card de um aviso de viagem finalizada — usado tanto na visão do motorista quanto na da equipe
+function rfViagemFimCard(a, souMotorista) {
+  const cor = a.status === "pendente" ? GOLD : a.status === "aprovada" ? "#2E7D32" : "#C0392B";
+  const txt = a.status === "pendente" ? "Pendente" : a.status === "aprovada" ? "Aprovada" : "Rejeitada";
+  const editavel = a.status === "pendente";
+  return `<div style="background:#0E0E0E; border:1px solid #2A2A2A; border-left:4px solid ${cor}; border-radius:10px; padding:14px 16px; margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <span style="font-size:12px; font-weight:800; color:${cor}; border:1px solid ${cor}; border-radius:6px; padding:2px 8px;">${txt}</span>
+        ${!souMotorista ? `<span style="font-size:13px; color:#ccc;">${esc(a.motoristaNome || "motorista")}</span>` : ""}
+        <span style="font-size:13px; color:${GOLD}; font-weight:700;">${esc(a.placa || "—")}</span>
+        <span style="font-size:12px; color:#999;">${a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : ""}</span>
+      </div>
+      <div style="display:flex; gap:8px;">
+        ${!souMotorista && editavel ? `<button class="btn-outline" style="font-size:11px;color:#2E7D32;border-color:#2E7D32;" onclick="aprovarViagemFim('${a.id}')">✓ Aprovar</button>
+          <button class="btn-outline" style="font-size:11px;color:#C0392B;border-color:#C0392B;" onclick="rejeitarViagemFim('${a.id}')">✕ Rejeitar</button>` : ""}
+        ${editavel && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerViagemFim('${a.id}')">✕ excluir</button>` : ""}
+      </div>
+    </div>
+    ${souMotorista && editavel ? `<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+      <div><div style="font-size:10px;color:#999;margin-bottom:3px;">Data</div>
+        <input type="date" value="${a.data || ""}" onchange="atualizarViagemFim('${a.id}','data',this.value)"></div>
+      <div><div style="font-size:10px;color:#999;margin-bottom:3px;">Cliente (opcional)</div>
+        <input value="${esc(a.cliente || "")}" placeholder="Ex: JT/Mateus" onchange="atualizarViagemFim('${a.id}','cliente',this.value)" style="width:160px;"></div>
+      <div style="flex:1;min-width:180px;"><div style="font-size:10px;color:#999;margin-bottom:3px;">Observação (opcional)</div>
+        <input value="${esc(a.obs || "")}" placeholder="Ex: entreguei tudo, sem avarias" onchange="atualizarViagemFim('${a.id}','obs',this.value)" style="width:100%;"></div>
+    </div>` : `<div style="font-size:13px;color:#ccc;">${a.cliente ? esc(a.cliente) + " — " : ""}${esc(a.obs || "sem observações")}</div>
+      ${a.status === "rejeitada" && a.motivoRejeicao ? `<div style="margin-top:6px;font-size:12px;color:#C0392B;">Motivo: ${esc(a.motivoRejeicao)}</div>` : ""}`}
+  </div>`;
+}
+
 // v96: painel simplificado do motorista — resumo do mes (viagens, pagas, a
 // pagar, km) baseado na placa vinculada ao perfil dele + o modulo de
 // abastecimento (que ja existia). Nao usa nada do painel completo da frota.
@@ -2761,6 +2924,7 @@ function painelMotoristaHTML() {
   const aPagar = totalViagens - pagas;
   const kmRodados = viagens.reduce((s, v) => s + (Number(v.km) || 0), 0);
   const meus = abastecimentosDoMotorista();
+  const minhasViagensFim = viagensFimDoMotorista();
   return `
     <div style="border-bottom:2px solid ${GOLD}; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#000;">
       <div>
@@ -2782,6 +2946,15 @@ function painelMotoristaHTML() {
         ${statCard("A pagar", aPagar, aPagar > 0 ? "#C0392B" : "#2E7D32")}
         ${statCard("Km rodados", kmRodados.toLocaleString("pt-BR"), GOLD)}
       </div>
+    </div>
+
+    <div style="padding:20px 24px 0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:20px; font-weight:800; color:${GOLD};">🏁 Viagem finalizada</div>
+        <button class="btn-gold" onclick="adicionarViagemFim()">+ Avisar viagem finalizada</button>
+      </div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Terminou uma viagem? Avise aqui com a data e uma observação (cliente, alguma ocorrência etc.). Fica <b style="color:${GOLD};">pendente</b> até a equipe conferir e lançar a viagem completa no sistema.</div>
+      ${minhasViagensFim.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum aviso enviado ainda.</div>` : minhasViagensFim.map((a) => rfViagemFimCard(a, true)).join("")}
     </div>
 
     <div style="padding:20px 24px 32px;">
@@ -3873,9 +4046,23 @@ function renderTabela() {
         ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
       `;
     } else {
+      const listaViagemFim = viagensFimFiltradas();
+      const pendentesViagemFimCount = (state.viagensFinalizadas || []).filter((a) => a.status === "pendente").length;
       const lista = abastecimentosFiltrados();
       const pendentesCount = (state.abastecimentos || []).filter((a) => a.status === "pendente").length;
       wrap.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+          <div style="font-size:20px; font-weight:800; color:${GOLD};">🏁 Viagens finalizadas pelos motoristas ${pendentesViagemFimCount ? `<span style="font-size:12px;background:${GOLD};color:#000;border-radius:10px;padding:2px 10px;margin-left:8px;">${pendentesViagemFimCount} pendente${pendentesViagemFimCount === 1 ? "" : "s"}</span>` : ""}</div>
+          <select onchange="state.filtroStatusViagemFim=this.value; render();" style="min-width:130px;">
+            <option value="pendente" ${(state.filtroStatusViagemFim || "pendente") === "pendente" ? "selected" : ""}>Pendentes</option>
+            <option value="aprovada" ${state.filtroStatusViagemFim === "aprovada" ? "selected" : ""}>Aprovadas</option>
+            <option value="rejeitada" ${state.filtroStatusViagemFim === "rejeitada" ? "selected" : ""}>Rejeitadas</option>
+            <option value="todos" ${state.filtroStatusViagemFim === "todos" ? "selected" : ""}>Todas</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:#777;margin-bottom:14px;">Aviso simples do motorista de que terminou uma viagem. Aprovar aqui só confirma que a equipe viu — a viagem em si (com valor, cliente etc.) precisa ser lançada manualmente na aba Despesas de Viagem.</div>
+        ${listaViagemFim.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;margin-bottom:28px;">Nenhum aviso nesse filtro.</div>` : listaViagemFim.map((a) => rfViagemFimCard(a, false)).join("")}
+        <div style="border-top:1px solid #262626;margin:24px 0;"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
           <div style="font-size:20px; font-weight:800; color:${GOLD};">⛽ Abastecimentos dos motoristas ${pendentesCount ? `<span style="font-size:12px;background:${GOLD};color:#000;border-radius:10px;padding:2px 10px;margin-left:8px;">${pendentesCount} pendente${pendentesCount === 1 ? "" : "s"}</span>` : ""}</div>
           <div style="display:flex;gap:8px;align-items:center;">
