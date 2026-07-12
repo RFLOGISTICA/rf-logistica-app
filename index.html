@@ -2,11 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v98)</title>
+<title>RF Logística — Painel da Frota (v99)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
 <!-- v98: motorista pode avisar "viagem finalizada" (placa/data/obs livre, sem vincular a cadastro previo) -- fica pendente, equipe aprova/rejeita na aba Abastecimento -->
+<!-- v99: aprovar cria a viagem de verdade (equipe so completa valor/km depois); resumo do motorista (viagens/pagas/km) agora vem de uma funcao segura no banco (RPC motorista_resumo_viagens), porque o celular do motorista nunca baixa a caixa geral -- por isso os cards sempre mostravam 0 antes -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2033,6 +2034,7 @@ function carregarPerfilEEntrar(sb, user) {
     if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
     if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
     if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+    if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
     const perm = abasPermitidas();
     state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
     render();
@@ -2768,6 +2770,7 @@ function rfViagemFimParaJS(r) {
     obs: r.obs || "",
     status: r.status || "pendente",
     motivoRejeicao: r.motivo_rejeicao || "",
+    viagemId: r.viagem_id || "",
     criadoEm: Number(r.criado_em) || 0,
   };
 }
@@ -2782,6 +2785,7 @@ function rfViagemFimParaDB(a) {
     obs: a.obs || "",
     status: a.status || "pendente",
     motivo_rejeicao: a.motivoRejeicao || "",
+    viagem_id: a.viagemId || "",
     criado_em: a.criadoEm || Date.now(),
   };
 }
@@ -2864,6 +2868,19 @@ function removerViagemFim(id) {
 function aprovarViagemFim(id) {
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
   if (!a) return;
+  if (!a.viagemId) {
+    const novaViagem = {
+      id: uid(), placa: a.placa || "", cliente: a.cliente || "", data: a.data || hojeISO(), criadoEm: Date.now(),
+      valorViagem: 0, km: 0, dias: 1,
+      kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+      combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+      temAjudante: true, pago: false, dataPagamento: "",
+      outrosItens: [], obs: a.obs || "",
+    };
+    state.viagens.push(novaViagem);
+    a.viagemId = novaViagem.id;
+    salvar();
+  }
   a.status = "aprovada"; a.motivoRejeicao = "";
   render();
   rfViagemFimSalvarLinha(a);
@@ -2903,8 +2920,38 @@ function rfViagemFimCard(a, souMotorista) {
       <div style="flex:1;min-width:180px;"><div style="font-size:10px;color:#999;margin-bottom:3px;">Observação (opcional)</div>
         <input value="${esc(a.obs || "")}" placeholder="Ex: entreguei tudo, sem avarias" onchange="atualizarViagemFim('${a.id}','obs',this.value)" style="width:100%;"></div>
     </div>` : `<div style="font-size:13px;color:#ccc;">${a.cliente ? esc(a.cliente) + " — " : ""}${esc(a.obs || "sem observações")}</div>
+      ${a.status === "aprovada" && a.viagemId ? `<div style="margin-top:6px;font-size:11px;color:#2E7D32;">✓ Viagem criada na aba Despesas de Viagem — falta completar valor e km.</div>` : ""}
       ${a.status === "rejeitada" && a.motivoRejeicao ? `<div style="margin-top:6px;font-size:12px;color:#C0392B;">Motivo: ${esc(a.motivoRejeicao)}</div>` : ""}`}
   </div>`;
+}
+
+// v99: o celular do motorista NUNCA baixa a caixa geral (painel_dados) por
+// segurança — então o resumo de viagens dele não pode ser calculado no
+// cliente (não tem os dados). Em vez disso chamamos uma função seguridade
+// no banco (RPC, SECURITY DEFINER) que lê a caixa geral do lado do servidor
+// e devolve só os NÚMEROS agregados da placa dele — nunca a lista de viagens
+// inteira, nunca dados de outros motoristas/clientes/valores da empresa.
+function motoristaResumoAtualizar() {
+  if (!ehMotorista()) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.rpc("motorista_resumo_viagens", { p_mes: state.mesAtivo }).then(function (res) {
+      if (res.error) { console.warn("motorista_resumo_viagens:", res.error.message); return; }
+      const linha = Array.isArray(res.data) ? res.data[0] : res.data;
+      state._resumoViagensMotorista = linha
+        ? { total: Number(linha.total_viagens) || 0, pagas: Number(linha.pagas) || 0, km: Number(linha.km_rodados) || 0 }
+        : { total: 0, pagas: 0, km: 0 };
+      render();
+    });
+  });
+}
+function motoristaTrocarMes(mes) { state.mesAtivo = mes; motoristaResumoAtualizar(); render(); }
+function motoristaNavegarMes(dir) {
+  const p = (state.mesAtivo || new Date().toISOString().slice(0, 7)).split("-");
+  const d = new Date(Number(p[0]), Number(p[1]) - 1 + dir, 1);
+  state.mesAtivo = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  motoristaResumoAtualizar();
+  render();
 }
 
 // v96: painel simplificado do motorista — resumo do mes (viagens, pagas, a
@@ -2918,11 +2965,11 @@ function viagensDoMotoristaNoMes() {
 function painelMotoristaHTML() {
   const nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "motorista";
   const placa = (state.sessao && state.sessao.placa_motorista) || "";
-  const viagens = viagensDoMotoristaNoMes();
-  const totalViagens = viagens.length;
-  const pagas = viagens.filter((v) => v.pago).length;
+  const resumo = state._resumoViagensMotorista || { total: 0, pagas: 0, km: 0 };
+  const totalViagens = resumo.total;
+  const pagas = resumo.pagas;
   const aPagar = totalViagens - pagas;
-  const kmRodados = viagens.reduce((s, v) => s + (Number(v.km) || 0), 0);
+  const kmRodados = resumo.km;
   const meus = abastecimentosDoMotorista();
   const minhasViagensFim = viagensFimDoMotorista();
   return `
@@ -2935,7 +2982,15 @@ function painelMotoristaHTML() {
     </div>
 
     <div style="padding:18px 24px 6px;">
-      <div style="font-size:15px;color:#ccc;">Olá, <b style="color:#fff;">${esc(nome)}</b> — resumo de ${mesLabel(state.mesAtivo)}${placa ? ` · <span style="color:${GOLD};">${esc(placa)}</span>` : ""}</div>
+      <div style="font-size:15px;color:#ccc;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>Olá, <b style="color:#fff;">${esc(nome)}</b> — resumo de</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;background:#111;border:1px solid ${GOLD};border-radius:8px;padding:2px 6px;">
+          <button class="btn-outline" style="padding:0 8px;font-size:16px;line-height:1.2;" onclick="motoristaNavegarMes(-1)" title="Mês anterior">‹</button>
+          <span style="color:${GOLD};font-weight:700;min-width:90px;text-align:center;display:inline-block;">${mesLabel(state.mesAtivo)}</span>
+          <button class="btn-outline" style="padding:0 8px;font-size:16px;line-height:1.2;" onclick="motoristaNavegarMes(1)" title="Próximo mês">›</button>
+        </span>
+        ${placa ? `<span>· <span style="color:${GOLD};">${esc(placa)}</span></span>` : ""}
+      </div>
       ${!placa ? `<div style="margin-top:8px;color:#C0392B;font-size:12px;">⚠ Sua conta ainda não tem uma placa vinculada. Fale com o administrador para liberar o resumo de viagens.</div>` : ""}
     </div>
 
