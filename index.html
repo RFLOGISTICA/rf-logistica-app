@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v92)</title>
+<title>RF Logística — Painel da Frota (v93)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2084,6 +2084,59 @@ function carregarPerfis() {
     }).catch(function () { state._carregandoPerfis = false; render(); });
   });
 }
+function criarUsuarioAbrir() {
+  state._novoUsuario = { nome: "", email: "", senha: "", papel: "user", modulos: [] };
+  render();
+}
+function criarUsuarioFechar() {
+  state._novoUsuario = null;
+  render();
+}
+function criarUsuarioCampo(campo, valor) {
+  if (!state._novoUsuario) return;
+  state._novoUsuario[campo] = valor;
+}
+function criarUsuarioToggleModulo(abaId, checked) {
+  if (!state._novoUsuario) return;
+  const i = state._novoUsuario.modulos.indexOf(abaId);
+  if (checked && i === -1) state._novoUsuario.modulos.push(abaId);
+  if (!checked && i !== -1) state._novoUsuario.modulos.splice(i, 1);
+}
+function criarUsuarioSalvar() {
+  const nu = state._novoUsuario;
+  if (!nu) return;
+  const nome = (document.getElementById("nuNome") || {}).value || nu.nome;
+  const email = (document.getElementById("nuEmail") || {}).value || nu.email;
+  const senha = (document.getElementById("nuSenha") || {}).value || nu.senha;
+  const papel = (document.getElementById("nuPapel") || {}).value || nu.papel;
+  if (!nome || !email || !senha) { alert("Preencha nome, e-mail e senha."); return; }
+  if (senha.length < 6) { alert("A senha precisa ter pelo menos 6 caracteres."); return; }
+  const btn = document.getElementById("nuBtnSalvar");
+  if (btn) { btn.disabled = true; btn.textContent = "Criando..."; }
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com o servidor."); if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; } return; }
+    sb.auth.getSession().then(function (res) {
+      const token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) { alert("Sessão expirada. Saia e entre de novo."); if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; } return; }
+      fetch(RF_SB_URL + "/functions/v1/criar-usuario", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: nome, email: email, senha: senha, papel: papel, modulos: nu.modulos }),
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res2) {
+          if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; }
+          if (!res2.ok) { alert("Erro: " + (res2.j.error || "falha ao criar usuário")); return; }
+          alert("Usuário criado com sucesso!");
+          state._novoUsuario = null;
+          carregarPerfis();
+        }).catch(function (e) {
+          if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; }
+          alert("Erro de conexão: " + e.message);
+        });
+    });
+  });
+}
+
 function atualizarPerfilCampo(id, campo, valor) {
   const p = (state._perfis || []).find((x) => String(x.id) === String(id));
   if (!p) return;
@@ -2972,6 +3025,35 @@ function renderTabela() {
         </div>
         <button class="btn-outline" style="align-self:flex-start;" onclick="carregarPerfis()">${state._carregandoPerfis ? "Atualizando..." : "↻ Atualizar lista"}</button>
       </div>
+      <div style="margin-bottom:16px;">
+        ${state._novoUsuario ? "" : `<button class="btn-gold" onclick="criarUsuarioAbrir()">+ Novo usuário</button>`}
+      </div>
+      ${state._novoUsuario ? `
+      <div style="border:1px solid ${GOLD};border-radius:10px;padding:16px;margin-bottom:18px;background:#0E0E0E;">
+        <div style="font-size:14px;font-weight:800;color:${GOLD};margin-bottom:12px;">+ Novo usuário</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Nome</div><input id="nuNome" placeholder="Nome completo" style="width:200px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">E-mail</div><input id="nuEmail" type="email" placeholder="email@exemplo.com" style="width:220px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Senha</div><input id="nuSenha" type="text" placeholder="mín. 6 caracteres" style="width:160px;"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Papel</div>
+            <select id="nuPapel" onchange="criarUsuarioCampo('papel',this.value)" style="width:130px;">
+              <option value="user" selected>Usuário</option>
+              <option value="motorista">Motorista</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas liberadas (ignorado se papel = motorista)</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
+            ${ABAS_DEF.map((a) => `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#bbb;">
+              <input type="checkbox" onchange="criarUsuarioToggleModulo('${a.id}',this.checked)"> ${esc(a.label)}
+            </label>`).join("")}
+          </div>
+        </div>
+        <button id="nuBtnSalvar" class="btn-gold" onclick="criarUsuarioSalvar()">Criar usuário</button>
+        <button class="btn-outline-gray" onclick="criarUsuarioFechar()">Cancelar</button>
+      </div>` : ""}
       ${(state._perfis || []).length ? state._perfis.map((p) => `
         <div style="border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:12px;background:#0E0E0E;">
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
