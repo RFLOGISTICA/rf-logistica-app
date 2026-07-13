@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v105)</title>
+<title>RF Logística — Painel da Frota (v107)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
@@ -14,6 +14,8 @@
 <!-- v103: viagens que nasceram de um aviso do motorista (abastecimento aprovado -> viagem, ou viagem finalizada aprovada) agora mostram um selo "🏁 via motorista" na aba Despesas de Viagem, com aviso "falta completar" enquanto o valor nao for preenchido -- fica claro o que foi lancado manualmente pela equipe x o que veio do motorista -->
 <!-- v104: fluxo de viagem do motorista virou em duas etapas -- "+ Inicio de viagem" (status em_andamento) e depois "Concluir viagem" (so libera com a foto do KM final anexada, obrigatoria) -- so ai passa pra "aguardando equipe" -->
 <!-- v105: a viagem agora nasce de verdade em Despesas de Viagem no exato momento do "Inicio de viagem" (nao so depois de aprovada) -- selo na tabela muda ao vivo: em viagem -> aguardando revisao -> aprovada/rejeitada, sincronizado com o que acontece no aviso do motorista -->
+<!-- v106: corrige a v105 -- o celular do motorista e bloqueado de escrever direto na caixa geral (protecao de seguranca que ja existia), entao a viagem nunca sincronizava de verdade. Agora usa funcoes seguras no banco (RPC) que so deixam o motorista criar/mexer na PROPRIA viagem em andamento -->
+<!-- v107: INVERTE o fluxo -- agora a equipe cria a viagem como sempre fez e clica "Enviar p/ motorista"; o motorista so CONFIRMA inicio (foto do KM inicial obrigatoria) e fim (foto do KM final obrigatoria) via RPC seguro. Retirado o antigo botao "+ Inicio de viagem" do lado do motorista -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -805,6 +807,15 @@ function removerCliente(nome) {
   salvar(); render();
 }
 
+function enviarViagemParaMotorista(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (!v.placa) { alert("Defina a placa da viagem antes de enviar pro motorista."); return; }
+  const temMotorista = (state._perfis || []).some((p) => p.papel === "motorista" && p.placa_motorista === v.placa);
+  if (!temMotorista) { alert("Não achei nenhum motorista cadastrado com essa placa. Confirme em Usuários."); return; }
+  v.statusMotorista = "aguardando_motorista";
+  salvar(); render();
+}
 function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
@@ -2036,11 +2047,13 @@ function carregarPerfilEEntrar(sb, user) {
     if (state.sessao.papel !== "motorista" && typeof window.rfIniciarSyncEquipe === "function") {
       window.rfIniciarSyncEquipe();
     }
+    if (state.sessao.papel !== "motorista" && typeof carregarPerfis === "function") { carregarPerfis(); }
     if (typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
     if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
     if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
     if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
     if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
+    if (typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
     const perm = abasPermitidas();
     state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
     render();
@@ -2858,34 +2871,29 @@ function viagensFimFiltradas() {
 }
 function adicionarViagemFim() {
   if (!Array.isArray(state.viagensFinalizadas)) state.viagensFinalizadas = [];
-  const id = uid();
-  // v105: a viagem já nasce de verdade na aba Despesas de Viagem, marcada como
-  // "em andamento" — a equipe já enxerga que o motorista está rodando, sem
-  // precisar esperar ele concluir e a equipe aprovar pra saber que existe.
-  const novaViagem = {
-    id: uid(), placa: (state.sessao && state.sessao.placa_motorista) || "", cliente: "", data: hojeISO(), criadoEm: Date.now(),
-    valorViagem: 0, km: 0, dias: 1,
-    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
-    combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
-    temAjudante: true, pago: false, dataPagamento: "",
-    outrosItens: [], obs: "", origemMotorista: true,
-    origemMotoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
-    statusMotorista: "em_andamento",
-  };
-  state.viagens.push(novaViagem);
-  const nova = {
-    id: id,
-    motoristaUid: state.sessao ? state.sessao.uid : "",
-    motoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
-    placa: (state.sessao && state.sessao.placa_motorista) || "",
-    data: hojeISO(), cliente: "", obs: "",
-    status: "em_andamento", motivoRejeicao: "",
-    viagemId: novaViagem.id,
-    criadoEm: Date.now(),
-  };
-  state.viagensFinalizadas.unshift(nova);
-  salvar(); render();
-  rfViagemFimSalvarLinha(nova);
+  // v106: o celular do motorista NÃO consegue escrever direto na caixa geral
+  // (bloqueio de segurança) — então a viagem é criada do lado do servidor,
+  // por uma função (RPC) que só deixa o motorista criar a PRÓPRIA viagem.
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Tente novamente com internet."); return; }
+    sb.rpc("motorista_criar_viagem_inicio", { p_data: hojeISO() }).then(function (res) {
+      if (res.error) { alert("Não consegui iniciar a viagem: " + res.error.message); return; }
+      const viagemId = res.data;
+      const nova = {
+        id: uid(),
+        motoristaUid: state.sessao ? state.sessao.uid : "",
+        motoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
+        placa: (state.sessao && state.sessao.placa_motorista) || "",
+        data: hojeISO(), cliente: "", obs: "",
+        status: "em_andamento", motivoRejeicao: "",
+        viagemId: viagemId,
+        criadoEm: Date.now(),
+      };
+      state.viagensFinalizadas.unshift(nova);
+      render();
+      rfViagemFimSalvarLinha(nova);
+    });
+  });
 }
 // v104: fecha o ciclo — só passa para "pendente" (aguardando a equipe conferir)
 // se já tiver a foto do KM final anexada. Sem essa foto, é bloqueado.
@@ -2893,26 +2901,45 @@ function concluirViagemFim(id) {
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
   if (!a) return;
   if (!a.fotoKmFim) { alert("Anexe a foto do KM final antes de concluir a viagem. Isso é obrigatório."); return; }
-  a.status = "pendente";
-  const v = a.viagemId ? state.viagens.find((x) => String(x.id) === String(a.viagemId)) : null;
-  if (v) { v.statusMotorista = "aguardando_equipe"; v.cliente = a.cliente || v.cliente; v.obs = a.obs || v.obs; salvar(); }
-  render();
-  rfViagemFimSalvarLinha(a);
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem."); return; }
+    const chamada = a.viagemId
+      ? sb.rpc("motorista_concluir_viagem", { p_viagem_id: a.viagemId })
+      : Promise.resolve({ error: null });
+    chamada.then(function (res) {
+      if (res.error) { alert("Não consegui concluir a viagem: " + res.error.message); return; }
+      a.status = "pendente";
+      render();
+      rfViagemFimSalvarLinha(a);
+    });
+  });
 }
 function atualizarViagemFim(id, campo, valor) {
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
   if (!a) return;
   a[campo] = valor;
-  // mantém a viagem de verdade em sincronia enquanto ainda está em andamento
-  const v = a.viagemId ? state.viagens.find((x) => String(x.id) === String(a.viagemId)) : null;
-  if (v && (campo === "data" || campo === "cliente" || campo === "obs")) { v[campo] = valor; salvar(); }
   render();
   rfViagemFimSalvarLinha(a);
+  // v106: mantém a viagem de verdade em sincronia — via RPC, porque o
+  // motorista não escreve direto na caixa geral.
+  if (a.viagemId && (campo === "data" || campo === "cliente" || campo === "obs") && a.status === "em_andamento") {
+    rfGetClient().then(function (sb) {
+      if (!sb) return;
+      sb.rpc("motorista_atualizar_viagem_andamento", {
+        p_viagem_id: a.viagemId, p_data: a.data || hojeISO(), p_cliente: a.cliente || "", p_obs: a.obs || "",
+      });
+    });
+  }
 }
 function removerViagemFim(id) {
   if (!confirm("Remover esta viagem? Isso também apaga o registro correspondente em Despesas de Viagem.")) return;
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
-  if (a && a.viagemId) {
+  if (a && a.viagemId && a.status === "em_andamento") {
+    rfGetClient().then(function (sb) {
+      if (sb) sb.rpc("motorista_cancelar_viagem", { p_viagem_id: a.viagemId });
+    });
+  } else if (a && a.viagemId) {
+    // caso um admin exclua algo já processado, remove direto (admin tem acesso normal)
     state.viagens = state.viagens.filter((x) => String(x.id) !== String(a.viagemId));
     salvar();
   }
@@ -3037,6 +3064,90 @@ function reabrirViagemFim(id) {
   render();
   rfViagemFimSalvarLinha(a);
 }
+// v107: NOVO FLUXO -- a equipe cria a viagem (como sempre) e "envia" pro
+// motorista. Ele só confirma: início (foto do KM inicial) e fim (foto do KM
+// final), sempre obrigatório. Substitui o antigo fluxo onde o motorista
+// criava a viagem do zero.
+function motoristaCarregarViagensAtivas() {
+  if (!ehMotorista()) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.rpc("motorista_minhas_viagens_ativas").then(function (res) {
+      if (res.error) { console.warn("motorista_minhas_viagens_ativas:", res.error.message); return; }
+      state._minhasViagensAtivas = (res.data || []).map(function (r) {
+        return {
+          id: r.id, data: r.data, cliente: r.cliente, status: r.status_motorista,
+          valorViagem: Number(r.valor_viagem) || 0, fotoKmSaida: r.foto_km_saida || "", fotoKmChegada: r.foto_km_chegada || "",
+        };
+      });
+      render();
+    });
+  });
+}
+function motoristaUploadEConfirmar(input, viagemId, tipo) {
+  var vg = (state._minhasViagensAtivas || []).find(function (x) { return String(x.id) === String(viagemId); });
+  if (!vg) return;
+  var file = input.files && input.files[0];
+  if (!file) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem."); return; }
+    var isImg = /^image\//.test(file.type);
+    var prep = isImg
+      ? rfComprimirImagem(file).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
+      : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
+    prep.then(function (p) {
+      var placa = (state.sessao && state.sessao.placa_motorista) || "sem-placa";
+      var path = "km/" + placa + "/" + viagemId + "-" + tipo + "-" + Date.now() + "." + p.ext;
+      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
+        if (res.error) throw res.error;
+        var fn = tipo === "inicio" ? "motorista_confirmar_inicio" : "motorista_confirmar_fim";
+        var params = tipo === "inicio" ? { p_viagem_id: viagemId, p_foto_km_saida: path } : { p_viagem_id: viagemId, p_foto_km_chegada: path };
+        return sb.rpc(fn, params).then(function (res2) {
+          if (res2.error) throw res2.error;
+          input.value = "";
+          motoristaCarregarViagensAtivas();
+        });
+      });
+    }).catch(function (e) { alert("Erro ao confirmar: " + (e.message || e)); });
+  });
+}
+function motoristaVerFotoKm(path) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.storage.from(RF_BUCKET).createSignedUrl(path, 3600).then(function (res) {
+      if (res.error || !res.data) { alert("Não foi possível abrir a foto."); return; }
+      window.open(res.data.signedUrl, "_blank");
+    });
+  });
+}
+function motoristaViagemCard(vg) {
+  const mapa = {
+    aguardando_motorista: { cor: "#3498DB", txt: "Aguardando você iniciar" },
+    em_andamento: { cor: GOLD, txt: "Em viagem" },
+    aguardando_equipe: { cor: "#2E7D32", txt: "Aguardando revisão da equipe" },
+  };
+  const info = mapa[vg.status] || mapa.aguardando_motorista;
+  return `<div style="background:#0E0E0E; border:1px solid #2A2A2A; border-left:4px solid ${info.cor}; border-radius:10px; padding:14px 16px; margin-bottom:12px;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+      <span style="font-size:12px; font-weight:800; color:${info.cor}; border:1px solid ${info.cor}; border-radius:6px; padding:2px 8px;">${info.txt}</span>
+      <span style="font-size:13px; color:#ccc;">${vg.cliente ? esc(vg.cliente) : "(sem cliente definido)"}</span>
+      <span style="font-size:12px; color:#999;">${vg.data ? new Date(vg.data + "T00:00:00").toLocaleDateString("pt-BR") : ""}</span>
+    </div>
+    ${vg.status === "aguardando_motorista" ? `<div>
+      <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM inicial (obrigatória para confirmar início)</div>
+      <input type="file" accept="image/*" onchange="motoristaUploadEConfirmar(this,'${vg.id}','inicio')">
+    </div>` : ""}
+    ${vg.status === "em_andamento" ? `<div>
+      ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;margin-bottom:8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
+      <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM final (obrigatória para concluir)</div>
+      <input type="file" accept="image/*" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')">
+    </div>` : ""}
+    ${vg.status === "aguardando_equipe" ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
+      ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
+      ${vg.fotoKmChegada ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="motoristaVerFotoKm('${vg.fotoKmChegada}')">📷 ver KM final</button>` : ""}
+    </div>` : ""}
+  </div>`;
+}
 function rfViagemFimCard(a, souMotorista) {
   const mapa = {
     em_andamento: { cor: "#3498DB", txt: "Em viagem" },
@@ -3142,7 +3253,6 @@ function painelMotoristaHTML() {
   const aPagar = totalViagens - pagas;
   const kmRodados = resumo.km;
   const meus = abastecimentosDoMotorista();
-  const minhasViagensFim = viagensFimDoMotorista();
   return `
     <div style="border-bottom:2px solid ${GOLD}; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#000;">
       <div>
@@ -3175,12 +3285,9 @@ function painelMotoristaHTML() {
     </div>
 
     <div style="padding:20px 24px 0;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
-        <div style="font-size:20px; font-weight:800; color:${GOLD};">🚚 Viagem</div>
-        <button class="btn-gold" onclick="adicionarViagemFim()">+ Início de viagem</button>
-      </div>
-      <div style="font-size:12px;color:#999;margin-bottom:16px;">Vai começar uma viagem? Clique em <b>+ Início de viagem</b>. Quando terminar, anexe a foto do <b>KM final</b> (obrigatória) e clique em <b>🏁 Concluir viagem</b>. Depois disso fica <b style="color:${GOLD};">aguardando a equipe</b> conferir.</div>
-      ${minhasViagensFim.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhuma viagem iniciada ainda.</div>` : minhasViagensFim.map((a) => rfViagemFimCard(a, true)).join("")}
+      <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">🚚 Minhas viagens</div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">A equipe cadastra a viagem e envia pra você. Quando for sair, anexe a foto do <b>KM inicial</b> pra confirmar o início. Quando terminar, anexe a foto do <b>KM final</b> pra concluir. As duas fotos são obrigatórias.</div>
+      ${(state._minhasViagensAtivas || []).length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhuma viagem enviada pela equipe no momento.</div>` : (state._minhasViagensAtivas || []).map((vg) => motoristaViagemCard(vg)).join("")}
     </div>
 
     <div style="padding:20px 24px 32px;">
@@ -4049,17 +4156,22 @@ function renderTabela() {
           const temAjudante = v.temAjudante !== false;
           return `<tr>
             <td><select onchange="atualizarViagem('${v.id}','placa',this.value)">${state.veiculos.map((vc) => `<option ${v.placa === vc.placa ? "selected" : ""}>${esc(vc.placa) || "(sem placa)"}</option>`).join("")}</select>
-              ${v.origemMotorista ? (() => {
-                const sm = v.statusMotorista || "aprovada";
+              ${(() => {
+                const sm = v.statusMotorista;
+                if (!sm) {
+                  const temMotorista = (state._perfis || []).some((p) => p.papel === "motorista" && p.placa_motorista === v.placa);
+                  return temMotorista ? `<button class="btn-outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="enviarViagemParaMotorista('${v.id}')" title="Envia essa viagem pro app do motorista, ele confirma início/fim com foto do KM">📤 Enviar p/ motorista</button>` : "";
+                }
                 const bmap = {
-                  em_andamento: { cor: "#3498DB", txt: "🚚 em viagem" },
-                  aguardando_equipe: { cor: GOLD, txt: "⏳ aguardando revisão" },
+                  aguardando_motorista: { cor: "#3498DB", txt: "📤 aguardando motorista" },
+                  em_andamento: { cor: GOLD, txt: "🚚 em viagem" },
+                  aguardando_equipe: { cor: "#2E7D32", txt: "⏳ aguardando revisão" },
                   aprovada: { cor: "#2E7D32", txt: "🏁 via motorista" },
                   rejeitada: { cor: "#C0392B", txt: "✕ rejeitada" },
                 };
-                const b = bmap[sm] || bmap.aprovada;
-                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="Origem: aviso do motorista${v.origemMotoristaNome ? ' (' + esc(v.origemMotoristaNome) + ')' : ''}">${b.txt}</span>${(sm === "aguardando_equipe" || sm === "aprovada") && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
-              })() : ""}
+                const b = bmap[sm] || bmap.aguardando_motorista;
+                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
+              })()}
             </td>
             <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); if (!vc || !vc.motorista) return "—"; const clt = vc.regimeMotorista === "clt"; return esc(vc.motorista) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
             <td><select onchange="selecionarCliente('${v.id}', this.value)" style="min-width:140px;">
