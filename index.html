@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v107)</title>
+<title>RF Logística — Painel da Frota (v108)</title>
+<!-- v108: troca o "envio pro motorista" de automatico-por-placa pra escolha manual -- a equipe seleciona explicitamente QUAL motorista recebe a viagem (dropdown com nome), e as RPCs conferem pelo motoristaDesignadoUid em vez da placa -->
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
@@ -807,12 +808,13 @@ function removerCliente(nome) {
   salvar(); render();
 }
 
-function enviarViagemParaMotorista(id) {
+function enviarViagemParaMotorista(id, motoristaUid) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
-  if (!v.placa) { alert("Defina a placa da viagem antes de enviar pro motorista."); return; }
-  const temMotorista = (state._perfis || []).some((p) => p.papel === "motorista" && p.placa_motorista === v.placa);
-  if (!temMotorista) { alert("Não achei nenhum motorista cadastrado com essa placa. Confirme em Usuários."); return; }
+  const m = (state._perfis || []).find((p) => String(p.id) === String(motoristaUid));
+  if (!m) { alert("Motorista não encontrado."); return; }
+  v.motoristaDesignadoUid = motoristaUid;
+  v.motoristaDesignadoNome = m.nome || m.email || "";
   v.statusMotorista = "aguardando_motorista";
   salvar(); render();
 }
@@ -4159,8 +4161,12 @@ function renderTabela() {
               ${(() => {
                 const sm = v.statusMotorista;
                 if (!sm) {
-                  const temMotorista = (state._perfis || []).some((p) => p.papel === "motorista" && p.placa_motorista === v.placa);
-                  return temMotorista ? `<button class="btn-outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="enviarViagemParaMotorista('${v.id}')" title="Envia essa viagem pro app do motorista, ele confirma início/fim com foto do KM">📤 Enviar p/ motorista</button>` : "";
+                  const motoristas = (state._perfis || []).filter((p) => p.papel === "motorista");
+                  if (!motoristas.length) return "";
+                  return `<select onchange="if(this.value) enviarViagemParaMotorista('${v.id}', this.value)" style="font-size:9px;margin-top:3px;max-width:150px;">
+                    <option value="">📤 Enviar p/ motorista...</option>
+                    ${motoristas.map((m) => `<option value="${m.id}">${esc(m.nome || m.email || "sem nome")}</option>`).join("")}
+                  </select>`;
                 }
                 const bmap = {
                   aguardando_motorista: { cor: "#3498DB", txt: "📤 aguardando motorista" },
@@ -4170,7 +4176,7 @@ function renderTabela() {
                   rejeitada: { cor: "#C0392B", txt: "✕ rejeitada" },
                 };
                 const b = bmap[sm] || bmap.aguardando_motorista;
-                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
+                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
               })()}
             </td>
             <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); if (!vc || !vc.motorista) return "—"; const clt = vc.regimeMotorista === "clt"; return esc(vc.motorista) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
