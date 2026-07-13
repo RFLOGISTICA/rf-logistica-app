@@ -2,13 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v100)</title>
+<title>RF Logística — Painel da Frota (v101)</title>
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
 <!-- v97: painel do motorista recriado do zero -- tela propria (Ola + 4 cards: viagens/pagas/a pagar/km) + abastecimento, sem nada do painel geral da frota -->
 <!-- v98: motorista pode avisar "viagem finalizada" (placa/data/obs livre, sem vincular a cadastro previo) -- fica pendente, equipe aprova/rejeita na aba Abastecimento -->
 <!-- v99: aprovar cria a viagem de verdade (equipe so completa valor/km depois); resumo do motorista (viagens/pagas/km) agora vem de uma funcao segura no banco (RPC motorista_resumo_viagens), porque o celular do motorista nunca baixa a caixa geral -- por isso os cards sempre mostravam 0 antes -->
 <!-- v100: equipe agora tem botao "Excluir" de verdade em qualquer status (abastecimento e viagem finalizada) -- antes so existia enquanto pendente, entao depois de aprovar/rejeitar nao dava pra apagar nada; adicionado tambem "Reabrir" pra voltar um aviso de viagem pra pendente de proposito -->
+<!-- v101: exclusao agora confere se realmente apagou no banco (RLS podia estar bloqueando silenciosamente, sem erro) -- se nao apagar, avisa e restaura a lista em vez de fingir que deu certo -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <!-- v92: PWA — permite instalar como app no celular (ícone próprio, tela cheia) -->
 <link rel="manifest" href="manifest.json" />
@@ -2747,8 +2748,12 @@ function rfAbastSalvarLinha(a) {
 function rfAbastDeletarLinha(id) {
   rfGetClient().then(function (sb) {
     if (!sb) return;
-    sb.from(RF_ABAST_TABELA).delete().eq("id", id).then(function (res) {
-      if (res.error) alert("Não consegui excluir na nuvem: " + res.error.message);
+    sb.from(RF_ABAST_TABELA).delete().eq("id", id).select().then(function (res) {
+      if (res.error) { alert("Não consegui excluir na nuvem: " + res.error.message); rfAbastCarregar(); return; }
+      if (!res.data || res.data.length === 0) {
+        alert("A exclusão não foi aplicada no banco (provavelmente por permissão/RLS). Restaurando a lista.");
+        rfAbastCarregar();
+      }
     });
   });
 }
@@ -2823,8 +2828,12 @@ function rfViagemFimSalvarLinha(a) {
 function rfViagemFimDeletarLinha(id) {
   rfGetClient().then(function (sb) {
     if (!sb) return;
-    sb.from(RF_VIAGEMFIM_TABELA).delete().eq("id", id).then(function (res) {
-      if (res.error) alert("Não consegui excluir na nuvem: " + res.error.message);
+    sb.from(RF_VIAGEMFIM_TABELA).delete().eq("id", id).select().then(function (res) {
+      if (res.error) { alert("Não consegui excluir na nuvem: " + res.error.message); rfViagemFimCarregar(); return; }
+      if (!res.data || res.data.length === 0) {
+        alert("A exclusão não foi aplicada no banco (provavelmente por permissão/RLS). Restaurando a lista.");
+        rfViagemFimCarregar();
+      }
     });
   });
 }
