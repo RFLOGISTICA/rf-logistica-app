@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v108)</title>
+<title>RF Logística — Painel da Frota (v109)</title>
+<!-- v109: abastecimento lancado durante uma viagem "em andamento" ja vincula sozinho (placa + viagemId), com seletor pro motorista trocar e um botao rapido "Aprovar -> viagem ja vinculada" pra equipe -->
 <!-- v108: troca o "envio pro motorista" de automatico-por-placa pra escolha manual -- a equipe seleciona explicitamente QUAL motorista recebe a viagem (dropdown com nome), e as RPCs conferem pelo motoristaDesignadoUid em vez da placa -->
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
 <!-- v96: corrige sessao "presa" no papel antigo -- agora revalida com o banco toda vez que o app abre -->
@@ -2525,11 +2526,23 @@ function rfAbastCard(a, souMotorista) {
         ${a.ocrStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o valor sozinho. Preencha manualmente.</div>` : ""}
       </div>
     </div>
+    ${souMotorista && editavel ? `<div style="margin-top:8px;">
+      <div style="font-size:10px;color:#999;margin-bottom:3px;">🚚 Vincular à viagem (opcional)</div>
+      ${(() => {
+        const minhas = (state._minhasViagensAtivas || []).filter((v) => v.status === "em_andamento");
+        if (!minhas.length) return `<span style="font-size:11px;color:#666;">Nenhuma viagem em andamento no momento.</span>`;
+        return `<select onchange="atualizarAbastecimento('${a.id}','viagemId',this.value)" style="min-width:200px;">
+          <option value="">— nenhuma —</option>
+          ${minhas.map((v) => `<option value="${v.id}" ${a.viagemId === v.id ? "selected" : ""}>${esc(v.placa)} · ${v.cliente ? esc(v.cliente) : "sem cliente"}</option>`).join("")}
+        </select>`;
+      })()}
+    </div>` : ""}
     ${!souMotorista && editavel ? `
     <div style="margin-top:14px; padding-top:12px; border-top:1px solid #222; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       <button class="btn-gold" style="font-size:12px;" onclick="aprovarAbastecimentoNovaViagem('${a.id}')">✓ Aprovar → nova viagem</button>
+      ${a.viagemId && state.viagens.some((v) => String(v.id) === String(a.viagemId)) ? `<button class="btn-gold" style="font-size:12px;background:#2E7D32;border-color:#2E7D32;" onclick="vincularAbastecimentoAViagem('${a.id}', '${a.viagemId}')">✓ Aprovar → viagem já vinculada</button>` : ""}
       ${viagensDoCaminhao.length ? `<select id="vinc-${a.id}" style="min-width:220px;">
-        ${viagensDoCaminhao.map((v) => `<option value="${v.id}">${v.data || "sem data"} — ${esc(v.cliente || "sem cliente")}</option>`).join("")}
+        ${viagensDoCaminhao.map((v) => `<option value="${v.id}" ${a.viagemId === v.id ? "selected" : ""}>${v.data || "sem data"} — ${esc(v.cliente || "sem cliente")}</option>`).join("")}
       </select>
       <button class="btn-outline" style="font-size:12px;" onclick="vincularAbastecimentoAViagem('${a.id}', document.getElementById('vinc-${a.id}').value)">Vincular a essa viagem</button>` : ""}
       <button class="btn-del" style="font-size:12px; margin-left:auto;" onclick="rejeitarAbastecimento('${a.id}')">✕ Rejeitar</button>
@@ -3080,6 +3093,7 @@ function motoristaCarregarViagensAtivas() {
         return {
           id: r.id, data: r.data, cliente: r.cliente, status: r.status_motorista,
           valorViagem: Number(r.valor_viagem) || 0, fotoKmSaida: r.foto_km_saida || "", fotoKmChegada: r.foto_km_chegada || "",
+          placa: r.placa || "",
         };
       });
       render();
@@ -3316,13 +3330,17 @@ function abastecimentosFiltrados() {
 }
 function adicionarAbastecimento() {
   if (!Array.isArray(state.abastecimentos)) state.abastecimentos = [];
+  // v109: se o motorista tem uma viagem "em andamento" agora, o abastecimento
+  // já nasce vinculado a ela sozinho (placa + viagemId) — ele pode trocar
+  // depois se precisar, e a equipe também pode mudar na hora de aprovar.
+  const viagemAtiva = (state._minhasViagensAtivas || []).find((v) => v.status === "em_andamento");
   const nova = {
     id: uid(),
     motoristaUid: state.sessao ? state.sessao.uid : "",
     motoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
-    placa: "", data: hojeISO(), kmAtual: "", litros: "", valor: "",
+    placa: viagemAtiva ? (viagemAtiva.placa || "") : "", data: hojeISO(), kmAtual: "", litros: "", valor: "",
     fotoKm: "", fotoBomba: "", obs: "",
-    status: "pendente", motivoRejeicao: "", viagemId: "",
+    status: "pendente", motivoRejeicao: "", viagemId: viagemAtiva ? viagemAtiva.id : "",
     criadoEm: Date.now(),
   };
   state.abastecimentos.unshift(nova);
