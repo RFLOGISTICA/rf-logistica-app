@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v109)</title>
+<title>RF Logística — Painel da Frota (v110)</title>
+<!-- v110: separa "pago" (cliente pagando a RF Logística, prazo de 15/30/45 dias por cliente) de
+     "pagoMotorista" (RF Logística pagando o motorista, ritmo semanal/quinzenal) -- checkbox novo na
+     aba Motoristas > Detalhe por viagem. IMPORTANTE: a RPC motorista_resumo_viagens no Supabase
+     ainda precisa ser atualizada pra ler pagoMotorista em vez de pago no calculo de "pagas" -- sem
+     isso o app do motorista continua mostrando o valor antigo. -->
 <!-- v109: abastecimento lancado durante uma viagem "em andamento" ja vincula sozinho (placa + viagemId), com seletor pro motorista trocar e um botao rapido "Aprovar -> viagem ja vinculada" pra equipe -->
 <!-- v108: troca o "envio pro motorista" de automatico-por-placa pra escolha manual -- a equipe seleciona explicitamente QUAL motorista recebe a viagem (dropdown com nome), e as RPCs conferem pelo motoristaDesignadoUid em vez da placa -->
 <!-- v95: excluir usuario (edge function excluir-usuario) + confirmacao visual ao salvar campo de perfil -->
@@ -613,7 +618,7 @@ function lancarComoViagem() {
     km: Number(c.km) || 0, dias: Number(c.dias) || 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
-    temAjudante: true, pago: false, dataPagamento: "",
+    temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha " + YAMAHA_REGIOES[c.regiao].nome + " — " + r.totItens + " itens: " + mix }],
   });
   if (!state.clientes.includes(c.cliente || "Yamaha")) { state.clientes.push(c.cliente || "Yamaha"); state.clientes.sort(); }
@@ -633,7 +638,7 @@ function adicionarViagem() {
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
-    temAjudante: true, pago: false, dataPagamento: "",
+    temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [],
   });
   salvar(); render();
@@ -938,6 +943,27 @@ function setViagemDataPagamento(id, valor) {
   if (valor) v.pago = true; // preencheu uma data → considera pago automaticamente
   salvar(); render();
 }
+// v110: status de pagamento AO MOTORISTA, por viagem — separado do "pago" acima
+// (que é o cliente pagando a RF Logística). O motorista pode ser pago semanal
+// ou quinzenalmente, num ritmo totalmente diferente do prazo do cliente (15,
+// 30, 45 dias). Isso é o que alimenta "PAGAS"/"A PAGAR" no painel do motorista
+// (via RPC motorista_resumo_viagens — a função no banco também precisa ser
+// atualizada pra ler pagoMotorista em vez de pago; ver nota no changelog).
+function setViagemPagoMotorista(id, checked) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  v.pagoMotorista = !!checked;
+  if (v.pagoMotorista && !v.dataPagamentoMotorista) v.dataPagamentoMotorista = hojeISO();
+  if (!v.pagoMotorista) v.dataPagamentoMotorista = "";
+  salvar(); render();
+}
+function setViagemDataPagamentoMotorista(id, valor) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  v.dataPagamentoMotorista = valor;
+  if (valor) v.pagoMotorista = true;
+  salvar(); render();
+}
 function adicionarOutroItem(viagemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
@@ -1065,15 +1091,15 @@ function exportarPagMotoristaExcel() {
     if (fm.ate && (!v.data || v.data > fm.ate)) return false;
     return true;
   }).slice().sort((a, b) => (b.data || "").localeCompare(a.data || ""));
-  const cab = ["Data","Placa","Motorista","Cliente","Pag Motorista"];
+  const cab = ["Data","Placa","Motorista","Cliente","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista"];
   const linhas = viagensMot.map((v) => {
     const vc = state.veiculos.find((x) => x.placa === v.placa);
-    return [v.data || "", v.placa || "", (vc && vc.motorista) || "", v.cliente || "", v.vgPagMotorista || 0];
+    return [v.data || "", v.placa || "", (vc && vc.motorista) || "", v.cliente || "", v.vgPagMotorista || 0, v.pagoMotorista ? "Sim" : "Nao", v.dataPagamentoMotorista || ""];
   });
   exportarCSV("rf-frota-pag-motoristas-" + new Date().toISOString().slice(0,10) + ".csv", cab, linhas);
 }
 function exportarViagensExcel() {
-  const cabecalho = ["Placa","Motorista","Cliente","Data","Valor Viagem","Pago","Data Pagamento","KM Saida","KM Chegada","KM","Dias","Combustivel","Tem Ajudante","Alim Motorista","Alim Ajudante","Pag Motorista","Pag Ajudante","ADM","Manutencao","Imposto","Pneus","Outros","Total Despesas","Sobra"];
+  const cabecalho = ["Placa","Motorista","Cliente","Data","Valor Viagem","Pago","Data Pagamento","KM Saida","KM Chegada","KM","Dias","Combustivel","Tem Ajudante","Alim Motorista","Alim Ajudante","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista","Pag Ajudante","ADM","Manutencao","Imposto","Pneus","Outros","Total Despesas","Sobra"];
   const linhas = [cabecalho.join(";")];
   const viagensFiltradas = state.viagens.filter((v) =>
     (state.filtroPlacaViagem === "Todas" || v.placa === state.filtroPlacaViagem) &&
@@ -1089,7 +1115,7 @@ function exportarViagensExcel() {
       v.kmSaida || 0, v.kmChegada || 0, v.km || 0, v.dias || 1,
       c.combustivel.toFixed(2), (v.temAjudante !== false) ? "Sim" : "Nao",
       c.alimMotorista.toFixed(2), c.alimAjudante.toFixed(2),
-      v.vgPagMotorista || 0, (v.temAjudante !== false) ? (v.vgPagAjudante || 0) : 0,
+      v.vgPagMotorista || 0, v.pagoMotorista ? "Sim" : "Nao", v.dataPagamentoMotorista || "", (v.temAjudante !== false) ? (v.vgPagAjudante || 0) : 0,
       c.adm.toFixed(2), c.manutencao.toFixed(2), c.imposto.toFixed(2), c.pneus.toFixed(2),
       c.outros.toFixed(2), c.totalDesp.toFixed(2), c.sobra.toFixed(2)
     ].map(csvEscape);
@@ -2973,7 +2999,7 @@ function aprovarViagemFim(id) {
       valorViagem: 0, km: 0, dias: 1,
       kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
       combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
-      temAjudante: true, pago: false, dataPagamento: "",
+      temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
       outrosItens: [], obs: a.obs || "", origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
     };
     state.viagens.push(v);
@@ -3378,7 +3404,7 @@ function aprovarAbastecimentoNovaViagem(id) {
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: a.fotoKm || "",
     combustivelItens: [{ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") }],
-    vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "",
+    vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [], origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
   };
   state.viagens.push(novaViagem);
@@ -4367,15 +4393,27 @@ function renderTabela() {
 
       <div style="margin-top:10px;">
         <div style="font-size:13px; color:${GOLD}; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px;">Detalhe por viagem</div>
-        <table style="min-width:700px;"><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>Cliente</th><th>Pag. Mot.</th></tr></thead><tbody>
+        <div style="display:flex; gap:24px; margin-bottom:12px; font-size:12px; color:#bbb; flex-wrap:wrap; padding:10px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
+          <span>✅ Já pago ao motorista: <b style="color:#2E7D32;">${fmtR(viagensMot.reduce((s, v) => s + (v.pagoMotorista ? (Number(v.vgPagMotorista) || 0) : 0), 0))}</b></span>
+          <span>💰 Falta pagar ao motorista: <b style="color:#C0392B;">${fmtR(viagensMot.reduce((s, v) => s + (!v.pagoMotorista ? (Number(v.vgPagMotorista) || 0) : 0), 0))}</b>${(() => { const q = viagensMot.filter((v) => !v.pagoMotorista).length; return q > 0 ? ` <span style="color:#888;">(${q} viagem${q > 1 ? "ns" : ""})</span>` : ""; })()}</span>
+        </div>
+        <div style="font-size:10px; color:#666; margin-bottom:8px;">Este pagamento é independente do "Pago?" da aba Despesas de Viagem — aquele é o <b>cliente</b> pagando a RF Logística (15/30/45 dias); este aqui é a <b>RF Logística pagando o motorista</b> (semanal/quinzenal). É esse checkbox que atualiza o "PAGAS" no app do motorista.</div>
+        <table style="min-width:820px;"><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>Cliente</th><th>Pag. Mot.</th><th>💰 Pago ao motorista?</th></tr></thead><tbody>
           ${viagensMot.map((v) => {
             const vc = state.veiculos.find((x) => x.placa === v.placa);
             const nomeMot = (vc && vc.motorista) || "(sem motorista)";
             return `<tr>
               <td>${v.data || "—"}</td><td>${esc(v.placa)}</td><td>${esc(nomeMot)}</td><td>${esc(v.cliente || "—")}</td>
               <td style="font-weight:700;">${fmtR(Number(v.vgPagMotorista) || 0)}</td>
+              <td style="text-align:center;min-width:120px;">
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; justify-content:center; white-space:nowrap;">
+                  <input type="checkbox" ${v.pagoMotorista ? "checked" : ""} onchange="setViagemPagoMotorista('${v.id}', this.checked)" style="width:18px;height:18px;">
+                  <span style="font-size:11px; font-weight:700; color:${v.pagoMotorista ? "#2E7D32" : "#C0392B"};">${v.pagoMotorista ? "Pago" : "Pendente"}</span>
+                </label>
+                <input type="date" value="${v.dataPagamentoMotorista || ""}" onchange="setViagemDataPagamentoMotorista('${v.id}', this.value)" title="Data do pagamento ao motorista" style="width:110px; margin-top:4px; font-size:11px;">
+              </td>
             </tr>`;
-          }).join("") || `<tr><td colspan="5" style="text-align:center;color:#777;padding:20px;">Nenhuma viagem encontrada.</td></tr>`}
+          }).join("") || `<tr><td colspan="6" style="text-align:center;color:#777;padding:20px;">Nenhuma viagem encontrada.</td></tr>`}
         </tbody></table>
       </div>
 
