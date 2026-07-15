@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v113)</title>
+<title>RF Logística — Painel da Frota (v114)</title>
+<!-- v114: a foto do abastecimento NUNCA MAIS preenche automaticamente a foto de
+     KM de chegada da viagem -- eram coisas diferentes sendo misturadas (a foto
+     de KM final da viagem e critica e nao pode ser confundida com o comprovante
+     de abastecimento). A foto do abastecimento continua visivel normalmente na
+     aba Abastecimento (botao "ver foto" ao lado de cada lancamento). -->
 <!-- v113: corrige bug introduzido na propria v112 -- o iniciar() (que agora usa
      rfGetClient) estava sendo chamado ANTES da funcao rfGetClient existir (ela
      e definida num <script> mais abaixo no arquivo, que ainda nao tinha rodado
@@ -3450,7 +3455,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   const novaViagem = {
     id: uid(), placa: a.placa, cliente: "", data: a.data || hojeISO(), criadoEm: Date.now(),
     valorViagem: 0, km: 0, dias: 1,
-    kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: a.fotoKm || "",
+    kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [{ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") }],
     vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [], origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
@@ -3471,7 +3476,10 @@ function vincularAbastecimentoAViagem(id, viagemId) {
   if (!v.combustivelItens) v.combustivelItens = [];
   v.combustivelItens.push({ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") });
   if ((Number(a.kmAtual) || 0) > (Number(v.kmChegada) || 0)) { v.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(v); }
-  if (a.fotoKm && !v.fotoKmChegada) v.fotoKmChegada = a.fotoKm;
+  // v113: NAO usar mais a foto do abastecimento como foto de chegada da viagem --
+  // sao coisas diferentes e a foto de KM final da viagem e critica, nao pode
+  // ficar confundida com o comprovante de abastecimento. A foto do abastecimento
+  // continua visivel normalmente na propria aba Abastecimento (botao "ver foto").
   a.status = "aprovado"; a.viagemId = v.id;
   salvar(); render();
   rfAbastSalvarLinha(a);
