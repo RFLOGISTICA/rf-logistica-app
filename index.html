@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v110)</title>
+<title>RF Logística — Painel da Frota (v111)</title>
+<!-- v111: corrige bug onde o motorista editando um abastecimento (valor, litros, foto, ou a
+     leitura automatica por OCR) depois que a equipe ja tinha aprovado podia REABRIR ele como
+     "pendente" de novo -- o app reenviava a linha inteira (upsert) com o status desatualizado
+     que o celular do motorista ainda tinha guardado localmente. Agora essas edicoes sao um
+     update parcial que nunca toca no status, e so aplica se o registro ainda estiver
+     "pendente" no banco -- senao a edicao e descartada e a tela recarrega os dados reais. -->
 <!-- v110: separa "pago" (cliente pagando a RF Logística, prazo de 15/30/45 dias por cliente) de
      "pagoMotorista" (RF Logística pagando o motorista, ritmo semanal/quinzenal) -- checkbox novo na
      aba Motoristas > Detalhe por viagem. IMPORTANTE: a RPC motorista_resumo_viagens no Supabase
@@ -2803,6 +2809,30 @@ function rfAbastSalvarLinha(a) {
     });
   });
 }
+// v111: edições de CAMPO (valor, litros, km, placa, obs, fotos, OCR) nunca devem
+// sobrescrever o status já decidido pela equipe. Antes, qualquer edição reenviava
+// a LINHA INTEIRA (upsert) -- se o celular do motorista ainda não tinha recebido
+// a aprovação da equipe (real-time atrasado/offline), o status local desatualizado
+// ("pendente") ia junto no upsert e reabria um abastecimento já aprovado, sem
+// ninguém perceber. Agora é um UPDATE parcial, que nunca toca no campo status, e
+// só é aplicado se o registro ainda estiver "pendente" no banco -- se a equipe já
+// decidiu nesse meio tempo, a edição é descartada e a tela recarrega os dados reais.
+function rfAbastSalvarCampoMotorista(a) {
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
+    var payload = rfAbastParaDB(a);
+    delete payload.status;
+    delete payload.motivo_rejeicao;
+    delete payload.viagem_id;
+    sb.from(RF_ABAST_TABELA).update(payload).eq("id", a.id).eq("status", "pendente").select().then(function (res) {
+      if (res.error) { alert("Não consegui salvar o abastecimento na nuvem: " + res.error.message); return; }
+      if (!res.data || res.data.length === 0) {
+        alert("Esse abastecimento já foi revisado pela equipe enquanto você editava — sua alteração não foi salva. Atualizando a lista com os dados mais recentes.");
+        rfAbastCarregar();
+      }
+    });
+  });
+}
 function rfAbastDeletarLinha(id) {
   rfGetClient().then(function (sb) {
     if (!sb) return;
@@ -3376,6 +3406,11 @@ function adicionarAbastecimento() {
 function atualizarAbastecimento(id, campo, valor) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
+  if (a.status !== "pendente") {
+    alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado.");
+    rfAbastCarregar();
+    return;
+  }
   if (campo === "veiculoId") {
     const v = state.veiculos.find((x) => String(x.id) === String(valor));
     a.placa = v ? v.placa : "";
@@ -3385,7 +3420,7 @@ function atualizarAbastecimento(id, campo, valor) {
     a[campo] = valor;
   }
   render();
-  rfAbastSalvarLinha(a);
+  rfAbastSalvarCampoMotorista(a);
 }
 function removerAbastecimento(id) {
   if (!confirm("Remover este abastecimento?")) return;
@@ -5583,6 +5618,7 @@ function rfMtFecharNotas() {
 function rfAbastUpload(input, abastId, tipo) {
   var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
   if (!a) return;
+  if (a.status !== "pendente") { alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado."); rfAbastCarregar(); return; }
   var file = input.files && input.files[0];
   if (!file) return;
   rfGetClient().then(function (sb) {
@@ -5602,7 +5638,7 @@ function rfAbastUpload(input, abastId, tipo) {
           rfAbastLerBombaAuto(a.id, p.blob);
         }
         render();
-        rfAbastSalvarLinha(a);
+        rfAbastSalvarCampoMotorista(a);
       });
     }).catch(function (e) { alert("Erro ao anexar foto: " + (e.message || e)); });
   });
@@ -5639,14 +5675,15 @@ function rfAbastLerBombaAuto(abastId, blob) {
     var campos = rfAbastExtrairValores(texto);
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
     if (!a) return;
+    if (a.status !== "pendente") return; // já foi revisado antes da leitura terminar — não mexe em nada
     if (campos.valor > 0) a.valor = campos.valor;
     if (campos.litros > 0) a.litros = campos.litros;
     a.ocrStatus = (campos.valor > 0 || campos.litros > 0) ? "ok" : "erro";
     render();
-    rfAbastSalvarLinha(a);
+    rfAbastSalvarCampoMotorista(a);
   }).catch(function () {
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (a) { a.ocrStatus = "erro"; render(); rfAbastSalvarLinha(a); }
+    if (a && a.status === "pendente") { a.ocrStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
   });
 }
 function rfAbastVer(path) {
@@ -5662,6 +5699,7 @@ function rfAbastExcluir(abastId, tipo) {
   if (!confirm("Excluir esta foto? Esta ação não pode ser desfeita.")) return;
   var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
   if (!a) return;
+  if (a.status !== "pendente") { alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado."); rfAbastCarregar(); return; }
   var path = tipo === "km" ? a.fotoKm : a.fotoBomba;
   if (!path) return;
   rfGetClient().then(function (sb) {
@@ -5670,7 +5708,7 @@ function rfAbastExcluir(abastId, tipo) {
       if (res.error) { alert("Erro ao excluir a foto."); return; }
       if (tipo === "km") a.fotoKm = ""; else a.fotoBomba = "";
       render();
-      rfAbastSalvarLinha(a);
+      rfAbastSalvarCampoMotorista(a);
     });
   });
 }
