@@ -2,7 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v111)</title>
+<title>RF Logística — Painel da Frota (v112)</title>
+<!-- v112: corrige bug onde o modulo que sincroniza a "caixa geral" (painel_dados)
+     criava seu PROPRIO cliente Supabase com persistSession:false -- ou seja,
+     nunca carregava o login de verdade e agia como anonimo o tempo todo. Isso
+     so nao dava erro porque a regra antiga do banco liberava acesso geral pra
+     qualquer um. Ao corrigir a seguranca do banco (RLS de painel_dados restrita
+     a usuarios logados), esse modulo passou a falhar com 401 e travar o carregamento
+     da frota (0 veiculos). Agora reaproveita o MESMO cliente autenticado do login
+     (rfGetClient), enviando o token de sessao real em toda leitura/escrita. -->
 <!-- v111: corrige bug onde o motorista editando um abastecimento (valor, litros, foto, ou a
      leitura automatica por OCR) depois que a equipe ja tinha aprovado podia REABRIR ele como
      "pendente" de novo -- o app reenviava a linha inteira (upsert) com o status desatualizado
@@ -5213,24 +5221,24 @@ revalidarSessaoAoAbrir();
     })(salvar);
   }
 
-  // carrega a biblioteca do Supabase e inicia
-  var lib = document.createElement("script");
-  lib.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
-  lib.onload = iniciar;
-  lib.onerror = function () { status("\u26A0 sem internet (modo local)", "#C0392B"); };
-  document.head.appendChild(lib);
-
+  // v112: antes este modulo criava seu PROPRIO cliente Supabase, com
+  // persistSession:false -- ou seja, ele NUNCA carregava o login de verdade
+  // e agia como anonimo o tempo todo. So "funcionava" porque a regra antiga
+  // do banco (painel_dados) liberava geral pra qualquer um, logado ou nao.
+  // Agora reaproveita o MESMO cliente autenticado usado no login (rfGetClient),
+  // pra realmente enviar o token de sessao em toda leitura/escrita.
   function iniciar() {
-    try {
-      sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-    } catch (e) {
+    rfGetClient().then(function (cliente) {
+      if (!cliente) { status("\u26A0 erro de conexao (modo local)", "#C0392B"); return; }
+      sb = cliente;
+      sbPronto = true;
+      if (podeSincronizar) { baixarTudo(); if (!tempoRealAssinado) { tempoRealAssinado = true; assinarTempoReal(); } }
+      else { status("\u23F8 aguardando login", "#666"); }
+    }).catch(function () {
       status("\u26A0 erro de conexao (modo local)", "#C0392B");
-      return;
-    }
-    sbPronto = true;
-    if (podeSincronizar) { baixarTudo(); if (!tempoRealAssinado) { tempoRealAssinado = true; assinarTempoReal(); } }
-    else { status("\u23F8 aguardando login", "#666"); }
+    });
   }
+  iniciar();
 
   // v92: chamado só depois que carregarPerfilEEntrar() confirma que o papel
   // logado NÃO é motorista. É a única porta de entrada pra baixar/subir a
