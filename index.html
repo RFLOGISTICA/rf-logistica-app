@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v112)</title>
+<title>RF Logística — Painel da Frota (v113)</title>
+<!-- v113: corrige bug introduzido na propria v112 -- o iniciar() (que agora usa
+     rfGetClient) estava sendo chamado ANTES da funcao rfGetClient existir (ela
+     e definida num <script> mais abaixo no arquivo, que ainda nao tinha rodado
+     nesse ponto). Isso travava a tela pra sempre em "conectando...". Agora
+     espera o evento "load" da pagina antes de chamar iniciar() pela 1a vez. -->
 <!-- v112: corrige bug onde o modulo que sincroniza a "caixa geral" (painel_dados)
      criava seu PROPRIO cliente Supabase com persistSession:false -- ou seja,
      nunca carregava o login de verdade e agia como anonimo o tempo todo. Isso
@@ -5238,7 +5243,12 @@ revalidarSessaoAoAbrir();
       status("\u26A0 erro de conexao (modo local)", "#C0392B");
     });
   }
-  iniciar();
+  // v113: iniciar() chama rfGetClient(), mas essa funcao so e definida mais
+  // abaixo no arquivo, num <script> separado que ainda nao rodou nesse ponto.
+  // Por isso precisa esperar o evento "load" da pagina (garante que TODO o
+  // codigo ja foi executado) antes de chamar iniciar() pela primeira vez.
+  if (document.readyState === "complete") { iniciar(); }
+  else { window.addEventListener("load", iniciar); }
 
   // v92: chamado só depois que carregarPerfilEEntrar() confirma que o papel
   // logado NÃO é motorista. É a única porta de entrada pra baixar/subir a
