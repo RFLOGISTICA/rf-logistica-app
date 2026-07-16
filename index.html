@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v117)</title>
+<title>RF Logística — Painel da Frota (v118)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -1028,14 +1028,31 @@ function adicionarCombustivelItem(viagemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
   if (!v.combustivelItens) v.combustivelItens = [];
-  v.combustivelItens.push({ id: uid(), valor: 0, litros: 0, desc: "" });
+  v.combustivelItens.push({ id: uid(), valor: 0, litros: 0, precoL: 0, desc: "" });
   salvar(); render();
 }
+// v118: campo antigo pedia "litros" digitados direto, mas quem lançava sempre
+// tinha em mãos era o PREÇO por litro (bico da bomba) — a equipe inteira vinha
+// digitando o preço no campo de litros por engano (ex: 6.79 em vez de 228L),
+// o que zerava o tanque virtual e disparava "faltam Xl" em toda viagem. Agora
+// o campo pedido é preço/L, e o litros é sempre calculado (valor ÷ preço).
 function atualizarCombustivelItem(viagemId, itemId, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
   const item = (v.combustivelItens || []).find((i) => i.id === itemId);
-  if (item) item[campo] = valor;
+  if (!item) return;
+  if (campo === "precoL") {
+    item.precoL = Number(String(valor).replace(",", ".")) || 0;
+    const val = Number(item.valor) || 0;
+    if (item.precoL > 0) item.litros = +(val / item.precoL).toFixed(3);
+  } else if (campo === "valor") {
+    item.valor = Number(String(valor).replace(",", ".")) || 0;
+    const preco = Number(item.precoL) || 0;
+    if (preco > 0) item.litros = +(item.valor / preco).toFixed(3);
+    // preço ainda não informado (registro antigo): não mexe no litros já salvo
+  } else {
+    item[campo] = valor;
+  }
   salvar(); render();
 }
 function removerCombustivelItem(viagemId, itemId) {
@@ -4349,14 +4366,14 @@ function renderTabela() {
             <td><input type="number" value="${v.m3 || 0}" onchange="setViagemM3('${v.id}',this.value)" style="width:60px; ${modoCliente(v.cliente) === "m3" ? "" : "opacity:0.4;"}" ${modoCliente(v.cliente) === "m3" ? "" : `title="${esc(v.cliente || "")} não cobra por m³"`}></td>
             <td><input type="number" value="${v.dias || 1}" min="1" onchange="atualizarViagem('${v.id}','dias',this.value)" style="width:60px;"></td>
             <td style="min-width:250px;">
-              ${itensComb.map((item) => { const lit = Number(item.litros) || 0; const val = Number(item.valor) || 0; const precoL = lit > 0 ? val / lit : 0; return `
+              ${itensComb.map((item) => { const lit = Number(item.litros) || 0; const val = Number(item.valor) || 0; const precoMostrar = Number(item.precoL) || (lit > 0 ? val / lit : 0); return `
                 <div style="display:flex; gap:4px; margin-bottom:3px; align-items:center;">
-                  <input type="number" step="0.01" value="${item.litros || 0}" placeholder="litros" title="Litros abastecidos" onchange="atualizarCombustivelItem('${v.id}','${item.id}','litros',this.value)" style="width:62px;">
+                  <input type="number" step="0.01" value="${precoMostrar ? precoMostrar.toFixed(2) : ""}" placeholder="preço/L" title="Preço pago por litro (R$/L) — o litros é calculado sozinho" onchange="atualizarCombustivelItem('${v.id}','${item.id}','precoL',this.value)" style="width:62px;">
                   <input type="number" value="${item.valor || 0}" placeholder="R$ total" title="Valor total pago" onchange="atualizarCombustivelItem('${v.id}','${item.id}','valor',this.value)" style="width:66px;">
                   <input value="${esc(item.desc)}" placeholder="ex: posto BR km 50" onchange="atualizarCombustivelItem('${v.id}','${item.id}','desc',this.value)" style="flex:1;min-width:60px;">
                   <button class="btn-del" onclick="removerCombustivelItem('${v.id}','${item.id}')" style="font-size:12px;">✕</button>
                 </div>
-                ${lit > 0 ? `<div style="font-size:9px;color:#888;margin:-2px 0 4px 2px;">≈ ${fmtR(precoL)}/L</div>` : ""}
+                ${lit > 0 ? `<div style="font-size:9px;color:#888;margin:-2px 0 4px 2px;">≈ ${lit.toFixed(1)} L abastecidos</div>` : ""}
               `; }).join("")}
               <button class="btn-outline" style="font-size:10px; padding:3px 8px; margin-top:2px;" onclick="adicionarCombustivelItem('${v.id}')">+ abastecimento</button>
               <div style="font-size:11px;color:#D4A017;margin-top:4px;">
@@ -5229,6 +5246,13 @@ revalidarSessaoAoAbrir();
   // o financeiro/frota/viagens) nunca é baixada nem enviada — nem por engano.
   var podeSincronizar = false;
   var tempoRealAssinado = false;
+  // v118: só vira true depois que o PRIMEIRO baixarTudo() aplica dados reais
+  // da nuvem no estado local. Antes disso, mesmo com podeSincronizar=true,
+  // qualquer subida é bloqueada — é exatamente a falha que já causou perda
+  // total de dados mais de uma vez: login libera sync antes do download
+  // terminar, alguém edita algo nesse intervalo, e o estado local (ainda
+  // vazio) sobe por cima da nuvem real 900ms depois.
+  var dadosCarregados = false;
 
   // indicador de status (canto inferior direito)
   var badge = document.createElement("div");
@@ -5295,6 +5319,7 @@ revalidarSessaoAoAbrir();
   // agendada) escreva na nuvem depois que a sessão já foi encerrada.
   window.rfPararSyncEquipe = function () {
     podeSincronizar = false;
+    dadosCarregados = false; // v118: próxima sessão repete a espera do 1º download real
     clearTimeout(timerSubida);
   };
 
@@ -5322,6 +5347,11 @@ revalidarSessaoAoAbrir();
           try { localStorage.setItem(MAPA_LS[linha.chave], ultimoEnviado[linha.chave]); } catch (e) {}
         }
       });
+      // v118: dados reais confirmados no estado local — agora sim é seguro
+      // permitir subida, e o cálculo de tanque/combustível precisa recalcular
+      // do zero (senão fica mostrando "faltam Xl" com base em cache velho).
+      dadosCarregados = true;
+      window.__rfVerSalvo = (window.__rfVerSalvo || 0) + 1;
       migrarFrotaMes();
       migrarIdsViagens();
       normalizarIdsTudo();
@@ -5330,11 +5360,17 @@ revalidarSessaoAoAbrir();
       garantirAcesso();
       render();
       status("\u2601 sincronizado", "#2E7D32");
+      // v118: se alguém editou algo NO INTERVALO entre login e este download
+      // terminar, agendarSubida() foi bloqueada na hora (dadosCarregados era
+      // false). Agora que os dados reais já estão seguros no estado, reagenda
+      // — assim a edição da pessoa não se perde, só espera o momento seguro.
+      if (houveEdicaoLocal) agendarSubida();
     });
   }
 
   function agendarSubida() {
     if (!podeSincronizar) return; // v92: defesa extra — nunca agenda envio fora da equipe
+    if (!dadosCarregados) { status("\u23F8 aguardando 1\u00ba download antes de salvar...", "#D4A017"); return; } // v118: nunca agenda envio antes do 1º download real
     clearTimeout(timerSubida);
     status("\u27F3 salvando...", "#D4A017");
     timerSubida = setTimeout(function () { subirTudo(false); }, 900);
@@ -5342,6 +5378,7 @@ revalidarSessaoAoAbrir();
 
   function subirTudo(semear) {
     if (!podeSincronizar) return; // v92: defesa extra — nunca envia a caixa geral fora da equipe
+    if (!dadosCarregados) return; // v118: defesa extra — nunca sobe estado antes do 1º download real confirmado
     if (!sb) { setTimeout(function () { subirTudo(semear); }, 500); return; }
     var agora = new Date().toISOString();
     var registros = [];
