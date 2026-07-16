@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v115)</title>
+<title>RF Logística — Painel da Frota (v116)</title>
+<!-- v116: CORRECAO CRITICA -- o app nunca mais sobrescreve a nuvem so porque
+     uma leitura voltou com 0 linhas. Isso causou perda TOTAL dos dados da
+     empresa duas vezes no mesmo dia (qualquer soluco de rede/sessao fazia o
+     app achar "primeira vez, nunca sincronizou" e subir o estado vazio local
+     por cima de TUDO). Agora, se a nuvem voltar vazia, o app so avisa e para
+     -- nunca decide sozinho apagar/sobrescrever os dados da equipe. -->
 <!-- v115: abastecimento agora exige 3 fotos separadas -- painel (KM), visor da
      bomba (valor/litros, lido automaticamente por OCR) e nota/comprovante.
      Antes era um campo so ("bomba/comprovante"), permitindo que o motorista so
@@ -5294,7 +5300,15 @@ revalidarSessaoAoAbrir();
       if (res.error) { status("\u26A0 offline (modo local)", "#C0392B"); return; }
       var linhas = res.data || [];
 
-      if (linhas.length === 0) { subirTudo(true); return; }
+      // v116: NUNCA MAIS sobrescrever a nuvem so porque a leitura voltou vazia.
+      // Isso ja causou perda TOTAL de dados mais de uma vez -- qualquer soluco
+      // (rede, timing, sessao) fazia o app achar "nunca sincronizou" e subir o
+      // estado vazio local por cima de tudo que a equipe tinha. Agora, se vier
+      // vazio, o app PARA e avisa -- nunca decide sozinho apagar a nuvem.
+      if (linhas.length === 0) {
+        status("\u26A0 nuvem retornou vazia \u2014 recarregue a p\u00e1gina (n\u00e3o mexi em nada)", "#C0392B");
+        return;
+      }
       if (houveEdicaoLocal) { subirTudo(false); return; }
 
       linhas.forEach(function (linha) {
