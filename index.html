@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v114)</title>
+<title>RF Logística — Painel da Frota (v115)</title>
+<!-- v115: abastecimento agora exige 3 fotos separadas -- painel (KM), visor da
+     bomba (valor/litros, lido automaticamente por OCR) e nota/comprovante.
+     Antes era um campo so ("bomba/comprovante"), permitindo que o motorista so
+     mandasse a nota sem provar que estava fisicamente na bomba. A aprovacao
+     (nova viagem ou vincular a viagem existente) agora BLOQUEIA se faltar a
+     foto do visor da bomba ou da nota. Coluna nova no banco: foto_nota. -->
 <!-- v114: a foto do abastecimento NUNCA MAIS preenche automaticamente a foto de
      KM de chegada da viagem -- eram coisas diferentes sendo misturadas (a foto
      de KM final da viagem e critica e nao pode ser confundida com o comprovante
@@ -2567,13 +2573,19 @@ function rfAbastCard(a, souMotorista) {
           : editavel ? `<input type="file" accept="image/*" capture="environment" onchange="rfAbastUpload(this,'${a.id}','km')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
       </div>
       <div>
-        <div style="font-size:10px;color:#999;margin-bottom:4px;">🧾 Foto da bomba/comprovante (lê o valor sozinho)</div>
+        <div style="font-size:10px;color:${a.fotoBomba ? "#999" : "#C0392B"};margin-bottom:4px;">⛽ Foto do visor da bomba <b>(valor/litros — obrigatória)</b></div>
         ${a.fotoBomba
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoBomba}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','bomba')">✕</button>` : ""}`
           : editavel ? `<input type="file" accept="image/*" capture="environment" onchange="rfAbastUpload(this,'${a.id}','bomba')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
         ${a.ocrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo valor da foto automaticamente...</div>` : ""}
         ${a.ocrStatus === "ok" ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Valor/litros lidos automaticamente — confira antes de salvar.</div>` : ""}
         ${a.ocrStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o valor sozinho. Preencha manualmente.</div>` : ""}
+      </div>
+      <div>
+        <div style="font-size:10px;color:${a.fotoNota ? "#999" : "#C0392B"};margin-bottom:4px;">🧾 Foto da nota/comprovante <b>(obrigatória)</b></div>
+        ${a.fotoNota
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoNota}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','nota')">✕</button>` : ""}`
+          : editavel ? `<input type="file" accept="image/*" capture="environment" onchange="rfAbastUpload(this,'${a.id}','nota')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
       </div>
     </div>
     ${souMotorista && editavel ? `<div style="margin-top:8px;">
@@ -2770,6 +2782,7 @@ function rfAbastParaJS(r) {
     valor: Number(r.valor) || 0,
     fotoKm: r.foto_km || "",
     fotoBomba: r.foto_bomba || "",
+    fotoNota: r.foto_nota || "",
     obs: r.obs || "",
     status: r.status || "pendente",
     motivoRejeicao: r.motivo_rejeicao || "",
@@ -2789,6 +2802,7 @@ function rfAbastParaDB(a) {
     valor: Number(a.valor) || 0,
     foto_km: a.fotoKm || "",
     foto_bomba: a.fotoBomba || "",
+    foto_nota: a.fotoNota || "",
     obs: a.obs || "",
     status: a.status || "pendente",
     motivo_rejeicao: a.motivoRejeicao || "",
@@ -3385,7 +3399,7 @@ function painelMotoristaHTML() {
         <div style="font-size:20px; font-weight:800; color:${GOLD};">⛽ Abastecimento</div>
         <button class="btn-gold" onclick="adicionarAbastecimento()">+ Novo abastecimento</button>
       </div>
-      <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão, tire foto do painel (mostrando o KM) e da bomba/comprovante — o valor é lido sozinho. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão e tire 3 fotos: painel (mostrando o KM), visor da bomba (o valor é lido sozinho) e a nota/comprovante. Todas obrigatórias. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
       ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
     </div>
   `;
@@ -3413,7 +3427,7 @@ function adicionarAbastecimento() {
     motoristaUid: state.sessao ? state.sessao.uid : "",
     motoristaNome: state.sessao ? (state.sessao.nome || state.sessao.email || "") : "",
     placa: viagemAtiva ? (viagemAtiva.placa || "") : "", data: hojeISO(), kmAtual: "", litros: "", valor: "",
-    fotoKm: "", fotoBomba: "", obs: "",
+    fotoKm: "", fotoBomba: "", fotoNota: "", obs: "",
     status: "pendente", motivoRejeicao: "", viagemId: viagemAtiva ? viagemAtiva.id : "",
     criadoEm: Date.now(),
   };
@@ -3452,6 +3466,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
   if (!a.placa) { alert("Este abastecimento não tem um caminhão definido."); return; }
+  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: o visor da bomba e a nota/comprovante precisam estar anexados antes de aprovar."); return; }
   const novaViagem = {
     id: uid(), placa: a.placa, cliente: "", data: a.data || hojeISO(), criadoEm: Date.now(),
     valorViagem: 0, km: 0, dias: 1,
@@ -3473,6 +3488,7 @@ function vincularAbastecimentoAViagem(id, viagemId) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!a || !v) return;
+  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: o visor da bomba e a nota/comprovante precisam estar anexados antes de aprovar."); return; }
   if (!v.combustivelItens) v.combustivelItens = [];
   v.combustivelItens.push({ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") });
   if ((Number(a.kmAtual) || 0) > (Number(v.kmChegada) || 0)) { v.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(v); }
@@ -4510,7 +4526,7 @@ function renderTabela() {
           <div style="font-size:20px; font-weight:800; color:${GOLD};">⛽ Abastecimento</div>
           <button class="btn-gold" onclick="adicionarAbastecimento()">+ Novo abastecimento</button>
         </div>
-        <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão, tire foto do painel (mostrando o KM) e da bomba/comprovante — o valor é lido sozinho. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
+        <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão e tire 3 fotos: painel (mostrando o KM), visor da bomba (o valor é lido sozinho) e a nota/comprovante. Todas obrigatórias. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
         ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
       `;
     } else {
@@ -5657,7 +5673,7 @@ function rfAbastUpload(input, abastId, tipo) {
       var path = "abast/" + (a.placa || "sem-placa") + "/" + a.id + "-" + tipo + "-" + Date.now() + "." + p.ext;
       return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
-        if (tipo === "km") a.fotoKm = path; else a.fotoBomba = path;
+        if (tipo === "km") a.fotoKm = path; else if (tipo === "nota") a.fotoNota = path; else a.fotoBomba = path;
         input.value = "";
         if (tipo === "bomba" && isImg) {
           a.ocrStatus = "lendo";
@@ -5726,13 +5742,13 @@ function rfAbastExcluir(abastId, tipo) {
   var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
   if (!a) return;
   if (a.status !== "pendente") { alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado."); rfAbastCarregar(); return; }
-  var path = tipo === "km" ? a.fotoKm : a.fotoBomba;
+  var path = tipo === "km" ? a.fotoKm : tipo === "nota" ? a.fotoNota : a.fotoBomba;
   if (!path) return;
   rfGetClient().then(function (sb) {
     if (!sb) return;
     sb.storage.from(RF_BUCKET).remove([path]).then(function (res) {
       if (res.error) { alert("Erro ao excluir a foto."); return; }
-      if (tipo === "km") a.fotoKm = ""; else a.fotoBomba = "";
+      if (tipo === "km") a.fotoKm = ""; else if (tipo === "nota") a.fotoNota = ""; else a.fotoBomba = "";
       render();
       rfAbastSalvarCampoMotorista(a);
     });
