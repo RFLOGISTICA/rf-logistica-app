@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v119)</title>
+<title>RF Logística — Painel da Frota (v121)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -129,9 +129,12 @@ const TIPOS = ["Toco", "3/4", "Cavalo Mecânico"];
 const STATUS_OP = ["Em viagem", "Disponível", "Fora de operação", "Manutenção", "Parado"];
 const STATUS_BAU = ["Com baú", "Com sider", "Baú comprado", "Baú em negociação", "Sem baú"];
 
+function numOuNull(v) { if (v === null || v === undefined || v === "") return null; const n = Number(v); return isNaN(n) ? null : n; }
 // TARIFAS POR CLIENTE (configuráveis na tela, sincronizadas). Cada cliente:
-//   { modo: "viagem" | "km" | "m3", kmDefault: R$/km (Toco e demais), km34: R$/km (3/4), m3: R$/m³ }
-// "viagem" = valor manual (não auto-preenche). "km" e "m3" auto-completam valor/quantidade.
+//   { modo: "viagem" | "km" | "m3" | "rota", kmDefault: R$/km (Toco e demais), km34: R$/km (3/4), m3: R$/m³,
+//     rotas: { "ORIGEM X DESTINO": { toco: R$, tresQuartos: R$ } },
+//     admPct, manutencaoPct, pneusPorKm, impostoPct: overrides opcionais (vazio = padrão da empresa) }
+// "viagem" = valor manual. "km", "m3" e "rota" auto-completam o valor.
 function tarifaCliente(cliente) { return (state.tarifas && state.tarifas[cliente]) || null; }
 function modoCliente(cliente) { const t = tarifaCliente(cliente); return (t && t.modo) ? t.modo : "viagem"; }
 function freteKmDe(cliente, tipo) {
@@ -144,6 +147,13 @@ function freteM3De(cliente) {
   const t = tarifaCliente(cliente);
   if (!t || t.modo !== "m3") return 0;
   return Number(t.m3) || 0;
+}
+function freteRotaDe(cliente, rota, tipo) {
+  const t = tarifaCliente(cliente);
+  if (!t || t.modo !== "rota" || !rota) return 0;
+  const r = (t.rotas || {})[rota];
+  if (!r) return 0;
+  return tipo === "3/4" ? (Number(r.tresQuartos) || 0) : (Number(r.toco) || 0);
 }
 function freteKmViagem(v) {
   if (v.freteKmManual) return Number(v.freteKmManualValor) || 0;   // v72: valor/km escolhido manualmente nesta viagem
@@ -165,6 +175,43 @@ function setTarifaValor(cliente, campo, valor) {
   const t = state.tarifas[cliente] || { modo: "viagem" };
   t[campo] = Number(String(valor).replace(",", ".")) || 0;
   state.tarifas[cliente] = t;
+  salvar(); render();
+}
+// v120: overrides opcionais de ADM/Manutenção/Pneus/Imposto por cliente.
+// Campo vazio = volta a usar o padrão da empresa (não fica 0 por engano).
+function setTarifaParametro(cliente, campo, valor) {
+  if (!state.tarifas) state.tarifas = {};
+  const t = state.tarifas[cliente] || { modo: "viagem" };
+  const s = String(valor).replace(",", ".").trim();
+  t[campo] = s === "" ? null : (Number(s) || 0);
+  state.tarifas[cliente] = t;
+  salvar(); render();
+}
+// v120: tabela de rotas por cliente (ex: JT/Mateus) — origem x destino -> valor por tipo de veículo.
+function adicionarRotaCliente(cliente) {
+  const nome = window.prompt("Nome da rota (ex: MUQUEM DE SAO FRANCISCO X LUIS ED):");
+  if (!nome || !nome.trim()) return;
+  if (!state.tarifas) state.tarifas = {};
+  const t = state.tarifas[cliente] || { modo: "rota" };
+  if (!t.rotas) t.rotas = {};
+  const chave = nome.trim().toUpperCase();
+  if (!t.rotas[chave]) t.rotas[chave] = { toco: 0, tresQuartos: 0 };
+  state.tarifas[cliente] = t;
+  salvar(); render();
+}
+function setRotaValor(cliente, rota, campo, valor) {
+  if (!state.tarifas) state.tarifas = {};
+  const t = state.tarifas[cliente] || { modo: "rota" };
+  if (!t.rotas) t.rotas = {};
+  if (!t.rotas[rota]) t.rotas[rota] = { toco: 0, tresQuartos: 0 };
+  t.rotas[rota][campo] = Number(String(valor).replace(",", ".")) || 0;
+  state.tarifas[cliente] = t;
+  salvar(); render();
+}
+function removerRotaCliente(cliente, rota) {
+  if (!window.confirm('Remover a rota "' + rota + '"?')) return;
+  const t = state.tarifas[cliente];
+  if (t && t.rotas) delete t.rotas[rota];
   salvar(); render();
 }
 
@@ -800,10 +847,17 @@ function calcularViagem(v) {
   const valorViagem = Number(v.valorViagem) || 0;
   const km = Number(v.km) || 0;
   const dias = Number(v.dias) || 1;
-  const adm = valorViagem * 0.025;
-  const manutencao = valorViagem * 0.03;
-  const imposto = valorViagem * impostoFator();
-  const pneus = km * 0.12;
+  // v120: cada cliente pode ter ADM/Manutenção/Pneus/Imposto próprios (configurável
+  // na aba Clientes, em "parâmetros avançados"). Vazio = usa o padrão da empresa.
+  const t = tarifaCliente(v.cliente) || {};
+  const admPct = numOuNull(t.admPct) != null ? numOuNull(t.admPct) / 100 : 0.025;
+  const manutPct = numOuNull(t.manutencaoPct) != null ? numOuNull(t.manutencaoPct) / 100 : 0.03;
+  const pneusRate = numOuNull(t.pneusPorKm) != null ? numOuNull(t.pneusPorKm) : 0.12;
+  const impostoPctCliente = numOuNull(t.impostoPct) != null ? numOuNull(t.impostoPct) / 100 : impostoFator();
+  const adm = valorViagem * admPct;
+  const manutencao = valorViagem * manutPct;
+  const imposto = valorViagem * impostoPctCliente;
+  const pneus = km * pneusRate;
   const temAjudante = v.temAjudante !== false;
   const alimMotorista = dias * 80;
   const alimAjudante = temAjudante ? dias * 80 : 0;
@@ -869,8 +923,8 @@ function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
   v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
-  // Mudou placa ou cliente? Se for cliente por km, reajusta valor/km automaticamente.
-  if (campo === "placa" || campo === "cliente") aplicarFreteKm(v, "auto");
+  // Mudou placa, cliente ou rota? Reajusta valor conforme o modo do cliente (km/m³/rota).
+  if (campo === "placa" || campo === "cliente" || campo === "rota") aplicarFreteKm(v, "auto");
   // v54: mantém "Local alocado" do veículo em dia (só se ainda estiver vazio).
   if ((campo === "placa" || campo === "cliente") && v.placa && v.cliente) {
     preencherLocalSeVazio(v.placa, v.cliente);
@@ -896,6 +950,13 @@ function aplicarFreteKm(v, origem) {
     if (origem === "m3") v.valorViagem = Math.round(m3 * rate * 100) / 100;
     else if (origem === "valor") v.m3 = Math.round((valor / rate) * 100) / 100;
     else { if (m3 > 0) v.valorViagem = Math.round(m3 * rate * 100) / 100; else if (valor > 0) v.m3 = Math.round((valor / rate) * 100) / 100; }
+  } else if (modo === "rota") {
+    // v120: valor fixo por rota (origem x destino), lido da tabela do cliente,
+    // conforme o tipo do veículo escalado (Toco ou 3/4).
+    if (!v.rota) return;
+    const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
+    const valorRota = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "");
+    if (valorRota > 0) v.valorViagem = valorRota;
   }
   // modo "viagem": valor é manual, não mexe.
 }
@@ -2073,10 +2134,14 @@ function garantirAcesso() {
 function ehAdmin() { return !!(state.sessao && state.sessao.papel === "admin"); }
 // v80: papel "motorista" — acesso travado só na aba de Abastecimento, não passa pelos módulos normais.
 function ehMotorista() { return !!(state.sessao && state.sessao.papel === "motorista"); }
+// v120: papel "cliente" — login externo (ex: JT/Mateus), vê só a aba "painel_cliente" com
+// as próprias viagens (buscadas via RPC isolada no banco, nunca a tabela geral).
+function ehCliente() { return !!(state.sessao && state.sessao.papel === "cliente"); }
 function usuarioLogado() { return state.sessao; }
 function sessaoValida() { return !!(state.sessao && state.sessao.uid && state.sessao.papel); }
 function podeVerAba(id) {
   if (ehMotorista()) return id === "abastecimento";
+  if (ehCliente()) return id === "painel_cliente";
   if (id === "usuarios") return ehAdmin();
   if (ehAdmin()) return true;
   return !!(state.sessao && Array.isArray(state.sessao.modulos) && state.sessao.modulos.indexOf(id) !== -1);
@@ -2138,22 +2203,26 @@ function carregarPerfilEEntrar(sb, user) {
       nome: p.nome || "", papel: p.papel || "user",
       modulos: Array.isArray(p.modulos) ? p.modulos : [],
       placa_motorista: p.placa_motorista || "",
+      cliente_nome: p.cliente_nome || "",
     };
     salvarSessaoLocal();
     // v92: a "caixa geral" (painel_dados: financeiro, viagens, dívidas, frota etc.)
     // só é baixada para quem NÃO é motorista. Motorista nunca toca nela — nem no
     // código, nem no banco (RLS). O abastecimento vive numa tabela própria, e essa
     // sim é carregada pra todo mundo (o banco filtra sozinho o que cada um vê).
-    if (state.sessao.papel !== "motorista" && typeof window.rfIniciarSyncEquipe === "function") {
+    // v120: papel "cliente" segue a mesma regra — nunca baixa a caixa geral,
+    // só a própria lista de viagens via RPC isolada (cliente_minhas_viagens).
+    if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof window.rfIniciarSyncEquipe === "function") {
       window.rfIniciarSyncEquipe();
     }
-    if (state.sessao.papel !== "motorista" && typeof carregarPerfis === "function") { carregarPerfis(); }
-    if (typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
-    if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
-    if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
-    if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
-    if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
-    if (typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
+    if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof carregarPerfis === "function") { carregarPerfis(); }
+    if (state.sessao.papel === "motorista" && typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
+    if (state.sessao.papel === "motorista" && typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
+    if (state.sessao.papel === "motorista" && typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
+    if (state.sessao.papel === "motorista" && typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+    if (state.sessao.papel === "motorista" && typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
+    if (state.sessao.papel === "motorista" && typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
+    if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
     const perm = abasPermitidas();
     state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
     render();
@@ -2182,13 +2251,15 @@ function revalidarSessaoAoAbrir() {
       state.sessao.papel = p.papel || "user";
       state.sessao.modulos = Array.isArray(p.modulos) ? p.modulos : [];
       state.sessao.placa_motorista = p.placa_motorista || "";
+      state.sessao.cliente_nome = p.cliente_nome || "";
       salvarSessaoLocal();
       if (papelMudou) {
         const perm = abasPermitidas();
         state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
-        if (state.sessao.papel !== "motorista" && typeof window.rfIniciarSyncEquipe === "function") {
+        if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof window.rfIniciarSyncEquipe === "function") {
           window.rfIniciarSyncEquipe();
         }
+        if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
       }
       render();
     }).catch(function () {});
@@ -2248,7 +2319,7 @@ function carregarPerfis() {
   });
 }
 function criarUsuarioAbrir() {
-  state._novoUsuario = { nome: "", email: "", senha: "", papel: "user", modulos: [], placa: "" };
+  state._novoUsuario = { nome: "", email: "", senha: "", papel: "user", modulos: [], placa: "", clienteNome: "" };
   render();
 }
 function criarUsuarioFechar() {
@@ -2273,9 +2344,11 @@ function criarUsuarioSalvar() {
   const senha = (document.getElementById("nuSenha") || {}).value || nu.senha;
   const papel = (document.getElementById("nuPapel") || {}).value || nu.papel;
   const placa = ((document.getElementById("nuPlaca") || {}).value || nu.placa || "").toUpperCase().trim();
+  const clienteNome = (document.getElementById("nuClienteNome") || {}).value || nu.clienteNome || "";
   if (!nome || !email || !senha) { alert("Preencha nome, e-mail e senha."); return; }
   if (senha.length < 6) { alert("A senha precisa ter pelo menos 6 caracteres."); return; }
   if (papel === "motorista" && !placa) { alert("Informe a placa do caminhão que este motorista vai rodar. É obrigatório para o resumo de viagens/bônus dele."); return; }
+  if (papel === "cliente" && !clienteNome) { alert("Selecione qual cliente cadastrado esse login representa (ex: JT/Mateus)."); return; }
   const btn = document.getElementById("nuBtnSalvar");
   if (btn) { btn.disabled = true; btn.textContent = "Criando..."; }
   rfGetClient().then(function (sb) {
@@ -2286,7 +2359,7 @@ function criarUsuarioSalvar() {
       fetch(RF_SB_URL + "/functions/v1/criar-usuario", {
         method: "POST",
         headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ nome: nome, email: email, senha: senha, papel: papel, modulos: nu.modulos, placa: papel === "motorista" ? placa : "" }),
+        body: JSON.stringify({ nome: nome, email: email, senha: senha, papel: papel, modulos: nu.modulos, placa: papel === "motorista" ? placa : "", clienteNome: papel === "cliente" ? clienteNome : "" }),
       }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res2) {
           if (btn) { btn.disabled = false; btn.textContent = "Criar usuário"; }
@@ -3212,6 +3285,21 @@ function reabrirViagemFim(id) {
 // motorista. Ele só confirma: início (foto do KM inicial) e fim (foto do KM
 // final), sempre obrigatório. Substitui o antigo fluxo onde o motorista
 // criava a viagem do zero.
+// v120: papel "cliente" — carrega só as próprias viagens, já calculadas no banco
+// (RPC cliente_minhas_viagens). Nunca toca em painel_dados nem em state.tarifas/config.
+function clienteCarregarViagens() {
+  if (!ehCliente()) return;
+  state._carregandoViagensCliente = true;
+  rfGetClient().then(function (sb) {
+    if (!sb) { state._carregandoViagensCliente = false; render(); return; }
+    sb.rpc("cliente_minhas_viagens").then(function (res) {
+      state._carregandoViagensCliente = false;
+      if (res.error) { console.warn("cliente_minhas_viagens:", res.error.message); state._viagensCliente = []; render(); return; }
+      state._viagensCliente = res.data || [];
+      render();
+    }).catch(function () { state._carregandoViagensCliente = false; render(); });
+  });
+}
 function motoristaCarregarViagensAtivas() {
   if (!ehMotorista()) return;
   rfGetClient().then(function (sb) {
@@ -3388,6 +3476,67 @@ function viagensDoMotoristaNoMes() {
   const placa = (state.sessao && state.sessao.placa_motorista) || "";
   if (!placa) return [];
   return state.viagens.filter((v) => v.placa === placa && (v.data || "").slice(0, 7) === state.mesAtivo);
+}
+// v120: painel do cliente (ex: JT/Mateus) — só as próprias viagens, já
+// calculadas no banco (server-side), nunca a caixa geral da empresa.
+function painelClienteHTML() {
+  const nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "cliente";
+  const clienteNome = (state.sessao && state.sessao.cliente_nome) || "";
+  const lista = state._viagensCliente || [];
+  const totalFaturado = lista.reduce((s, v) => s + (Number(v.valorViagem) || 0), 0);
+  const totalPago = lista.reduce((s, v) => s + (v.pago ? (Number(v.valorViagem) || 0) : 0), 0);
+  const totalPendente = totalFaturado - totalPago;
+  return `
+    <div style="border-bottom:2px solid ${GOLD}; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#000;">
+      <div>
+        <div style="font-size:22px; font-weight:800; color:#fff;">RF Logística</div>
+        <div style="font-size:11px; color:${GOLD}; letter-spacing:2px; font-weight:700;">PAINEL DO CLIENTE — ${esc(clienteNome)}</div>
+      </div>
+      <button class="btn-outline" onclick="logout()" title="Sair / trocar de usuário">Sair</button>
+    </div>
+    <div style="padding:18px 24px 6px;">
+      <div style="font-size:15px;color:#ccc;">Olá, <b style="color:#fff;">${esc(nome)}</b> — suas viagens com a RF Logística</div>
+    </div>
+    <div style="padding:12px 24px 0;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px;">
+        ${statCard("Viagens", lista.length, GOLD)}
+        ${statCard("Total faturado", fmtR(totalFaturado), GOLD)}
+        ${statCard("Pago", fmtR(totalPago), "#2E7D32")}
+        ${statCard("Pendente", fmtR(totalPendente), totalPendente > 0 ? "#C0392B" : "#2E7D32")}
+      </div>
+    </div>
+    <div style="padding:20px 24px 32px;">
+      <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:12px;">🚛 Viagens</div>
+      ${state._carregandoViagensCliente ? `<div style="text-align:center;color:#777;padding:24px;">Carregando...</div>` :
+        lista.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhuma viagem encontrada.</div>` :
+        lista.map((v) => {
+          const totalDesp = (v.adm||0)+(v.manutencao||0)+(v.imposto||0)+(v.pneus||0)+(v.alimMotorista||0)+(v.alimAjudante||0)+(v.combustivel||0)+(v.pagMotorista||0)+(v.pagAjudante||0)+(v.outros||0);
+          const sobra = (Number(v.valorViagem)||0) - totalDesp;
+          return `
+          <div style="border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:12px;background:#0E0E0E;">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+              <span style="font-size:15px;color:#fff;font-weight:700;">${esc(v.placa || "")}</span>
+              <span style="color:#999;">${esc(v.data || "")}</span>
+              ${v.rota ? `<span style="color:#999;">· ${esc(v.rota)}</span>` : ""}
+              <span style="margin-left:auto;font-size:16px;font-weight:700;color:${GOLD};">${fmtR(v.valorViagem)}</span>
+              <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${v.pago ? "#2E7D32" : "#C0392B"};color:#fff;">${v.pago ? "Paga" : "Pendente"}</span>
+            </div>
+            <div style="margin-top:10px;font-size:11px;color:#999;display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px;">
+              <span>KM: ${v.km || 0}</span>
+              <span>ADM: ${fmtR(v.adm)}</span>
+              <span>Manutenção: ${fmtR(v.manutencao)}</span>
+              <span>Imposto: ${fmtR(v.imposto)}</span>
+              <span>Pneus: ${fmtR(v.pneus)}</span>
+              <span>Combustível: ${fmtR(v.combustivel)}</span>
+              <span>Alimentação: ${fmtR((v.alimMotorista||0)+(v.alimAjudante||0))}</span>
+              <span>Motorista/Ajudante: ${fmtR((v.pagMotorista||0)+(v.pagAjudante||0))}</span>
+              <span>Outros: ${fmtR(v.outros)}</span>
+              <span style="color:${sobra >= 0 ? "#2E7D32" : "#C0392B"};font-weight:700;">Resultado: ${fmtR(sobra)}</span>
+            </div>
+          </div>`;
+        }).join("")}
+    </div>
+  `;
 }
 function painelMotoristaHTML() {
   const nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "motorista";
@@ -3574,6 +3723,10 @@ function render() {
   const root0 = document.getElementById("root");
   if (ehMotorista()) {
     if (root0) root0.innerHTML = painelMotoristaHTML();
+    return;
+  }
+  if (ehCliente()) {
+    if (root0) root0.innerHTML = painelClienteHTML();
     return;
   }
   const scrollY = window.scrollY;
@@ -3824,13 +3977,20 @@ function renderTabela() {
             <select id="nuPapel" onchange="criarUsuarioCampo('papel',this.value)" style="width:130px;">
               <option value="user" selected>Usuário</option>
               <option value="motorista">Motorista</option>
+              <option value="cliente">Cliente</option>
               <option value="admin">Admin</option>
             </select>
           </div>
           <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Placa (obrigatório p/ motorista)</div><input id="nuPlaca" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;" oninput="criarUsuarioCampo('placa',this.value)"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Cliente vinculado (obrigatório p/ papel Cliente)</div>
+            <select id="nuClienteNome" onchange="criarUsuarioCampo('clienteNome',this.value)" style="width:160px;">
+              <option value="">(selecione)</option>
+              ${state.clientes.map((c) => `<option>${esc(c)}</option>`).join("")}
+            </select>
+          </div>
         </div>
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas liberadas (ignorado se papel = motorista)</div>
+          <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas liberadas (ignorado se papel = motorista ou cliente)</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
             ${ABAS_DEF.map((a) => `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#bbb;">
               <input type="checkbox" onchange="criarUsuarioToggleModulo('${a.id}',this.checked)"> ${esc(a.label)}
@@ -3849,6 +4009,7 @@ function renderTabela() {
               <select onchange="atualizarPerfilCampo('${p.id}','papel',this.value)" style="width:120px;">
                 <option value="user" ${p.papel === "user" ? "selected" : ""}>Usuário</option>
                 <option value="motorista" ${p.papel === "motorista" ? "selected" : ""}>Motorista</option>
+                <option value="cliente" ${p.papel === "cliente" ? "selected" : ""}>Cliente</option>
                 <option value="admin" ${p.papel === "admin" ? "selected" : ""}>Admin</option>
               </select>
             </div>
@@ -3861,7 +4022,15 @@ function renderTabela() {
           ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
             <div><div style="${lbl}">Placa que ele roda</div><input value="${esc(p.placa_motorista || "")}" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;${p.placa_motorista ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','placa_motorista',this.value.toUpperCase())"></div>
             ${!p.placa_motorista ? `<div style="color:#C0392B;font-size:11px;">⚠ sem placa — motorista não verá o resumo de viagens</div>` : ""}
-          </div><div style="margin-top:6px;color:#999;font-size:12px;">Motorista só vê a aba <b style="color:${GOLD};">⛽ Abastecimento</b> e o resumo das próprias viagens (vinculado à placa acima). Não precisa marcar módulos.</div>` : `
+          </div><div style="margin-top:6px;color:#999;font-size:12px;">Motorista só vê a aba <b style="color:${GOLD};">⛽ Abastecimento</b> e o resumo das próprias viagens (vinculado à placa acima). Não precisa marcar módulos.</div>` : p.papel === "cliente" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+            <div><div style="${lbl}">Cliente vinculado</div>
+              <select style="width:160px;${p.cliente_nome ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','cliente_nome',this.value)">
+                <option value="">(selecione)</option>
+                ${state.clientes.map((c) => `<option ${p.cliente_nome === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+              </select>
+            </div>
+            ${!p.cliente_nome ? `<div style="color:#C0392B;font-size:11px;">⚠ sem cliente vinculado — login não vai ver nenhuma viagem</div>` : ""}
+          </div><div style="margin-top:6px;color:#999;font-size:12px;">Cliente só vê as próprias viagens (vinculadas ao nome acima), buscadas direto no banco de forma isolada — nunca os dados de outros clientes.</div>` : `
           <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
             <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas que este usuário pode ver</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
@@ -4183,26 +4352,57 @@ function renderTabela() {
       </div>
       <div style="margin-bottom:16px; padding:12px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
         <div style="font-size:11px; color:#999; text-transform:uppercase; margin-bottom:10px;">Clientes & forma de cobrança</div>
-        <div style="font-size:10px; color:#666; margin-bottom:10px;">Defina como cada cliente paga. <b style="color:${GOLD};">Por km</b> ou <b style="color:${GOLD};">por m³</b> preenchem o valor da viagem sozinhos. <b>Por viagem</b> = valor manual.</div>
+        <div style="font-size:10px; color:#666; margin-bottom:10px;">Defina como cada cliente paga. <b style="color:${GOLD};">Por km</b>, <b style="color:${GOLD};">por m³</b> ou <b style="color:${GOLD};">por rota</b> preenchem o valor da viagem sozinhos. <b>Por viagem</b> = valor manual.</div>
         ${state.clientes.map((c) => {
+          const cEsc = esc(c).replace(/'/g, "\\'");
           const t = state.tarifas[c] || { modo: "viagem" };
           const modo = t.modo || "viagem";
           const esS = (m) => modo === m ? `background:${GOLD};color:#000;border-color:${GOLD};` : "background:#1E1E1E;color:#bbb;border-color:#3A3A3A;";
+          const rotas = t.rotas || {};
+          const rotasNomes = Object.keys(rotas).sort();
           return `
-          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid #222;">
+          <div style="padding:8px 0; border-bottom:1px solid #222;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <span style="min-width:130px; font-size:13px; color:#fff; font-weight:700;">${esc(c)}</span>
-            <div style="display:inline-flex; gap:4px;">
-              <button onclick="setTarifaModo('${esc(c).replace(/'/g, "\\'")}','viagem')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("viagem")}">Por viagem</button>
-              <button onclick="setTarifaModo('${esc(c).replace(/'/g, "\\'")}','km')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("km")}">Por km</button>
-              <button onclick="setTarifaModo('${esc(c).replace(/'/g, "\\'")}','m3')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("m3")}">Por m³</button>
+            <div style="display:inline-flex; gap:4px; flex-wrap:wrap;">
+              <button onclick="setTarifaModo('${cEsc}','viagem')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("viagem")}">Por viagem</button>
+              <button onclick="setTarifaModo('${cEsc}','km')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("km")}">Por km</button>
+              <button onclick="setTarifaModo('${cEsc}','m3')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("m3")}">Por m³</button>
+              <button onclick="setTarifaModo('${cEsc}','rota')" style="font-size:11px; padding:4px 9px; border-radius:12px; border:1px solid; cursor:pointer; ${esS("rota")}">Por rota</button>
             </div>
             ${modo === "km" ? `
-              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/km Toco <input type="number" step="0.01" value="${t.kmDefault != null ? t.kmDefault : ""}" placeholder="4,80" onchange="setTarifaValor('${esc(c).replace(/'/g, "\\'")}','kmDefault',this.value)" style="width:70px; text-align:right;"></span>
-              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/km 3/4 <input type="number" step="0.01" value="${t.km34 != null ? t.km34 : ""}" placeholder="4,30" onchange="setTarifaValor('${esc(c).replace(/'/g, "\\'")}','km34',this.value)" style="width:70px; text-align:right;"></span>` : ""}
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/km Toco <input type="number" step="0.01" value="${t.kmDefault != null ? t.kmDefault : ""}" placeholder="4,80" onchange="setTarifaValor('${cEsc}','kmDefault',this.value)" style="width:70px; text-align:right;"></span>
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/km 3/4 <input type="number" step="0.01" value="${t.km34 != null ? t.km34 : ""}" placeholder="4,30" onchange="setTarifaValor('${cEsc}','km34',this.value)" style="width:70px; text-align:right;"></span>` : ""}
             ${modo === "m3" ? `
-              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/m³ <input type="number" step="0.01" value="${t.m3 != null ? t.m3 : ""}" placeholder="0,00" onchange="setTarifaValor('${esc(c).replace(/'/g, "\\'")}','m3',this.value)" style="width:80px; text-align:right;"></span>` : ""}
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#bbb;">R$/m³ <input type="number" step="0.01" value="${t.m3 != null ? t.m3 : ""}" placeholder="0,00" onchange="setTarifaValor('${cEsc}','m3',this.value)" style="width:80px; text-align:right;"></span>` : ""}
             ${modo === "viagem" ? `<span style="font-size:11px; color:#666;">valor digitado manualmente</span>` : ""}
-            <button onclick="removerCliente('${esc(c).replace(/'/g, "\\'")}')" style="margin-left:auto; background:none;border:none;color:#C0392B;cursor:pointer;font-size:14px;" title="Remover cliente">✕</button>
+            ${modo === "rota" ? `<span style="font-size:11px; color:#666;">${rotasNomes.length} rota(s) cadastrada(s)</span>` : ""}
+            <button onclick="removerCliente('${cEsc}')" style="margin-left:auto; background:none;border:none;color:#C0392B;cursor:pointer;font-size:14px;" title="Remover cliente">✕</button>
+          </div>
+          ${modo === "rota" ? `
+          <div style="margin:10px 0 4px 0; padding:10px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:6px;">
+            <div style="display:grid; grid-template-columns:1fr 90px 90px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
+              <span>ROTA</span><span>TOCO</span><span>3/4</span><span></span>
+            </div>
+            ${rotasNomes.map((rn) => `
+              <div style="display:grid; grid-template-columns:1fr 90px 90px 30px; gap:6px; align-items:center; margin-bottom:4px;">
+                <span style="font-size:11px; color:#ddd;">${esc(rn)}</span>
+                <input type="number" step="0.01" value="${rotas[rn].toco || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','toco',this.value)" style="width:85px; text-align:right; font-size:11px;">
+                <input type="number" step="0.01" value="${rotas[rn].tresQuartos || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','tresQuartos',this.value)" style="width:85px; text-align:right; font-size:11px;">
+                <button onclick="removerRotaCliente('${cEsc}','${esc(rn).replace(/'/g, "\\'")}')" style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;">✕</button>
+              </div>`).join("")}
+            <button class="btn-outline" style="font-size:10px; margin-top:4px;" onclick="adicionarRotaCliente('${cEsc}')">+ Nova rota</button>
+          </div>` : ""}
+          <details style="margin-top:6px;">
+            <summary style="font-size:10px; color:#888; cursor:pointer;">Parâmetros avançados (ADM, manutenção, pneus, imposto)</summary>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; padding:8px; background:#0E0E0E; border-radius:6px;">
+              <span style="font-size:11px; color:#bbb;">ADM % <input type="number" step="0.1" value="${t.admPct != null ? t.admPct : ""}" placeholder="2,5 (padrão)" onchange="setTarifaParametro('${cEsc}','admPct',this.value)" style="width:80px; text-align:right;"></span>
+              <span style="font-size:11px; color:#bbb;">Manutenção % <input type="number" step="0.1" value="${t.manutencaoPct != null ? t.manutencaoPct : ""}" placeholder="3 (padrão)" onchange="setTarifaParametro('${cEsc}','manutencaoPct',this.value)" style="width:80px; text-align:right;"></span>
+              <span style="font-size:11px; color:#bbb;">Pneus R$/km <input type="number" step="0.01" value="${t.pneusPorKm != null ? t.pneusPorKm : ""}" placeholder="0,12 (padrão)" onchange="setTarifaParametro('${cEsc}','pneusPorKm',this.value)" style="width:80px; text-align:right;"></span>
+              <span style="font-size:11px; color:#bbb;">Imposto % <input type="number" step="0.1" value="${t.impostoPct != null ? t.impostoPct : ""}" placeholder="${impostoPctNum()} (padrão)" onchange="setTarifaParametro('${cEsc}','impostoPct',this.value)" style="width:80px; text-align:right;"></span>
+              <span style="font-size:10px; color:#666; width:100%;">Deixe em branco pra usar o padrão da empresa. Só preenche se esse cliente específico tiver uma condição diferente combinada em contrato.</span>
+            </div>
+          </details>
           </div>`;
         }).join("")}
         <button class="btn-outline" style="font-size:11px; margin-top:10px;" onclick="adicionarClienteGlobal()">+ Novo cliente</button>
@@ -4341,9 +4541,15 @@ function renderTabela() {
               <option value="" ${!v.cliente ? "selected" : ""}>(selecione)</option>
               ${state.clientes.map((c) => `<option ${v.cliente === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
               <option value="__novo__" style="color:${GOLD};">+ Novo cliente...</option>
-            </select></td>
+            </select>
+            ${modoCliente(v.cliente) === "rota" ? (() => { const t = tarifaCliente(v.cliente) || {}; const rotas = Object.keys(t.rotas || {}).sort(); return `
+              <select onchange="atualizarViagem('${v.id}','rota',this.value)" style="min-width:140px; margin-top:4px; font-size:11px;" title="Rota (define o valor da viagem)">
+                <option value="" ${!v.rota ? "selected" : ""}>(selecione a rota)</option>
+                ${rotas.map((r) => `<option ${v.rota === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
+              </select>`; })() : ""}
+            </td>
             <td><input type="date" value="${v.data}" onchange="atualizarViagem('${v.id}','data',this.value)" style="min-width:120px;"></td>
-            <td><input type="number" value="${v.valorViagem || 0}" onchange="setViagemValor('${v.id}',this.value)" style="font-weight:700;">${(() => { if (v.freteKmManual) { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">manual: km × ${fmtR(r)}</div>` : ""; } const m = modoCliente(v.cliente); if (m === "km") { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">auto: km × ${fmtR(r)}</div>` : ""; } if (m === "m3") { const r = freteM3De(v.cliente); return r ? `<div style="font-size:9px;color:${GOLD};">auto: m³ × ${fmtR(r)}</div>` : ""; } return ""; })()}</td>
+            <td><input type="number" value="${v.valorViagem || 0}" onchange="setViagemValor('${v.id}',this.value)" style="font-weight:700;">${(() => { if (v.freteKmManual) { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">manual: km × ${fmtR(r)}</div>` : ""; } const m = modoCliente(v.cliente); if (m === "km") { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">auto: km × ${fmtR(r)}</div>` : ""; } if (m === "m3") { const r = freteM3De(v.cliente); return r ? `<div style="font-size:9px;color:${GOLD};">auto: m³ × ${fmtR(r)}</div>` : ""; } if (m === "rota") { const veic = state.veiculos.find((x) => x.placa === v.placa); const r = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : ""); return v.rota ? (r ? `<div style="font-size:9px;color:${GOLD};">auto: tabela da rota</div>` : `<div style="font-size:9px;color:#C0392B;">sem valor cadastrado pra essa rota/veículo</div>`) : `<div style="font-size:9px;color:#C0392B;">selecione a rota acima</div>`; } return ""; })()}</td>
             <td style="text-align:center;min-width:120px;">
               <label style="display:flex; align-items:center; gap:5px; cursor:pointer; justify-content:center; white-space:nowrap;">
                 <input type="checkbox" ${v.pago ? "checked" : ""} onchange="setViagemPago('${v.id}', this.checked)" style="width:18px;height:18px;">
