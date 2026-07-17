@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v122)</title>
+<title>RF Logística — Painel da Frota (v123)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3853,9 +3853,133 @@ function render() {
   const newWrap = document.getElementById("tabela-wrap");
   if (newWrap) newWrap.scrollLeft = scrollLeft;
   window.scrollTo(0, scrollY);
+  // v122: assistente virtual — Fase 1 (só admin, dentro do painel).
+  if (ehAdmin()) {
+    root.insertAdjacentHTML("beforeend", assistenteWidgetHTML());
+    const chatMsgsEl = document.getElementById("chatMsgs");
+    if (chatMsgsEl) chatMsgsEl.scrollTop = chatMsgsEl.scrollHeight;
+  }
 }
 
-// Paleta de cores dos gráficos — dourado/preto da marca + vermelho (custo) e
+// v122: Assistente virtual — Fase 1 (painel interno).
+// Monta um resumo textual dos dados atuais pra mandar junto da pergunta.
+// Não manda o banco inteiro — só um resumo do mês ativo + coisas de alerta,
+// pra manter a pergunta rápida e barata.
+function gerarContextoAssistente() {
+  const t = calcularTotais();
+  const mesA = mesLabel(state.mesAtivo);
+  const viagensMes = state.viagens.filter((v) => v.data && v.data.slice(0, 7) === state.mesAtivo);
+  const porCliente = {};
+  viagensMes.forEach((v) => {
+    const c = v.cliente || "(sem cliente)";
+    if (!porCliente[c]) porCliente[c] = { qtd: 0, valor: 0, pago: 0 };
+    porCliente[c].qtd += 1;
+    porCliente[c].valor += Number(v.valorViagem) || 0;
+    if (v.pago) porCliente[c].pago += Number(v.valorViagem) || 0;
+  });
+  const linhasCliente = Object.keys(porCliente).map((c) => {
+    const d = porCliente[c];
+    return `- ${c}: ${d.qtd} viagem(ns), faturado ${fmtR(d.valor)}, pago ${fmtR(d.pago)}, pendente ${fmtR(d.valor - d.pago)}`;
+  }).join("\n");
+  const dividasVencendo = (state.dividas || []).filter((d) => { const dias = diasPara(d.vencimento); return dias !== null && dias <= 15; })
+    .map((d) => `- ${d.nome || d.descricao || "dívida"}: ${fmtR(d.valorMes)} vence em ${d.vencimento}`).join("\n");
+  const abastPendentes = (state.abastecimentos || []).filter((a) => a.status === "pendente").length;
+  const seguroVencendo = veiculosComMes().filter((v) => { const dias = diasPara(v.venctoSeguro); return dias !== null && dias <= 30; })
+    .map((v) => `- ${v.placa}: seguro vence em ${v.venctoSeguro}`).join("\n");
+  return `Mês ativo no painel: ${mesA}
+Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
+Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
+Margem da frota (manual): ${fmtR(t.margem)} (${t.margemPct.toFixed(1)}%)
+Viagens do mês: ${t.viagensMes} — receita ${fmtR(t.viagensReceita)}, despesa ${fmtR(t.viagensDespesa)}, resultado ${fmtR(t.viagensSobra)}
+Viagens acumulado (todos os meses): receita ${fmtR(t.viagensReceitaAcum)}, resultado ${fmtR(t.viagensSobraAcum)} (margem ${t.margemViagensAcumPct.toFixed(1)}%)
+Dívidas fixas do mês: ${fmtR(t.totalDividasFixas)}
+Manutenção real do mês: ${fmtR(t.manutencaoReal)}
+Lucro real do mês: ${fmtR(t.lucroReal)}
+Abastecimentos pendentes de aprovação: ${abastPendentes}
+
+Viagens do mês por cliente:
+${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
+
+Dívidas vencendo nos próximos 15 dias:
+${dividasVencendo || "(nenhuma)"}
+
+Seguros vencendo nos próximos 30 dias:
+${seguroVencendo || "(nenhum)"}`;
+}
+function toggleChatAssistente() {
+  state._chatAberto = !state._chatAberto;
+  render();
+}
+function chatEnviarPergunta() {
+  const input = document.getElementById("chatInput");
+  if (!input) return;
+  const pergunta = input.value.trim();
+  if (!pergunta || state._chatCarregando) return;
+  if (!state._chatMensagens) state._chatMensagens = [];
+  state._chatMensagens.push({ role: "user", content: pergunta });
+  state._chatCarregando = true;
+  input.value = "";
+  render();
+  const historico = state._chatMensagens.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+  const contexto = gerarContextoAssistente();
+  rfGetClient().then(function (sb) {
+    if (!sb) { chatErro("Sem conexão com o servidor."); return; }
+    sb.auth.getSession().then(function (res) {
+      const token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) { chatErro("Sessão expirada. Saia e entre de novo."); return; }
+      fetch(RF_SB_URL + "/functions/v1/assistente-chat", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ pergunta: pergunta, contexto: contexto, historico: historico }),
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res2) {
+          state._chatCarregando = false;
+          if (!res2.ok) { chatErro(res2.j.error || "Erro ao falar com o assistente."); return; }
+          state._chatMensagens.push({ role: "assistant", content: res2.j.resposta || "(sem resposta)" });
+          render();
+        }).catch(function (e) { chatErro("Erro de conexão: " + e.message); });
+    });
+  });
+}
+function chatErro(msg) {
+  state._chatCarregando = false;
+  state._chatMensagens.push({ role: "assistant", content: "⚠ " + msg });
+  render();
+}
+function chatLimpar() {
+  state._chatMensagens = [];
+  render();
+}
+function assistenteWidgetHTML() {
+  const aberto = !!state._chatAberto;
+  const msgs = state._chatMensagens || [];
+  if (!aberto) {
+    return `<button onclick="toggleChatAssistente()" title="Assistente virtual" style="position:fixed; bottom:20px; right:20px; width:56px; height:56px; border-radius:50%; background:${GOLD}; color:#000; border:none; font-size:24px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,0.4); z-index:9999;">💬</button>`;
+  }
+  return `
+    <div style="position:fixed; bottom:20px; right:20px; width:340px; max-width:90vw; height:460px; max-height:80vh; background:#111; border:1px solid ${GOLD}; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.6); z-index:9999; display:flex; flex-direction:column; overflow:hidden;">
+      <div style="background:${GOLD}; color:#000; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;">
+        <span>💬 Assistente RF</span>
+        <div>
+          <button onclick="chatLimpar()" title="Limpar conversa" style="background:none; border:none; color:#000; cursor:pointer; font-size:13px; margin-right:8px;">limpar</button>
+          <button onclick="toggleChatAssistente()" style="background:none; border:none; color:#000; cursor:pointer; font-size:18px; font-weight:800;">✕</button>
+        </div>
+      </div>
+      <div id="chatMsgs" style="flex:1; overflow-y:auto; padding:10px; font-size:13px;">
+        ${msgs.length === 0 ? `<div style="color:#888; text-align:center; padding:20px 10px;">Pergunte algo sobre os dados do mês (ex: "quanto faturei com a JT esse mês?") ou como usar o sistema.</div>` : ""}
+        ${msgs.map((m) => `
+          <div style="margin-bottom:10px; display:flex; ${m.role === "user" ? "justify-content:flex-end;" : "justify-content:flex-start;"}">
+            <div style="max-width:85%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; ${m.role === "user" ? `background:${GOLD}; color:#000;` : "background:#222; color:#eee;"}">${esc(m.content)}</div>
+          </div>`).join("")}
+        ${state._chatCarregando ? `<div style="color:#888; font-size:12px;">digitando...</div>` : ""}
+      </div>
+      <div style="padding:8px; border-top:1px solid #333; display:flex; gap:6px;">
+        <input id="chatInput" placeholder="Pergunte algo..." onkeydown="if(event.key==='Enter'){chatEnviarPergunta();}" style="flex:1; font-size:13px;">
+        <button class="btn-gold" style="padding:6px 12px;" onclick="chatEnviarPergunta()">➤</button>
+      </div>
+    </div>
+  `;
+}
 // verde (positivo), já usados no resto do sistema. Sem azul (nunca usar).
 var GRAF_PALETA = ["#D4A017", "#C0392B", "#8a6d1f", "#B08C1A", "#555555", "#2E7D32", "#7a5210", "#999999"];
 window.__rfCharts = window.__rfCharts || {};
