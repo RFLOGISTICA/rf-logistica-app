@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v118)</title>
+<title>RF Logística — Painel da Frota (v119)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -117,6 +117,7 @@
   .rf-mais-painel { position: absolute; right: 0; top: calc(100% + 6px); background: #111; border: 1px solid #D4A017; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; z-index: 50; min-width: 210px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -1085,7 +1086,31 @@ function csvEscape(v) {
   const s = String(v == null ? "" : v).replace(/"/g, '""');
   return /[",;\n]/.test(s) ? `"${s}"` : s;
 }
+// v118: "Exportar Excel" baixava um .csv (não um Excel de verdade). Isso
+// causava planilhas quebradas/corrompidas ao abrir em alguns celulares e ao
+// reenviar por WhatsApp. Agora gera um .xlsx binário real via SheetJS —
+// com fallback pro .csv antigo só se a biblioteca não carregar (ex: sem internet).
 function exportarCSV(filename, cabecalho, linhasArr) {
+  const nomeXlsx = filename.replace(/\.csv$/i, ".xlsx");
+  if (window.XLSX) {
+    try {
+      const linhasNum = linhasArr.map((linha) => linha.map((v) => {
+        if (typeof v === "number") return v;
+        const n = Number(v);
+        return (v !== "" && v != null && !isNaN(n) && /^-?\d+([.,]\d+)?$/.test(String(v).trim())) ? n : v;
+      }));
+      const ws = XLSX.utils.aoa_to_sheet([cabecalho, ...linhasNum]);
+      ws["!cols"] = cabecalho.map((h, i) => {
+        let max = String(h || "").length;
+        linhasArr.forEach((l) => { const s = String(l[i] == null ? "" : l[i]); if (s.length > max) max = s.length; });
+        return { wch: Math.min(Math.max(max + 2, 8), 40) };
+      });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Dados");
+      XLSX.writeFile(wb, nomeXlsx);
+      return;
+    } catch (e) { /* cai pro fallback abaixo */ }
+  }
   const linhas = [cabecalho.join(";")];
   linhasArr.forEach((linha) => linhas.push(linha.map(csvEscape).join(";")));
   const csv = "\uFEFF" + linhas.join("\r\n");
@@ -1157,16 +1182,15 @@ function exportarPagMotoristaExcel() {
 }
 function exportarViagensExcel() {
   const cabecalho = ["Placa","Motorista","Cliente","Data","Valor Viagem","Pago","Data Pagamento","KM Saida","KM Chegada","KM","Dias","Combustivel","Tem Ajudante","Alim Motorista","Alim Ajudante","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista","Pag Ajudante","ADM","Manutencao","Imposto","Pneus","Outros","Total Despesas","Sobra"];
-  const linhas = [cabecalho.join(";")];
   const viagensFiltradas = state.viagens.filter((v) =>
     (state.filtroPlacaViagem === "Todas" || v.placa === state.filtroPlacaViagem) &&
     (state.filtroClienteViagem === "Todos" || v.cliente === state.filtroClienteViagem) &&
     ((state.filtroPagViagem || "Todas") === "Todas" || (state.filtroPagViagem === "Pagas" ? v.pago : !v.pago))
   );
-  viagensFiltradas.forEach((v) => {
+  const linhas = viagensFiltradas.map((v) => {
     const c = calcularViagem(v);
     const vc = state.veiculos.find((x) => x.placa === v.placa);
-    const linha = [
+    return [
       v.placa, (vc && vc.motorista) || "", v.cliente || "",
       v.data, v.valorViagem || 0, v.pago ? "Sim" : "Nao", v.dataPagamento || "",
       v.kmSaida || 0, v.kmChegada || 0, v.km || 0, v.dias || 1,
@@ -1175,20 +1199,10 @@ function exportarViagensExcel() {
       v.vgPagMotorista || 0, v.pagoMotorista ? "Sim" : "Nao", v.dataPagamentoMotorista || "", (v.temAjudante !== false) ? (v.vgPagAjudante || 0) : 0,
       c.adm.toFixed(2), c.manutencao.toFixed(2), c.imposto.toFixed(2), c.pneus.toFixed(2),
       c.outros.toFixed(2), c.totalDesp.toFixed(2), c.sobra.toFixed(2)
-    ].map(csvEscape);
-    linhas.push(linha.join(";"));
+    ];
   });
-  const csv = "\uFEFF" + linhas.join("\r\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
   const sufixoPlaca = state.filtroPlacaViagem === "Todas" ? "" : "-" + state.filtroPlacaViagem;
-  a.download = "rf-frota-viagens" + sufixoPlaca + "-" + new Date().toISOString().slice(0, 10) + ".csv";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  exportarCSV("rf-frota-viagens" + sufixoPlaca + "-" + new Date().toISOString().slice(0, 10) + ".csv", cabecalho, linhas);
 }
 
 function exportarDados() {
