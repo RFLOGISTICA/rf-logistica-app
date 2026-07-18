@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v134)</title>
+<title>RF Logística — Painel da Frota (v135)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -4089,12 +4089,82 @@ function chatEnviarPergunta() {
           state._chatCarregando = false;
           if (!res2.ok) { chatErro(res2.j.error || "Erro ao falar com o assistente."); return; }
           const resposta = res2.j.resposta || "(sem resposta)";
+          const acao = res2.j.acao;
+          if (acao && acao.tipo === "gerar_planilha") {
+            const ok = chatExecutarGerarPlanilha(acao.dados && acao.dados.aba);
+            state._chatMensagens.push({ role: "assistant", content: ok ? resposta + "\n\n✅ Planilha gerada — confira o download." : "Não consegui identificar qual planilha gerar." });
+            render();
+            falarTexto(ok ? "Planilha gerada." : "Não consegui gerar a planilha.", chatContinuarConversaSeAtivo);
+            return;
+          }
+          if (acao && acao.tipo === "criar_viagem") {
+            state._chatMensagens.push({ role: "assistant", content: resposta, acaoPendente: acao });
+            render();
+            falarTexto(resposta, chatContinuarConversaSeAtivo);
+            return;
+          }
           state._chatMensagens.push({ role: "assistant", content: resposta });
           render();
           falarTexto(resposta, chatContinuarConversaSeAtivo);
         }).catch(function (e) { chatErro("Erro de conexão: " + e.message); });
     });
   });
+}
+// v135: "gerar planilha" executa na hora — é só leitura, sem risco nenhum.
+function chatExecutarGerarPlanilha(aba) {
+  try {
+    if (aba === "viagens") exportarViagensExcel();
+    else if (aba === "frota") exportarFrotaExcel();
+    else if (aba === "financeiro") exportarFinanceiroExcel();
+    else if (aba === "manutencao") exportarManutencaoExcel();
+    else if (aba === "abastecimento") exportarAbastecimentosExcel();
+    else if (aba === "dividas") exportarDividasExcel();
+    else if (aba === "pagamentos_motorista") exportarPagMotoristaExcel();
+    else return false;
+    return true;
+  } catch (e) { return false; }
+}
+// v135: "criar viagem" só grava depois que a pessoa aperta "Confirmar" — uma
+// transcrição de voz errada nunca cria uma viagem sozinha no sistema.
+function chatConfirmarViagem(msgIndex) {
+  const m = state._chatMensagens && state._chatMensagens[msgIndex];
+  if (!m || !m.acaoPendente) return;
+  const d = m.acaoPendente.dados || {};
+  const placaBuscada = String(d.placa || "").toUpperCase().trim();
+  const veic = state.veiculos.find((x) => x.placa === placaBuscada);
+  m.acaoPendente = null;
+  if (!veic) {
+    m.content += "\n\n⚠ Não achei o caminhão \"" + placaBuscada + "\" cadastrado na Frota. Confere a placa e pede de novo.";
+    render();
+    return;
+  }
+  const clienteNome = String(d.cliente || "").trim();
+  if (!clienteNome) {
+    m.content += "\n\n⚠ Faltou o nome do cliente, não criei a viagem.";
+    render();
+    return;
+  }
+  if (state.clientes.indexOf(clienteNome) === -1) state.clientes.push(clienteNome);
+  const nova = {
+    id: uid(), placa: veic.placa, cliente: clienteNome, data: d.data || dataPadraoMes(), criadoEm: Date.now(),
+    valorViagem: Number(d.valorViagem) || 0, km: Number(d.km) || 0, dias: 1,
+    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+    combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+    motoristaNaEpoca: veic.motorista || "",
+    temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+    outrosItens: [],
+  };
+  if (!nova.valorViagem) aplicarFreteKm(nova, "auto");
+  state.viagens.push(nova);
+  m.content += "\n\n✅ Viagem criada: " + veic.placa + " · " + clienteNome + " · " + nova.data + (nova.valorViagem ? " · " + fmtR(nova.valorViagem) : "");
+  salvar(); render();
+}
+function chatCancelarViagem(msgIndex) {
+  const m = state._chatMensagens && state._chatMensagens[msgIndex];
+  if (!m) return;
+  m.acaoPendente = null;
+  m.content += "\n\n❌ Cancelado, nada foi criado.";
+  render();
 }
 function chatErro(msg) {
   state._chatCarregando = false;
@@ -4217,9 +4287,13 @@ function assistenteWidgetHTML() {
       </div>
       <div id="chatMsgs" style="flex:1; overflow-y:auto; padding:10px; font-size:13px;">
         ${msgs.length === 0 ? `<div style="color:#888; text-align:center; padding:20px 10px;">Pergunte algo sobre os dados do mês (ex: "quanto faturei com a JT esse mês?") ou como usar o sistema.</div>` : ""}
-        ${msgs.map((m) => `
+        ${msgs.map((m, i) => `
           <div style="margin-bottom:10px; display:flex; ${m.role === "user" ? "justify-content:flex-end;" : "justify-content:flex-start;"}">
-            <div style="max-width:85%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; ${m.role === "user" ? `background:${GOLD}; color:#000;` : "background:#222; color:#eee;"}">${esc(m.content)}</div>
+            <div style="max-width:85%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; ${m.role === "user" ? `background:${GOLD}; color:#000;` : "background:#222; color:#eee;"}">${esc(m.content)}${m.acaoPendente ? `
+              <div style="margin-top:8px; display:flex; gap:6px;">
+                <button onclick="chatConfirmarViagem(${i})" style="background:#2E7D32; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✓ Confirmar</button>
+                <button onclick="chatCancelarViagem(${i})" style="background:#C0392B; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✕ Cancelar</button>
+              </div>` : ""}</div>
           </div>`).join("")}
         ${state._chatCarregando ? `<div style="color:#888; font-size:12px;">digitando...</div>` : ""}
       </div>
