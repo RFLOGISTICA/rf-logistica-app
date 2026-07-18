@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v133)</title>
+<title>RF Logística — Painel da Frota (v134)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3900,6 +3900,16 @@ function gerarContextoAssistente() {
   // mais divergir do que a pessoa vê na tela.
   const caixaMeses = calcularCaixaMeses();
   const cxAtivo = caixaMeses[state.mesAtivo] || null;
+  // v134: detalhamento por CATEGORIA de custo (combustível, manutenção, ADM,
+  // pneus, alimentação, motorista/ajudante, imposto, outros) — antes ele só
+  // tinha o total de despesa em bloco único, sem saber qual categoria pesa mais.
+  const custoCat = custosPorCategoriaDoMes(state.mesAtivo);
+  const catLabels = { combustivel: "Combustível", manutencao: "Manutenção", adm: "ADM", pneus: "Pneus", alimMotorista: "Alimentação motorista", alimAjudante: "Alimentação ajudante", pagMotorista: "Pagamento motorista", pagAjudante: "Pagamento ajudante", imposto: "Imposto", outros: "Outros" };
+  const linhasCategoria = Object.keys(catLabels)
+    .map((k) => ({ nome: catLabels[k], valor: custoCat.cat[k] || 0 }))
+    .sort((a, b) => b.valor - a.valor)
+    .map((x) => `- ${x.nome}: ${fmtR(x.valor)}${custoCat.totalDesp > 0 ? " (" + ((x.valor / custoCat.totalDesp) * 100).toFixed(1) + "% da despesa de viagens)" : ""}`)
+    .join("\n");
   const frotaTudo = veiculosComMes().map((v) =>
     `- ${v.placa} (${v.tipo || "?"}, ${v.modelo || "?"}, ${v.kmPorLitro || "?"} km/l): motorista ${v.motorista || "(sem)"}, regime ${v.regimeMotorista || "?"}, status ${v.statusOp || "?"}${v.local ? ", local: " + v.local : ""}`
   ).join("\n");
@@ -4009,6 +4019,9 @@ Componentes do mês ativo (${mesA}):
 - Ajuste manual do mês (one-off, se houver): ${cxAtivo ? fmtR(cxAtivo.ajusteManual) : "0"}
 RESULTADO OFICIAL do mês (conferido, igual à aba Financeiro): ${cxAtivo ? fmtR(cxAtivo.resultadoMes) + (cxAtivo.resultadoMes >= 0 ? " (sobrou)" : " (faltou)") : "(sem fechamento calculado pra esse mês)"}
 Posição real do caixa acumulado (saldo que rola pro próximo mês): ${cxAtivo ? fmtR(cxAtivo.saldoFinal) : "(indisponível)"}
+
+Despesa das viagens por CATEGORIA no mês ativo (${mesA}), da maior pra menor:
+${linhasCategoria || "(nenhuma despesa lançada)"}
 
 PARA PROJEÇÕES (ex: "e se tivéssemos N caminhões em viagem"): escale SÓ os componentes marcados "ESCALA" acima (calcule a média atual por caminhão em viagem = valor ÷ ${t.emViagem || 1} caminhões em viagem, multiplique pela nova quantidade). Receita fixa, custo fixo e dívidas fixas do mês ficam EXATAMENTE OS MESMOS valores acima, não escalam.
 
