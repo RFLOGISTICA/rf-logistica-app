@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v127)</title>
+<title>RF Logística — Painel da Frota (v129)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3868,6 +3868,20 @@ function render() {
 function gerarContextoAssistente() {
   const t = calcularTotais();
   const mesA = mesLabel(state.mesAtivo);
+  // v129: "acesso quase total" — pra projeções, ele precisa ver a frota
+  // inteira, todas as dívidas fixas (não só as que vencem logo) e
+  // manutenção/abastecimento do mês, além do que já tinha (viagens).
+  const frotaTudo = veiculosComMes().map((v) =>
+    `- ${v.placa} (${v.tipo || "?"}, ${v.modelo || "?"}, ${v.kmPorLitro || "?"} km/l): motorista ${v.motorista || "(sem)"}, regime ${v.regimeMotorista || "?"}, status ${v.statusOp || "?"}${v.local ? ", local: " + v.local : ""}`
+  ).join("\n");
+  const dividasTudo = (state.dividas || []).map((d) =>
+    `- ${d.nome || d.descricao || "dívida"}: ${fmtR(d.valorMes)}/mês, vence dia ${d.vencimento || "?"}`
+  ).join("\n");
+  const mt = calcularManutencao();
+  const manutPorVeiculo = Object.keys(mt.porPlaca || {}).map((p) => {
+    const d = mt.porPlaca[p];
+    return `- ${p}: manutenção real ${fmtR(d.real)}, investimento ${fmtR(d.inv)}`;
+  }).join("\n");
   const viagensMes = state.viagens.filter((v) => v.data && v.data.slice(0, 7) === state.mesAtivo);
   const porCliente = {};
   viagensMes.forEach((v) => {
@@ -3884,6 +3898,9 @@ function gerarContextoAssistente() {
   const dividasVencendo = (state.dividas || []).filter((d) => { const dias = diasPara(d.vencimento); return dias !== null && dias <= 15; })
     .map((d) => `- ${d.nome || d.descricao || "dívida"}: ${fmtR(d.valorMes)} vence em ${d.vencimento}`).join("\n");
   const abastPendentes = (state.abastecimentos || []).filter((a) => a.status === "pendente").length;
+  const abastMesAprovado = (state.abastecimentos || [])
+    .filter((a) => a.status === "aprovado" && a.data && a.data.slice(0, 7) === state.mesAtivo)
+    .reduce((s, a) => s + (Number(a.valor) || 0), 0);
   const seguroVencendo = veiculosComMes().filter((v) => { const dias = diasPara(v.venctoSeguro); return dias !== null && dias <= 30; })
     .map((v) => `- ${v.placa}: seguro vence em ${v.venctoSeguro}`).join("\n");
 
@@ -3916,16 +3933,39 @@ function gerarContextoAssistente() {
     return `- ${c}: ${d.qtd} viagem(ns) no total, faturado ${fmtR(d.valor)}, pago ${fmtR(d.pago)}, pendente ${fmtR(d.valor - d.pago)}`;
   }).join("\n");
 
+  // v128: detalhamento por veículo/placa — mês ativo e histórico completo.
+  const porPlacaMes = resumoViagensPorPlaca(state.mesAtivo);
+  const linhasPlacaMes = Object.keys(porPlacaMes).map((p) => {
+    const d = porPlacaMes[p];
+    return `- ${p}: ${d.qtd} viagem(ns), receita ${fmtR(d.receita)}, despesa ${fmtR(d.despesa)}, resultado ${fmtR(d.sobra)}${d.clientes.length ? ", cliente(s): " + d.clientes.join(", ") : ""}`;
+  }).join("\n");
+  const porPlacaTudo = resumoViagensPorPlaca(null);
+  const linhasPlacaTudo = Object.keys(porPlacaTudo).map((p) => {
+    const d = porPlacaTudo[p];
+    return `- ${p}: ${d.qtd} viagem(ns) no total, receita ${fmtR(d.receita)}, despesa ${fmtR(d.despesa)}, resultado ${fmtR(d.sobra)}`;
+  }).join("\n");
+
   return `Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
 Margem da frota (manual): ${fmtR(t.margem)} (${t.margemPct.toFixed(1)}%)
 Viagens do mês: ${t.viagensMes} — receita ${fmtR(t.viagensReceita)}, despesa ${fmtR(t.viagensDespesa)}, resultado ${fmtR(t.viagensSobra)}
 Viagens acumulado (todos os meses): receita ${fmtR(t.viagensReceitaAcum)}, resultado ${fmtR(t.viagensSobraAcum)} (margem ${t.margemViagensAcumPct.toFixed(1)}%)
-Dívidas fixas do mês: ${fmtR(t.totalDividasFixas)}
+Dívidas fixas do mês (total): ${fmtR(t.totalDividasFixas)}
 Manutenção real do mês: ${fmtR(t.manutencaoReal)}
+Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
+Abastecimento aprovado no mês (fora do cálculo por viagem): ${fmtR(abastMesAprovado)}
 Lucro real do mês: ${fmtR(t.lucroReal)}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
+
+Frota completa (todos os veículos cadastrados):
+${frotaTudo || "(nenhum)"}
+
+Todas as dívidas fixas cadastradas:
+${dividasTudo || "(nenhuma)"}
+
+Manutenção do mês ativo por veículo:
+${manutPorVeiculo || "(nenhuma manutenção lançada no mês ativo)"}
 
 Viagens do mês ativo por cliente:
 ${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
@@ -3935,6 +3975,12 @@ ${linhasMes || "(nenhum)"}
 
 Total por cliente (histórico completo, todos os meses):
 ${linhasClienteTudo || "(nenhum)"}
+
+Total por veículo/placa no mês ativo (${mesA}):
+${linhasPlacaMes || "(nenhum)"}
+
+Total por veículo/placa (histórico completo, todos os meses):
+${linhasPlacaTudo || "(nenhum)"}
 
 Dívidas vencendo nos próximos 15 dias:
 ${dividasVencendo || "(nenhuma)"}
