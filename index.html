@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v129)</title>
+<title>RF Logística — Painel da Frota (v130)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3945,6 +3945,14 @@ function gerarContextoAssistente() {
     return `- ${p}: ${d.qtd} viagem(ns) no total, receita ${fmtR(d.receita)}, despesa ${fmtR(d.despesa)}, resultado ${fmtR(d.sobra)}`;
   }).join("\n");
 
+  // v130: lista individual — cada viagem com a própria data (não só totais).
+  const listaViagens = state.viagens.slice()
+    .sort((a, b) => (a.data || "").localeCompare(b.data || ""))
+    .map((v) => {
+      const c = calcularViagem(v);
+      return `- ${v.data || "sem data"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.pago ? "paga" : "pendente"}`;
+    }).join("\n");
+
   return `Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -3981,6 +3989,9 @@ ${linhasPlacaMes || "(nenhum)"}
 
 Total por veículo/placa (histórico completo, todos os meses):
 ${linhasPlacaTudo || "(nenhum)"}
+
+Lista de TODAS as viagens, uma por uma, com data (ordem cronológica):
+${listaViagens || "(nenhuma viagem cadastrada)"}
 
 Dívidas vencendo nos próximos 15 dias:
 ${dividasVencendo || "(nenhuma)"}
