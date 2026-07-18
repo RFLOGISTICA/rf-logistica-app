@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v126)</title>
+<title>RF Logística — Painel da Frota (v127)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3886,6 +3886,36 @@ function gerarContextoAssistente() {
   const abastPendentes = (state.abastecimentos || []).filter((a) => a.status === "pendente").length;
   const seguroVencendo = veiculosComMes().filter((v) => { const dias = diasPara(v.venctoSeguro); return dias !== null && dias <= 30; })
     .map((v) => `- ${v.placa}: seguro vence em ${v.venctoSeguro}`).join("\n");
+
+  // v127: histórico completo — todos os meses, não só o mês ativo.
+  const porMes = {};
+  state.viagens.forEach((v) => {
+    if (!v.data) return;
+    const m = v.data.slice(0, 7);
+    if (!porMes[m]) porMes[m] = { qtd: 0, receita: 0, despesa: 0 };
+    const c = calcularViagem(v);
+    porMes[m].qtd += 1;
+    porMes[m].receita += c.valorViagem;
+    porMes[m].despesa += c.totalDesp;
+  });
+  const linhasMes = Object.keys(porMes).sort().map((m) => {
+    const d = porMes[m];
+    return `- ${mesLabel(m)}: ${d.qtd} viagem(ns), receita ${fmtR(d.receita)}, despesa ${fmtR(d.despesa)}, resultado ${fmtR(d.receita - d.despesa)}`;
+  }).join("\n");
+
+  const porClienteTudo = {};
+  state.viagens.forEach((v) => {
+    const c = v.cliente || "(sem cliente)";
+    if (!porClienteTudo[c]) porClienteTudo[c] = { qtd: 0, valor: 0, pago: 0 };
+    porClienteTudo[c].qtd += 1;
+    porClienteTudo[c].valor += Number(v.valorViagem) || 0;
+    if (v.pago) porClienteTudo[c].pago += Number(v.valorViagem) || 0;
+  });
+  const linhasClienteTudo = Object.keys(porClienteTudo).map((c) => {
+    const d = porClienteTudo[c];
+    return `- ${c}: ${d.qtd} viagem(ns) no total, faturado ${fmtR(d.valor)}, pago ${fmtR(d.pago)}, pendente ${fmtR(d.valor - d.pago)}`;
+  }).join("\n");
+
   return `Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -3897,8 +3927,14 @@ Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Lucro real do mês: ${fmtR(t.lucroReal)}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
 
-Viagens do mês por cliente:
+Viagens do mês ativo por cliente:
 ${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
+
+Histórico mensal completo (todos os meses com viagem lançada):
+${linhasMes || "(nenhum)"}
+
+Total por cliente (histórico completo, todos os meses):
+${linhasClienteTudo || "(nenhum)"}
 
 Dívidas vencendo nos próximos 15 dias:
 ${dividasVencendo || "(nenhuma)"}
