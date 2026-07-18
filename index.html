@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v130)</title>
+<title>RF Logística — Painel da Frota (v131)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -714,6 +714,7 @@ function lancarComoViagem() {
     km: Number(c.km) || 0, dias: Number(c.dias) || 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+    motoristaNaEpoca: (state.veiculos.find((x) => x.placa === placa) || {}).motorista || "",
     temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha " + YAMAHA_REGIOES[c.regiao].nome + " — " + r.totItens + " itens: " + mix }],
   });
@@ -734,6 +735,7 @@ function adicionarViagem() {
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+    motoristaNaEpoca: (state.veiculos.find((x) => x.placa === primeiraPlaca) || {}).motorista || "",
     temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     outrosItens: [],
   });
@@ -931,6 +933,15 @@ function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
   v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
+  // v131: quando a placa é definida/trocada, "congela" quem dirigia o caminhão
+  // NAQUELE momento — assim, se o motorista do caminhão mudar depois (ex: troca
+  // de motorista), essa viagem antiga continua correta no pagamento de quem
+  // realmente a fez. Sem isso, trocar o motorista de um caminhão reescrevia
+  // o histórico de pagamento de todas as viagens antigas dele.
+  if (campo === "placa") {
+    const vc = state.veiculos.find((x) => x.placa === valor);
+    v.motoristaNaEpoca = (vc && vc.motorista) || "";
+  }
   // Mudou placa, cliente ou rota? Reajusta valor conforme o modo do cliente (km/m³/rota).
   if (campo === "placa" || campo === "cliente" || campo === "rota") aplicarFreteKm(v, "auto");
   // v54: mantém "Local alocado" do veículo em dia (só se ainda estiver vazio).
@@ -938,6 +949,14 @@ function atualizarViagem(id, campo, valor) {
     preencherLocalSeVazio(v.placa, v.cliente);
   }
   salvar(); render();
+}
+// v131: quem realmente dirigiu essa viagem — usa o "congelado" na época; se a
+// viagem for antiga (de antes dessa correção) e não tiver o snapshot, cai pro
+// motorista atual do caminhão (comportamento de antes, só como último recurso).
+function motoristaDaViagem(v) {
+  if (v.motoristaNaEpoca) return v.motoristaNaEpoca;
+  const vc = state.veiculos.find((x) => x.placa === v.placa);
+  return (vc && vc.motorista) || "";
 }
 
 // Auto-preenchimento conforme o modo do cliente.
@@ -1244,8 +1263,7 @@ function exportarPagMotoristaExcel() {
   }).slice().sort((a, b) => (b.data || "").localeCompare(a.data || ""));
   const cab = ["Data","Placa","Motorista","Cliente","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista"];
   const linhas = viagensMot.map((v) => {
-    const vc = state.veiculos.find((x) => x.placa === v.placa);
-    return [v.data || "", v.placa || "", (vc && vc.motorista) || "", v.cliente || "", v.vgPagMotorista || 0, v.pagoMotorista ? "Sim" : "Nao", v.dataPagamentoMotorista || ""];
+    return [v.data || "", v.placa || "", motoristaDaViagem(v) || "", v.cliente || "", v.vgPagMotorista || 0, v.pagoMotorista ? "Sim" : "Nao", v.dataPagamentoMotorista || ""];
   });
   exportarCSV("rf-frota-pag-motoristas-" + new Date().toISOString().slice(0,10) + ".csv", cab, linhas);
 }
@@ -1258,9 +1276,8 @@ function exportarViagensExcel() {
   );
   const linhas = viagensFiltradas.map((v) => {
     const c = calcularViagem(v);
-    const vc = state.veiculos.find((x) => x.placa === v.placa);
     return [
-      v.placa, (vc && vc.motorista) || "", v.cliente || "",
+      v.placa, motoristaDaViagem(v) || "", v.cliente || "",
       v.data, v.valorViagem || 0, v.pago ? "Sim" : "Nao", v.dataPagamento || "",
       v.kmSaida || 0, v.kmChegada || 0, v.km || 0, v.dias || 1,
       c.combustivel.toFixed(2), (v.temAjudante !== false) ? "Sim" : "Nao",
@@ -2862,7 +2879,7 @@ function saldoMotorista(nome) {
   garantirMotoristas();
   const gerado = state.viagens.reduce((s, v) => {
     const vc = state.veiculos.find((x) => x.placa === v.placa);
-    if (!vc || vc.motorista !== nome || vc.regimeMotorista === "clt") return s;
+    if (motoristaDaViagem(v) !== nome || (vc && vc.regimeMotorista === "clt")) return s;
     return s + (Number(v.vgPagMotorista) || 0);
   }, 0);
   const pago = state.pagamentosMotorista.filter((p) => p.motorista === nome).reduce((s, p) => s + (Number(p.valor) || 0), 0);
@@ -3183,6 +3200,7 @@ function aprovarViagemFim(id) {
       valorViagem: 0, km: 0, dias: 1,
       kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
       combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+      motoristaNaEpoca: (state.veiculos.find((x) => x.placa === a.placa) || {}).motorista || "",
       temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
       outrosItens: [], obs: a.obs || "", origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
     };
@@ -3671,6 +3689,7 @@ function aprovarAbastecimentoNovaViagem(id) {
     kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [{ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") }],
     vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+    motoristaNaEpoca: (state.veiculos.find((x) => x.placa === a.placa) || {}).motorista || "",
     outrosItens: [], origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
   };
   state.viagens.push(novaViagem);
@@ -4863,7 +4882,7 @@ function renderTabela() {
                 return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
               })()}
             </td>
-            <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); if (!vc || !vc.motorista) return "—"; const clt = vc.regimeMotorista === "clt"; return esc(vc.motorista) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
+            <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); const nome = motoristaDaViagem(v); if (!nome) return "—"; const clt = vc && vc.regimeMotorista === "clt"; return esc(nome) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
             <td><select onchange="selecionarCliente('${v.id}', this.value)" style="min-width:140px;">
               <option value="" ${!v.cliente ? "selected" : ""}>(selecione)</option>
               ${state.clientes.map((c) => `<option ${v.cliente === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
@@ -4988,8 +5007,7 @@ function renderTabela() {
 
     const porMes = {};
     viagensMot.forEach((v) => {
-      const vc = state.veiculos.find((x) => x.placa === v.placa);
-      const nomeMot = (vc && vc.motorista) || "(sem motorista)";
+      const nomeMot = motoristaDaViagem(v) || "(sem motorista)";
       const mes = v.data ? v.data.slice(0, 7) : "sem-data";
       if (!porMes[mes]) porMes[mes] = {};
       if (!porMes[mes][nomeMot]) porMes[mes][nomeMot] = { total: 0, qtd: 0 };
@@ -5046,8 +5064,7 @@ function renderTabela() {
         <div style="font-size:10px; color:#666; margin-bottom:8px;">Este pagamento é independente do "Pago?" da aba Despesas de Viagem — aquele é o <b>cliente</b> pagando a RF Logística (15/30/45 dias); este aqui é a <b>RF Logística pagando o motorista</b> (semanal/quinzenal). É esse checkbox que atualiza o "PAGAS" no app do motorista.</div>
         <table style="min-width:820px;"><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>Cliente</th><th>Pag. Mot.</th><th>💰 Pago ao motorista?</th></tr></thead><tbody>
           ${viagensMot.map((v) => {
-            const vc = state.veiculos.find((x) => x.placa === v.placa);
-            const nomeMot = (vc && vc.motorista) || "(sem motorista)";
+            const nomeMot = motoristaDaViagem(v) || "(sem motorista)";
             return `<tr>
               <td>${v.data || "—"}</td><td>${esc(v.placa)}</td><td>${esc(nomeMot)}</td><td>${esc(v.cliente || "—")}</td>
               <td style="font-weight:700;">${fmtR(Number(v.vgPagMotorista) || 0)}</td>
