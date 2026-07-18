@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v135)</title>
+<title>RF Logística — Painel da Frota (v136)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -932,6 +932,7 @@ function enviarViagemParaMotorista(id, motoristaUid) {
 function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return; // v136: viagem travada — edição bloqueada de verdade, não só escondida na tela
   v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
   // v131: quando a placa é definida/trocada, "congela" quem dirigia o caminhão
   // NAQUELE momento — assim, se o motorista do caminhão mudar depois (ex: troca
@@ -1047,12 +1048,31 @@ function setViagemM3(id, valor) {
 function setViagemValor(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.valorViagem = Number(valor) || 0;
   aplicarFreteKm(v, "valor");                         // cliente por km/m³ → preenche km/m³
   salvar(); render();
 }
 function removerViagem(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (v && v.trancada) { alert("Essa viagem está travada 🔒 — destrave primeiro (só Admin) pra poder excluir."); return; }
   state.viagens = state.viagens.filter((v) => String(v.id) !== String(id));
+  salvar(); render();
+}
+// v136: trava de viagem finalizada — depois de travada, ninguém edita nem
+// exclui (nem por fora da tela, essa checagem é feita nas próprias funções
+// que mexem na viagem, não só escondendo botão). Só Admin destrava.
+function toggleTravarViagem(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (v.trancada) {
+    if (!ehAdmin()) { alert("Essa viagem está travada 🔒 — só o Admin pode destravar."); return; }
+    if (!window.confirm("Destravar essa viagem? Ela volta a poder ser editada por qualquer um com acesso.")) return;
+    v.trancada = false;
+  } else {
+    if (!window.confirm("Travar essa viagem? Depois de travada, ninguém consegue editar ou excluir — só o Admin poderá destravar depois.")) return;
+    v.trancada = true;
+  }
   salvar(); render();
 }
 // v85: status de pagamento da viagem (ex: JDL paga por quinzena — a viagem
@@ -1060,6 +1080,7 @@ function removerViagem(id) {
 function setViagemPago(id, checked) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.pago = !!checked;
   if (v.pago && !v.dataPagamento) v.dataPagamento = hojeISO(); // marcou pago sem data → assume hoje
   if (!v.pago) v.dataPagamento = ""; // desmarcou → limpa a data
@@ -1068,6 +1089,7 @@ function setViagemPago(id, checked) {
 function setViagemDataPagamento(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.dataPagamento = valor;
   if (valor) v.pago = true; // preencheu uma data → considera pago automaticamente
   salvar(); render();
@@ -1081,6 +1103,7 @@ function setViagemDataPagamento(id, valor) {
 function setViagemPagoMotorista(id, checked) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.pagoMotorista = !!checked;
   if (v.pagoMotorista && !v.dataPagamentoMotorista) v.dataPagamentoMotorista = hojeISO();
   if (!v.pagoMotorista) v.dataPagamentoMotorista = "";
@@ -1089,6 +1112,7 @@ function setViagemPagoMotorista(id, checked) {
 function setViagemDataPagamentoMotorista(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.dataPagamentoMotorista = valor;
   if (valor) v.pagoMotorista = true;
   salvar(); render();
@@ -1096,6 +1120,7 @@ function setViagemDataPagamentoMotorista(id, valor) {
 function adicionarOutroItem(viagemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   if (!v.outrosItens) v.outrosItens = [];
   v.outrosItens.push({ id: uid(), valor: 0, desc: "" });
   salvar(); render();
@@ -1103,6 +1128,7 @@ function adicionarOutroItem(viagemId) {
 function atualizarOutroItem(viagemId, itemId, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   const item = (v.outrosItens || []).find((i) => i.id === itemId);
   if (item) item[campo] = valor;
   salvar(); render();
@@ -1110,12 +1136,14 @@ function atualizarOutroItem(viagemId, itemId, campo, valor) {
 function removerOutroItem(viagemId, itemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.outrosItens = (v.outrosItens || []).filter((i) => i.id !== itemId);
   salvar(); render();
 }
 function adicionarCombustivelItem(viagemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   if (!v.combustivelItens) v.combustivelItens = [];
   v.combustivelItens.push({ id: uid(), valor: 0, litros: 0, precoL: 0, desc: "" });
   salvar(); render();
@@ -1128,6 +1156,7 @@ function adicionarCombustivelItem(viagemId) {
 function atualizarCombustivelItem(viagemId, itemId, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   const item = (v.combustivelItens || []).find((i) => i.id === itemId);
   if (!item) return;
   if (campo === "precoL") {
@@ -1147,6 +1176,7 @@ function atualizarCombustivelItem(viagemId, itemId, campo, valor) {
 function removerCombustivelItem(viagemId, itemId) {
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (v.trancada && !ehAdmin()) return;
   v.combustivelItens = (v.combustivelItens || []).filter((i) => i.id !== itemId);
   salvar(); render();
 }
@@ -4966,14 +4996,14 @@ function renderTabela() {
         <th>Placa</th><th>Motorista</th><th>Cliente</th><th>Data</th><th>Valor Viagem</th><th>💰 Pago?</th><th>KM Saída</th><th>KM Chegada</th><th>KM</th><th>m³</th><th>Dias</th><th>Combustível (abastecimentos)</th>
         <th>Alim. Mot. (auto)</th><th>Tem Ajud.?</th><th>Alim. Ajud. (auto)</th><th>Pag. Mot.</th><th>Pag. Ajud.</th>
         <th>ADM (2,5%)</th><th>Manut. (3%)</th><th>Imposto (${impostoPctNum()}%)</th><th>Pneus (R$0,12/km)</th><th>Outros (despesas extras)</th>
-        <th>Total Desp.</th><th>Sobra</th><th></th>
+        <th>Total Desp.</th><th>Sobra</th><th>🔒 Trava</th>
       </tr></thead><tbody>
         ${viagensFiltro.map((v) => {
           const c = calcularViagem(v);
           const itensOutros = v.outrosItens || [];
           const itensComb = v.combustivelItens || [];
           const temAjudante = v.temAjudante !== false;
-          return `<tr>
+          return `<tr style="${v.trancada ? "pointer-events:none; opacity:0.55;" : ""}">
             <td><select onchange="atualizarViagem('${v.id}','placa',this.value)">${state.veiculos.map((vc) => `<option ${v.placa === vc.placa ? "selected" : ""}>${esc(vc.placa) || "(sem placa)"}</option>`).join("")}</select>
               ${(() => {
                 const sm = v.statusMotorista;
@@ -5084,7 +5114,10 @@ function renderTabela() {
             </td>
             <td style="font-weight:700;color:#C0392B;">${fmtR(c.totalDesp)}</td>
             <td style="font-weight:800;color:${c.sobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(c.sobra)}</td>
-            <td><button class="btn-del" onclick="removerViagem('${v.id}')">✕</button></td>
+            <td style="pointer-events:auto; white-space:nowrap;">
+              <button onclick="toggleTravarViagem('${v.id}')" title="${v.trancada ? (ehAdmin() ? "Destravar (Admin)" : "Travada — só Admin destrava") : "Travar viagem (ninguém mais poderá editar)"}" style="background:none; border:none; cursor:${(!v.trancada || ehAdmin()) ? "pointer" : "not-allowed"}; font-size:16px; margin-right:6px;" ${(v.trancada && !ehAdmin()) ? "disabled" : ""}>${v.trancada ? "🔒" : "🔓"}</button>
+              <button class="btn-del" onclick="removerViagem('${v.id}')" style="${v.trancada ? "opacity:0.3; pointer-events:none;" : ""}">✕</button>
+            </td>
           </tr>`;
         }).join("")}
       </tbody></table>
