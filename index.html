@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v132)</title>
+<title>RF Logística — Painel da Frota (v133)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3988,13 +3988,29 @@ Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
 Margem da frota (manual): ${fmtR(t.margem)} (${t.margemPct.toFixed(1)}%)
 Viagens do mês: ${t.viagensMes} — receita ${fmtR(t.viagensReceita)}, despesa ${fmtR(t.viagensDespesa)}, resultado ${fmtR(t.viagensSobra)}
 Viagens acumulado (todos os meses): receita ${fmtR(t.viagensReceitaAcum)}, resultado ${fmtR(t.viagensSobraAcum)} (margem ${t.margemViagensAcumPct.toFixed(1)}%)
-Dívidas fixas do mês (total): ${fmtR(t.totalDividasFixas)}
 Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
 Abastecimento aprovado no mês (fora do cálculo por viagem): ${fmtR(abastMesAprovado)}
-RESULTADO OFICIAL do mês (igual à aba Financeiro): ${cxAtivo ? fmtR(cxAtivo.resultadoMes) + (cxAtivo.resultadoMes >= 0 ? " (sobrou)" : " (faltou)") : "(sem fechamento calculado pra esse mês)"}
-Posição real do caixa acumulado (saldo que rola pro próximo mês): ${cxAtivo ? fmtR(cxAtivo.saldoFinal) : "(indisponível)"}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
+
+⚠️ IMPORTANTE — existem DUAS informações de "dívidas fixas" no sistema, não confunda:
+- Total de TODAS as dívidas fixas cadastradas (inclui algumas que podem não estar ativas nesse mês específico): ${fmtR(t.totalDividasFixas)}
+- Dívidas fixas REALMENTE ATIVAS no mês ativo (${mesA}) — É ESSE que entra no cálculo oficial do resultado do mês: ${cxAtivo ? fmtR(cxAtivo.dividasFixasMes) : "(indisponível)"}
+
+FÓRMULA OFICIAL do resultado do mês (a mesma da aba Financeiro — use ESTA fórmula pra qualquer projeção, nunca invente outra):
+Resultado do mês = (Receita fixa/aluguel + Receita das viagens) − (Custo fixo manual + Despesa das viagens sem imposto + Manutenção real) − Imposto das viagens − Dívidas fixas ativas do mês (+ ajuste manual, se houver)
+Componentes do mês ativo (${mesA}):
+- Receita fixa/aluguel (recorrente, NÃO muda com o número de caminhões em viagem): ${cxAtivo ? fmtR(cxAtivo.receitaManual) : "0"}
+- Custo fixo manual (recorrente, NÃO muda com o número de caminhões): ${cxAtivo ? fmtR(cxAtivo.custoManual) : "0"}
+- Receita das viagens (ESCALA com o número de caminhões em viagem): ${cxAtivo ? fmtR(cxAtivo.viagensReceita) : "0"}
+- Despesa das viagens sem imposto (ESCALA com o número de caminhões): ${cxAtivo ? fmtR(cxAtivo.viagensDespesaSemImposto) : "0"}
+- Imposto das viagens (ESCALA com o número de caminhões): ${cxAtivo ? fmtR(cxAtivo.viagensImposto) : "0"}
+- Manutenção real (parcialmente fixa, use o valor atual como referência): ${cxAtivo ? fmtR(cxAtivo.manutencaoReal) : "0"}
+- Ajuste manual do mês (one-off, se houver): ${cxAtivo ? fmtR(cxAtivo.ajusteManual) : "0"}
+RESULTADO OFICIAL do mês (conferido, igual à aba Financeiro): ${cxAtivo ? fmtR(cxAtivo.resultadoMes) + (cxAtivo.resultadoMes >= 0 ? " (sobrou)" : " (faltou)") : "(sem fechamento calculado pra esse mês)"}
+Posição real do caixa acumulado (saldo que rola pro próximo mês): ${cxAtivo ? fmtR(cxAtivo.saldoFinal) : "(indisponível)"}
+
+PARA PROJEÇÕES (ex: "e se tivéssemos N caminhões em viagem"): escale SÓ os componentes marcados "ESCALA" acima (calcule a média atual por caminhão em viagem = valor ÷ ${t.emViagem || 1} caminhões em viagem, multiplique pela nova quantidade). Receita fixa, custo fixo e dívidas fixas do mês ficam EXATAMENTE OS MESMOS valores acima, não escalam.
 
 Frota completa (todos os veículos cadastrados):
 ${frotaTudo || "(nenhum)"}
