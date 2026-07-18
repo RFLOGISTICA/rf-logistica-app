@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v131)</title>
+<title>RF Logística — Painel da Frota (v132)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3761,6 +3761,10 @@ function render() {
   const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
 
   const totais = calcularTotais();
+  // v132: mesmo cálculo oficial da aba Financeiro, pra esse medidor nunca
+  // mais mostrar um "lucro real" diferente do "Resultado do mês" que a
+  // pessoa vê na aba Financeiro (eram duas contas diferentes antes).
+  const caixaOficialFrota = (calcularCaixaMeses()[state.mesAtivo] || { resultadoMes: 0 });
   const root = document.getElementById("root");
 
   root.innerHTML = `
@@ -3808,7 +3812,7 @@ function render() {
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px,1fr)); gap:8px; justify-items:center;">
           ${podeVerAba("financeiro") ? gauge(totais.margemPct, "Margem da frota", fmtR(totais.margem), totais.margem >= 0 ? "#2E7D32" : "#C0392B") : ""}
           ${gauge(totais.ocupacaoPct, "Ocupação da frota", totais.emViagem + " de " + totais.totalVeiculos + " em viagem", GOLD)}
-          ${podeVerAba("financeiro") ? gauge((totais.totalDividasFixas + totais.manutencaoReal) > 0 ? Math.min(100, (totais.liquidoTotal / (totais.totalDividasFixas + totais.manutencaoReal)) * 100) : 0, "Cobertura das despesas (" + mesLabel(state.mesAtivo) + ")", fmtR(totais.lucroReal) + " de lucro real", totais.lucroReal >= 0 ? "#2E7D32" : "#C0392B") : ""}
+          ${podeVerAba("financeiro") ? gauge((totais.totalDividasFixas + totais.manutencaoReal) > 0 ? Math.min(100, (totais.liquidoTotal / (totais.totalDividasFixas + totais.manutencaoReal)) * 100) : 0, "Cobertura das despesas (" + mesLabel(state.mesAtivo) + ")", fmtR(caixaOficialFrota.resultadoMes) + " de resultado do mês", caixaOficialFrota.resultadoMes >= 0 ? "#2E7D32" : "#C0392B") : ""}
           ${podeVerAba("financeiro") ? gauge(totais.margemViagensAcumPct, "Margem acumulada (todos os meses)", fmtR(totais.viagensSobraAcum) + " líquido • histórico", totais.viagensSobraAcum >= 0 ? "#2E7D32" : "#C0392B") : ""}
         </div>
       </div>
@@ -3887,9 +3891,15 @@ function render() {
 function gerarContextoAssistente() {
   const t = calcularTotais();
   const mesA = mesLabel(state.mesAtivo);
-  // v129: "acesso quase total" — pra projeções, ele precisa ver a frota
-  // inteira, todas as dívidas fixas (não só as que vencem logo) e
-  // manutenção/abastecimento do mês, além do que já tinha (viagens).
+  // v132: CORREÇÃO IMPORTANTE — existiam dois cálculos de "lucro do mês" no
+  // painel (um mais antigo em calcularTotais().lucroReal, outro oficial na
+  // aba Financeiro via calcularCaixaMeses(), que considera dívidas fixas
+  // específicas do mês e ajustes manuais). Eram números diferentes! O
+  // assistente agora usa o MESMO cálculo oficial que aparece na tela
+  // Financeiro ("Resultado do mês" e "Posição real do caixa"), pra nunca
+  // mais divergir do que a pessoa vê na tela.
+  const caixaMeses = calcularCaixaMeses();
+  const cxAtivo = caixaMeses[state.mesAtivo] || null;
   const frotaTudo = veiculosComMes().map((v) =>
     `- ${v.placa} (${v.tipo || "?"}, ${v.modelo || "?"}, ${v.kmPorLitro || "?"} km/l): motorista ${v.motorista || "(sem)"}, regime ${v.regimeMotorista || "?"}, status ${v.statusOp || "?"}${v.local ? ", local: " + v.local : ""}`
   ).join("\n");
@@ -3982,7 +3992,8 @@ Dívidas fixas do mês (total): ${fmtR(t.totalDividasFixas)}
 Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
 Abastecimento aprovado no mês (fora do cálculo por viagem): ${fmtR(abastMesAprovado)}
-Lucro real do mês: ${fmtR(t.lucroReal)}
+RESULTADO OFICIAL do mês (igual à aba Financeiro): ${cxAtivo ? fmtR(cxAtivo.resultadoMes) + (cxAtivo.resultadoMes >= 0 ? " (sobrou)" : " (faltou)") : "(sem fechamento calculado pra esse mês)"}
+Posição real do caixa acumulado (saldo que rola pro próximo mês): ${cxAtivo ? fmtR(cxAtivo.saldoFinal) : "(indisponível)"}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
 
 Frota completa (todos os veículos cadastrados):
