@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v123)</title>
+<title>RF Logística — Painel da Frota (v125)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3908,6 +3908,7 @@ ${seguroVencendo || "(nenhum)"}`;
 }
 function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
+  if (!state._chatAberto && window.speechSynthesis) window.speechSynthesis.cancel();
   render();
 }
 function chatEnviarPergunta() {
@@ -3935,7 +3936,9 @@ function chatEnviarPergunta() {
         .then(function (res2) {
           state._chatCarregando = false;
           if (!res2.ok) { chatErro(res2.j.error || "Erro ao falar com o assistente."); return; }
-          state._chatMensagens.push({ role: "assistant", content: res2.j.resposta || "(sem resposta)" });
+          const resposta = res2.j.resposta || "(sem resposta)";
+          state._chatMensagens.push({ role: "assistant", content: resposta });
+          falarTexto(resposta);
           render();
         }).catch(function (e) { chatErro("Erro de conexão: " + e.message); });
     });
@@ -3950,6 +3953,50 @@ function chatLimpar() {
   state._chatMensagens = [];
   render();
 }
+// v124: falar com o assistente por voz — usa o reconhecimento de fala do
+// próprio navegador (Web Speech API), de graça, sem passar pela API paga.
+// Funciona no Chrome (Android/desktop); em navegadores sem suporte, avisa.
+// v125: o assistente também FALA a resposta em voz alta (texto-pra-voz do
+// próprio navegador, de graça, sem gastar crédito da OpenAI). Dá pra
+// silenciar no botão 🔊 no cabeçalho do chat.
+function falarTexto(texto) {
+  if (state._chatVozAtiva === false || !window.speechSynthesis || !texto) return;
+  try {
+    window.speechSynthesis.cancel(); // corta qualquer fala anterior ainda em andamento
+    const fala = new SpeechSynthesisUtterance(texto);
+    fala.lang = "pt-BR";
+    const vozes = window.speechSynthesis.getVoices();
+    const vozPt = vozes.find((v) => v.lang === "pt-BR") || vozes.find((v) => v.lang && v.lang.indexOf("pt") === 0);
+    if (vozPt) fala.voice = vozPt;
+    window.speechSynthesis.speak(fala);
+  } catch (e) { /* navegador sem suporte a fala — ignora silenciosamente */ }
+}
+function chatAlternarVozResposta() {
+  state._chatVozAtiva = !state._chatVozAtiva;
+  if (!state._chatVozAtiva && window.speechSynthesis) window.speechSynthesis.cancel();
+  render();
+}
+var _rfReconhecimentoVoz = null;
+function chatAlternarVoz() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert("Esse navegador não suporta reconhecimento de voz. Tenta pelo Chrome."); return; }
+  if (state._chatOuvindo && _rfReconhecimentoVoz) { _rfReconhecimentoVoz.stop(); return; }
+  _rfReconhecimentoVoz = new SR();
+  _rfReconhecimentoVoz.lang = "pt-BR";
+  _rfReconhecimentoVoz.continuous = false;
+  _rfReconhecimentoVoz.interimResults = false;
+  _rfReconhecimentoVoz.onstart = function () { state._chatOuvindo = true; render(); };
+  _rfReconhecimentoVoz.onresult = function (ev) {
+    const texto = ev.results[0][0].transcript;
+    const input = document.getElementById("chatInput");
+    if (input) input.value = texto;
+    state._chatOuvindo = false;
+    chatEnviarPergunta(); // lê o input e já renderiza — não chamar render() antes, senão apaga o texto
+  };
+  _rfReconhecimentoVoz.onerror = function () { state._chatOuvindo = false; render(); };
+  _rfReconhecimentoVoz.onend = function () { state._chatOuvindo = false; render(); };
+  try { _rfReconhecimentoVoz.start(); } catch (e) { state._chatOuvindo = false; }
+}
 function assistenteWidgetHTML() {
   const aberto = !!state._chatAberto;
   const msgs = state._chatMensagens || [];
@@ -3961,6 +4008,7 @@ function assistenteWidgetHTML() {
       <div style="background:${GOLD}; color:#000; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;">
         <span>💬 Assistente RF</span>
         <div>
+          <button onclick="chatAlternarVozResposta()" title="${state._chatVozAtiva === false ? "Ativar resposta por voz" : "Silenciar resposta por voz"}" style="background:none; border:none; color:#000; cursor:pointer; font-size:15px; margin-right:8px;">${state._chatVozAtiva === false ? "🔇" : "🔊"}</button>
           <button onclick="chatLimpar()" title="Limpar conversa" style="background:none; border:none; color:#000; cursor:pointer; font-size:13px; margin-right:8px;">limpar</button>
           <button onclick="toggleChatAssistente()" style="background:none; border:none; color:#000; cursor:pointer; font-size:18px; font-weight:800;">✕</button>
         </div>
@@ -3974,6 +4022,7 @@ function assistenteWidgetHTML() {
         ${state._chatCarregando ? `<div style="color:#888; font-size:12px;">digitando...</div>` : ""}
       </div>
       <div style="padding:8px; border-top:1px solid #333; display:flex; gap:6px;">
+        <button id="chatMicBtn" title="Falar" onclick="chatAlternarVoz()" style="padding:6px 10px; border-radius:6px; border:1px solid ${state._chatOuvindo ? "#C0392B" : "#3A3A3A"}; background:${state._chatOuvindo ? "#C0392B" : "#1E1E1E"}; color:#fff; cursor:pointer; font-size:15px;">🎤</button>
         <input id="chatInput" placeholder="Pergunte algo..." onkeydown="if(event.key==='Enter'){chatEnviarPergunta();}" style="flex:1; font-size:13px;">
         <button class="btn-gold" style="padding:6px 12px;" onclick="chatEnviarPergunta()">➤</button>
       </div>
