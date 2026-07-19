@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v140)</title>
+<title>RF Logística — Painel da Frota (v142)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -6562,33 +6562,44 @@ function rfAbastLerBombaAuto(abastId, blob) {
     if (a && a.status === "pendente") { a.ocrStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
   });
 }
-// v137: leitura automática do KM na foto do painel (odômetro) — pega a maior
-// sequência de dígitos encontrada na foto (odômetro geralmente tem 5-7 dígitos).
-// Só preenche se o campo ainda estiver vazio -- nunca sobrescreve o que o
-// motorista já digitou com a mão.
-function rfAbastExtrairKm(texto) {
-  var candidatos = texto.match(/\d{4,7}/g) || [];
-  if (!candidatos.length) return 0;
-  candidatos.sort(function (a, b) { return b.length - a.length; });
-  return parseInt(candidatos[0], 10) || 0;
-}
+// v142: leitura do KM do painel agora usa IA com visão de verdade (mesma
+// tecnologia do assistente), em vez do OCR gratuito — o OCR gratuito é ruim
+// pra mostrador digital de painel (LED/LCD), sujo, com reflexo. Custa uma
+// fração de centavo por foto, mas lê muito melhor. Se algo falhar (sem
+// internet, erro na API), o motorista sempre pode preencher na mão.
 function rfAbastLerKmAuto(abastId, blob) {
-  rfOcrCarregarLib().then(function () {
-    return Tesseract.recognize(blob, "por");
-  }).then(function (result) {
-    var texto = (result && result.data && result.data.text) || "";
-    var km = rfAbastExtrairKm(texto);
-    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (!a) return;
-    if (a.status !== "pendente") return;
-    if (km > 0 && !a.kmAtual) a.kmAtual = km;
-    a.ocrKmStatus = km > 0 ? "ok" : "erro";
-    render();
-    rfAbastSalvarCampoMotorista(a);
-  }).catch(function () {
-    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (a && a.status === "pendente") { a.ocrKmStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
-  });
+  var reader = new FileReader();
+  reader.onload = function () {
+    var base64 = String(reader.result || "").split(",")[1] || "";
+    if (!base64) { rfAbastKmMarcarErro(abastId); return; }
+    rfGetClient().then(function (sb) {
+      if (!sb) { rfAbastKmMarcarErro(abastId); return; }
+      sb.auth.getSession().then(function (res) {
+        var token = res.data && res.data.session && res.data.session.access_token;
+        if (!token) { rfAbastKmMarcarErro(abastId); return; }
+        fetch(RF_SB_URL + "/functions/v1/ler-km-painel", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ imagemBase64: base64, mimeType: blob.type || "image/jpeg" }),
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+          if (!a) return;
+          if (a.status !== "pendente") return;
+          var km = Number(j.km) || 0;
+          if (km > 0 && !a.kmAtual) a.kmAtual = km;
+          a.ocrKmStatus = km > 0 ? "ok" : "erro";
+          render();
+          rfAbastSalvarCampoMotorista(a);
+        }).catch(function () { rfAbastKmMarcarErro(abastId); });
+      });
+    });
+  };
+  reader.onerror = function () { rfAbastKmMarcarErro(abastId); };
+  reader.readAsDataURL(blob);
+}
+function rfAbastKmMarcarErro(abastId) {
+  var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+  if (a && a.status === "pendente") { a.ocrKmStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
 }
 // v137: leitura automática da NOTA — não preenche nada sozinha (nota tem
 // letreiro demais, mais fácil de confundir), só CONFERE se o valor total
