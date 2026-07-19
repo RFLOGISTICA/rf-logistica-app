@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v145)</title>
+<title>RF Logística — Painel da Frota (v147)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3144,13 +3144,24 @@ function rfViagemFimParaDB(a) {
     criado_em: a.criadoEm || Date.now(),
   };
 }
+// v146: mesma proteção aplicada hoje em abastecimentos e na caixa geral —
+// edição local recente protege esse registro de ser sobrescrito por um
+// recarregamento em tempo real concorrente (era a mesma causa do status
+// "aguardando_equipe" ficar preso numa viagem sem aviso de fim de verdade).
+var _rfViagemFimEditsRecentes = {};
+function rfViagemFimMarcarEditadoAgora(id) { _rfViagemFimEditsRecentes[id] = Date.now(); }
 function rfViagemFimCarregar() {
   rfGetClient().then(function (sb) {
     if (!sb || !sessaoValida()) return;
     sb.from(RF_VIAGEMFIM_TABELA).select("*").then(function (res) {
       if (res.error) { console.warn("viagens_finalizadas_motorista:", res.error.message); return; }
-      state.viagensFinalizadas = (res.data || []).map(rfViagemFimParaJS)
-        .sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
+      var agora = Date.now();
+      var atuais = {};
+      (state.viagensFinalizadas || []).forEach(function (a) { atuais[a.id] = a; });
+      state.viagensFinalizadas = (res.data || []).map(function (row) {
+        var editadoRecente = _rfViagemFimEditsRecentes[row.id] && (agora - _rfViagemFimEditsRecentes[row.id] < 6000);
+        return editadoRecente && atuais[row.id] ? atuais[row.id] : rfViagemFimParaJS(row);
+      }).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
       render();
     });
   });
@@ -3166,6 +3177,7 @@ function rfViagemFimAssinarTempoReal() {
   });
 }
 function rfViagemFimSalvarLinha(a) {
+  rfViagemFimMarcarEditadoAgora(a.id);
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
     sb.from(RF_VIAGEMFIM_TABELA).upsert(rfViagemFimParaDB(a)).then(function (res) {
@@ -3444,13 +3456,32 @@ function motoristaUploadEConfirmar(input, viagemId, tipo) {
       var path = "km/" + placa + "/" + viagemId + "-" + tipo + "-" + Date.now() + "." + p.ext;
       return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
-        var fn = tipo === "inicio" ? "motorista_confirmar_inicio" : "motorista_confirmar_fim";
-        var params = tipo === "inicio" ? { p_viagem_id: viagemId, p_foto_km_saida: path } : { p_viagem_id: viagemId, p_foto_km_chegada: path };
-        return sb.rpc(fn, params).then(function (res2) {
-          if (res2.error) throw res2.error;
-          input.value = "";
-          motoristaCarregarViagensAtivas();
-        });
+        // v146: lê o KM da foto com a IA de visão (mesma tecnologia do
+        // abastecimento) antes de confirmar — assim já manda o número pronto
+        // pra equipe, sem precisar digitar depois olhando a foto na mão.
+        var terminarConfirmacao = function (kmLido) {
+          var fn = tipo === "inicio" ? "motorista_confirmar_inicio" : "motorista_confirmar_fim";
+          var params = tipo === "inicio"
+            ? { p_viagem_id: viagemId, p_foto_km_saida: path, p_km: kmLido || null }
+            : { p_viagem_id: viagemId, p_foto_km_chegada: path, p_km: kmLido || null };
+          return sb.rpc(fn, params).then(function (res2) {
+            if (res2.error) throw res2.error;
+            input.value = "";
+            motoristaCarregarViagensAtivas();
+            if (kmLido > 0) {
+              alert("✓ Confirmado! KM lido automaticamente: " + kmLido + ". Se estiver errado, avise a equipe.");
+            } else {
+              alert("Confirmado — mas não consegui ler o KM sozinho na foto. A equipe vai completar manualmente.");
+            }
+          });
+        };
+        if (isImg) {
+          rfLerFotoIA("km", p.blob, function (j) {
+            terminarConfirmacao((j && Number(j.km)) || 0);
+          });
+        } else {
+          terminarConfirmacao(0);
+        }
       });
     }).catch(function (e) { alert("Erro ao confirmar: " + (e.message || e)); });
   });
