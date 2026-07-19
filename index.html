@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v144)</title>
+<title>RF Logística — Painel da Frota (v145)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -6025,6 +6025,14 @@ revalidarSessaoAoAbrir();
   // terminar, alguém edita algo nesse intervalo, e o estado local (ainda
   // vazio) sobe por cima da nuvem real 900ms depois.
   var dadosCarregados = false;
+  // v145: CORREÇÃO IMPORTANTE — mesmo bug de hoje (corrida entre "salvar" e
+  // "atualização em tempo real"), agora achado também na caixa geral principal
+  // (viagens/veículos/etc, não só abastecimentos). Ex: aprovar 2 abastecimentos
+  // seguidos pra mesma viagem podia perder o segundo, porque uma atualização em
+  // tempo real chegava entre o 1º salvamento e o 2º, sobrescrevendo o item que
+  // ainda não tinha subido. Agora qualquer edição local nos últimos 6 segundos
+  // protege TODA a caixa geral de ser sobrescrita por uma atualização recebida.
+  var _ultimaEdicaoLocalTs = 0;
 
   // indicador de status (canto inferior direito)
   var badge = document.createElement("div");
@@ -6051,6 +6059,7 @@ revalidarSessaoAoAbrir();
         salvarOriginal();
         if (!podeSincronizar) return; // v92: motorista nunca escreve na caixa geral
         houveEdicaoLocal = true;
+        _ultimaEdicaoLocalTs = Date.now();
         agendarSubida();
       };
     })(salvar);
@@ -6177,6 +6186,11 @@ revalidarSessaoAoAbrir();
           if (!nova || CHAVES.indexOf(nova.chave) === -1) return;
           var txt = JSON.stringify(nova.valor);
           if (txt === ultimoEnviado[nova.chave]) return;
+          // v145: se editei algo há pouco (ainda pode estar subindo), NÃO aplica
+          // essa atualização recebida agora — ela pode ser mais antiga que a minha
+          // edição em andamento. Assim que meu envio terminar e ultimoEnviado
+          // atualizar, a próxima atualização real (se houver) passa normalmente.
+          if (Date.now() - _ultimaEdicaoLocalTs < 6000) return;
           state[nova.chave] = nova.valor;
           ultimoEnviado[nova.chave] = txt;
           try { localStorage.setItem(MAPA_LS[nova.chave], txt); } catch (e) {}
