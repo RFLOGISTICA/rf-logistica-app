@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v136)</title>
+<title>RF Logística — Painel da Frota (v137)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2740,6 +2740,9 @@ function rfAbastCard(a, souMotorista) {
         ${a.fotoKm
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoKm}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','km')">✕</button>` : ""}`
           : editavel ? `<input type="file" accept="image/*" onchange="rfAbastUpload(this,'${a.id}','km')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+        ${a.ocrKmStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo o KM da foto automaticamente...</div>` : ""}
+        ${a.ocrKmStatus === "ok" ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ KM lido automaticamente — confira antes de salvar.</div>` : ""}
+        ${a.ocrKmStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o KM sozinho. Preencha manualmente.</div>` : ""}
       </div>
       <div>
         <div style="font-size:10px;color:${a.fotoBomba ? "#999" : "#C0392B"};margin-bottom:4px;">⛽ Foto do visor da bomba <b>(valor/litros — obrigatória)</b></div>
@@ -2755,8 +2758,10 @@ function rfAbastCard(a, souMotorista) {
         ${a.fotoNota
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoNota}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','nota')">✕</button>` : ""}`
           : editavel ? `<input type="file" accept="image/*" onchange="rfAbastUpload(this,'${a.id}','nota')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+        ${a.notaValorLido > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
     </div>
+    ${a.ocrAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">⚠ ${esc(a.ocrAlerta)}</div>` : ""}
     ${souMotorista && editavel ? `<div style="margin-top:8px;">
       <div style="font-size:10px;color:#999;margin-bottom:3px;">🚚 Vincular à viagem (opcional)</div>
       ${(() => {
@@ -6441,9 +6446,14 @@ function rfAbastUpload(input, abastId, tipo) {
         if (res.error) throw res.error;
         if (tipo === "km") a.fotoKm = path; else if (tipo === "nota") a.fotoNota = path; else a.fotoBomba = path;
         input.value = "";
-        if (tipo === "bomba" && isImg) {
+        if (tipo === "km" && isImg) {
+          a.ocrKmStatus = "lendo";
+          rfAbastLerKmAuto(a.id, p.blob);
+        } else if (tipo === "bomba" && isImg) {
           a.ocrStatus = "lendo";
           rfAbastLerBombaAuto(a.id, p.blob);
+        } else if (tipo === "nota" && isImg) {
+          rfAbastLerNotaAuto(a.id, p.blob);
         }
         render();
         rfAbastSalvarCampoMotorista(a);
@@ -6493,6 +6503,57 @@ function rfAbastLerBombaAuto(abastId, blob) {
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
     if (a && a.status === "pendente") { a.ocrStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
   });
+}
+// v137: leitura automática do KM na foto do painel (odômetro) — pega a maior
+// sequência de dígitos encontrada na foto (odômetro geralmente tem 5-7 dígitos).
+// Só preenche se o campo ainda estiver vazio -- nunca sobrescreve o que o
+// motorista já digitou com a mão.
+function rfAbastExtrairKm(texto) {
+  var candidatos = texto.match(/\d{4,7}/g) || [];
+  if (!candidatos.length) return 0;
+  candidatos.sort(function (a, b) { return b.length - a.length; });
+  return parseInt(candidatos[0], 10) || 0;
+}
+function rfAbastLerKmAuto(abastId, blob) {
+  rfOcrCarregarLib().then(function () {
+    return Tesseract.recognize(blob, "por");
+  }).then(function (result) {
+    var texto = (result && result.data && result.data.text) || "";
+    var km = rfAbastExtrairKm(texto);
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a) return;
+    if (a.status !== "pendente") return;
+    if (km > 0 && !a.kmAtual) a.kmAtual = km;
+    a.ocrKmStatus = km > 0 ? "ok" : "erro";
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  }).catch(function () {
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (a && a.status === "pendente") { a.ocrKmStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
+  });
+}
+// v137: leitura automática da NOTA — não preenche nada sozinha (nota tem
+// letreiro demais, mais fácil de confundir), só CONFERE se o valor total
+// impresso nela bate com o valor já lido/digitado da bomba, e avisa se não bater.
+function rfAbastLerNotaAuto(abastId, blob) {
+  rfOcrCarregarLib().then(function () {
+    return Tesseract.recognize(blob, "por");
+  }).then(function (result) {
+    var texto = (result && result.data && result.data.text) || "";
+    var campos = rfAbastExtrairValores(texto);
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a) return;
+    if (a.status !== "pendente") return;
+    a.notaValorLido = campos.valor || 0;
+    var valorBomba = Number(a.valor) || 0;
+    if (a.notaValorLido > 0 && valorBomba > 0 && Math.abs(a.notaValorLido - valorBomba) > 2) {
+      a.ocrAlerta = "O valor lido na nota (" + fmtR(a.notaValorLido) + ") não bate com o valor da bomba (" + fmtR(valorBomba) + "). Confira as duas fotos antes de enviar.";
+    } else {
+      a.ocrAlerta = "";
+    }
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  }).catch(function () { /* nota é mais difícil de ler (mais texto/ruído) — falha aqui não trava o fluxo do motorista */ });
 }
 function rfAbastVer(path) {
   rfGetClient().then(function (sb) {
