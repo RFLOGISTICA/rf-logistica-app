@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v137)</title>
+<title>RF Logística — Painel da Frota (v138)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2739,7 +2739,10 @@ function rfAbastCard(a, souMotorista) {
         <div style="font-size:10px;color:#999;margin-bottom:4px;">📷 Foto do painel (KM)</div>
         ${a.fotoKm
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoKm}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','km')">✕</button>` : ""}`
-          : editavel ? `<input type="file" accept="image/*" onchange="rfAbastUpload(this,'${a.id}','km')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','km')"></label>
+              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','km')"></label>
+            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
         ${a.ocrKmStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo o KM da foto automaticamente...</div>` : ""}
         ${a.ocrKmStatus === "ok" ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ KM lido automaticamente — confira antes de salvar.</div>` : ""}
         ${a.ocrKmStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o KM sozinho. Preencha manualmente.</div>` : ""}
@@ -2748,7 +2751,10 @@ function rfAbastCard(a, souMotorista) {
         <div style="font-size:10px;color:${a.fotoBomba ? "#999" : "#C0392B"};margin-bottom:4px;">⛽ Foto do visor da bomba <b>(valor/litros — obrigatória)</b></div>
         ${a.fotoBomba
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoBomba}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','bomba')">✕</button>` : ""}`
-          : editavel ? `<input type="file" accept="image/*" onchange="rfAbastUpload(this,'${a.id}','bomba')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','bomba')"></label>
+              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','bomba')"></label>
+            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
         ${a.ocrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo valor da foto automaticamente...</div>` : ""}
         ${a.ocrStatus === "ok" ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Valor/litros lidos automaticamente — confira antes de salvar.</div>` : ""}
         ${a.ocrStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o valor sozinho. Preencha manualmente.</div>` : ""}
@@ -2757,7 +2763,10 @@ function rfAbastCard(a, souMotorista) {
         <div style="font-size:10px;color:${a.fotoNota ? "#999" : "#C0392B"};margin-bottom:4px;">🧾 Foto da nota/comprovante <b>(obrigatória)</b></div>
         ${a.fotoNota
           ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoNota}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','nota')">✕</button>` : ""}`
-          : editavel ? `<input type="file" accept="image/*" onchange="rfAbastUpload(this,'${a.id}','nota')">` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
+              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
+            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
         ${a.notaValorLido > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
     </div>
@@ -3429,12 +3438,18 @@ function motoristaViagemCard(vg) {
     </div>
     ${vg.status === "aguardando_motorista" ? `<div>
       <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM inicial (obrigatória para confirmar início)</div>
-      <input type="file" accept="image/*" onchange="motoristaUploadEConfirmar(this,'${vg.id}','inicio')">
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','inicio')"></label>
+        <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','inicio')"></label>
+      </div>
     </div>` : ""}
     ${vg.status === "em_andamento" ? `<div>
       ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;margin-bottom:8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
       <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM final (obrigatória para concluir)</div>
-      <input type="file" accept="image/*" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')">
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')"></label>
+        <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')"></label>
+      </div>
     </div>` : ""}
     ${vg.status === "aguardando_equipe" ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
       ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
