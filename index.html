@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v138)</title>
+<title>RF Logística — Painel da Frota (v139)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2767,7 +2767,7 @@ function rfAbastCard(a, souMotorista) {
               <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
               <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
             </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
-        ${a.notaValorLido > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
+        ${a.notaValorLido > 0 && Number(a.valor) > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
     </div>
     ${a.ocrAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">⚠ ${esc(a.ocrAlerta)}</div>` : ""}
@@ -2995,13 +2995,28 @@ function rfAbastParaDB(a) {
 }
 // Carrega os abastecimentos do banco. Para motorista, o RLS já entrega só os
 // dele; para equipe, entrega todos. Não depende do sync da caixa geral.
+// v139: CORREÇÃO IMPORTANTE — quando uma foto é enviada, ela sobe pro
+// armazenamento e SÓ DEPOIS o caminho dela é salvo no banco (são duas etapas).
+// Se uma atualização em tempo real chegasse NESSE MEIO TEMPO (ex: outra pessoa
+// mexendo em outro abastecimento), o recarregamento sobrescrevia o registro
+// inteiro com a versão antiga do banco — apagando a foto que acabou de ser
+// anexada, sem erro nenhum aparecer (a foto ficava só no armazenamento,
+// "órfã", nunca linkada). Agora qualquer edição local nos últimos 6 segundos
+// protege aquele registro específico de ser sobrescrito por um recarregamento.
+var _rfAbastEditsRecentes = {};
+function rfAbastMarcarEditadoAgora(id) { _rfAbastEditsRecentes[id] = Date.now(); }
 function rfAbastCarregar() {
   rfGetClient().then(function (sb) {
     if (!sb || !sessaoValida()) return;
     sb.from(RF_ABAST_TABELA).select("*").then(function (res) {
       if (res.error) { console.warn("abastecimentos_motorista:", res.error.message); return; }
-      state.abastecimentos = (res.data || []).map(rfAbastParaJS)
-        .sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
+      const agora = Date.now();
+      const atuais = {};
+      (state.abastecimentos || []).forEach(function (a) { atuais[a.id] = a; });
+      state.abastecimentos = (res.data || []).map(function (row) {
+        const editadoRecente = _rfAbastEditsRecentes[row.id] && (agora - _rfAbastEditsRecentes[row.id] < 6000);
+        return editadoRecente && atuais[row.id] ? atuais[row.id] : rfAbastParaJS(row);
+      }).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
       render();
     });
   });
@@ -3033,6 +3048,7 @@ function rfAbastSalvarLinha(a) {
 // só é aplicado se o registro ainda estiver "pendente" no banco -- se a equipe já
 // decidiu nesse meio tempo, a edição é descartada e a tela recarrega os dados reais.
 function rfAbastSalvarCampoMotorista(a) {
+  rfAbastMarcarEditadoAgora(a.id); // v139: protege esse registro de ser sobrescrito por um refetch concorrente
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
     var payload = rfAbastParaDB(a);
@@ -6487,9 +6503,14 @@ function rfAbastExtrairValores(texto) {
     litros = parseFloat(bruto.replace(",", "."));
     if (isNaN(litros)) litros = 0;
   }
-  var valores = texto.match(/(?:R\$)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/g) || [];
+  // v139: visores de bomba variam de formato — a maioria usa vírgula (padrão BR:
+  // "158,90"), mas alguns mostram com ponto ("158.90"). Tenta os dois formatos.
+  var valores = texto.match(/(?:R\$)?\s*\d{1,3}(?:\.\d{3})*,\d{2}\b/g) || [];
+  if (!valores.length) valores = texto.match(/(?:R\$)?\s*\d{1,4}\.\d{2}\b/g) || [];
   var nums = valores.map(function (v) {
-    return parseFloat(v.replace(/[R$\s.]/g, "").replace(",", "."));
+    var limpo = v.replace(/[R$\s]/g, "");
+    if (limpo.indexOf(",") !== -1) limpo = limpo.replace(/\./g, "").replace(",", ".");
+    return parseFloat(limpo);
   }).filter(function (n) { return !isNaN(n) && n > 0; });
   var totalM = texto.match(/TOTAL[^\d]{0,12}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
   var valor = 0;
