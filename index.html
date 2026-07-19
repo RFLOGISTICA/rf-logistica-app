@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v142)</title>
+<title>RF Logística — Painel da Frota (v143)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -6516,113 +6516,73 @@ function rfAbastUpload(input, abastId, tipo) {
 }
 
 // ---- Leitura automática do valor/litros na foto da bomba (v92, roda no navegador via OCR) ----
-function rfAbastExtrairValores(texto) {
-  var litrosM = texto.match(/(\d{1,3}[.,]\d{2,3})\s*(?:LTS?\b|LITROS?\b|L\b)/i) ||
-                texto.match(/LITROS?\s*[:\-]?\s*(\d{1,3}[.,]\d{2,3})/i);
-  var litros = 0;
-  if (litrosM) {
-    var bruto = (litrosM[1] || litrosM[0]).replace(/[^\d,.]/g, "");
-    litros = parseFloat(bruto.replace(",", "."));
-    if (isNaN(litros)) litros = 0;
-  }
-  // v139: visores de bomba variam de formato — a maioria usa vírgula (padrão BR:
-  // "158,90"), mas alguns mostram com ponto ("158.90"). Tenta os dois formatos.
-  var valores = texto.match(/(?:R\$)?\s*\d{1,3}(?:\.\d{3})*,\d{2}\b/g) || [];
-  if (!valores.length) valores = texto.match(/(?:R\$)?\s*\d{1,4}\.\d{2}\b/g) || [];
-  var nums = valores.map(function (v) {
-    var limpo = v.replace(/[R$\s]/g, "");
-    if (limpo.indexOf(",") !== -1) limpo = limpo.replace(/\./g, "").replace(",", ".");
-    return parseFloat(limpo);
-  }).filter(function (n) { return !isNaN(n) && n > 0; });
-  var totalM = texto.match(/TOTAL[^\d]{0,12}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
-  var valor = 0;
-  if (totalM) {
-    valor = parseFloat(totalM[1].replace(/\./g, "").replace(",", "."));
-  } else if (nums.length) {
-    valor = Math.max.apply(null, nums);
-  }
-  return { litros: litros, valor: valor };
-}
-function rfAbastLerBombaAuto(abastId, blob) {
-  rfOcrCarregarLib().then(function () {
-    return Tesseract.recognize(blob, "por");
-  }).then(function (result) {
-    var texto = (result && result.data && result.data.text) || "";
-    var campos = rfAbastExtrairValores(texto);
-    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (!a) return;
-    if (a.status !== "pendente") return; // já foi revisado antes da leitura terminar — não mexe em nada
-    if (campos.valor > 0) a.valor = campos.valor;
-    if (campos.litros > 0) a.litros = campos.litros;
-    a.ocrStatus = (campos.valor > 0 || campos.litros > 0) ? "ok" : "erro";
-    render();
-    rfAbastSalvarCampoMotorista(a);
-  }).catch(function () {
-    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (a && a.status === "pendente") { a.ocrStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
-  });
-}
-// v142: leitura do KM do painel agora usa IA com visão de verdade (mesma
-// tecnologia do assistente), em vez do OCR gratuito — o OCR gratuito é ruim
-// pra mostrador digital de painel (LED/LCD), sujo, com reflexo. Custa uma
-// fração de centavo por foto, mas lê muito melhor. Se algo falhar (sem
-// internet, erro na API), o motorista sempre pode preencher na mão.
-function rfAbastLerKmAuto(abastId, blob) {
+// v143: TODAS as 3 fotos do abastecimento (km, bomba, nota) agora usam a IA
+// com visão de verdade, em vez do OCR gratuito — lê muito melhor mostrador
+// digital de bomba, painel sujo/com reflexo e nota fiscal amassada. Custa
+// uma fração de centavo por foto. Helper compartilhado pelas 3.
+function rfLerFotoIA(tipo, blob, aoTerminar) {
   var reader = new FileReader();
   reader.onload = function () {
     var base64 = String(reader.result || "").split(",")[1] || "";
-    if (!base64) { rfAbastKmMarcarErro(abastId); return; }
+    if (!base64) { aoTerminar(null); return; }
     rfGetClient().then(function (sb) {
-      if (!sb) { rfAbastKmMarcarErro(abastId); return; }
+      if (!sb) { aoTerminar(null); return; }
       sb.auth.getSession().then(function (res) {
         var token = res.data && res.data.session && res.data.session.access_token;
-        if (!token) { rfAbastKmMarcarErro(abastId); return; }
-        fetch(RF_SB_URL + "/functions/v1/ler-km-painel", {
+        if (!token) { aoTerminar(null); return; }
+        fetch(RF_SB_URL + "/functions/v1/ler-foto-abastecimento", {
           method: "POST",
           headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ imagemBase64: base64, mimeType: blob.type || "image/jpeg" }),
-        }).then(function (r) { return r.json(); }).then(function (j) {
-          var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-          if (!a) return;
-          if (a.status !== "pendente") return;
-          var km = Number(j.km) || 0;
-          if (km > 0 && !a.kmAtual) a.kmAtual = km;
-          a.ocrKmStatus = km > 0 ? "ok" : "erro";
-          render();
-          rfAbastSalvarCampoMotorista(a);
-        }).catch(function () { rfAbastKmMarcarErro(abastId); });
+          body: JSON.stringify({ imagemBase64: base64, mimeType: blob.type || "image/jpeg", tipo: tipo }),
+        }).then(function (r) { return r.json(); }).then(function (j) { aoTerminar(j); })
+          .catch(function () { aoTerminar(null); });
       });
     });
   };
-  reader.onerror = function () { rfAbastKmMarcarErro(abastId); };
+  reader.onerror = function () { aoTerminar(null); };
   reader.readAsDataURL(blob);
 }
-function rfAbastKmMarcarErro(abastId) {
-  var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-  if (a && a.status === "pendente") { a.ocrKmStatus = "erro"; render(); rfAbastSalvarCampoMotorista(a); }
-}
-// v137: leitura automática da NOTA — não preenche nada sozinha (nota tem
-// letreiro demais, mais fácil de confundir), só CONFERE se o valor total
-// impresso nela bate com o valor já lido/digitado da bomba, e avisa se não bater.
-function rfAbastLerNotaAuto(abastId, blob) {
-  rfOcrCarregarLib().then(function () {
-    return Tesseract.recognize(blob, "por");
-  }).then(function (result) {
-    var texto = (result && result.data && result.data.text) || "";
-    var campos = rfAbastExtrairValores(texto);
+function rfAbastLerBombaAuto(abastId, blob) {
+  rfLerFotoIA("bomba", blob, function (j) {
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
-    if (!a) return;
-    if (a.status !== "pendente") return;
-    a.notaValorLido = campos.valor || 0;
+    if (!a || a.status !== "pendente") return;
+    var valor = (j && Number(j.valor)) || 0;
+    var litros = (j && Number(j.litros)) || 0;
+    if (valor > 0) a.valor = valor;
+    if (litros > 0) a.litros = litros;
+    a.ocrStatus = (valor > 0 || litros > 0) ? "ok" : "erro";
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  });
+}
+function rfAbastLerKmAuto(abastId, blob) {
+  rfLerFotoIA("km", blob, function (j) {
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a || a.status !== "pendente") return;
+    var km = (j && Number(j.km)) || 0;
+    if (km > 0 && !a.kmAtual) a.kmAtual = km;
+    a.ocrKmStatus = km > 0 ? "ok" : "erro";
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  });
+}
+// v137: a nota não preenche nada sozinha (mais fácil de confundir campos),
+// só CONFERE se o valor total dela bate com o valor já lido da bomba.
+function rfAbastLerNotaAuto(abastId, blob) {
+  rfLerFotoIA("nota", blob, function (j) {
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a || a.status !== "pendente") return;
+    var valorNota = (j && Number(j.valor)) || 0;
+    a.notaValorLido = valorNota;
     var valorBomba = Number(a.valor) || 0;
-    if (a.notaValorLido > 0 && valorBomba > 0 && Math.abs(a.notaValorLido - valorBomba) > 2) {
-      a.ocrAlerta = "O valor lido na nota (" + fmtR(a.notaValorLido) + ") não bate com o valor da bomba (" + fmtR(valorBomba) + "). Confira as duas fotos antes de enviar.";
+    if (valorNota > 0 && valorBomba > 0 && Math.abs(valorNota - valorBomba) > 2) {
+      a.ocrAlerta = "O valor lido na nota (" + fmtR(valorNota) + ") não bate com o valor da bomba (" + fmtR(valorBomba) + "). Confira as duas fotos antes de enviar.";
     } else {
       a.ocrAlerta = "";
     }
     render();
     rfAbastSalvarCampoMotorista(a);
-  }).catch(function () { /* nota é mais difícil de ler (mais texto/ruído) — falha aqui não trava o fluxo do motorista */ });
+  });
 }
 function rfAbastVer(path) {
   rfGetClient().then(function (sb) {
