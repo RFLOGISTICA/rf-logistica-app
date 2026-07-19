@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v139)</title>
+<title>RF Logística — Painel da Frota (v140)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2271,10 +2271,16 @@ function carregarPerfilEEntrar(sb, user) {
       window.rfIniciarSyncEquipe();
     }
     if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof carregarPerfis === "function") { carregarPerfis(); }
-    if (state.sessao.papel === "motorista" && typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
-    if (state.sessao.papel === "motorista" && typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
-    if (state.sessao.papel === "motorista" && typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
-    if (state.sessao.papel === "motorista" && typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+    // v140: CORREÇÃO DE REGRESSÃO — essas 4 chamadas tinham ficado restritas só
+    // a "motorista" desde a v120 (quando criei o papel "cliente"), por engano.
+    // Isso fazia o Admin nunca carregar nem atualizar a lista de abastecimentos
+    // (state.abastecimentos ficava vazio pra sempre pra ele) e nunca ver avisos
+    // de fim de viagem em tempo real. O certo sempre foi: todo mundo carrega,
+    // EXCETO "cliente" (que não deve ver dados de motoristas/abastecimento).
+    if (state.sessao.papel !== "cliente" && typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
+    if (state.sessao.papel !== "cliente" && typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
     if (state.sessao.papel === "motorista" && typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
     if (state.sessao.papel === "motorista" && typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
     if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
@@ -2308,6 +2314,22 @@ function revalidarSessaoAoAbrir() {
       state.sessao.placa_motorista = p.placa_motorista || "";
       state.sessao.cliente_nome = p.cliente_nome || "";
       salvarSessaoLocal();
+      // v140: CORREÇÃO DEFINITIVA — esse caminho (reabrir o app com sessão já
+      // salva, sem precisar logar de novo) NUNCA carregava abastecimentos nem
+      // avisos de fim de viagem, pra ninguém. Isso fazia a lista ficar vazia
+      // pra sempre depois de fechar/abrir o app, mesmo tendo dados novos no
+      // banco. Agora recarrega sempre, em toda reabertura — não só quando o
+      // papel muda.
+      if (state.sessao.papel !== "cliente") {
+        if (typeof rfAbastCarregar === "function") { rfAbastCarregar(); }
+        if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
+        if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
+        if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+      }
+      if (state.sessao.papel === "motorista") {
+        if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
+        if (typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
+      }
       if (papelMudou) {
         const perm = abasPermitidas();
         state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
