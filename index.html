@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v143)</title>
+<title>RF Logística — Painel da Frota (v144)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2792,7 +2792,10 @@ function rfAbastCard(a, souMotorista) {
         ${a.notaValorLido > 0 && Number(a.valor) > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
     </div>
-    ${a.ocrAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">⚠ ${esc(a.ocrAlerta)}</div>` : ""}
+    ${a.ocrAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">
+      ⚠ ${esc(a.ocrAlerta)}
+      ${editavel ? `<div style="margin-top:6px;"><button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastConfirmarDivergencia('${a.id}')">✓ Confirmar assim mesmo (explicar motivo)</button></div>` : ""}
+    </div>` : ""}
     ${souMotorista && editavel ? `<div style="margin-top:8px;">
       <div style="font-size:10px;color:#999;margin-bottom:3px;">🚚 Vincular à viagem (opcional)</div>
       ${(() => {
@@ -6568,6 +6571,20 @@ function rfAbastLerKmAuto(abastId, blob) {
 }
 // v137: a nota não preenche nada sozinha (mais fácil de confundir campos),
 // só CONFERE se o valor total dela bate com o valor já lido da bomba.
+// v144: quando a nota e a bomba divergem por um motivo legítimo (desconto à
+// vista, promoção, etc.), a pessoa confirma manualmente — pede o motivo e
+// registra na observação, pra ficar documentado pra quem for aprovar depois.
+function rfAbastConfirmarDivergencia(abastId) {
+  var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+  if (!a) return;
+  if (a.status !== "pendente") { alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado."); return; }
+  var motivo = window.prompt("Por que os valores são diferentes? (ex: desconto à vista, preço promocional...)", "");
+  if (motivo === null) return; // cancelou, não muda nada
+  a.obs = (a.obs ? a.obs + " | " : "") + "Divergência nota x bomba confirmada: " + (motivo.trim() || "sem motivo informado");
+  a.ocrAlerta = "";
+  render();
+  rfAbastSalvarCampoMotorista(a);
+}
 function rfAbastLerNotaAuto(abastId, blob) {
   rfLerFotoIA("nota", blob, function (j) {
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
