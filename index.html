@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v148)</title>
+<title>RF Logística — Painel da Frota (v149)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -3776,8 +3776,32 @@ function abastecimentosFiltrados() {
   if (st === "todos") return lista;
   return lista.filter((a) => a.status === st);
 }
+// v149: CORREÇÃO — se a sessão ainda não tinha terminado de carregar o ID do
+// usuário (ex: motorista clicou rápido demais assim que abriu o app), o
+// abastecimento nascia com motoristaUid vazio e o banco recusava salvar
+// (erro de segurança "row-level security"), deixando um registro "fantasma"
+// preso na tela sem nunca conseguir salvar. Agora, se faltar o ID, busca na
+// hora antes de criar — em vez de criar algo que nunca vai salvar.
 function adicionarAbastecimento() {
   if (!Array.isArray(state.abastecimentos)) state.abastecimentos = [];
+  if (!state.sessao || !state.sessao.uid) {
+    rfGetClient().then(function (sb) {
+      if (!sb) { alert("Sem conexão com a nuvem. Tente de novo em alguns segundos."); return; }
+      sb.auth.getUser().then(function (res) {
+        var u = res.data && res.data.user;
+        if (!u) { alert("Sessão ainda carregando — espera alguns segundos e tenta de novo."); return; }
+        if (!state.sessao) state.sessao = {};
+        state.sessao.uid = u.id;
+        state.sessao.email = u.email;
+        salvarSessaoLocal();
+        adicionarAbastecimentoInterno();
+      });
+    });
+    return;
+  }
+  adicionarAbastecimentoInterno();
+}
+function adicionarAbastecimentoInterno() {
   // v109: se o motorista tem uma viagem "em andamento" agora, o abastecimento
   // já nasce vinculado a ela sozinho (placa + viagemId) — ele pode trocar
   // depois se precisar, e a equipe também pode mudar na hora de aprovar.
