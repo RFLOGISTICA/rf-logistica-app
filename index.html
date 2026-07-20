@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v147)</title>
+<title>RF Logística — Painel da Frota (v148)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -2469,6 +2469,28 @@ function atualizarPerfilCampo(id, campo, valor) {
     });
   });
 }
+function resetarSenhaClick(id, nome) {
+  var novaSenha = window.prompt("Nova senha pra \"" + (nome || id) + "\" (mínimo 6 caracteres):", "");
+  if (novaSenha === null) return; // cancelou
+  novaSenha = novaSenha.trim();
+  if (novaSenha.length < 6) { alert("A senha precisa ter pelo menos 6 caracteres."); return; }
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexao com o servidor."); return; }
+    sb.auth.getSession().then(function (res) {
+      const token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) { alert("Sessao expirada. Saia e entre de novo."); return; }
+      fetch(RF_SB_URL + "/functions/v1/resetar-senha", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id, novaSenha: novaSenha }),
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res2) {
+          if (!res2.ok) { alert("Erro: " + (res2.j.error || "falha ao resetar senha")); return; }
+          alert("Senha de \"" + (nome || id) + "\" atualizada! Passa a nova senha pra pessoa.");
+        }).catch(function (e) { alert("Erro de conexao: " + e.message); });
+    });
+  });
+}
 function excluirUsuarioClick(id, nome) {
   if (!confirm("Excluir o usuario \"" + (nome || id) + "\"? Esta acao e permanente e remove o login e o perfil dele do sistema.")) return;
   rfGetClient().then(function (sb) {
@@ -4599,7 +4621,8 @@ function renderTabela() {
               <input type="checkbox" ${p.ativo ? "checked" : ""} onchange="atualizarPerfilCampo('${p.id}','ativo',this.checked)"> Ativo
             </label>
             <span id="pfSalvo_${p.id}" style="font-size:12px;color:#2ecc71;opacity:0;transition:opacity .3s;">✓ salvo</span>
-            <button class="btn-outline-gray" style="margin-left:auto;color:#C0392B;border-color:#C0392B;" onclick="excluirUsuarioClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🗑 Excluir</button>
+            <button class="btn-outline" style="margin-left:auto;" onclick="resetarSenhaClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🔑 Resetar senha</button>
+            <button class="btn-outline-gray" style="color:#C0392B;border-color:#C0392B;" onclick="excluirUsuarioClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🗑 Excluir</button>
           </div>
           ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
             <div><div style="${lbl}">Placa que ele roda</div><input value="${esc(p.placa_motorista || "")}" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;${p.placa_motorista ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','placa_motorista',this.value.toUpperCase())"></div>
