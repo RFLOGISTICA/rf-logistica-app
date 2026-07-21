@@ -2,24 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v156)</title>
-<!-- v156: CORREÇÃO CRÍTICA -- rfRomaneiosCarregar() e rfCaixasCarregar() (novas
-     na v153) chamavam salvar() depois de carregar dados da nuvem. O problema:
-     salvar() é "monkey-patched" pelo módulo de sync da frota pra tratar
-     QUALQUER chamada como "o usuário editou algo" (marca houveEdicaoLocal =
-     true). Como essas duas funções carregam rápido (tabelas pequenas) e
-     costumam terminar ANTES do 1º download da caixa geral (painel_dados,
-     bem maior), a flag ficava marcada bem na hora errada -- e o código de
-     download da frota tem uma regra (v118, pra proteção contra perda de
-     dados) que, ao ver houveEdicaoLocal=true, DESCARTA os dados reais da
-     nuvem que acabaram de chegar e tenta subir o estado local por cima.
-     Resultado: "Painel da Frota — 0 veículos" travado pra sempre, repetindo
-     a cada novo login (mesmo bug se repetia). A trava adicional em
-     subirTudo() (só sobe depois que dadosCarregados=true) evitou que isso
-     chegasse a apagar dado real na nuvem -- confirmado por consulta direta
-     ao banco (22 veículos, 30 viagens intactos) -- mas a tela ficava
-     inutilizável. Correção: as duas funções agora só chamam render(), nunca
-     salvar() -- mesmo padrão já usado (corretamente) em rfAbastCarregar().
+<title>RF Logística — Painel da Frota (v157)</title>
+<!-- v157: Conferência de Carga -- nunca mais deixa o mesmo romaneio ser
+     anexado duas vezes. Chave real: número do Conhecimento + Carregamentos
+     (impressos no cabeçalho do PDF), não o nome do arquivo (que pode ser
+     renomeado). ler-romaneio (v4) agora extrai esses dois campos; o banco
+     tem um índice único em (conhecimento, carregamentos); o app checa local
+     antes de tentar salvar e trata o erro de duplicidade do banco também
+     (segunda linha de defesa, cobre a corrida de duas pessoas anexando ao
+     mesmo tempo). Romaneios de formato sem esses campos continuam podendo
+     ser anexados normalmente (sem checagem, já que não tem chave pra travar).
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3183,6 +3175,8 @@ function rfRomaneioParaJS(r) {
     viagemId: r.viagem_id || "",
     nomeArquivo: r.nome_arquivo || "",
     clientes: Array.isArray(r.clientes) ? r.clientes : [],
+    conhecimento: r.conhecimento || "",
+    carregamentos: r.carregamentos || "",
     criadoPor: r.criado_por || "",
     criadoEm: Number(r.criado_em) || 0,
   };
@@ -3194,6 +3188,8 @@ function rfRomaneioParaDB(r) {
     viagem_id: r.viagemId || "",
     nome_arquivo: r.nomeArquivo || "",
     clientes: r.clientes || [],
+    conhecimento: r.conhecimento || "",
+    carregamentos: r.carregamentos || "",
     criado_por: r.criadoPor || null,
     criado_em: r.criadoEm || Date.now(),
   };
@@ -3287,7 +3283,19 @@ function rfRomaneioSalvar(r) {
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
     sb.from(RF_ROMANEIOS_TABELA).upsert(rfRomaneioParaDB(r)).then(function (res) {
-      if (res.error) alert("Não consegui salvar o romaneio na nuvem: " + res.error.message);
+      if (res.error) {
+        // v157: código 23505 = unique_violation -- esse Conhecimento+Carregamentos já
+        // existe (alguém mais rápido salvou entre a checagem local e o envio). Desfaz
+        // a inserção otimista local e recarrega a lista real da nuvem.
+        if (res.error.code === "23505") {
+          state.romaneios = state.romaneios.filter(function (x) { return x.id !== r.id; });
+          render();
+          alert("Esse romaneio (Conhecimento " + (r.conhecimento || "?") + ") já tinha sido anexado por outra pessoa nesse instante. Atualizando a lista.");
+          rfRomaneiosCarregar();
+          return;
+        }
+        alert("Não consegui salvar o romaneio na nuvem: " + res.error.message);
+      }
     });
   });
 }
@@ -3345,7 +3353,22 @@ function rfConfRomaneioUpload(input, placa) {
           if (j && j.error) { render(); alert(j.error); return; }
           var clientes = (j && j.clientes) || [];
           if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o PDF e tente de novo."); return; }
+          var conhecimento = (j && j.conhecimento) || "";
+          var carregamentos = (j && j.carregamentos) || "";
+          // v157: nunca deixa o mesmo romaneio (Conhecimento + Carregamentos) entrar
+          // duas vezes -- essa é a chave de negócio real do documento (o nome do
+          // arquivo pode mudar, esses números não). Checagem rápida local primeiro;
+          // o banco também trava isso (índice único), como segunda linha de defesa.
+          if (conhecimento && carregamentos) {
+            var jaExiste = state.romaneios.some(function (x) { return x.conhecimento === conhecimento && x.carregamentos === carregamentos; });
+            if (jaExiste) {
+              render();
+              alert("Esse romaneio (Conhecimento " + conhecimento + ") já foi anexado antes. Exclua o anterior primeiro se quiser reanexar uma versão corrigida.");
+              return;
+            }
+          }
           var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
+            conhecimento: conhecimento, carregamentos: carregamentos,
             criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
           state.romaneios.unshift(novo);
           state.aba = "conferencia";
@@ -3567,7 +3590,7 @@ function rfConfRomaneioCardAdmin(rom) {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
       <div>
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
-        <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")} · ${totalFechados}/${totalClientes} clientes conferidos (${pct}%)</div>
+        <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}${rom.conhecimento ? ` · Conhecimento ${esc(rom.conhecimento)}` : ""} · ${totalFechados}/${totalClientes} clientes conferidos (${pct}%)</div>
       </div>
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
     </div>
