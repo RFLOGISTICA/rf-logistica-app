@@ -2,12 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v159)</title>
-<!-- v159: motorista agora vê bem destacado a quantidade total de caixas
-     esperada por cliente (número grande, tipo "3/17"), tanto na lista de
-     clientes quanto na tela de "Entregando", junto com os números de
-     Pedido/NF de cada nota daquele cliente -- pra ele comparar com a nota
-     fiscal física em caso de dúvida, dando mais segurança na conferência.
+<title>RF Logística — Painel da Frota (v160)</title>
+<!-- v160: corrige "Sessão inválida" ao anexar romaneio ou fotografar etiqueta
+     depois do celular ficar em segundo plano (app minimizado/tela bloqueada) --
+     nesse caso a renovação automática do token não roda em background, e ao
+     voltar o token pode estar vencido. Antes o app só mostrava o erro; agora
+     tenta renovar a sessão sozinho (sb.auth.refreshSession()) e refaz o
+     pedido 1 vez antes de desistir -- tanto no upload do romaneio (ler-romaneio)
+     quanto na foto da etiqueta (ler-etiqueta-caixa, sem reenviar a foto, já
+     que ela já subiu pro armazenamento).
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3353,41 +3356,57 @@ function rfConfRomaneioUpload(input, placa) {
     if (!base64) { state._romaneioLendo = false; render(); alert("Não consegui ler o arquivo."); return; }
     rfGetClient().then(function (sb) {
       if (!sb) { state._romaneioLendo = false; render(); alert("Sem conexão com a nuvem."); return; }
-      sb.auth.getSession().then(function (res) {
-        var token = res.data && res.data.session && res.data.session.access_token;
-        if (!token) { state._romaneioLendo = false; render(); alert("Sessão expirada, entre novamente."); return; }
-        fetch(RF_SB_URL + "/functions/v1/ler-romaneio", {
-          method: "POST",
-          headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfBase64: base64, nomeArquivo: file.name }),
-        }).then(function (r) { return r.json(); }).then(function (j) {
-          state._romaneioLendo = false;
-          if (j && j.error) { render(); alert(j.error); return; }
-          var clientes = (j && j.clientes) || [];
-          if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o PDF e tente de novo."); return; }
-          var conhecimento = (j && j.conhecimento) || "";
-          var carregamentos = (j && j.carregamentos) || "";
-          // v157: nunca deixa o mesmo romaneio (Conhecimento + Carregamentos) entrar
-          // duas vezes -- essa é a chave de negócio real do documento (o nome do
-          // arquivo pode mudar, esses números não). Checagem rápida local primeiro;
-          // o banco também trava isso (índice único), como segunda linha de defesa.
-          if (conhecimento && carregamentos) {
-            var jaExiste = state.romaneios.some(function (x) { return x.conhecimento === conhecimento && x.carregamentos === carregamentos; });
-            if (jaExiste) {
-              render();
-              alert("Esse romaneio (Conhecimento " + conhecimento + ") já foi anexado antes. Exclua o anterior primeiro se quiser reanexar uma versão corrigida.");
+      // v160: se o celular ficou em segundo plano (app minimizado/tela bloqueada),
+      // a renovação automática do token não roda em background -- ao voltar, o
+      // token pode estar vencido e o pedido cai com "Sessão inválida". Em vez de
+      // só avisar, tenta renovar a sessão sozinho e refazer o pedido 1 vez antes
+      // de desistir.
+      function enviar(jaTentouRenovar) {
+        sb.auth.getSession().then(function (res) {
+          var token = res.data && res.data.session && res.data.session.access_token;
+          if (!token) {
+            if (jaTentouRenovar) { state._romaneioLendo = false; render(); alert("Sessão expirada. Saia e entre novamente."); return; }
+            sb.auth.refreshSession().then(function () { enviar(true); });
+            return;
+          }
+          fetch(RF_SB_URL + "/functions/v1/ler-romaneio", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ pdfBase64: base64, nomeArquivo: file.name }),
+          }).then(function (r) { return r.json(); }).then(function (j) {
+            if (j && j.error && /sess[ãa]o/i.test(j.error) && !jaTentouRenovar) {
+              sb.auth.refreshSession().then(function () { enviar(true); });
               return;
             }
-          }
-          var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
-            conhecimento: conhecimento, carregamentos: carregamentos,
-            criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
-          state.romaneios.unshift(novo);
-          state.aba = "conferencia";
-          render();
-          rfRomaneioSalvar(novo);
-        }).catch(function (e) { state._romaneioLendo = false; render(); alert("Erro ao ler o romaneio: " + (e.message || e)); });
-      });
+            state._romaneioLendo = false;
+            if (j && j.error) { render(); alert(j.error + (jaTentouRenovar ? " Saia e entre novamente." : "")); return; }
+            var clientes = (j && j.clientes) || [];
+            if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o PDF e tente de novo."); return; }
+            var conhecimento = (j && j.conhecimento) || "";
+            var carregamentos = (j && j.carregamentos) || "";
+            // v157: nunca deixa o mesmo romaneio (Conhecimento + Carregamentos) entrar
+            // duas vezes -- essa é a chave de negócio real do documento (o nome do
+            // arquivo pode mudar, esses números não). Checagem rápida local primeiro;
+            // o banco também trava isso (índice único), como segunda linha de defesa.
+            if (conhecimento && carregamentos) {
+              var jaExiste = state.romaneios.some(function (x) { return x.conhecimento === conhecimento && x.carregamentos === carregamentos; });
+              if (jaExiste) {
+                render();
+                alert("Esse romaneio (Conhecimento " + conhecimento + ") já foi anexado antes. Exclua o anterior primeiro se quiser reanexar uma versão corrigida.");
+                return;
+              }
+            }
+            var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
+              conhecimento: conhecimento, carregamentos: carregamentos,
+              criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
+            state.romaneios.unshift(novo);
+            state.aba = "conferencia";
+            render();
+            rfRomaneioSalvar(novo);
+          }).catch(function (e) { state._romaneioLendo = false; render(); alert("Erro ao ler o romaneio: " + (e.message || e)); });
+        });
+      }
+      enviar(false);
     });
   };
   reader.onerror = function () { state._romaneioLendo = false; render(); alert("Erro ao ler o arquivo."); };
@@ -3411,18 +3430,31 @@ function rfConfEtiquetaProcessar(input, romaneioId) {
         var path = "conferencia/" + (placa || "sem-placa") + "/" + Date.now() + ".jpg";
         sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }).then(function (resUp) {
           if (resUp.error) throw resUp.error;
-          return sb.auth.getSession().then(function (res) {
-            var token = res.data && res.data.session && res.data.session.access_token;
-            if (!token) throw new Error("Sessão expirada, entre novamente.");
-            return fetch(RF_SB_URL + "/functions/v1/ler-etiqueta-caixa", {
-              method: "POST",
-              headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ imagemBase64: base64, mimeType: "image/jpeg" }),
-            }).then(function (r) { return r.json(); }).then(function (j) {
-              state._confLendoEtiqueta = false;
-              rfConfEtiquetaSalvarResultado(romaneioId, path, j || {});
+          // v160: mesma correção do romaneio -- se o token venceu enquanto o
+          // celular ficou em segundo plano, renova a sessão sozinho e tenta de
+          // novo 1 vez (a foto já foi enviada pro armazenamento, não precisa
+          // reenviar -- só repete a leitura pela IA).
+          function chamarOcr(jaTentouRenovar) {
+            return sb.auth.getSession().then(function (res) {
+              var token = res.data && res.data.session && res.data.session.access_token;
+              if (!token) {
+                if (jaTentouRenovar) throw new Error("Sessão expirada. Saia e entre novamente.");
+                return sb.auth.refreshSession().then(function () { return chamarOcr(true); });
+              }
+              return fetch(RF_SB_URL + "/functions/v1/ler-etiqueta-caixa", {
+                method: "POST",
+                headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify({ imagemBase64: base64, mimeType: "image/jpeg" }),
+              }).then(function (r) { return r.json(); }).then(function (j) {
+                if (j && j.error && /sess[ãa]o/i.test(j.error) && !jaTentouRenovar) {
+                  return sb.auth.refreshSession().then(function () { return chamarOcr(true); });
+                }
+                state._confLendoEtiqueta = false;
+                rfConfEtiquetaSalvarResultado(romaneioId, path, j || {});
+              });
             });
-          });
+          }
+          return chamarOcr(false);
         }).catch(function (e) { state._confLendoEtiqueta = false; render(); alert("Erro ao registrar a caixa: " + (e.message || e)); });
       });
     };
