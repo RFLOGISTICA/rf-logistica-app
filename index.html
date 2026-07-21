@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v151)</title>
+<title>RF Logística — Painel da Frota (v152)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -4359,6 +4359,7 @@ function chatConfirmarViagem(msgIndex) {
   state.viagens.push(nova);
   m.content += "\n\n✅ Viagem criada: " + veic.placa + " · " + clienteNome + " · " + nova.data + (nova.valorViagem ? " · " + fmtR(nova.valorViagem) : "");
   salvar(); render();
+  falarTexto("Viagem criada.", chatContinuarConversaSeAtivo);
 }
 function chatCancelarViagem(msgIndex) {
   const m = state._chatMensagens && state._chatMensagens[msgIndex];
@@ -4366,6 +4367,7 @@ function chatCancelarViagem(msgIndex) {
   m.acaoPendente = null;
   m.content += "\n\n❌ Cancelado, nada foi criado.";
   render();
+  falarTexto("Tudo bem, não criei.", chatContinuarConversaSeAtivo);
 }
 // v150: aprovação de abastecimento proposta pela IA — mesmo padrão de segurança
 // da criação de viagem por voz: a IA nunca grava sozinha, só depois que a
@@ -4381,17 +4383,20 @@ function chatConfirmarAprovacaoAbastecimento(msgIndex) {
   if (!a) {
     m.content += "\n\n⚠ Não achei mais esse abastecimento (pode já ter sido revisado). Atualizando a lista.";
     render();
+    falarTexto("Não achei mais esse abastecimento.", chatContinuarConversaSeAtivo);
     rfAbastCarregar();
     return;
   }
   if (a.status !== "pendente") {
     m.content += "\n\n⚠ Esse abastecimento já foi revisado enquanto conversávamos.";
     render();
+    falarTexto("Esse abastecimento já foi revisado.", chatContinuarConversaSeAtivo);
     return;
   }
   if (!a.fotoBomba || !a.fotoNota) {
     m.content += "\n\n⚠ Faltam fotos obrigatórias (bomba e/ou nota) — não aprovei.";
     render();
+    falarTexto("Não aprovei, faltam fotos obrigatórias.", chatContinuarConversaSeAtivo);
     return;
   }
   const viagemId = String(d.viagemId || "").trim();
@@ -4402,6 +4407,7 @@ function chatConfirmarAprovacaoAbastecimento(msgIndex) {
   }
   m.content += "\n\n✅ Abastecimento de " + (a.placa || "?") + " aprovado.";
   render();
+  falarTexto("Aprovado.", chatContinuarConversaSeAtivo);
 }
 function chatCancelarAprovacaoAbastecimento(msgIndex) {
   const m = state._chatMensagens && state._chatMensagens[msgIndex];
@@ -4409,6 +4415,7 @@ function chatCancelarAprovacaoAbastecimento(msgIndex) {
   m.acaoPendente = null;
   m.content += "\n\n❌ Não aprovei.";
   render();
+  falarTexto("Tudo bem, não aprovei.", chatContinuarConversaSeAtivo);
 }
 function chatErro(msg) {
   state._chatCarregando = false;
@@ -4473,6 +4480,20 @@ function chatContinuarConversaSeAtivo() {
   chatResetTimeoutConversa();
   setTimeout(function () { if (state._chatModoConversa) chatIniciarEscuta(); }, 500);
 }
+// v151: quando tem uma ação esperando confirmação (aprovar abastecimento ou
+// criar viagem), a resposta falada ("sim"/"pode aprovar"/"não"/"cancela")
+// já confirma ou cancela na hora, sem precisar tocar no botão na tela.
+function chatSemAcentoMinuscula(txt) {
+  return String(txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+function chatVozEhConfirmacao(texto) {
+  const t = " " + chatSemAcentoMinuscula(texto) + " ";
+  const negativas = [" nao ", " cancela", " deixa pra", " nao confirma", " nao aprova", " nao pode", " para", " espera"];
+  for (let i = 0; i < negativas.length; i++) { if (t.indexOf(negativas[i]) !== -1) return false; }
+  const positivas = [" sim", " confirma", " confirmo", " confirmado", " pode aprovar", " pode sim", " pode criar", " pode lancar", " aprova", " aprovar", " aprovado", " isso mesmo", " isso", " beleza", " manda", " ok", " positivo", " correto"];
+  for (let i = 0; i < positivas.length; i++) { if (t.indexOf(positivas[i]) !== -1) return true; }
+  return null;
+}
 function chatIniciarEscuta() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR || !state._chatModoConversa) return;
@@ -4486,10 +4507,27 @@ function chatIniciarEscuta() {
   rec.onresult = function (ev) {
     gotResult = true;
     const texto = ev.results[0][0].transcript;
-    const input = document.getElementById("chatInput");
-    if (input) input.value = texto;
     state._chatOuvindo = false;
     chatResetTimeoutConversa();
+    const msgs = state._chatMensagens || [];
+    const ultimaMsg = msgs[msgs.length - 1];
+    if (ultimaMsg && ultimaMsg.acaoPendente) {
+      const decisao = chatVozEhConfirmacao(texto);
+      const msgIndex = msgs.length - 1;
+      const eAbastecimento = ultimaMsg.acaoPendente.tipo === "aprovar_abastecimento";
+      if (decisao === true) {
+        if (eAbastecimento) chatConfirmarAprovacaoAbastecimento(msgIndex); else chatConfirmarViagem(msgIndex);
+        return;
+      }
+      if (decisao === false) {
+        if (eAbastecimento) chatCancelarAprovacaoAbastecimento(msgIndex); else chatCancelarViagem(msgIndex);
+        return;
+      }
+      // não deu pra entender se era sim ou não — trata como uma pergunta normal,
+      // a ação continua pendente com os botões na tela como alternativa.
+    }
+    const input = document.getElementById("chatInput");
+    if (input) input.value = texto;
     chatEnviarPergunta(); // lê o input e já renderiza — não chamar render() antes, senão apaga o texto
   };
   rec.onerror = function () { state._chatOuvindo = false; };
@@ -4534,7 +4572,8 @@ function assistenteWidgetHTML() {
         ${msgs.map((m, i) => `
           <div style="margin-bottom:10px; display:flex; ${m.role === "user" ? "justify-content:flex-end;" : "justify-content:flex-start;"}">
             <div style="max-width:85%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; ${m.role === "user" ? `background:${GOLD}; color:#000;` : "background:#222; color:#eee;"}">${esc(m.content)}${m.acaoPendente ? `
-              <div style="margin-top:8px; display:flex; gap:6px;">
+              ${state._chatModoConversa ? `<div style="font-size:10px; color:#999; margin-top:6px;">🎙️ Pode responder falando "sim" ou "não"</div>` : ""}
+              <div style="margin-top:6px; display:flex; gap:6px;">
                 <button onclick="${m.acaoPendente.tipo === "aprovar_abastecimento" ? `chatConfirmarAprovacaoAbastecimento(${i})` : `chatConfirmarViagem(${i})`}" style="background:#2E7D32; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✓ Confirmar</button>
                 <button onclick="${m.acaoPendente.tipo === "aprovar_abastecimento" ? `chatCancelarAprovacaoAbastecimento(${i})` : `chatCancelarViagem(${i})`}" style="background:#C0392B; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✕ Cancelar</button>
               </div>` : ""}</div>
