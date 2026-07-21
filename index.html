@@ -2,7 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v152)</title>
+<title>RF Logística — Painel da Frota (v153)</title>
+<!-- v153: nova aba "Conferência de Carga" — equipe anexa o romaneio (PDF) de uma
+     viagem, a IA extrai cidade->cliente->pedidos com o total de caixas esperado
+     por pedido; motorista fotografa a etiqueta de cada caixa (IA le PEDIDO e
+     "VOL x/y"), e o pedido fica verde quando todas as caixas baterem. Caixa
+     fracionada (varias etiquetas coladas, ou nenhuma) fica marcada manualmente
+     pelo motorista e/ou sinalizada pra equipe resolver. Duas tabelas novas no
+     Supabase (conferencia_romaneios, conferencia_caixas), mesmo padrao de
+     RLS + tempo real do abastecimento. Usa as edge functions ler-romaneio e
+     ler-etiqueta-caixa (ja publicadas). -->
+
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -315,6 +325,8 @@ function salvar() {
     localStorage.setItem("rf-frota-pagamotorista-v1", JSON.stringify(state.pagamentosMotorista));
     localStorage.setItem("rf-frota-abastecimentos-v1", JSON.stringify(state.abastecimentos));
     localStorage.setItem("rf-frota-viagensfim-v1", JSON.stringify(state.viagensFinalizadas));
+    localStorage.setItem("rf-frota-romaneios-v1", JSON.stringify(state.romaneios));
+    localStorage.setItem("rf-frota-caixasconf-v1", JSON.stringify(state.caixasConferencia));
   } catch (e) {}
 }
 
@@ -334,6 +346,8 @@ let state = {
   pagamentosMotorista: carregar("rf-frota-pagamotorista-v1", () => []),
   abastecimentos: carregar("rf-frota-abastecimentos-v1", () => []),
   viagensFinalizadas: carregar("rf-frota-viagensfim-v1", () => []),
+  romaneios: carregar("rf-frota-romaneios-v1", () => []),
+  caixasConferencia: carregar("rf-frota-caixasconf-v1", () => []),
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -2153,6 +2167,7 @@ var ABAS_DEF = [
   { id: "operacao", label: "🧭 Operação", grupo: "OPERAÇÃO" },
   { id: "viagem", label: "Despesas de Viagem", grupo: "OPERAÇÃO" },
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
+  { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
   { id: "motoristas", label: "Motoristas 💰", grupo: "OPERAÇÃO" },
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
   { id: "custos", label: "Análise de Custos 📊", grupo: "FINANCEIRO" },
@@ -2170,6 +2185,7 @@ var TAB_DESCRICOES = {
   operacao: "Alocação dos veículos por cliente/contrato",
   viagem: "Lançamento das despesas de cada viagem",
   abastecimento: "Abastecimentos lançados pelos motoristas (fotos de KM e da bomba) — aguardando confirmação",
+  conferencia: "Conferência de carga por foto: motorista fotografa cada caixa, o sistema confere pedido a pedido até fechar o cliente",
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
   custos: "Análise de custos por categoria",
@@ -2281,6 +2297,9 @@ function carregarPerfilEEntrar(sb, user) {
     if (state.sessao.papel !== "cliente" && typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
     if (state.sessao.papel !== "cliente" && typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
     if (state.sessao.papel !== "cliente" && typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+    if (state.sessao.papel !== "cliente" && typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
     if (state.sessao.papel === "motorista" && typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
     if (state.sessao.papel === "motorista" && typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
     if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
@@ -2325,6 +2344,9 @@ function revalidarSessaoAoAbrir() {
         if (typeof rfAbastAssinarTempoReal === "function") { rfAbastAssinarTempoReal(); }
         if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
         if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
+        if (typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
+        if (typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
+        if (typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
       }
       if (state.sessao.papel === "motorista") {
         if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
@@ -3124,6 +3146,412 @@ function rfAbastDeletarLinha(id) {
   });
 }
 
+/* ===================== CONFERÊNCIA DE CARGA POR FOTO (v153) =====================
+   Resolve o problema do motorista procurando caixa por caixa entre centenas
+   dentro do caminhão. Fluxo: (1) equipe anexa o PDF do romaneio de entrega
+   externa antes da viagem — a IA (ler-romaneio) extrai cidade → cliente →
+   pedidos, com o total de volumes (caixas) esperado por pedido; (2) durante a
+   viagem, o motorista fotografa a etiqueta de cada caixa — a IA
+   (ler-etiqueta-caixa) lê o número do PEDIDO e o campo "VOL x/y" e vincula a
+   caixa ao cliente/romaneio; (3) quando todas as caixas de um pedido baterem,
+   o cliente fica verde. Caixa fracionada (várias etiquetas coladas juntas, ou
+   sem etiqueta nenhuma — só a marca impressa) é tratada à parte: o motorista
+   pode marcar manualmente quais pedidos estão naquela caixa E/OU deixar
+   sinalizada para a equipe resolver depois.
+   Duas tabelas próprias no Supabase (conferencia_romaneios e
+   conferencia_caixas), fora da caixa geral — mesmo padrão de
+   abastecimentos_motorista: RLS garante que todo usuário logado (equipe e
+   motorista) enxerga tudo (dado não sensível), mas só a equipe cadastra/edita
+   romaneios, e cada caixa só pode ser inserida/editada por quem a fotografou
+   ou pela equipe. */
+var RF_ROMANEIOS_TABELA = "conferencia_romaneios";
+var RF_CAIXAS_TABELA = "conferencia_caixas";
+
+function rfRomaneioParaJS(r) {
+  return {
+    id: r.id,
+    placa: r.placa || "",
+    viagemId: r.viagem_id || "",
+    nomeArquivo: r.nome_arquivo || "",
+    clientes: Array.isArray(r.clientes) ? r.clientes : [],
+    criadoPor: r.criado_por || "",
+    criadoEm: Number(r.criado_em) || 0,
+  };
+}
+function rfRomaneioParaDB(r) {
+  return {
+    id: r.id,
+    placa: r.placa || "",
+    viagem_id: r.viagemId || "",
+    nome_arquivo: r.nomeArquivo || "",
+    clientes: r.clientes || [],
+    criado_por: r.criadoPor || null,
+    criado_em: r.criadoEm || Date.now(),
+  };
+}
+function rfCaixaParaJS(r) {
+  return {
+    id: r.id,
+    romaneioId: r.romaneio_id,
+    placa: r.placa || "",
+    motoristaUid: r.motorista_uid,
+    motoristaNome: r.motorista_nome || "",
+    foto: r.foto || "",
+    pedido: r.pedido || "",
+    volAtual: Number(r.vol_atual) || 0,
+    volTotal: Number(r.vol_total) || 0,
+    fantasia: r.fantasia || "",
+    cidade: r.cidade || "",
+    fracionada: !!r.fracionada,
+    pedidosExtra: Array.isArray(r.pedidos_extra) ? r.pedidos_extra : [],
+    semEtiqueta: !!r.sem_etiqueta,
+    sinalizada: !!r.sinalizada,
+    sinalizadaMotivo: r.sinalizada_motivo || "",
+    criadoEm: Number(r.criado_em) || 0,
+  };
+}
+function rfCaixaParaDB(a) {
+  return {
+    id: a.id,
+    romaneio_id: a.romaneioId,
+    placa: a.placa || "",
+    motorista_uid: a.motoristaUid,
+    motorista_nome: a.motoristaNome || "",
+    foto: a.foto || "",
+    pedido: a.pedido || "",
+    vol_atual: Number(a.volAtual) || 0,
+    vol_total: Number(a.volTotal) || 0,
+    fantasia: a.fantasia || "",
+    cidade: a.cidade || "",
+    fracionada: !!a.fracionada,
+    pedidos_extra: a.pedidosExtra || [],
+    sem_etiqueta: !!a.semEtiqueta,
+    sinalizada: !!a.sinalizada,
+    sinalizada_motivo: a.sinalizadaMotivo || "",
+    criado_em: a.criadoEm || Date.now(),
+  };
+}
+function rfRomaneiosCarregar() {
+  rfGetClient().then(function (sb) {
+    if (!sb || !sessaoValida()) return;
+    sb.from(RF_ROMANEIOS_TABELA).select("*").then(function (res) {
+      if (res.error) { console.warn("conferencia_romaneios:", res.error.message); return; }
+      state.romaneios = (res.data || []).map(rfRomaneioParaJS).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
+      salvar(); render();
+    });
+  });
+}
+function rfCaixasCarregar() {
+  rfGetClient().then(function (sb) {
+    if (!sb || !sessaoValida()) return;
+    sb.from(RF_CAIXAS_TABELA).select("*").then(function (res) {
+      if (res.error) { console.warn("conferencia_caixas:", res.error.message); return; }
+      state.caixasConferencia = (res.data || []).map(rfCaixaParaJS).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
+      salvar(); render();
+    });
+  });
+}
+function rfConferenciaAssinarTempoReal() {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    if (!window.__rfRomaneiosCanal) {
+      window.__rfRomaneiosCanal = sb.channel("conferencia-romaneios-rf")
+        .on("postgres_changes", { event: "*", schema: "public", table: RF_ROMANEIOS_TABELA }, function () { rfRomaneiosCarregar(); })
+        .subscribe();
+    }
+    if (!window.__rfCaixasCanal) {
+      window.__rfCaixasCanal = sb.channel("conferencia-caixas-rf")
+        .on("postgres_changes", { event: "*", schema: "public", table: RF_CAIXAS_TABELA }, function () { rfCaixasCarregar(); })
+        .subscribe();
+    }
+  });
+}
+function rfRomaneioSalvar(r) {
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
+    sb.from(RF_ROMANEIOS_TABELA).upsert(rfRomaneioParaDB(r)).then(function (res) {
+      if (res.error) alert("Não consegui salvar o romaneio na nuvem: " + res.error.message);
+    });
+  });
+}
+function rfRomaneioExcluir(id) {
+  if (!confirm("Excluir este romaneio e todas as caixas conferidas ligadas a ele? Esta ação não pode ser desfeita.")) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_ROMANEIOS_TABELA).delete().eq("id", id).select().then(function (res) {
+      if (res.error) { alert("Não consegui excluir na nuvem: " + res.error.message); rfRomaneiosCarregar(); return; }
+      rfRomaneiosCarregar(); rfCaixasCarregar();
+    });
+  });
+}
+function rfCaixaSalvar(a) {
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
+    sb.from(RF_CAIXAS_TABELA).upsert(rfCaixaParaDB(a)).then(function (res) {
+      if (res.error) alert("Não consegui salvar a caixa conferida na nuvem: " + res.error.message);
+    });
+  });
+}
+function rfCaixaExcluir(id) {
+  if (!confirm("Excluir esta caixa da conferência?")) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_CAIXAS_TABELA).delete().eq("id", id).select().then(function (res) {
+      if (res.error) { alert("Não consegui excluir na nuvem: " + res.error.message); rfCaixasCarregar(); return; }
+      rfCaixasCarregar();
+    });
+  });
+}
+
+// ---- Upload do PDF do romaneio (equipe) e leitura pela IA (ler-romaneio) ----
+function rfConfRomaneioUpload(input, placa) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) { alert("Anexe o romaneio em PDF."); input.value = ""; return; }
+  state._romaneioLendo = true; render();
+  var reader = new FileReader();
+  reader.onload = function () {
+    var base64 = String(reader.result || "").split(",")[1] || "";
+    input.value = "";
+    if (!base64) { state._romaneioLendo = false; render(); alert("Não consegui ler o arquivo."); return; }
+    rfGetClient().then(function (sb) {
+      if (!sb) { state._romaneioLendo = false; render(); alert("Sem conexão com a nuvem."); return; }
+      sb.auth.getSession().then(function (res) {
+        var token = res.data && res.data.session && res.data.session.access_token;
+        if (!token) { state._romaneioLendo = false; render(); alert("Sessão expirada, entre novamente."); return; }
+        fetch(RF_SB_URL + "/functions/v1/ler-romaneio", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfBase64: base64, nomeArquivo: file.name }),
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          state._romaneioLendo = false;
+          if (j && j.error) { render(); alert(j.error); return; }
+          var clientes = (j && j.clientes) || [];
+          if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o PDF e tente de novo."); return; }
+          var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
+            criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
+          state.romaneios.unshift(novo);
+          state.aba = "conferencia";
+          render();
+          rfRomaneioSalvar(novo);
+        }).catch(function (e) { state._romaneioLendo = false; render(); alert("Erro ao ler o romaneio: " + (e.message || e)); });
+      });
+    });
+  };
+  reader.onerror = function () { state._romaneioLendo = false; render(); alert("Erro ao ler o arquivo."); };
+  reader.readAsDataURL(file);
+}
+
+// ---- Foto da etiqueta da caixa (motorista) e leitura pela IA (ler-etiqueta-caixa) ----
+function rfConfEtiquetaProcessar(input, romaneioId) {
+  var file = input.files && input.files[0];
+  input.value = "";
+  if (!file || !romaneioId) return;
+  state._confLendoEtiqueta = true; render();
+  rfComprimirImagem(file).then(function (blob) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var base64 = String(reader.result || "").split(",")[1] || "";
+      if (!base64) { state._confLendoEtiqueta = false; render(); return; }
+      rfGetClient().then(function (sb) {
+        if (!sb) { state._confLendoEtiqueta = false; render(); alert("Sem conexão com a nuvem."); return; }
+        var placa = (state.sessao && state.sessao.placa_motorista) || "";
+        var path = "conferencia/" + (placa || "sem-placa") + "/" + Date.now() + ".jpg";
+        sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }).then(function (resUp) {
+          if (resUp.error) throw resUp.error;
+          return sb.auth.getSession().then(function (res) {
+            var token = res.data && res.data.session && res.data.session.access_token;
+            if (!token) throw new Error("Sessão expirada, entre novamente.");
+            return fetch(RF_SB_URL + "/functions/v1/ler-etiqueta-caixa", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ imagemBase64: base64, mimeType: "image/jpeg" }),
+            }).then(function (r) { return r.json(); }).then(function (j) {
+              state._confLendoEtiqueta = false;
+              rfConfEtiquetaSalvarResultado(romaneioId, path, j || {});
+            });
+          });
+        }).catch(function (e) { state._confLendoEtiqueta = false; render(); alert("Erro ao registrar a caixa: " + (e.message || e)); });
+      });
+    };
+    reader.onerror = function () { state._confLendoEtiqueta = false; render(); };
+    reader.readAsDataURL(blob);
+  }).catch(function (e) { state._confLendoEtiqueta = false; render(); alert("Erro ao processar a foto: " + (e.message || e)); });
+}
+function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
+  var uid = (state.sessao && state.sessao.uid) || null;
+  var nome = (state.sessao && state.sessao.nome) || "";
+  var placa = (state.sessao && state.sessao.placa_motorista) || "";
+  var base = { id: "caixa-" + Date.now() + "-" + Math.floor(Math.random() * 1000), romaneioId: romaneioId, placa: placa,
+    motoristaUid: uid, motoristaNome: nome, foto: fotoPath, pedidosExtra: [], criadoEm: Date.now() };
+  var nova;
+  if (j.erro) {
+    nova = Object.assign({}, base, { pedido: "", volAtual: 0, volTotal: 0, fantasia: "", cidade: "", fracionada: true, semEtiqueta: false, sinalizada: false });
+    state.caixasConferencia.unshift(nova);
+    render();
+    rfCaixaSalvar(nova);
+    alert("Não consegui ler essa etiqueta. A caixa foi registrada como pendente — marque manualmente o(s) pedido(s) dela abaixo, ou sinalize para a equipe resolver.");
+    return;
+  }
+  if (j.semEtiqueta) {
+    nova = Object.assign({}, base, { pedido: "", volAtual: 0, volTotal: 0, fantasia: "", cidade: "", fracionada: true, semEtiqueta: true, sinalizada: false });
+    state.caixasConferencia.unshift(nova);
+    render();
+    rfCaixaSalvar(nova);
+    return;
+  }
+  nova = Object.assign({}, base, { pedido: j.pedido || "", volAtual: j.volAtual || 0, volTotal: j.volTotal || 0,
+    fantasia: j.fantasia || "", cidade: j.cidade || "", fracionada: false, semEtiqueta: false, sinalizada: false });
+  state.caixasConferencia.unshift(nova);
+  render();
+  rfCaixaSalvar(nova);
+}
+// Caixa fracionada: motorista marca manualmente quais pedidos estão naquela caixa
+// (pode marcar mais de um — caixa com etiquetas de clientes diferentes juntas).
+function rfConfCaixaMarcarPedidos(caixaId, romaneioId) {
+  var c = state.caixasConferencia.find(function (x) { return String(x.id) === String(caixaId); });
+  var rom = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!c || !rom) return;
+  var todosPedidos = [];
+  (rom.clientes || []).forEach(function (cli) { (cli.pedidos || []).forEach(function (p) { todosPedidos.push(p.pedido + " (" + cli.cliente + ")"); }); });
+  var escolha = prompt("Pedidos desse romaneio:\n" + todosPedidos.join("\n") + "\n\nDigite o(s) número(s) do PEDIDO dessa caixa (separados por vírgula, se for mais de um):", (c.pedidosExtra || []).join(", "));
+  if (escolha === null) return;
+  var lista = escolha.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  c.pedidosExtra = lista;
+  c.pedido = lista[0] || "";
+  render();
+  rfCaixaSalvar(c);
+}
+function rfConfCaixaSinalizar(caixaId) {
+  var c = state.caixasConferencia.find(function (x) { return String(x.id) === String(caixaId); });
+  if (!c) return;
+  var motivo = prompt("O que aconteceu com essa caixa? (ex: caixa com 2 etiquetas coladas, etiqueta rasgada...)", c.sinalizadaMotivo || "");
+  if (motivo === null) return;
+  c.sinalizada = true;
+  c.sinalizadaMotivo = motivo.trim();
+  render();
+  rfCaixaSalvar(c);
+}
+function rfConfCaixaResolverSinalizacao(caixaId) {
+  var c = state.caixasConferencia.find(function (x) { return String(x.id) === String(caixaId); });
+  if (!c) return;
+  c.sinalizada = false;
+  render();
+  rfCaixaSalvar(c);
+}
+function rfConfVerFoto(path) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.storage.from(RF_BUCKET).createSignedUrl(path, 3600).then(function (res) {
+      if (res.error || !res.data) { alert("Não foi possível abrir a foto."); return; }
+      window.open(res.data.signedUrl, "_blank");
+    });
+  });
+}
+// Calcula, por romaneio, o progresso de cada pedido/cliente (caixas conferidas x total esperado).
+function rfConfProgressoRomaneio(romaneioId) {
+  var caixas = state.caixasConferencia.filter(function (c) { return String(c.romaneioId) === String(romaneioId) && !c.fracionada; });
+  var porPedido = {};
+  caixas.forEach(function (c) {
+    if (!c.pedido) return;
+    if (!porPedido[c.pedido]) porPedido[c.pedido] = new Set();
+    porPedido[c.pedido].add(c.volAtual || Object.keys(porPedido[c.pedido]).length + 1);
+  });
+  var extras = state.caixasConferencia.filter(function (c) { return String(c.romaneioId) === String(romaneioId) && c.fracionada && (c.pedidosExtra || []).length; });
+  extras.forEach(function (c) {
+    (c.pedidosExtra || []).forEach(function (ped) {
+      var pedidoLimpo = ped.split(" — ")[0].trim();
+      if (!porPedido[pedidoLimpo]) porPedido[pedidoLimpo] = new Set();
+      porPedido[pedidoLimpo].add("frac-" + c.id);
+    });
+  });
+  return porPedido;
+}
+
+// Card de um romaneio na visão do motorista: botão de foto + progresso + caixas recentes dele.
+function rfConfRomaneioCardMotorista(rom) {
+  const porPedido = rfConfProgressoRomaneio(rom.id);
+  let totalPedidos = 0, totalFechados = 0;
+  (rom.clientes || []).forEach((cli) => (cli.pedidos || []).forEach((p) => {
+    totalPedidos++;
+    if ((porPedido[p.pedido] || new Set()).size >= (Number(p.volumeTotal) || 1)) totalFechados++;
+  }));
+  const uidLogado = state.sessao ? state.sessao.uid : null;
+  const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado)
+    .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
+  return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <div>
+        <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
+        <div style="font-size:11px;color:#777;">${totalFechados}/${totalPedidos} pedidos conferidos</div>
+      </div>
+      <label class="btn-gold" style="cursor:pointer;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
+    </div>
+    ${state._confLendoEtiqueta ? `<div style="color:${GOLD};font-size:12px;margin-bottom:10px;">Lendo etiqueta com IA...</div>` : ""}
+    ${minhas.length === 0 ? "" : `<div style="font-size:11px;color:#777;margin-bottom:6px;">Últimas caixas fotografadas por você:</div>
+      ${minhas.map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:1px solid #1a1a1a;flex-wrap:wrap;">
+        <span style="color:#ccc;">
+          ${c.fracionada ? (c.semEtiqueta ? "📦 sem etiqueta" : "📦 etiqueta ilegível") : `Pedido ${esc(c.pedido)} (${c.volAtual}/${c.volTotal})${c.fantasia ? " — " + esc(c.fantasia) : ""}`}
+          ${c.sinalizada ? `<span style="color:#C0392B;"> · sinalizada</span>` : ""}
+          ${c.fracionada && (c.pedidosExtra || []).length ? `<span style="color:#2E7D32;"> · marcada: ${c.pedidosExtra.map(esc).join(", ")}</span>` : ""}
+        </span>
+        <span style="display:flex;gap:6px;">
+          <button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfVerFoto('${c.foto}')">ver</button>
+          ${c.fracionada && !c.sinalizada ? `<button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfCaixaMarcarPedidos('${c.id}','${rom.id}')">marcar pedido</button>
+          <button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfCaixaSinalizar('${c.id}')">sinalizar</button>` : ""}
+          <button class="btn-del" style="font-size:10px;padding:2px 6px;" onclick="rfCaixaExcluir('${c.id}')">✕</button>
+        </span>
+      </div>`).join("")}`}
+  </div>`;
+}
+
+// Card de um romaneio na visão da equipe: progresso por cliente/pedido + caixas sinalizadas.
+function rfConfRomaneioCardAdmin(rom) {
+  const porPedido = rfConfProgressoRomaneio(rom.id);
+  const sinalizadas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.sinalizada);
+  let totalPedidos = 0, totalFechados = 0;
+  const clientesHTML = (rom.clientes || []).map((cli) => {
+    const pedidosHTML = (cli.pedidos || []).map((p) => {
+      totalPedidos++;
+      const conferidas = (porPedido[p.pedido] || new Set()).size;
+      const total = Number(p.volumeTotal) || 1;
+      const fechado = conferidas >= total;
+      if (fechado) totalFechados++;
+      const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
+      return `<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #1a1a1a;font-size:12px;">
+        <span style="color:#ccc;">Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}</span>
+        <span style="font-weight:700;color:${cor};">${fechado ? "✓" : "●"} ${conferidas}/${total}</span>
+      </div>`;
+    }).join("");
+    return `<div style="background:#0E0E0E;border:1px solid #262626;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+      <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></div>
+      ${pedidosHTML}
+    </div>`;
+  }).join("");
+  const pct = totalPedidos ? Math.round((totalFechados / totalPedidos) * 100) : 0;
+  return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#111;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+      <div>
+        <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
+        <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")} · ${totalFechados}/${totalPedidos} pedidos conferidos (${pct}%)</div>
+      </div>
+      <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
+    </div>
+    ${sinalizadas.length ? `<div style="background:#2a1414;border:1px solid #C0392B;border-radius:8px;padding:10px;margin:10px 0;">
+      <div style="font-weight:700;color:#C0392B;font-size:12px;margin-bottom:6px;">⚠ ${sinalizadas.length} caixa${sinalizadas.length === 1 ? "" : "s"} sinalizada${sinalizadas.length === 1 ? "" : "s"} pelo motorista</div>
+      ${sinalizadas.map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:4px 0;flex-wrap:wrap;">
+        <span style="color:#ddd;">${esc(c.sinalizadaMotivo || "sem detalhe")} ${c.motoristaNome ? `— ${esc(c.motoristaNome)}` : ""}</span>
+        <span style="display:flex;gap:6px;">
+          <button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfConfVerFoto('${c.foto}')">📷 ver foto</button>
+          <button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfConfCaixaMarcarPedidos('${c.id}','${rom.id}')">marcar pedido(s)</button>
+          <button class="btn-gold" style="font-size:11px;padding:2px 8px;" onclick="rfConfCaixaResolverSinalizacao('${c.id}')">✓ resolvido</button>
+        </span>
+      </div>`).join("")}
+    </div>` : ""}
+    ${clientesHTML}
+  </div>`;
+}
+
 /* ===================== VIAGEM FINALIZADA PELO MOTORISTA (v98) =====================
    Mesma lógica do abastecimento: tabela própria (viagens_finalizadas_motorista),
    fora da caixa geral, RLS garante que motorista só vê/edita as próprias. O
@@ -3761,6 +4189,12 @@ function painelMotoristaHTML() {
       </div>
       <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão e tire 3 fotos: painel (mostrando o KM), visor da bomba (o valor é lido sozinho) e a nota/comprovante. Todas obrigatórias. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
       ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
+    </div>
+
+    <div style="padding:0 24px 32px;">
+      <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">📦 Conferência de Carga</div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Fotografe a etiqueta de cada caixa. O sistema lê sozinho o pedido e confere. Se a caixa não tiver etiqueta (ou tiver mais de uma colada), marque manualmente o pedido ou sinalize pra equipe resolver.</div>
+      ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado pela equipe ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardMotorista(r)).join("")}
     </div>
   `;
 }
@@ -5556,6 +5990,22 @@ function renderTabela() {
         ${lista.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento nesse filtro.</div>` : lista.map((a) => rfAbastCard(a, false)).join("")}
       `;
     }
+  }
+
+  if (state.aba === "conferencia") {
+    const pendSinalizadas = (state.caixasConferencia || []).filter((c) => c.sinalizada).length;
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:20px; font-weight:800; color:${GOLD};">📦 Conferência de Carga ${pendSinalizadas ? `<span style="font-size:12px;background:#C0392B;color:#fff;border-radius:10px;padding:2px 10px;margin-left:8px;">${pendSinalizadas} sinalizada${pendSinalizadas === 1 ? "" : "s"}</span>` : ""}</div>
+      </div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Anexe o romaneio (PDF) de uma viagem antes de sair. Durante a viagem, o motorista fotografa a etiqueta de cada caixa pelo celular — o pedido fica <b style="color:#2E7D32;">verde</b> quando todas as caixas dele forem conferidas.</div>
+      <div style="border:1px dashed #333;border-radius:10px;padding:14px;margin-bottom:22px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <input id="rfConfPlacaNovoRomaneio" placeholder="Placa do caminhão (opcional)" style="width:180px;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
+        <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF)<input type="file" accept="application/pdf" style="display:none" onchange="rfConfRomaneioUpload(this, document.getElementById('rfConfPlacaNovoRomaneio').value)"></label>
+        ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
+      </div>
+      ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardAdmin(r)).join("")}
+    `;
   }
 
   if (state.aba === "saldocaminhao") {
