@@ -2,16 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v154)</title>
-<!-- v154: CORREÇÃO na Conferência de Carga -- no romaneio da Mateus, a coluna
-     VOLUME e impressa por CLIENTE (soma de todos os pedidos/notas fiscais dele),
-     nao por pedido individual (confirmado comparando com o total "X volumes" do
-     rodape do romaneio). A v153 tratava cada pedido como se tivesse seu proprio
-     volume, inflando o total esperado em clientes com varias notas fiscais (ex:
-     cliente com 10 pedidos e 150 caixas reais aparecia pedindo 159). Agora o
-     progresso e calculado por cliente (ler-romaneio v2 extrai um unico
-     volumeTotal por cliente). Romaneios ja anexados ANTES dessa versao precisam
-     ser excluidos e reanexados para usar o calculo correto. -->
+<title>RF Logística — Painel da Frota (v155)</title>
+<!-- v155: mais 2 correções na Conferência de Carga, achadas comparando com um
+     romaneio real linha a linha -- (1) o romaneio pode ter dois BLOCOS
+     separados com o mesmo nome+cidade de cliente (cada um com seu próprio
+     subtotal de volume); a v154 juntava os dois num só, mudando a contagem
+     de clientes do que o próprio romaneio declara no rodapé -- agora
+     ler-romaneio (v3) trata cada bloco/subtotal como um cliente separado,
+     nunca junta por nome. (2) quando o volume de um bloco vem explicitamente
+     "0" no PDF (nota de ajuste/crédito sem caixa física), o app trocava por
+     1 sem querer (0 é falsy em JS) -- corrigido com rfConfClienteTotal(),
+     que só usa o padrão de 1 quando o campo realmente não veio nenhum valor.
+-->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
@@ -3448,6 +3450,13 @@ function rfConfVerFoto(path) {
     });
   });
 }
+// v155: cli.volumeTotal pode legitimamente ser 0 (nota de ajuste/crédito sem
+// caixa física) -- "|| 1" trocava esse 0 por 1 sem querer (0 é falsy em JS).
+// Só usa o padrão de 1 quando o campo realmente não veio (null/undefined/"").
+function rfConfClienteTotal(cli) {
+  var v = cli && cli.volumeTotal;
+  return (v === 0 || v) ? Number(v) : 1;
+}
 // Calcula, por romaneio, o progresso de cada CLIENTE (caixas conferidas x total de caixas
 // do cliente inteiro). v154: o total de volumes do romaneio é impresso por CLIENTE (soma de
 // todos os pedidos/notas dele), não por pedido individual — por isso o progresso também
@@ -3486,7 +3495,7 @@ function rfConfRomaneioCardMotorista(rom) {
   let totalClientes = 0, totalFechados = 0;
   (rom.clientes || []).forEach((cli, i) => {
     totalClientes++;
-    if ((porCliente[i] || new Set()).size >= (Number(cli.volumeTotal) || 1)) totalFechados++;
+    if ((porCliente[i] || new Set()).size >= rfConfClienteTotal(cli)) totalFechados++;
   });
   const uidLogado = state.sessao ? state.sessao.uid : null;
   const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado)
@@ -3525,7 +3534,7 @@ function rfConfRomaneioCardAdmin(rom) {
   const clientesHTML = (rom.clientes || []).map((cli, i) => {
     totalClientes++;
     const conferidas = (porCliente[i] || new Set()).size;
-    const total = Number(cli.volumeTotal) || 1;
+    const total = rfConfClienteTotal(cli);
     const fechado = conferidas >= total;
     if (fechado) totalFechados++;
     const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
@@ -3533,7 +3542,7 @@ function rfConfRomaneioCardAdmin(rom) {
     return `<div style="background:#0E0E0E;border:1px solid #262626;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
         <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></div>
-        <span style="font-weight:700;color:${cor};font-size:13px;">${fechado ? "✓" : "●"} ${conferidas}/${total} caixas</span>
+        <span style="font-weight:700;color:${cor};font-size:13px;">${total === 0 ? "✓ sem caixa física (ajuste)" : `${fechado ? "✓" : "●"} ${conferidas}/${total} caixas`}</span>
       </div>
       ${pedidosHTML}
     </div>`;
