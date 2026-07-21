@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v150)</title>
+<title>RF Logística — Painel da Frota (v151)</title>
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
      forcava a camera e travava casos legitimos (ex: recuperar foto de um
@@ -4298,6 +4298,12 @@ function chatEnviarPergunta() {
             falarTexto(resposta, chatContinuarConversaSeAtivo);
             return;
           }
+          if (acao && acao.tipo === "aprovar_abastecimento") {
+            state._chatMensagens.push({ role: "assistant", content: resposta, acaoPendente: acao });
+            render();
+            falarTexto(resposta, chatContinuarConversaSeAtivo);
+            return;
+          }
           state._chatMensagens.push({ role: "assistant", content: resposta });
           render();
           falarTexto(resposta, chatContinuarConversaSeAtivo);
@@ -4359,6 +4365,49 @@ function chatCancelarViagem(msgIndex) {
   if (!m) return;
   m.acaoPendente = null;
   m.content += "\n\n❌ Cancelado, nada foi criado.";
+  render();
+}
+// v150: aprovação de abastecimento proposta pela IA — mesmo padrão de segurança
+// da criação de viagem por voz: a IA nunca grava sozinha, só depois que a
+// equipe aperta "Confirmar" na tela é que aprovarAbastecimentoNovaViagem (ou
+// vincularAbastecimentoAViagem, se já tinha viagem vinculada) roda de verdade.
+function chatConfirmarAprovacaoAbastecimento(msgIndex) {
+  const m = state._chatMensagens && state._chatMensagens[msgIndex];
+  if (!m || !m.acaoPendente) return;
+  const d = m.acaoPendente.dados || {};
+  const id = String(d.abastecimentoId || "").trim();
+  const a = (state.abastecimentos || []).find((x) => String(x.id) === id);
+  m.acaoPendente = null;
+  if (!a) {
+    m.content += "\n\n⚠ Não achei mais esse abastecimento (pode já ter sido revisado). Atualizando a lista.";
+    render();
+    rfAbastCarregar();
+    return;
+  }
+  if (a.status !== "pendente") {
+    m.content += "\n\n⚠ Esse abastecimento já foi revisado enquanto conversávamos.";
+    render();
+    return;
+  }
+  if (!a.fotoBomba || !a.fotoNota) {
+    m.content += "\n\n⚠ Faltam fotos obrigatórias (bomba e/ou nota) — não aprovei.";
+    render();
+    return;
+  }
+  const viagemId = String(d.viagemId || "").trim();
+  if (viagemId && state.viagens.some((v) => String(v.id) === viagemId)) {
+    vincularAbastecimentoAViagem(a.id, viagemId);
+  } else {
+    aprovarAbastecimentoNovaViagem(a.id);
+  }
+  m.content += "\n\n✅ Abastecimento de " + (a.placa || "?") + " aprovado.";
+  render();
+}
+function chatCancelarAprovacaoAbastecimento(msgIndex) {
+  const m = state._chatMensagens && state._chatMensagens[msgIndex];
+  if (!m) return;
+  m.acaoPendente = null;
+  m.content += "\n\n❌ Não aprovei.";
   render();
 }
 function chatErro(msg) {
@@ -4486,8 +4535,8 @@ function assistenteWidgetHTML() {
           <div style="margin-bottom:10px; display:flex; ${m.role === "user" ? "justify-content:flex-end;" : "justify-content:flex-start;"}">
             <div style="max-width:85%; padding:8px 10px; border-radius:10px; white-space:pre-wrap; ${m.role === "user" ? `background:${GOLD}; color:#000;` : "background:#222; color:#eee;"}">${esc(m.content)}${m.acaoPendente ? `
               <div style="margin-top:8px; display:flex; gap:6px;">
-                <button onclick="chatConfirmarViagem(${i})" style="background:#2E7D32; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✓ Confirmar</button>
-                <button onclick="chatCancelarViagem(${i})" style="background:#C0392B; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✕ Cancelar</button>
+                <button onclick="${m.acaoPendente.tipo === "aprovar_abastecimento" ? `chatConfirmarAprovacaoAbastecimento(${i})` : `chatConfirmarViagem(${i})`}" style="background:#2E7D32; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✓ Confirmar</button>
+                <button onclick="${m.acaoPendente.tipo === "aprovar_abastecimento" ? `chatCancelarAprovacaoAbastecimento(${i})` : `chatCancelarViagem(${i})`}" style="background:#C0392B; color:#fff; border:none; border-radius:6px; padding:5px 12px; font-size:12px; cursor:pointer;">✕ Cancelar</button>
               </div>` : ""}</div>
           </div>`).join("")}
         ${state._chatCarregando ? `<div style="color:#888; font-size:12px;">digitando...</div>` : ""}
