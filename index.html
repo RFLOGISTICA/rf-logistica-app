@@ -2,16 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v157)</title>
-<!-- v157: Conferência de Carga -- nunca mais deixa o mesmo romaneio ser
-     anexado duas vezes. Chave real: número do Conhecimento + Carregamentos
-     (impressos no cabeçalho do PDF), não o nome do arquivo (que pode ser
-     renomeado). ler-romaneio (v4) agora extrai esses dois campos; o banco
-     tem um índice único em (conhecimento, carregamentos); o app checa local
-     antes de tentar salvar e trata o erro de duplicidade do banco também
-     (segunda linha de defesa, cobre a corrida de duas pessoas anexando ao
-     mesmo tempo). Romaneios de formato sem esses campos continuam podendo
-     ser anexados normalmente (sem checagem, já que não tem chave pra travar).
+<title>RF Logística — Painel da Frota (v158)</title>
+<!-- v158: 2 melhorias pedidas por Renato na Conferência de Carga --
+     (1) romaneio agora é direcionado a uma placa/motorista específico (dropdown
+     na hora de anexar, com opção de trocar depois); só o motorista daquela placa
+     vê o romaneio no painel dele (rfConfRomaneiosDoMotorista) -- igual já
+     acontece com viagem; (2) motorista agora escolhe o CLIENTE que vai entregar
+     antes de fotografar (lista de clientes com progresso, toca pra selecionar),
+     em vez de só uma lista solta de "fotografar caixa" -- fica claro pra ele
+     por onde começar e trocar de cliente. Se a etiqueta lida for de um pedido
+     de outro cliente (não o selecionado), avisa mas ainda registra a caixa.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3279,6 +3279,14 @@ function rfConferenciaAssinarTempoReal() {
     }
   });
 }
+// v158: equipe pode direcionar (ou trocar) a placa/motorista de um romaneio já anexado.
+function rfRomaneioAtualizarPlaca(romaneioId, placa) {
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  r.placa = placa || "";
+  render();
+  rfRomaneioSalvar(r);
+}
 function rfRomaneioSalvar(r) {
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
@@ -3329,6 +3337,14 @@ function rfCaixaExcluir(id) {
 }
 
 // ---- Upload do PDF do romaneio (equipe) e leitura pela IA (ler-romaneio) ----
+// v158: romaneio agora precisa de placa/motorista escolhido antes de anexar --
+// é o que faz o motorista certo enxergar só o romaneio dele (ver rfConfRomaneiosDoMotorista).
+function rfConfRomaneioUploadValida(input) {
+  var sel = document.getElementById("rfConfPlacaNovoRomaneio");
+  var placa = sel ? sel.value : "";
+  if (!placa) { alert("Escolha a placa/motorista que vai fazer essa entrega antes de anexar o romaneio."); input.value = ""; return; }
+  rfConfRomaneioUpload(input, placa);
+}
 function rfConfRomaneioUpload(input, placa) {
   var file = input.files && input.files[0];
   if (!file) return;
@@ -3445,6 +3461,16 @@ function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
   state.caixasConferencia.unshift(nova);
   render();
   rfCaixaSalvar(nova);
+  // v158: se o motorista tinha um cliente selecionado e a caixa lida é de outro
+  // pedido (não pertence a esse cliente), avisa -- pode ter pego a caixa errada.
+  var idxAtivo = state._confClienteAtivo && state._confClienteAtivo[romaneioId];
+  var romAtivo = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  if (romAtivo && idxAtivo !== undefined && idxAtivo !== null && romAtivo.clientes && romAtivo.clientes[idxAtivo]) {
+    var pedidosDoAtivo = (romAtivo.clientes[idxAtivo].pedidos || []).map(function (p) { return p.pedido; });
+    if (nova.pedido && pedidosDoAtivo.indexOf(nova.pedido) === -1) {
+      alert("Atenção: essa caixa é do pedido " + nova.pedido + (nova.fantasia ? " (" + nova.fantasia + ")" : "") + ", que não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + "). A caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
+    }
+  }
 }
 // Caixa fracionada: motorista marca manualmente quais pedidos estão naquela caixa
 // (pode marcar mais de um — caixa com etiquetas de clientes diferentes juntas).
@@ -3527,7 +3553,20 @@ function rfConfProgressoRomaneio(romaneioId) {
   return porCliente;
 }
 
+// v158: motorista só vê o romaneio que a equipe direcionou pra placa dele.
+function rfConfRomaneiosDoMotorista() {
+  var placa = (state.sessao && state.sessao.placa_motorista) || "";
+  if (!placa) return [];
+  return (state.romaneios || []).filter(function (r) { return r.placa === placa; });
+}
 // Card de um romaneio na visão do motorista: botão de foto + progresso + caixas recentes dele.
+// v158: guarda qual cliente cada motorista escolheu, por romaneio.
+function rfConfSelecionarCliente(romaneioId, indice) {
+  state._confClienteAtivo = state._confClienteAtivo || {};
+  if (indice === null || indice === undefined) delete state._confClienteAtivo[romaneioId];
+  else state._confClienteAtivo[romaneioId] = indice;
+  render();
+}
 function rfConfRomaneioCardMotorista(rom) {
   const porCliente = rfConfProgressoRomaneio(rom.id);
   let totalClientes = 0, totalFechados = 0;
@@ -3535,19 +3574,53 @@ function rfConfRomaneioCardMotorista(rom) {
     totalClientes++;
     if ((porCliente[i] || new Set()).size >= rfConfClienteTotal(cli)) totalFechados++;
   });
-  const uidLogado = state.sessao ? state.sessao.uid : null;
-  const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado)
-    .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
-  return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+  state._confClienteAtivo = state._confClienteAtivo || {};
+  const idxAtivo = state._confClienteAtivo[rom.id];
+  const cliAtivo = (idxAtivo !== undefined && rom.clientes && rom.clientes[idxAtivo]) ? rom.clientes[idxAtivo] : null;
+  const cabecalho = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
       <div>
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
         <div style="font-size:11px;color:#777;">${totalFechados}/${totalClientes} clientes conferidos</div>
       </div>
-      <label class="btn-gold" style="cursor:pointer;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
+    </div>`;
+
+  if (!cliAtivo) {
+    const listaHTML = (rom.clientes || []).map((cli, i) => {
+      const conferidas = (porCliente[i] || new Set()).size;
+      const total = rfConfClienteTotal(cli);
+      const fechado = conferidas >= total;
+      const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
+      return `<button onclick="rfConfSelecionarCliente('${rom.id}',${i})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;gap:8px;padding:10px 12px;margin-bottom:6px;background:#161616;border:1px solid #262626;border-radius:8px;color:#fff;font-size:13px;">
+        <span>${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></span>
+        <span style="font-weight:700;color:${cor};white-space:nowrap;">${total === 0 ? "✓ sem caixa" : `${fechado ? "✓" : "●"} ${conferidas}/${total}`}</span>
+      </button>`;
+    }).join("");
+    return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
+      ${cabecalho}
+      <div style="font-size:11px;color:#777;margin-bottom:8px;">Toque no cliente que você vai entregar agora:</div>
+      ${listaHTML}
+    </div>`;
+  }
+
+  const conferidasAtivo = (porCliente[idxAtivo] || new Set()).size;
+  const totalAtivo = rfConfClienteTotal(cliAtivo);
+  const uidLogado = state.sessao ? state.sessao.uid : null;
+  const pedidosDoAtivo = (cliAtivo.pedidos || []).map((p) => p.pedido);
+  const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado &&
+      (pedidosDoAtivo.indexOf(c.pedido) !== -1 || (c.fracionada && (c.pedidosExtra || []).some((p) => pedidosDoAtivo.indexOf(p) !== -1))))
+    .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
+  return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
+    ${cabecalho}
+    <div style="background:#161616;border:1px solid #333;border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:700;color:#fff;">🚚 Entregando: ${esc(cliAtivo.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cliAtivo.cidade || "")}</span></div>
+        <div style="font-size:11px;color:#777;">${totalAtivo === 0 ? "sem caixa física (ajuste)" : `${conferidasAtivo}/${totalAtivo} caixas conferidas`}</div>
+      </div>
+      <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="rfConfSelecionarCliente('${rom.id}', null)">🔁 trocar cliente</button>
     </div>
+    <label class="btn-gold" style="cursor:pointer;display:inline-block;margin-bottom:10px;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
     ${state._confLendoEtiqueta ? `<div style="color:${GOLD};font-size:12px;margin-bottom:10px;">Lendo etiqueta com IA...</div>` : ""}
-    ${minhas.length === 0 ? "" : `<div style="font-size:11px;color:#777;margin-bottom:6px;">Últimas caixas fotografadas por você:</div>
+    ${minhas.length === 0 ? "" : `<div style="font-size:11px;color:#777;margin-bottom:6px;">Últimas caixas desse cliente:</div>
       ${minhas.map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:1px solid #1a1a1a;flex-wrap:wrap;">
         <span style="color:#ccc;">
           ${c.fracionada ? (c.semEtiqueta ? "📦 sem etiqueta" : "📦 etiqueta ilegível") : `Pedido ${esc(c.pedido)} (${c.volAtual}/${c.volTotal})${c.fantasia ? " — " + esc(c.fantasia) : ""}`}
@@ -3589,10 +3662,19 @@ function rfConfRomaneioCardAdmin(rom) {
   return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#111;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
       <div>
-        <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
+        <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}</div>
         <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}${rom.conhecimento ? ` · Conhecimento ${esc(rom.conhecimento)}` : ""} · ${totalFechados}/${totalClientes} clientes conferidos (${pct}%)</div>
       </div>
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px;flex-wrap:wrap;">
+      <span style="font-size:12px;color:#999;">Direcionado pra:</span>
+      <select onchange="rfRomaneioAtualizarPlaca('${rom.id}', this.value)" style="font-size:12px;min-width:220px;${rom.placa ? "" : "border-color:#C0392B;"}">
+        <option value="">— nenhuma placa/motorista ainda —</option>
+        ${state.veiculos.map((v) => `<option value="${esc(v.placa)}" ${rom.placa === v.placa ? "selected" : ""}>${esc(v.placa)}${v.motorista ? ` — ${esc(v.motorista)}` : " — (sem motorista)"}</option>`).join("")}
+      </select>
+      ${!rom.placa ? `<span style="color:#C0392B;font-size:11px;">⚠ nenhum motorista vê esse romaneio ainda</span>` : ""}
+    </div>
     </div>
     ${sinalizadas.length ? `<div style="background:#2a1414;border:1px solid #C0392B;border-radius:8px;padding:10px;margin:10px 0;">
       <div style="font-weight:700;color:#C0392B;font-size:12px;margin-bottom:6px;">⚠ ${sinalizadas.length} caixa${sinalizadas.length === 1 ? "" : "s"} sinalizada${sinalizadas.length === 1 ? "" : "s"} pelo motorista</div>
@@ -4250,8 +4332,9 @@ function painelMotoristaHTML() {
 
     <div style="padding:0 24px 32px;">
       <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">📦 Conferência de Carga</div>
-      <div style="font-size:12px;color:#999;margin-bottom:16px;">Fotografe a etiqueta de cada caixa. O sistema lê sozinho o pedido e confere. Se a caixa não tiver etiqueta (ou tiver mais de uma colada), marque manualmente o pedido ou sinalize pra equipe resolver.</div>
-      ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado pela equipe ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardMotorista(r)).join("")}
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Escolha o cliente que você vai entregar agora e fotografe a etiqueta de cada caixa dele. O sistema lê sozinho o pedido e confere. Se a caixa não tiver etiqueta (ou tiver mais de uma colada), marque manualmente o pedido ou sinalize pra equipe resolver.</div>
+      ${(function () { var meusRomaneios = rfConfRomaneiosDoMotorista();
+        return meusRomaneios.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio direcionado pra você ainda. Fale com a equipe.</div>` : meusRomaneios.map((r) => rfConfRomaneioCardMotorista(r)).join(""); })()}
     </div>
   `;
 }
@@ -6057,8 +6140,11 @@ function renderTabela() {
       </div>
       <div style="font-size:12px;color:#999;margin-bottom:16px;">Anexe o romaneio (PDF) de uma viagem antes de sair. Durante a viagem, o motorista fotografa a etiqueta de cada caixa pelo celular — o pedido fica <b style="color:#2E7D32;">verde</b> quando todas as caixas dele forem conferidas.</div>
       <div style="border:1px dashed #333;border-radius:10px;padding:14px;margin-bottom:22px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-        <input id="rfConfPlacaNovoRomaneio" placeholder="Placa do caminhão (opcional)" style="width:180px;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
-        <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF)<input type="file" accept="application/pdf" style="display:none" onchange="rfConfRomaneioUpload(this, document.getElementById('rfConfPlacaNovoRomaneio').value)"></label>
+        <select id="rfConfPlacaNovoRomaneio" style="min-width:220px;">
+          <option value="">Escolha a placa/motorista...</option>
+          ${state.veiculos.map((v) => `<option value="${esc(v.placa)}">${esc(v.placa)}${v.motorista ? ` — ${esc(v.motorista)}` : " — (sem motorista)"}</option>`).join("")}
+        </select>
+        <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF)<input type="file" accept="application/pdf" style="display:none" onchange="rfConfRomaneioUploadValida(this)"></label>
         ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
       </div>
       ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardAdmin(r)).join("")}
