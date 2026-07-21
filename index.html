@@ -2,20 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v167)</title>
-<!-- v167: romaneio (Conferência de Carga) agora pode ser vinculado a uma
-     viagem real de Despesas de Viagem (dropdown filtrado pela mesma placa,
-     ou botão "+ criar viagem" direto dali). Uma vez vinculado, o campo
-     "dias" da viagem se mantém sincronizado com o prazo do romaneio sempre:
-     ao definir/editar "dias previstos" já aplica na viagem, e sempre que o
-     relógio RECALCULA a previsão (pelo ritmo real de entregas), o campo
-     "dias" da viagem é atualizado sozinho pro valor recalculado -- sem a
-     equipe precisar editar nada na mão. Objetivo: terminar a viagem no
-     menor tempo real possível, com Despesas de Viagem sempre refletindo a
-     estimativa mais atual. Trava extra de segurança (window.__rfDadosCarregados)
-     garante que essa sincronização automática NUNCA mexe em state.viagens
-     antes do 1º download real da caixa geral terminar -- mesma lição do bug
-     crítico da v156, pra nunca se repetir aqui.
+<title>RF Logística — Painel da Frota (v169)</title>
+<!-- v169: romaneio agora também pode ser anexado por FOTO(s), não só PDF --
+     resolve o caso do romaneio vir em papel físico em vez de digital. Pode
+     escolher várias fotos de uma vez (uma por página) que a IA lê todas
+     juntas como páginas do mesmo documento. Também adicionada uma
+     CONFERÊNCIA AUTOMÁTICA (ler-romaneio v5): a IA agora também extrai os
+     totais que o PRÓPRIO documento declara no rodapé ("Declaro... N
+     nota(s), V volumes, C cliente(s)") e o app compara contra o que
+     realmente foi extraído da tabela -- se não bater, avisa claramente
+     antes do motorista sair com esse romaneio. É a proteção mais forte
+     contra erro de leitura, principalmente em foto de papel (ângulo,
+     sombra, dobra), que é menos confiável que um PDF nativo.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3444,15 +3442,29 @@ function rfConfRomaneioUploadValida(input) {
   rfConfRomaneioUpload(input, placa, diasPrevistos);
 }
 function rfConfRomaneioUpload(input, placa, diasPrevistos) {
-  var file = input.files && input.files[0];
-  if (!file) return;
-  if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) { alert("Anexe o romaneio em PDF."); input.value = ""; return; }
+  var files = input.files ? Array.prototype.slice.call(input.files) : [];
+  if (!files.length) return;
+  var ehPdf = files.some(function (f) { return /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name); });
+  if (ehPdf && files.length > 1) { alert("Escolha só 1 arquivo quando for PDF (o PDF já traz todas as páginas dentro dele)."); input.value = ""; return; }
+  var nomeExibicao = files.length > 1 ? files.length + " fotos do romaneio" : files[0].name;
   state._romaneioLendo = true; render();
-  var reader = new FileReader();
-  reader.onload = function () {
-    var base64 = String(reader.result || "").split(",")[1] || "";
+
+  function lerComoBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || "").split(",")[1] || ""); };
+      reader.onerror = function () { reject(new Error("Erro ao ler o arquivo.")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  Promise.all(files.map(lerComoBase64)).then(function (base64s) {
     input.value = "";
-    if (!base64) { state._romaneioLendo = false; render(); alert("Não consegui ler o arquivo."); return; }
+    var pdfBase64 = ehPdf ? base64s[0] : "";
+    var imagens = ehPdf ? [] : files.map(function (f, i) { return { base64: base64s[i], mimeType: f.type || "image/jpeg" }; });
+    if (ehPdf && !pdfBase64) { state._romaneioLendo = false; render(); alert("Não consegui ler o arquivo."); return; }
+    if (!ehPdf && imagens.every(function (im) { return !im.base64; })) { state._romaneioLendo = false; render(); alert("Não consegui ler as fotos."); return; }
+
     rfGetClient().then(function (sb) {
       if (!sb) { state._romaneioLendo = false; render(); alert("Sem conexão com a nuvem."); return; }
       // v160: se o celular ficou em segundo plano (app minimizado/tela bloqueada),
@@ -3471,16 +3483,16 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
           fetch(RF_SB_URL + "/functions/v1/ler-romaneio", {
             method: "POST",
             headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ pdfBase64: base64, nomeArquivo: file.name }),
+            body: JSON.stringify({ pdfBase64: pdfBase64, nomeArquivo: nomeExibicao, imagens: imagens }),
           }).then(function (r) { return r.json(); }).then(function (j) {
             if (j && j.error && /sess[ãa]o/i.test(j.error) && !jaTentouRenovar) {
               sb.auth.refreshSession().then(function () { enviar(true); });
               return;
             }
             state._romaneioLendo = false;
-            if (j && j.error) { render(); alert(j.error + (jaTentouRenovar ? " Saia e entre novamente." : "")); return; }
+            if (j && j.error) { render(); alert(j.error); return; }
             var clientes = (j && j.clientes) || [];
-            if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o PDF e tente de novo."); return; }
+            if (!clientes.length) { render(); alert("Não encontrei nenhum cliente/pedido nesse romaneio. Confira o arquivo/fotos e tente de novo."); return; }
             var conhecimento = (j && j.conhecimento) || "";
             var carregamentos = (j && j.carregamentos) || "";
             // v157: nunca deixa o mesmo romaneio (Conhecimento + Carregamentos) entrar
@@ -3495,21 +3507,41 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
                 return;
               }
             }
-            var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
+            var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: nomeExibicao, clientes: clientes,
               conhecimento: conhecimento, carregamentos: carregamentos, diasPrevistos: diasPrevistos || null,
               criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
             state.romaneios.unshift(novo);
             state.aba = "conferencia";
             render();
             rfRomaneioSalvar(novo);
+            // v169: confere o que foi extraído contra o total que o PRÓPRIO
+            // documento declara no rodapé ("Declaro... N nota(s), V volumes, C
+            // cliente(s)") -- pega erro de leitura, mais provável em foto de
+            // papel físico (ângulo, sombra, dobra) do que em PDF nativo.
+            rfConfConferirExtracaoRomaneio(clientes, j);
           }).catch(function (e) { state._romaneioLendo = false; render(); alert("Erro ao ler o romaneio: " + (e.message || e)); });
         });
       }
       enviar(false);
     });
-  };
-  reader.onerror = function () { state._romaneioLendo = false; render(); alert("Erro ao ler o arquivo."); };
-  reader.readAsDataURL(file);
+  }).catch(function (e) { state._romaneioLendo = false; render(); alert("Erro ao processar o(s) arquivo(s): " + (e.message || e)); });
+}
+// v169: compara o que foi extraído (contagem real de clientes/pedidos/volumes)
+// contra o que o PRÓPRIO documento declara no rodapé. Se bater, silencioso
+// (não precisa incomodar); se não bater, avisa claramente -- é o sinal mais
+// forte de erro de leitura, principalmente em foto de romaneio físico.
+function rfConfConferirExtracaoRomaneio(clientes, j) {
+  if (j.declaradoClientes == null && j.declaradoVolumes == null && j.declaradoNotas == null) return; // documento sem essa linha -- nada pra conferir
+  const clientesExtraidos = clientes.length;
+  const notasExtraidas = clientes.reduce((s, c) => s + (c.pedidos || []).length, 0);
+  const volumesExtraidos = clientes.reduce((s, c) => s + (Number(c.volumeTotal) || 0), 0);
+  const divergencias = [];
+  if (j.declaradoClientes != null && j.declaradoClientes !== clientesExtraidos) divergencias.push(`clientes: extraí ${clientesExtraidos}, o documento declara ${j.declaradoClientes}`);
+  if (j.declaradoNotas != null && j.declaradoNotas !== notasExtraidas) divergencias.push(`notas/pedidos: extraí ${notasExtraidas}, o documento declara ${j.declaradoNotas}`);
+  if (j.declaradoVolumes != null && j.declaradoVolumes !== volumesExtraidos) divergencias.push(`volumes: extraí ${volumesExtraidos}, o documento declara ${j.declaradoVolumes}`);
+  if (divergencias.length) {
+    alert("⚠ Atenção — a leitura pode ter ficado incompleta. O que foi extraído não bate com o total que o próprio romaneio declara no rodapé:\n\n" + divergencias.join("\n") + "\n\nConfira o documento com calma (se foi foto, tente tirar de novo com mais luz e sem cortar nenhuma parte da tabela) antes de mandar o motorista sair com esse romaneio.");
+  }
 }
 
 // ---- Foto da etiqueta da caixa (motorista) e leitura pela IA (ler-etiqueta-caixa) ----
@@ -3786,6 +3818,13 @@ function rfConfVerFoto(path) {
 // isso claro em qualquer lugar que mostrar.
 function rfConfRelogioRomaneio(rom) {
   if (!rom || !rom.diasPrevistos) return null;
+  // v168: o relógio só começa a contar quando o motorista de fato confirmou
+  // o início da viagem no app dele (KM de saída) -- antes disso, nada vale,
+  // mesmo que o romaneio já tenha sido anexado há dias.
+  const viagemVinc = rom.viagemId ? (state.viagens || []).find((v) => v.id === rom.viagemId) : null;
+  if (!viagemVinc || !viagemVinc.inicioRealMs) {
+    return { pendente: true, semViagem: !viagemVinc, diasPrevistos: rom.diasPrevistos };
+  }
   const porCliente = rfConfProgressoRomaneio(rom.id);
   let totalClientes = 0, totalFechados = 0;
   (rom.clientes || []).forEach((cli, i) => {
@@ -3793,7 +3832,7 @@ function rfConfRelogioRomaneio(rom) {
     if ((porCliente[i] || new Set()).size >= rfConfClienteTotal(cli)) totalFechados++;
   });
   const pct = totalClientes ? (totalFechados / totalClientes) * 100 : 0;
-  const inicioMs = rom.criadoEm || Date.now();
+  const inicioMs = viagemVinc.inicioRealMs;
   const agoraMs = Date.now();
   const diasDecorridos = Math.max(0, (agoraMs - inicioMs) / 86400000);
   const previstoFimOriginalMs = inicioMs + rom.diasPrevistos * 86400000;
@@ -3805,6 +3844,7 @@ function rfConfRelogioRomaneio(rom) {
   }
   const previstoFimRecalcMs = inicioMs + diasEstimadosTotais * 86400000;
   return {
+    pendente: false,
     totalClientes, totalFechados, pct,
     diasPrevistos: rom.diasPrevistos, diasDecorridos, diasEstimadosTotais, recalculado,
     previstoFimOriginalMs, previstoFimRecalcMs,
@@ -3820,6 +3860,12 @@ function rfFmtDataHora(ms) {
 function rfConfRomaneioRelogioHTML(rom) {
   const r = rfConfRelogioRomaneio(rom);
   if (!r) return "";
+  if (r.pendente) {
+    return `<div style="background:#161616;border:1px solid #333;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+      <div style="font-weight:700;color:${GOLD};font-size:13px;margin-bottom:6px;">🕐 Relógio da rota</div>
+      <div style="font-size:12px;color:#999;">${r.semViagem ? "Vincule uma viagem acima e a" : "A"}guardando o motorista confirmar o início da viagem no app dele (foto do KM de saída) — o relógio só começa a contar a partir daí. Previsão: ${r.diasPrevistos} dia(s) a partir do início real.</div>
+    </div>`;
+  }
   const corBarra = r.atrasado ? "#C0392B" : r.adiantado ? "#2E7D32" : GOLD;
   return `<div style="background:#161616;border:1px solid #333;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
@@ -5171,10 +5217,12 @@ function gerarContextoAssistente() {
     const veic = state.veiculos.find((v) => v.placa === rom.placa);
     const viagemVinc = rom.viagemId ? (state.viagens || []).find((v) => v.id === rom.viagemId) : null;
     const relogio = rfConfRelogioRomaneio(rom);
-    let linha = `- ${rom.nomeArquivo || "romaneio"} (Conhecimento ${rom.conhecimento || "?"}) — placa ${rom.placa || "(sem placa direcionada)"}${veic && veic.motorista ? ", motorista " + veic.motorista : ""}: ${totalFechados}/${totalClientes} clientes/entregas concluídos (${totalClientes ? ((totalFechados / totalClientes) * 100).toFixed(0) : 0}%), iniciado em ${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}`;
+    let linha = `- ${rom.nomeArquivo || "romaneio"} (Conhecimento ${rom.conhecimento || "?"}) — placa ${rom.placa || "(sem placa direcionada)"}${veic && veic.motorista ? ", motorista " + veic.motorista : ""}: ${totalFechados}/${totalClientes} clientes/entregas concluídos (${totalClientes ? ((totalFechados / totalClientes) * 100).toFixed(0) : 0}%), romaneio anexado em ${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}`;
     if (viagemVinc) linha += `. Viagem vinculada em Despesas de Viagem: cliente ${viagemVinc.cliente || "?"}, campo "dias" atual: ${viagemVinc.dias || 1} (esse campo é atualizado automaticamente pelo relógio recalculado)`;
-    if (relogio) {
-      linha += `. Previsão original: ${relogio.diasPrevistos} dia(s), terminar em ${rfFmtDataHora(relogio.previstoFimOriginalMs)}`;
+    if (relogio && relogio.pendente) {
+      linha += `. Relógio de previsão (${relogio.diasPrevistos} dia(s)) AINDA NÃO COMEÇOU A CONTAR — o motorista ainda não confirmou o início real da viagem no app dele (foto do KM de saída). Não estime prazo de chegada até isso acontecer.`;
+    } else if (relogio) {
+      linha += `. Relógio começou a contar quando o motorista confirmou o início real (KM de saída). Previsão original: ${relogio.diasPrevistos} dia(s), terminar em ${rfFmtDataHora(relogio.previstoFimOriginalMs)}`;
       if (relogio.recalculado) {
         linha += `. RECALCULADO pelo ritmo atual: terminar em ${rfFmtDataHora(relogio.previstoFimRecalcMs)} (~${relogio.diasRestantesRecalc.toFixed(1)} dia(s) restante(s))` + (relogio.atrasado ? " — tendência de ATRASO" : relogio.adiantado ? " — tendência de ADIANTAR" : " — no ritmo previsto");
       }
@@ -6614,14 +6662,14 @@ function renderTabela() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
         <div style="font-size:20px; font-weight:800; color:${GOLD};">📦 Conferência de Carga ${pendSinalizadas ? `<span style="font-size:12px;background:#C0392B;color:#fff;border-radius:10px;padding:2px 10px;margin-left:8px;">${pendSinalizadas} sinalizada${pendSinalizadas === 1 ? "" : "s"}</span>` : ""}</div>
       </div>
-      <div style="font-size:12px;color:#999;margin-bottom:16px;">Anexe o romaneio (PDF) de uma viagem antes de sair. Durante a viagem, o motorista fotografa a etiqueta de cada caixa pelo celular — o pedido fica <b style="color:#2E7D32;">verde</b> quando todas as caixas dele forem conferidas.</div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Anexe o romaneio de uma viagem antes de sair — em PDF, ou (se vier em papel) uma ou mais fotos do documento, uma por página. Durante a viagem, o motorista fotografa a etiqueta de cada caixa pelo celular — o pedido fica <b style="color:#2E7D32;">verde</b> quando todas as caixas dele forem conferidas.</div>
       <div style="border:1px dashed #333;border-radius:10px;padding:14px;margin-bottom:22px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
         <select id="rfConfPlacaNovoRomaneio" style="min-width:220px;">
           <option value="">Escolha a placa/motorista...</option>
           ${state.veiculos.map((v) => `<option value="${esc(v.placa)}">${esc(v.placa)}${v.motorista ? ` — ${esc(v.motorista)}` : " — (sem motorista)"}</option>`).join("")}
         </select>
         <input id="rfConfDiasPrevistosNovoRomaneio" type="number" min="1" step="1" placeholder="Dias previstos (opcional)" style="width:170px;" title="Em quantos dias essa rota deve terminar — ativa o relógio de previsão">
-        <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF)<input type="file" accept="application/pdf" style="display:none" onchange="rfConfRomaneioUploadValida(this)"></label>
+        <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF ou foto)<input type="file" accept="application/pdf,image/*" multiple style="display:none" onchange="rfConfRomaneioUploadValida(this)"></label>
         ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
       </div>
       ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardAdmin(r)).join("")}
