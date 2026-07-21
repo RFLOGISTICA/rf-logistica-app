@@ -2,16 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v153)</title>
-<!-- v153: nova aba "Conferência de Carga" — equipe anexa o romaneio (PDF) de uma
-     viagem, a IA extrai cidade->cliente->pedidos com o total de caixas esperado
-     por pedido; motorista fotografa a etiqueta de cada caixa (IA le PEDIDO e
-     "VOL x/y"), e o pedido fica verde quando todas as caixas baterem. Caixa
-     fracionada (varias etiquetas coladas, ou nenhuma) fica marcada manualmente
-     pelo motorista e/ou sinalizada pra equipe resolver. Duas tabelas novas no
-     Supabase (conferencia_romaneios, conferencia_caixas), mesmo padrao de
-     RLS + tempo real do abastecimento. Usa as edge functions ler-romaneio e
-     ler-etiqueta-caixa (ja publicadas). -->
+<title>RF Logística — Painel da Frota (v154)</title>
+<!-- v154: CORREÇÃO na Conferência de Carga -- no romaneio da Mateus, a coluna
+     VOLUME e impressa por CLIENTE (soma de todos os pedidos/notas fiscais dele),
+     nao por pedido individual (confirmado comparando com o total "X volumes" do
+     rodape do romaneio). A v153 tratava cada pedido como se tivesse seu proprio
+     volume, inflando o total esperado em clientes com varias notas fiscais (ex:
+     cliente com 10 pedidos e 150 caixas reais aparecia pedindo 159). Agora o
+     progresso e calculado por cliente (ler-romaneio v2 extrai um unico
+     volumeTotal por cliente). Romaneios ja anexados ANTES dessa versao precisam
+     ser excluidos e reanexados para usar o calculo correto. -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
      escolher da galeria tambem, nao so tirar foto na hora -- o "capture=environment"
@@ -3448,34 +3448,46 @@ function rfConfVerFoto(path) {
     });
   });
 }
-// Calcula, por romaneio, o progresso de cada pedido/cliente (caixas conferidas x total esperado).
+// Calcula, por romaneio, o progresso de cada CLIENTE (caixas conferidas x total de caixas
+// do cliente inteiro). v154: o total de volumes do romaneio é impresso por CLIENTE (soma de
+// todos os pedidos/notas dele), não por pedido individual — por isso o progresso também
+// precisa ser por cliente, senão clientes com várias notas fechavam com o número errado.
 function rfConfProgressoRomaneio(romaneioId) {
-  var caixas = state.caixasConferencia.filter(function (c) { return String(c.romaneioId) === String(romaneioId) && !c.fracionada; });
-  var porPedido = {};
+  var rom = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  if (!rom) return {};
+  var pedidoParaCliente = {};
+  (rom.clientes || []).forEach(function (cli, i) {
+    (cli.pedidos || []).forEach(function (p) { pedidoParaCliente[p.pedido] = i; });
+  });
+  var porCliente = {};
+  var caixas = state.caixasConferencia.filter(function (c) { return String(c.romaneioId) === String(romaneioId); });
   caixas.forEach(function (c) {
+    if (c.fracionada) {
+      (c.pedidosExtra || []).forEach(function (ped) {
+        var i = pedidoParaCliente[ped];
+        if (i === undefined) return;
+        if (!porCliente[i]) porCliente[i] = new Set();
+        porCliente[i].add("frac-" + c.id); // 1 caixa física conta 1 vez, mesmo marcada em >1 pedido do mesmo cliente
+      });
+      return;
+    }
     if (!c.pedido) return;
-    if (!porPedido[c.pedido]) porPedido[c.pedido] = new Set();
-    porPedido[c.pedido].add(c.volAtual || Object.keys(porPedido[c.pedido]).length + 1);
+    var i = pedidoParaCliente[c.pedido];
+    if (i === undefined) return;
+    if (!porCliente[i]) porCliente[i] = new Set();
+    porCliente[i].add(c.pedido + "|" + (c.volAtual || c.id));
   });
-  var extras = state.caixasConferencia.filter(function (c) { return String(c.romaneioId) === String(romaneioId) && c.fracionada && (c.pedidosExtra || []).length; });
-  extras.forEach(function (c) {
-    (c.pedidosExtra || []).forEach(function (ped) {
-      var pedidoLimpo = ped.split(" — ")[0].trim();
-      if (!porPedido[pedidoLimpo]) porPedido[pedidoLimpo] = new Set();
-      porPedido[pedidoLimpo].add("frac-" + c.id);
-    });
-  });
-  return porPedido;
+  return porCliente;
 }
 
 // Card de um romaneio na visão do motorista: botão de foto + progresso + caixas recentes dele.
 function rfConfRomaneioCardMotorista(rom) {
-  const porPedido = rfConfProgressoRomaneio(rom.id);
-  let totalPedidos = 0, totalFechados = 0;
-  (rom.clientes || []).forEach((cli) => (cli.pedidos || []).forEach((p) => {
-    totalPedidos++;
-    if ((porPedido[p.pedido] || new Set()).size >= (Number(p.volumeTotal) || 1)) totalFechados++;
-  }));
+  const porCliente = rfConfProgressoRomaneio(rom.id);
+  let totalClientes = 0, totalFechados = 0;
+  (rom.clientes || []).forEach((cli, i) => {
+    totalClientes++;
+    if ((porCliente[i] || new Set()).size >= (Number(cli.volumeTotal) || 1)) totalFechados++;
+  });
   const uidLogado = state.sessao ? state.sessao.uid : null;
   const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado)
     .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
@@ -3483,7 +3495,7 @@ function rfConfRomaneioCardMotorista(rom) {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
       <div>
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
-        <div style="font-size:11px;color:#777;">${totalFechados}/${totalPedidos} pedidos conferidos</div>
+        <div style="font-size:11px;color:#777;">${totalFechados}/${totalClientes} clientes conferidos</div>
       </div>
       <label class="btn-gold" style="cursor:pointer;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
     </div>
@@ -3505,35 +3517,33 @@ function rfConfRomaneioCardMotorista(rom) {
   </div>`;
 }
 
-// Card de um romaneio na visão da equipe: progresso por cliente/pedido + caixas sinalizadas.
+// Card de um romaneio na visão da equipe: progresso por cliente + caixas sinalizadas.
 function rfConfRomaneioCardAdmin(rom) {
-  const porPedido = rfConfProgressoRomaneio(rom.id);
+  const porCliente = rfConfProgressoRomaneio(rom.id);
   const sinalizadas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.sinalizada);
-  let totalPedidos = 0, totalFechados = 0;
-  const clientesHTML = (rom.clientes || []).map((cli) => {
-    const pedidosHTML = (cli.pedidos || []).map((p) => {
-      totalPedidos++;
-      const conferidas = (porPedido[p.pedido] || new Set()).size;
-      const total = Number(p.volumeTotal) || 1;
-      const fechado = conferidas >= total;
-      if (fechado) totalFechados++;
-      const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
-      return `<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #1a1a1a;font-size:12px;">
-        <span style="color:#ccc;">Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}</span>
-        <span style="font-weight:700;color:${cor};">${fechado ? "✓" : "●"} ${conferidas}/${total}</span>
-      </div>`;
-    }).join("");
+  let totalClientes = 0, totalFechados = 0;
+  const clientesHTML = (rom.clientes || []).map((cli, i) => {
+    totalClientes++;
+    const conferidas = (porCliente[i] || new Set()).size;
+    const total = Number(cli.volumeTotal) || 1;
+    const fechado = conferidas >= total;
+    if (fechado) totalFechados++;
+    const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
+    const pedidosHTML = (cli.pedidos || []).map((p) => `<div style="font-size:11px;color:#888;padding:1px 0;">Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}</div>`).join("");
     return `<div style="background:#0E0E0E;border:1px solid #262626;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
-      <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></div>
+        <span style="font-weight:700;color:${cor};font-size:13px;">${fechado ? "✓" : "●"} ${conferidas}/${total} caixas</span>
+      </div>
       ${pedidosHTML}
     </div>`;
   }).join("");
-  const pct = totalPedidos ? Math.round((totalFechados / totalPedidos) * 100) : 0;
+  const pct = totalClientes ? Math.round((totalFechados / totalClientes) * 100) : 0;
   return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#111;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
       <div>
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
-        <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")} · ${totalFechados}/${totalPedidos} pedidos conferidos (${pct}%)</div>
+        <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")} · ${totalFechados}/${totalClientes} clientes conferidos (${pct}%)</div>
       </div>
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
     </div>
