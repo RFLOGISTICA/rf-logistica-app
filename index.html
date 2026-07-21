@@ -2,16 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v158)</title>
-<!-- v158: 2 melhorias pedidas por Renato na Conferência de Carga --
-     (1) romaneio agora é direcionado a uma placa/motorista específico (dropdown
-     na hora de anexar, com opção de trocar depois); só o motorista daquela placa
-     vê o romaneio no painel dele (rfConfRomaneiosDoMotorista) -- igual já
-     acontece com viagem; (2) motorista agora escolhe o CLIENTE que vai entregar
-     antes de fotografar (lista de clientes com progresso, toca pra selecionar),
-     em vez de só uma lista solta de "fotografar caixa" -- fica claro pra ele
-     por onde começar e trocar de cliente. Se a etiqueta lida for de um pedido
-     de outro cliente (não o selecionado), avisa mas ainda registra a caixa.
+<title>RF Logística — Painel da Frota (v159)</title>
+<!-- v159: motorista agora vê bem destacado a quantidade total de caixas
+     esperada por cliente (número grande, tipo "3/17"), tanto na lista de
+     clientes quanto na tela de "Entregando", junto com os números de
+     Pedido/NF de cada nota daquele cliente -- pra ele comparar com a nota
+     fiscal física em caso de dúvida, dando mais segurança na conferência.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3592,7 +3588,10 @@ function rfConfRomaneioCardMotorista(rom) {
       const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
       return `<button onclick="rfConfSelecionarCliente('${rom.id}',${i})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;gap:8px;padding:10px 12px;margin-bottom:6px;background:#161616;border:1px solid #262626;border-radius:8px;color:#fff;font-size:13px;">
         <span>${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></span>
-        <span style="font-weight:700;color:${cor};white-space:nowrap;">${total === 0 ? "✓ sem caixa" : `${fechado ? "✓" : "●"} ${conferidas}/${total}`}</span>
+        <span style="text-align:right;white-space:nowrap;">
+          <span style="font-weight:700;color:${cor};">${total === 0 ? "✓ sem caixa" : `${fechado ? "✓" : "●"} ${conferidas}/${total}`}</span>
+          ${total > 0 ? `<div style="font-size:10px;color:#999;font-weight:400;">${total} caixa${total === 1 ? "" : "s"} no total</div>` : ""}
+        </span>
       </button>`;
     }).join("");
     return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
@@ -3611,12 +3610,20 @@ function rfConfRomaneioCardMotorista(rom) {
     .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
   return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
     ${cabecalho}
-    <div style="background:#161616;border:1px solid #333;border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-      <div>
-        <div style="font-weight:700;color:#fff;">🚚 Entregando: ${esc(cliAtivo.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cliAtivo.cidade || "")}</span></div>
-        <div style="font-size:11px;color:#777;">${totalAtivo === 0 ? "sem caixa física (ajuste)" : `${conferidasAtivo}/${totalAtivo} caixas conferidas`}</div>
+    <div style="background:#161616;border:1px solid #333;border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;color:#fff;">🚚 Entregando: ${esc(cliAtivo.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cliAtivo.cidade || "")}</span></div>
+        </div>
+        <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="rfConfSelecionarCliente('${rom.id}', null)">🔁 trocar cliente</button>
       </div>
-      <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="rfConfSelecionarCliente('${rom.id}', null)">🔁 trocar cliente</button>
+      ${totalAtivo === 0 ? `<div style="font-size:12px;color:#999;margin-top:6px;">Sem caixa física (nota de ajuste).</div>` : `
+      <div style="display:flex;align-items:baseline;gap:8px;margin:8px 0 6px;">
+        <span style="font-size:28px;font-weight:800;color:${conferidasAtivo >= totalAtivo ? "#2E7D32" : GOLD};">${conferidasAtivo}/${totalAtivo}</span>
+        <span style="font-size:12px;color:#999;">caixas conferidas — confira esse total com a nota fiscal se tiver dúvida</span>
+      </div>
+      <div style="font-size:11px;color:#888;">${(cliAtivo.pedidos || []).map((p) => `Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}`).join(" &nbsp;·&nbsp; ")}</div>
+      `}
     </div>
     <label class="btn-gold" style="cursor:pointer;display:inline-block;margin-bottom:10px;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
     ${state._confLendoEtiqueta ? `<div style="color:${GOLD};font-size:12px;margin-bottom:10px;">Lendo etiqueta com IA...</div>` : ""}
