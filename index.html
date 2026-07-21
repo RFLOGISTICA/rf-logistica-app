@@ -2,18 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v169)</title>
-<!-- v169: romaneio agora também pode ser anexado por FOTO(s), não só PDF --
-     resolve o caso do romaneio vir em papel físico em vez de digital. Pode
-     escolher várias fotos de uma vez (uma por página) que a IA lê todas
-     juntas como páginas do mesmo documento. Também adicionada uma
-     CONFERÊNCIA AUTOMÁTICA (ler-romaneio v5): a IA agora também extrai os
-     totais que o PRÓPRIO documento declara no rodapé ("Declaro... N
-     nota(s), V volumes, C cliente(s)") e o app compara contra o que
-     realmente foi extraído da tabela -- se não bater, avisa claramente
-     antes do motorista sair com esse romaneio. É a proteção mais forte
-     contra erro de leitura, principalmente em foto de papel (ângulo,
-     sombra, dobra), que é menos confiável que um PDF nativo.
+<title>RF Logística — Painel da Frota (v170)</title>
+<!-- v170: o "relógio da rota" (🕐, % concluído + previsão recalculada) agora
+     aparece pro motorista também, não só pra equipe -- mesmo widget,
+     reaproveitado (rfConfRomaneioRelogioHTML), no topo do card do romaneio
+     dele, tanto na tela de escolher cliente quanto na de "Entregando".
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -4045,6 +4038,7 @@ function rfConfRomaneioCardMotorista(rom) {
         <div style="font-size:11px;color:#777;">${totalFechados}/${totalClientes} clientes conferidos</div>
       </div>
     </div>`;
+  const relogioHTML = rfConfRomaneioRelogioHTML(rom);
 
   if (!cliAtivo) {
     const listaHTML = (rom.clientes || []).map((cli, i) => {
@@ -4063,6 +4057,7 @@ function rfConfRomaneioCardMotorista(rom) {
     }).join("");
     return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
       ${cabecalho}
+      ${relogioHTML}
       <div style="font-size:11px;color:#777;margin-bottom:8px;">Toque no cliente que você vai entregar agora:</div>
       ${listaHTML}
     </div>`;
@@ -4078,6 +4073,7 @@ function rfConfRomaneioCardMotorista(rom) {
     .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
   return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:16px;margin-bottom:16px;background:#0E0E0E;">
     ${cabecalho}
+    ${relogioHTML}
     <div style="background:#161616;border:1px solid #333;border-radius:8px;padding:10px 12px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div>
