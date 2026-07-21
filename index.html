@@ -2,13 +2,20 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v164)</title>
-<!-- v164: escondido o badge "⏸ aguardando login" pra sessões de motorista --
-     esse badge é do módulo de sync da CAIXA GERAL (frota/viagens/etc.), que
-     nunca roda pra motorista por desenho (v92: "motorista nunca escreve na
-     caixa geral"). A mensagem ficava presa pra sempre na tela dele mesmo com
-     tudo funcionando normal (abastecimento e conferência de carga sincronizam
-     em módulos próprios, à parte), só confundindo achando que travou.
+<title>RF Logística — Painel da Frota (v167)</title>
+<!-- v167: romaneio (Conferência de Carga) agora pode ser vinculado a uma
+     viagem real de Despesas de Viagem (dropdown filtrado pela mesma placa,
+     ou botão "+ criar viagem" direto dali). Uma vez vinculado, o campo
+     "dias" da viagem se mantém sincronizado com o prazo do romaneio sempre:
+     ao definir/editar "dias previstos" já aplica na viagem, e sempre que o
+     relógio RECALCULA a previsão (pelo ritmo real de entregas), o campo
+     "dias" da viagem é atualizado sozinho pro valor recalculado -- sem a
+     equipe precisar editar nada na mão. Objetivo: terminar a viagem no
+     menor tempo real possível, com Despesas de Viagem sempre refletindo a
+     estimativa mais atual. Trava extra de segurança (window.__rfDadosCarregados)
+     garante que essa sincronização automática NUNCA mexe em state.viagens
+     antes do 1º download real da caixa geral terminar -- mesma lição do bug
+     crítico da v156, pra nunca se repetir aqui.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3182,6 +3189,7 @@ function rfRomaneioParaJS(r) {
     clientes: Array.isArray(r.clientes) ? r.clientes : [],
     conhecimento: r.conhecimento || "",
     carregamentos: r.carregamentos || "",
+    diasPrevistos: r.dias_previstos != null ? Number(r.dias_previstos) : null,
     criadoPor: r.criado_por || "",
     criadoEm: Number(r.criado_em) || 0,
   };
@@ -3195,6 +3203,7 @@ function rfRomaneioParaDB(r) {
     clientes: r.clientes || [],
     conhecimento: r.conhecimento || "",
     carregamentos: r.carregamentos || "",
+    dias_previstos: r.diasPrevistos != null ? Number(r.diasPrevistos) : null,
     criado_por: r.criadoPor || null,
     criado_em: r.criadoEm || Date.now(),
   };
@@ -3258,6 +3267,7 @@ function rfRomaneiosCarregar() {
       // sozinho já atualiza a tela; os dados desses dois módulos são
       // sincronizados por conta própria (tabelas e realtime dedicados).
       render();
+      rfRomaneiosSincronizarViagens();
     });
   });
 }
@@ -3268,6 +3278,7 @@ function rfCaixasCarregar() {
       if (res.error) { console.warn("conferencia_caixas:", res.error.message); return; }
       state.caixasConferencia = (res.data || []).map(rfCaixaParaJS).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
       render(); // v156: idem acima -- nunca salvar() aqui, ver comentário em rfRomaneiosCarregar()
+      rfRomaneiosSincronizarViagens();
     });
   });
 }
@@ -3293,6 +3304,84 @@ function rfRomaneioAtualizarPlaca(romaneioId, placa) {
   r.placa = placa || "";
   render();
   rfRomaneioSalvar(r);
+}
+// v166: equipe define/edita em quantos dias a rota deve terminar -- liga o "relógio".
+function rfRomaneioAtualizarDiasPrevistos(romaneioId, valor) {
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  var n = valor ? parseInt(valor, 10) : null;
+  r.diasPrevistos = n && n > 0 ? n : null;
+  render();
+  rfRomaneioSalvar(r);
+  rfRomaneioAplicarDiasNaViagem(r); // v167: recém definido/mudou -- já usa como base pra viagem vinculada
+}
+// v167: romaneio (Conferência de Carga) e viagem (Despesas de Viagem) andam
+// juntos -- o campo "dias" da viagem some com o prazo previsto/recalculado
+// do romaneio, sempre. Só roda pra equipe (nunca motorista, que não escreve
+// na caixa geral -- ver v92/v156).
+function rfRomaneioVincularViagem(romaneioId, viagemId) {
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  r.viagemId = viagemId || "";
+  render();
+  rfRomaneioSalvar(r);
+  rfRomaneioAplicarDiasNaViagem(r);
+}
+function rfRomaneioCriarViagemVinculada(romaneioId) {
+  if (!window.__rfDadosCarregados) { alert("Ainda carregando os dados da frota — espera aparecer \"☁ sincronizado\" e tenta de novo."); return; }
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  if (!r.placa) { alert("Direcione o romaneio pra uma placa/motorista antes de criar a viagem."); return; }
+  var cliente = prompt("Nome do cliente dessa viagem (vai aparecer em Despesas de Viagem):");
+  if (cliente === null || !cliente.trim()) return;
+  cliente = cliente.trim();
+  var novaViagem = {
+    id: uid(), placa: r.placa, cliente: cliente, data: dataPadraoMes(), criadoEm: Date.now(),
+    valorViagem: 0, km: 0, dias: r.diasPrevistos || 1,
+    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+    combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+    motoristaNaEpoca: (state.veiculos.find(function (x) { return x.placa === r.placa; }) || {}).motorista || "",
+    temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+    outrosItens: [],
+  };
+  state.viagens.push(novaViagem);
+  if (!state.clientes.includes(cliente)) { state.clientes.push(cliente); state.clientes.sort(); }
+  r.viagemId = novaViagem.id;
+  salvar(); render();
+  rfRomaneioSalvar(r);
+}
+// Ajusta o campo "dias" da viagem vinculada pro valor previsto do romaneio --
+// usado quando o vínculo é criado ou quando "dias previstos" muda na mão.
+function rfRomaneioAplicarDiasNaViagem(rom) {
+  if (typeof ehMotorista === "function" && ehMotorista()) return;
+  if (!window.__rfDadosCarregados) return; // v167: nunca mexe em state.viagens antes do 1º download real (mesma trava do v156)
+  if (!rom || !rom.viagemId || !rom.diasPrevistos) return;
+  var viagem = (state.viagens || []).find(function (v) { return String(v.id) === String(rom.viagemId); });
+  if (!viagem) return;
+  if (Number(viagem.dias) !== Number(rom.diasPrevistos)) {
+    viagem.dias = Number(rom.diasPrevistos);
+    salvar(); render();
+  }
+}
+// Roda sempre que os dados de conferência mudam (nova caixa conferida, etc.):
+// se o ritmo real de entregas já recalculou a previsão de término, atualiza
+// sozinho o campo "dias" da viagem vinculada -- sem precisar a equipe editar
+// nada na mão. O objetivo é sempre convergir pro MENOR tempo real de viagem.
+function rfRomaneiosSincronizarViagens() {
+  if (typeof ehMotorista === "function" && ehMotorista()) return;
+  if (!window.__rfDadosCarregados) return; // v167: nunca mexe em state.viagens antes do 1º download real (mesma trava do v156)
+  if (!Array.isArray(state.viagens) || !state.viagens.length) return;
+  var mudou = false;
+  (state.romaneios || []).forEach(function (rom) {
+    if (!rom.viagemId) return;
+    var relogio = rfConfRelogioRomaneio(rom);
+    if (!relogio || !relogio.recalculado) return;
+    var viagem = state.viagens.find(function (v) { return String(v.id) === String(rom.viagemId); });
+    if (!viagem) return;
+    var novoDias = Math.max(1, Math.ceil(relogio.diasEstimadosTotais));
+    if (Number(viagem.dias) !== novoDias) { viagem.dias = novoDias; mudou = true; }
+  });
+  if (mudou) { salvar(); render(); }
 }
 function rfRomaneioSalvar(r) {
   rfGetClient().then(function (sb) {
@@ -3350,9 +3439,11 @@ function rfConfRomaneioUploadValida(input) {
   var sel = document.getElementById("rfConfPlacaNovoRomaneio");
   var placa = sel ? sel.value : "";
   if (!placa) { alert("Escolha a placa/motorista que vai fazer essa entrega antes de anexar o romaneio."); input.value = ""; return; }
-  rfConfRomaneioUpload(input, placa);
+  var diasSel = document.getElementById("rfConfDiasPrevistosNovoRomaneio");
+  var diasPrevistos = diasSel && diasSel.value ? parseInt(diasSel.value, 10) : null;
+  rfConfRomaneioUpload(input, placa, diasPrevistos);
 }
-function rfConfRomaneioUpload(input, placa) {
+function rfConfRomaneioUpload(input, placa, diasPrevistos) {
   var file = input.files && input.files[0];
   if (!file) return;
   if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) { alert("Anexe o romaneio em PDF."); input.value = ""; return; }
@@ -3405,7 +3496,7 @@ function rfConfRomaneioUpload(input, placa) {
               }
             }
             var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: file.name, clientes: clientes,
-              conhecimento: conhecimento, carregamentos: carregamentos,
+              conhecimento: conhecimento, carregamentos: carregamentos, diasPrevistos: diasPrevistos || null,
               criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
             state.romaneios.unshift(novo);
             state.aba = "conferencia";
@@ -3531,14 +3622,16 @@ function rfConfEtiquetaSalvarOffline(romaneioId, blob, pedido, volAtual, volTota
   rfOfflineSalvar({ id: id, tipo: "caixa", caixa: nova, fotoBlob: blob, criadoEm: Date.now() }).then(rfOfflineAtualizarContador);
   var romAtivo = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
   if (romAtivo) {
+    var clienteDono = (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === pedido; }); });
     var idxAtivo = state._confClienteAtivo && state._confClienteAtivo[romaneioId];
     if (idxAtivo !== undefined && idxAtivo !== null && romAtivo.clientes && romAtivo.clientes[idxAtivo]) {
       var pedidosDoAtivo = (romAtivo.clientes[idxAtivo].pedidos || []).map(function (p) { return p.pedido; });
       if (pedidosDoAtivo.indexOf(pedido) === -1) {
-        alert("Atenção: esse pedido não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + "). A caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
+        alert("Atenção: esse pedido não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + ").\n\n" +
+          (clienteDono ? "Essa caixa é do pedido " + pedido + ", que pertence a: " + clienteDono.cliente + " — " + clienteDono.cidade + "." : "Não encontrei esse pedido em nenhum cliente desse romaneio — confira se digitou certo.") +
+          "\n\nA caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
       }
     }
-    var clienteDono = (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === pedido; }); });
     if (clienteDono) rfClienteLocalCapturarSeNecessario(clienteDono.cliente, clienteDono.cidade);
   }
 }
@@ -3626,19 +3719,22 @@ function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
   // pedido (não pertence a esse cliente), avisa -- pode ter pego a caixa errada.
   var idxAtivo = state._confClienteAtivo && state._confClienteAtivo[romaneioId];
   var romAtivo = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  // v165: resolve ANTES do aviso quem é o dono de verdade do pedido lido, pra
+  // mostrar pro motorista não só "não é o cliente selecionado" mas também
+  // "de quem é essa caixa" -- ele consegue decidir na hora o que fazer.
+  var clienteDonoReal = romAtivo && nova.pedido ? (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === nova.pedido; }); }) : null;
   if (romAtivo && idxAtivo !== undefined && idxAtivo !== null && romAtivo.clientes && romAtivo.clientes[idxAtivo]) {
     var pedidosDoAtivo = (romAtivo.clientes[idxAtivo].pedidos || []).map(function (p) { return p.pedido; });
     if (nova.pedido && pedidosDoAtivo.indexOf(nova.pedido) === -1) {
-      alert("Atenção: essa caixa é do pedido " + nova.pedido + (nova.fantasia ? " (" + nova.fantasia + ")" : "") + ", que não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + "). A caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
+      alert("Atenção: essa caixa é do pedido " + nova.pedido + (nova.fantasia ? " (" + nova.fantasia + ")" : "") + ", que não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + ").\n\n" +
+        (clienteDonoReal ? "Essa caixa pertence a: " + clienteDonoReal.cliente + " — " + clienteDonoReal.cidade + "." : "Não achei esse pedido em nenhum cliente desse romaneio.") +
+        "\n\nA caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
     }
   }
   // v161: captura o GPS na 1ª caixa do cliente de verdade (dono do pedido lido),
   // não necessariamente o selecionado -- assim a localização fica correta mesmo
   // se o motorista tiver esquecido de trocar o cliente ativo.
-  if (romAtivo && nova.pedido) {
-    var clienteDono = (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === nova.pedido; }); });
-    if (clienteDono) rfClienteLocalCapturarSeNecessario(clienteDono.cliente, clienteDono.cidade);
-  }
+  if (clienteDonoReal) rfClienteLocalCapturarSeNecessario(clienteDonoReal.cliente, clienteDonoReal.cidade);
 }
 // Caixa fracionada: motorista marca manualmente quais pedidos estão naquela caixa
 // (pode marcar mais de um — caixa com etiquetas de clientes diferentes juntas).
@@ -3681,6 +3777,65 @@ function rfConfVerFoto(path) {
       window.open(res.data.signedUrl, "_blank");
     });
   });
+}
+// v166: "relógio" da rota -- % concluído + previsão recalculada de término.
+// Só existe se a equipe informou "dias previstos" pro romaneio. A previsão
+// original (data de início + dias previstos) fica fixa; a RECALCULADA usa o
+// ritmo real de entregas até agora (dias decorridos ÷ % concluído) pra
+// projetar quando deve realmente acabar -- é sempre uma ESTIMATIVA, deixa
+// isso claro em qualquer lugar que mostrar.
+function rfConfRelogioRomaneio(rom) {
+  if (!rom || !rom.diasPrevistos) return null;
+  const porCliente = rfConfProgressoRomaneio(rom.id);
+  let totalClientes = 0, totalFechados = 0;
+  (rom.clientes || []).forEach((cli, i) => {
+    totalClientes++;
+    if ((porCliente[i] || new Set()).size >= rfConfClienteTotal(cli)) totalFechados++;
+  });
+  const pct = totalClientes ? (totalFechados / totalClientes) * 100 : 0;
+  const inicioMs = rom.criadoEm || Date.now();
+  const agoraMs = Date.now();
+  const diasDecorridos = Math.max(0, (agoraMs - inicioMs) / 86400000);
+  const previstoFimOriginalMs = inicioMs + rom.diasPrevistos * 86400000;
+  let diasEstimadosTotais = rom.diasPrevistos;
+  let recalculado = false;
+  if (pct > 0 && diasDecorridos > 0) {
+    diasEstimadosTotais = diasDecorridos / (pct / 100);
+    recalculado = true;
+  }
+  const previstoFimRecalcMs = inicioMs + diasEstimadosTotais * 86400000;
+  return {
+    totalClientes, totalFechados, pct,
+    diasPrevistos: rom.diasPrevistos, diasDecorridos, diasEstimadosTotais, recalculado,
+    previstoFimOriginalMs, previstoFimRecalcMs,
+    diasRestantesRecalc: Math.max(0, (previstoFimRecalcMs - agoraMs) / 86400000),
+    atrasado: previstoFimRecalcMs > previstoFimOriginalMs + 86400000 * 0.5,
+    adiantado: previstoFimRecalcMs < previstoFimOriginalMs - 86400000 * 0.5,
+  };
+}
+function rfFmtDataHora(ms) {
+  return new Date(ms).toLocaleDateString("pt-BR") + " às " + new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+// Monta o quadro visual do relógio de entregas (só aparece se a equipe informou dias previstos).
+function rfConfRomaneioRelogioHTML(rom) {
+  const r = rfConfRelogioRomaneio(rom);
+  if (!r) return "";
+  const corBarra = r.atrasado ? "#C0392B" : r.adiantado ? "#2E7D32" : GOLD;
+  return `<div style="background:#161616;border:1px solid #333;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+      <span style="font-weight:700;color:${GOLD};font-size:13px;">🕐 Relógio da rota</span>
+      <span style="font-size:20px;font-weight:800;color:${corBarra};">${r.pct.toFixed(0)}%</span>
+    </div>
+    <div style="background:#0A0A0A;border-radius:6px;height:8px;overflow:hidden;margin-bottom:8px;">
+      <div style="background:${corBarra};height:100%;width:${Math.min(100, r.pct)}%;"></div>
+    </div>
+    <div style="font-size:11px;color:#999;line-height:1.6;">
+      Previsão original: ${r.diasPrevistos} dia(s) — terminar em ${rfFmtDataHora(r.previstoFimOriginalMs)}<br>
+      ${r.recalculado ? `Pelo ritmo atual (${r.totalFechados}/${r.totalClientes} clientes em ${r.diasDecorridos.toFixed(1)} dia(s)): <b style="color:${corBarra};">previsão recalculada — ${rfFmtDataHora(r.previstoFimRecalcMs)}</b> (~${r.diasRestantesRecalc.toFixed(1)} dia(s) restante(s))${r.atrasado ? " — <b style=\"color:#C0392B;\">tendência de atraso</b>" : r.adiantado ? " — <b style=\"color:#2E7D32;\">tendência de adiantar</b>" : ""}` : "Ainda sem caixas conferidas pra recalcular o ritmo."}
+      <br><span style="color:#666;">(estimativa — recalcula sozinho conforme as entregas avançam)</span>
+      ${rom.viagemId ? (() => { const v = (state.viagens || []).find((x) => x.id === rom.viagemId); return v ? `<br><span style="color:#2E7D32;">🔗 viagem "${esc(v.cliente || "")}" vinculada — dias atual: ${v.dias || 1}</span>` : ""; })() : `<br><span style="color:#C0392B;">⚠ nenhuma viagem vinculada ainda — o prazo não atualiza em Despesas de Viagem</span>`}
+    </div>
+  </div>`;
 }
 // v155: cli.volumeTotal pode legitimamente ser 0 (nota de ajuste/crédito sem
 // caixa física) -- "|| 1" trocava esse 0 por 1 sem querer (0 é falsy em JS).
@@ -3954,7 +4109,19 @@ function rfConfRomaneioCardAdmin(rom) {
         ${state.veiculos.map((v) => `<option value="${esc(v.placa)}" ${rom.placa === v.placa ? "selected" : ""}>${esc(v.placa)}${v.motorista ? ` — ${esc(v.motorista)}` : " — (sem motorista)"}</option>`).join("")}
       </select>
       ${!rom.placa ? `<span style="color:#C0392B;font-size:11px;">⚠ nenhum motorista vê esse romaneio ainda</span>` : ""}
+      <span style="font-size:12px;color:#999;margin-left:8px;">🕐 Previsto pra terminar em:</span>
+      <input type="number" min="1" step="1" value="${rom.diasPrevistos || ""}" placeholder="dias" style="width:70px;font-size:12px;" onchange="rfRomaneioAtualizarDiasPrevistos('${rom.id}', this.value)">
+      <span style="font-size:12px;color:#999;">dia(s)</span>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
+      <span style="font-size:12px;color:#999;">Viagem vinculada (Despesas de Viagem):</span>
+      <select onchange="rfRomaneioVincularViagem('${rom.id}', this.value)" style="font-size:12px;min-width:220px;">
+        <option value="">— nenhuma —</option>
+        ${(state.viagens || []).filter((v) => v.placa === rom.placa).map((v) => `<option value="${v.id}" ${rom.viagemId === v.id ? "selected" : ""}>${esc(v.cliente || "sem cliente")} — ${v.data || "?"} (${v.dias || 1}d)</option>`).join("")}
+      </select>
+      ${!rom.viagemId ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfRomaneioCriarViagemVinculada('${rom.id}')">+ criar viagem</button>` : `<span style="font-size:11px;color:#2E7D32;">✓ o campo "dias" dessa viagem atualiza sozinho conforme o ritmo real</span>`}
+    </div>
+    ${rfConfRomaneioRelogioHTML(rom)}
     </div>
     ${sinalizadas.length ? `<div style="background:#2a1414;border:1px solid #C0392B;border-radius:8px;padding:10px;margin:10px 0;">
       <div style="font-weight:700;color:#C0392B;font-size:12px;margin-bottom:6px;">⚠ ${sinalizadas.length} caixa${sinalizadas.length === 1 ? "" : "s"} sinalizada${sinalizadas.length === 1 ? "" : "s"} pelo motorista</div>
@@ -4990,6 +5157,31 @@ function gerarContextoAssistente() {
   const seguroVencendo = veiculosComMes().filter((v) => { const dias = diasPara(v.venctoSeguro); return dias !== null && dias <= 30; })
     .map((v) => `- ${v.placa}: seguro vence em ${v.venctoSeguro}`).join("\n");
 
+  // v166: resumo dos romaneios/Conferência de Carga -- quantas entregas
+  // (clientes) foram concluídas em cada romaneio, e o relógio de previsão
+  // (quando a equipe informou dias previstos), pra IA responder perguntas
+  // tipo "quantas entregas foram concluídas" ou "quando o caminhão chega".
+  const linhasRomaneios = (state.romaneios || []).map((rom) => {
+    const porCliente = rfConfProgressoRomaneio(rom.id);
+    let totalClientes = 0, totalFechados = 0;
+    (rom.clientes || []).forEach((cli, i) => {
+      totalClientes++;
+      if ((porCliente[i] || new Set()).size >= rfConfClienteTotal(cli)) totalFechados++;
+    });
+    const veic = state.veiculos.find((v) => v.placa === rom.placa);
+    const viagemVinc = rom.viagemId ? (state.viagens || []).find((v) => v.id === rom.viagemId) : null;
+    const relogio = rfConfRelogioRomaneio(rom);
+    let linha = `- ${rom.nomeArquivo || "romaneio"} (Conhecimento ${rom.conhecimento || "?"}) — placa ${rom.placa || "(sem placa direcionada)"}${veic && veic.motorista ? ", motorista " + veic.motorista : ""}: ${totalFechados}/${totalClientes} clientes/entregas concluídos (${totalClientes ? ((totalFechados / totalClientes) * 100).toFixed(0) : 0}%), iniciado em ${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}`;
+    if (viagemVinc) linha += `. Viagem vinculada em Despesas de Viagem: cliente ${viagemVinc.cliente || "?"}, campo "dias" atual: ${viagemVinc.dias || 1} (esse campo é atualizado automaticamente pelo relógio recalculado)`;
+    if (relogio) {
+      linha += `. Previsão original: ${relogio.diasPrevistos} dia(s), terminar em ${rfFmtDataHora(relogio.previstoFimOriginalMs)}`;
+      if (relogio.recalculado) {
+        linha += `. RECALCULADO pelo ritmo atual: terminar em ${rfFmtDataHora(relogio.previstoFimRecalcMs)} (~${relogio.diasRestantesRecalc.toFixed(1)} dia(s) restante(s))` + (relogio.atrasado ? " — tendência de ATRASO" : relogio.adiantado ? " — tendência de ADIANTAR" : " — no ritmo previsto");
+      }
+    }
+    return linha;
+  }).join("\n");
+
   // v127: histórico completo — todos os meses, não só o mês ativo.
   const porMes = {};
   state.viagens.forEach((v) => {
@@ -5106,7 +5298,10 @@ Seguros vencendo nos próximos 30 dias:
 ${seguroVencendo || "(nenhum)"}
 
 Abastecimentos (pendentes primeiro, depois os mais recentes já revisados — até 60 registros; "fotos faltando: nenhuma" quer dizer que as 3 fotos obrigatórias foram enviadas):
-${linhasAbastecimento || "(nenhum abastecimento lançado)"}`;
+${linhasAbastecimento || "(nenhum abastecimento lançado)"}
+
+Romaneios / Conferência de Carga (entregas em andamento, uma linha por romaneio anexado — "clientes/entregas concluídos" é quanto já foi CONFERIDO por foto/confirmação do motorista; a previsão RECALCULADA usa o ritmo real de entregas até agora, é sempre uma estimativa que se ajusta sozinha conforme a rota avança):
+${linhasRomaneios || "(nenhum romaneio anexado)"}`;
 }
 function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
@@ -6425,6 +6620,7 @@ function renderTabela() {
           <option value="">Escolha a placa/motorista...</option>
           ${state.veiculos.map((v) => `<option value="${esc(v.placa)}">${esc(v.placa)}${v.motorista ? ` — ${esc(v.motorista)}` : " — (sem motorista)"}</option>`).join("")}
         </select>
+        <input id="rfConfDiasPrevistosNovoRomaneio" type="number" min="1" step="1" placeholder="Dias previstos (opcional)" style="width:170px;" title="Em quantos dias essa rota deve terminar — ativa o relógio de previsão">
         <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF)<input type="file" accept="application/pdf" style="display:none" onchange="rfConfRomaneioUploadValida(this)"></label>
         ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
       </div>
@@ -7183,6 +7379,7 @@ revalidarSessaoAoAbrir();
   window.rfPararSyncEquipe = function () {
     podeSincronizar = false;
     dadosCarregados = false; // v118: próxima sessão repete a espera do 1º download real
+    window.__rfDadosCarregados = false;
     clearTimeout(timerSubida);
   };
 
@@ -7214,6 +7411,11 @@ revalidarSessaoAoAbrir();
       // permitir subida, e o cálculo de tanque/combustível precisa recalcular
       // do zero (senão fica mostrando "faltam Xl" com base em cache velho).
       dadosCarregados = true;
+      // v167: sinal GLOBAL (só leitura por fora) de que a caixa geral já
+      // carregou de verdade -- outros módulos (ex: sincronizar viagem<->
+      // romaneio da Conferência de Carga) usam isso pra nunca mexer em
+      // state.viagens antes desse ponto, evitando repetir o bug do v156.
+      window.__rfDadosCarregados = true;
       window.__rfVerSalvo = (window.__rfVerSalvo || 0) + 1;
       migrarFrotaMes();
       migrarIdsViagens();
