@@ -2,18 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v163)</title>
-<!-- v163: fila offline pra Conferência de Carga. Sem sinal, a IA não tem como
-     ler a etiqueta (ela roda num servidor) -- então o motorista confirma a
-     caixa na hora digitando o que já está vendo (Pedido + "VOL x/y"), 100%
-     preciso, sem depender de internet. A caixa já conta na conferência
-     imediatamente. Só a FOTO fica guardada localmente (IndexedDB) e sobe
-     sozinha pra nuvem quando o sinal voltar (evento "online" + retentativa
-     a cada 30s), sem o motorista precisar fazer nada. O mesmo fallback entra
-     em ação automaticamente se o app tentar ler pela IA e a conexão falhar
-     no meio do processo (upload da foto ou chamada da IA). Coluna nova
-     confirmada_offline em conferencia_caixas pra equipe saber quais caixas
-     foram confirmadas manualmente (sem IA) -- indicadores "⏳" na tela.
+<title>RF Logística — Painel da Frota (v164)</title>
+<!-- v164: escondido o badge "⏸ aguardando login" pra sessões de motorista --
+     esse badge é do módulo de sync da CAIXA GERAL (frota/viagens/etc.), que
+     nunca roda pra motorista por desenho (v92: "motorista nunca escreve na
+     caixa geral"). A mensagem ficava presa pra sempre na tela dele mesmo com
+     tudo funcionando normal (abastecimento e conferência de carga sincronizam
+     em módulos próprios, à parte), só confundindo achando que travou.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -7149,6 +7144,14 @@ revalidarSessaoAoAbrir();
       sb = cliente;
       sbPronto = true;
       if (podeSincronizar) { baixarTudo(); if (!tempoRealAssinado) { tempoRealAssinado = true; assinarTempoReal(); } }
+      // v164: esse badge é do módulo de sync da CAIXA GERAL (frota/viagens/etc.),
+      // que por desenho (v92) nunca roda pra motorista -- "podeSincronizar" nunca
+      // vira true nessa sessão, então a mensagem "aguardando login" ficava presa
+      // pra sempre na tela dele, mesmo com tudo funcionando normal (os dados
+      // dele -- abastecimento, conferência de carga -- sincronizam por conta
+      // própria, em módulos separados). Confundia o motorista achando que
+      // travou. Simplesmente não é uma informação relevante pra ele.
+      else if (typeof ehMotorista === "function" && ehMotorista()) { badge.style.display = "none"; }
       else { status("\u23F8 aguardando login", "#666"); }
     }).catch(function () {
       status("\u26A0 erro de conexao (modo local)", "#C0392B");
