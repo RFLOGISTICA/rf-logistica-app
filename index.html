@@ -2,17 +2,24 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v155)</title>
-<!-- v155: mais 2 correções na Conferência de Carga, achadas comparando com um
-     romaneio real linha a linha -- (1) o romaneio pode ter dois BLOCOS
-     separados com o mesmo nome+cidade de cliente (cada um com seu próprio
-     subtotal de volume); a v154 juntava os dois num só, mudando a contagem
-     de clientes do que o próprio romaneio declara no rodapé -- agora
-     ler-romaneio (v3) trata cada bloco/subtotal como um cliente separado,
-     nunca junta por nome. (2) quando o volume de um bloco vem explicitamente
-     "0" no PDF (nota de ajuste/crédito sem caixa física), o app trocava por
-     1 sem querer (0 é falsy em JS) -- corrigido com rfConfClienteTotal(),
-     que só usa o padrão de 1 quando o campo realmente não veio nenhum valor.
+<title>RF Logística — Painel da Frota (v156)</title>
+<!-- v156: CORREÇÃO CRÍTICA -- rfRomaneiosCarregar() e rfCaixasCarregar() (novas
+     na v153) chamavam salvar() depois de carregar dados da nuvem. O problema:
+     salvar() é "monkey-patched" pelo módulo de sync da frota pra tratar
+     QUALQUER chamada como "o usuário editou algo" (marca houveEdicaoLocal =
+     true). Como essas duas funções carregam rápido (tabelas pequenas) e
+     costumam terminar ANTES do 1º download da caixa geral (painel_dados,
+     bem maior), a flag ficava marcada bem na hora errada -- e o código de
+     download da frota tem uma regra (v118, pra proteção contra perda de
+     dados) que, ao ver houveEdicaoLocal=true, DESCARTA os dados reais da
+     nuvem que acabaram de chegar e tenta subir o estado local por cima.
+     Resultado: "Painel da Frota — 0 veículos" travado pra sempre, repetindo
+     a cada novo login (mesmo bug se repetia). A trava adicional em
+     subirTudo() (só sobe depois que dadosCarregados=true) evitou que isso
+     chegasse a apagar dado real na nuvem -- confirmado por consulta direta
+     ao banco (22 veículos, 30 viagens intactos) -- mas a tela ficava
+     inutilizável. Correção: as duas funções agora só chamam render(), nunca
+     salvar() -- mesmo padrão já usado (corretamente) em rfAbastCarregar().
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3239,7 +3246,15 @@ function rfRomaneiosCarregar() {
     sb.from(RF_ROMANEIOS_TABELA).select("*").then(function (res) {
       if (res.error) { console.warn("conferencia_romaneios:", res.error.message); return; }
       state.romaneios = (res.data || []).map(rfRomaneioParaJS).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
-      salvar(); render();
+      // v156: NUNCA chamar salvar() aqui -- salvar() está "monkey-patched" pelo
+      // módulo de sync da frota pra tratar QUALQUER chamada como "usuário editou
+      // algo" e marcar houveEdicaoLocal=true. Se isso acontece antes do 1º
+      // download da caixa geral (painel_dados) terminar, o download descarta os
+      // dados reais da nuvem e tenta subir o estado local (ainda vazio) por
+      // cima -- exatamente o bug que travava "0 veículos" pra sempre. render()
+      // sozinho já atualiza a tela; os dados desses dois módulos são
+      // sincronizados por conta própria (tabelas e realtime dedicados).
+      render();
     });
   });
 }
@@ -3249,7 +3264,7 @@ function rfCaixasCarregar() {
     sb.from(RF_CAIXAS_TABELA).select("*").then(function (res) {
       if (res.error) { console.warn("conferencia_caixas:", res.error.message); return; }
       state.caixasConferencia = (res.data || []).map(rfCaixaParaJS).sort(function (x, y) { return (y.criadoEm || 0) - (x.criadoEm || 0); });
-      salvar(); render();
+      render(); // v156: idem acima -- nunca salvar() aqui, ver comentário em rfRomaneiosCarregar()
     });
   });
 }
