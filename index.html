@@ -2,15 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v160)</title>
-<!-- v160: corrige "Sessão inválida" ao anexar romaneio ou fotografar etiqueta
-     depois do celular ficar em segundo plano (app minimizado/tela bloqueada) --
-     nesse caso a renovação automática do token não roda em background, e ao
-     voltar o token pode estar vencido. Antes o app só mostrava o erro; agora
-     tenta renovar a sessão sozinho (sb.auth.refreshSession()) e refaz o
-     pedido 1 vez antes de desistir -- tanto no upload do romaneio (ler-romaneio)
-     quanto na foto da etiqueta (ler-etiqueta-caixa, sem reenviar a foto, já
-     que ela já subiu pro armazenamento).
+<title>RF Logística — Painel da Frota (v163)</title>
+<!-- v163: fila offline pra Conferência de Carga. Sem sinal, a IA não tem como
+     ler a etiqueta (ela roda num servidor) -- então o motorista confirma a
+     caixa na hora digitando o que já está vendo (Pedido + "VOL x/y"), 100%
+     preciso, sem depender de internet. A caixa já conta na conferência
+     imediatamente. Só a FOTO fica guardada localmente (IndexedDB) e sobe
+     sozinha pra nuvem quando o sinal voltar (evento "online" + retentativa
+     a cada 30s), sem o motorista precisar fazer nada. O mesmo fallback entra
+     em ação automaticamente se o app tentar ler pela IA e a conexão falhar
+     no meio do processo (upload da foto ou chamada da IA). Coluna nova
+     confirmada_offline em conferencia_caixas pra equipe saber quais caixas
+     foram confirmadas manualmente (sem IA) -- indicadores "⏳" na tela.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -327,6 +330,7 @@ function salvar() {
     localStorage.setItem("rf-frota-viagensfim-v1", JSON.stringify(state.viagensFinalizadas));
     localStorage.setItem("rf-frota-romaneios-v1", JSON.stringify(state.romaneios));
     localStorage.setItem("rf-frota-caixasconf-v1", JSON.stringify(state.caixasConferencia));
+    localStorage.setItem("rf-frota-clienteslocais-v1", JSON.stringify(state.clientesLocais));
   } catch (e) {}
 }
 
@@ -348,6 +352,7 @@ let state = {
   viagensFinalizadas: carregar("rf-frota-viagensfim-v1", () => []),
   romaneios: carregar("rf-frota-romaneios-v1", () => []),
   caixasConferencia: carregar("rf-frota-caixasconf-v1", () => []),
+  clientesLocais: carregar("rf-frota-clienteslocais-v1", () => []),
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -2300,6 +2305,9 @@ function carregarPerfilEEntrar(sb, user) {
     if (state.sessao.papel !== "cliente" && typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
     if (state.sessao.papel !== "cliente" && typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
     if (state.sessao.papel !== "cliente" && typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
+    if (state.sessao.papel !== "cliente" && typeof rfClientesLocaisCarregar === "function") { rfClientesLocaisCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfClientesLocaisAssinarTempoReal === "function") { rfClientesLocaisAssinarTempoReal(); }
+    if (state.sessao.papel === "motorista" && typeof rfOfflineAtualizarContador === "function") { rfOfflineAtualizarContador(); rfOfflineTentarSincronizar(); }
     if (state.sessao.papel === "motorista" && typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
     if (state.sessao.papel === "motorista" && typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
     if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
@@ -2347,10 +2355,13 @@ function revalidarSessaoAoAbrir() {
         if (typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
         if (typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
         if (typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
+        if (typeof rfClientesLocaisCarregar === "function") { rfClientesLocaisCarregar(); }
+        if (typeof rfClientesLocaisAssinarTempoReal === "function") { rfClientesLocaisAssinarTempoReal(); }
       }
       if (state.sessao.papel === "motorista") {
         if (typeof motoristaResumoAtualizar === "function") { motoristaResumoAtualizar(); }
         if (typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
+        if (typeof rfOfflineAtualizarContador === "function") { rfOfflineAtualizarContador(); rfOfflineTentarSincronizar(); }
       }
       if (papelMudou) {
         const perm = abasPermitidas();
@@ -3211,6 +3222,7 @@ function rfCaixaParaJS(r) {
     semEtiqueta: !!r.sem_etiqueta,
     sinalizada: !!r.sinalizada,
     sinalizadaMotivo: r.sinalizada_motivo || "",
+    confirmadaOffline: !!r.confirmada_offline,
     criadoEm: Number(r.criado_em) || 0,
   };
 }
@@ -3232,6 +3244,7 @@ function rfCaixaParaDB(a) {
     sem_etiqueta: !!a.semEtiqueta,
     sinalizada: !!a.sinalizada,
     sinalizada_motivo: a.sinalizadaMotivo || "",
+    confirmada_offline: !!a.confirmadaOffline,
     criado_em: a.criadoEm || Date.now(),
   };
 }
@@ -3414,18 +3427,139 @@ function rfConfRomaneioUpload(input, placa) {
 }
 
 // ---- Foto da etiqueta da caixa (motorista) e leitura pela IA (ler-etiqueta-caixa) ----
+/* ===================== FILA OFFLINE (v163) =====================
+   Quando não tem sinal, a leitura automática pela IA não tem como funcionar
+   (ela roda num servidor). Nesse caso, o motorista confirma a caixa na hora
+   digitando o que já está vendo na etiqueta (Pedido + "VOL x/y") -- 100% de
+   precisão, sem depender de internet nenhuma, e a caixa já conta na
+   conferência imediatamente. Só a FOTO (que serve de comprovante) fica
+   guardada no celular (IndexedDB, aguenta bem mais dado que localStorage) e
+   sobe sozinha pra nuvem quando o sinal voltar -- sem o motorista precisar
+   fazer nada. */
+var RF_OFFLINE_DB = "rf-conferencia-offline";
+var RF_OFFLINE_STORE = "fila";
+function rfOfflineDB() {
+  return new Promise(function (resolve, reject) {
+    if (!window.indexedDB) { reject(new Error("IndexedDB indisponível")); return; }
+    var req = indexedDB.open(RF_OFFLINE_DB, 1);
+    req.onupgradeneeded = function () { req.result.createObjectStore(RF_OFFLINE_STORE, { keyPath: "id" }); };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function rfOfflineSalvar(item) {
+  return rfOfflineDB().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(RF_OFFLINE_STORE, "readwrite");
+      tx.objectStore(RF_OFFLINE_STORE).put(item);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+function rfOfflineListar() {
+  return rfOfflineDB().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(RF_OFFLINE_STORE, "readonly");
+      var req = tx.objectStore(RF_OFFLINE_STORE).getAll();
+      req.onsuccess = function () { resolve(req.result || []); };
+      req.onerror = function () { reject(req.error); };
+    });
+  });
+}
+function rfOfflineRemover(id) {
+  return rfOfflineDB().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(RF_OFFLINE_STORE, "readwrite");
+      tx.objectStore(RF_OFFLINE_STORE).delete(id);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+function rfOfflineAtualizarContador() {
+  rfOfflineListar().then(function (itens) { state._filaOfflinePendentes = itens.length; render(); }).catch(function () {});
+}
+// Tenta subir tudo que ficou pendente (foto + registro da caixa) assim que
+// detecta conexão. Silencioso: se falhar, tenta de novo na próxima vez
+// (evento "online" ou o temporizador periódico).
+function rfOfflineTentarSincronizar() {
+  if (!navigator.onLine) return;
+  rfOfflineListar().then(function (itens) {
+    itens.forEach(function (item) {
+      if (item.tipo !== "caixa") return;
+      rfGetClient().then(function (sb) {
+        if (!sb) return;
+        var placa = (item.caixa && item.caixa.placa) || "sem-placa";
+        var path = "conferencia/" + placa + "/" + item.id + ".jpg";
+        sb.storage.from(RF_BUCKET).upload(path, item.fotoBlob, { contentType: "image/jpeg", upsert: true }).then(function (resUp) {
+          if (resUp.error) { console.warn("sync offline (upload):", resUp.error.message); return; }
+          var caixaComFoto = Object.assign({}, item.caixa, { foto: path });
+          sb.from(RF_CAIXAS_TABELA).upsert(rfCaixaParaDB(caixaComFoto)).then(function (res) {
+            if (res.error) { console.warn("sync offline (salvar):", res.error.message); return; }
+            var local = state.caixasConferencia.find(function (c) { return c.id === item.id; });
+            if (local) local.foto = path;
+            render();
+            rfOfflineRemover(item.id).then(rfOfflineAtualizarContador);
+          });
+        }).catch(function (e) { console.warn("sync offline:", e.message || e); });
+      });
+    });
+  }).catch(function () {});
+}
+// Motorista digita Pedido + VOL x/y direto da etiqueta -- confirma a caixa na
+// hora, sem precisar de internet. A foto fica na fila local pra subir depois.
+function rfConfEtiquetaManual(blob, romaneioId, avisoInicial) {
+  if (avisoInicial) alert("Sem sinal agora. Confirme a caixa digitando o que está vendo na etiqueta — a foto sobe sozinha depois, quando voltar o sinal.");
+  var pedido = prompt("Número do PEDIDO da etiqueta:");
+  if (pedido === null) { state._confLendoEtiqueta = false; render(); return; }
+  pedido = pedido.trim();
+  if (!pedido) { alert("Precisa digitar o número do pedido."); rfConfEtiquetaManual(blob, romaneioId, false); return; }
+  var vol = prompt('"VOL x/y" da etiqueta (exemplo: 3/17):');
+  if (vol === null) { state._confLendoEtiqueta = false; render(); return; }
+  var m = vol.match(/(\d+)\s*\/\s*(\d+)/);
+  if (!m) { alert('Formato inválido — digite como "3/17".'); rfConfEtiquetaManual(blob, romaneioId, false); return; }
+  rfConfEtiquetaSalvarOffline(romaneioId, blob, pedido, parseInt(m[1], 10), parseInt(m[2], 10));
+}
+function rfConfEtiquetaSalvarOffline(romaneioId, blob, pedido, volAtual, volTotal) {
+  var uid = (state.sessao && state.sessao.uid) || null;
+  var nome = (state.sessao && state.sessao.nome) || "";
+  var placa = (state.sessao && state.sessao.placa_motorista) || "";
+  var id = "caixa-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+  var nova = { id: id, romaneioId: romaneioId, placa: placa, motoristaUid: uid, motoristaNome: nome,
+    foto: "", pedido: pedido, volAtual: volAtual, volTotal: volTotal, fantasia: "", cidade: "",
+    fracionada: false, pedidosExtra: [], semEtiqueta: false, sinalizada: false,
+    confirmadaOffline: true, criadoEm: Date.now() };
+  state.caixasConferencia.unshift(nova);
+  state._confLendoEtiqueta = false;
+  render();
+  rfOfflineSalvar({ id: id, tipo: "caixa", caixa: nova, fotoBlob: blob, criadoEm: Date.now() }).then(rfOfflineAtualizarContador);
+  var romAtivo = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  if (romAtivo) {
+    var idxAtivo = state._confClienteAtivo && state._confClienteAtivo[romaneioId];
+    if (idxAtivo !== undefined && idxAtivo !== null && romAtivo.clientes && romAtivo.clientes[idxAtivo]) {
+      var pedidosDoAtivo = (romAtivo.clientes[idxAtivo].pedidos || []).map(function (p) { return p.pedido; });
+      if (pedidosDoAtivo.indexOf(pedido) === -1) {
+        alert("Atenção: esse pedido não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + "). A caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
+      }
+    }
+    var clienteDono = (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === pedido; }); });
+    if (clienteDono) rfClienteLocalCapturarSeNecessario(clienteDono.cliente, clienteDono.cidade);
+  }
+}
 function rfConfEtiquetaProcessar(input, romaneioId) {
   var file = input.files && input.files[0];
   input.value = "";
   if (!file || !romaneioId) return;
   state._confLendoEtiqueta = true; render();
   rfComprimirImagem(file).then(function (blob) {
+    if (!navigator.onLine) { rfConfEtiquetaManual(blob, romaneioId, true); return; }
     var reader = new FileReader();
     reader.onload = function () {
       var base64 = String(reader.result || "").split(",")[1] || "";
       if (!base64) { state._confLendoEtiqueta = false; render(); return; }
       rfGetClient().then(function (sb) {
-        if (!sb) { state._confLendoEtiqueta = false; render(); alert("Sem conexão com a nuvem."); return; }
+        if (!sb) { rfConfEtiquetaManual(blob, romaneioId, true); return; }
         var placa = (state.sessao && state.sessao.placa_motorista) || "";
         var path = "conferencia/" + (placa || "sem-placa") + "/" + Date.now() + ".jpg";
         sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }).then(function (resUp) {
@@ -3455,7 +3589,11 @@ function rfConfEtiquetaProcessar(input, romaneioId) {
             });
           }
           return chamarOcr(false);
-        }).catch(function (e) { state._confLendoEtiqueta = false; render(); alert("Erro ao registrar a caixa: " + (e.message || e)); });
+          // v163: se a etapa acima (upload da foto ou leitura pela IA) falhar por
+          // causa de conexão -- não por erro de leitura, esse já é tratado dentro
+          // de rfConfEtiquetaSalvarResultado -- cai pro fluxo manual, sem
+          // desperdiçar a caixa nem deixar o motorista sem saber o que fazer.
+        }).catch(function () { rfConfEtiquetaManual(blob, romaneioId, true); });
       });
     };
     reader.onerror = function () { state._confLendoEtiqueta = false; render(); };
@@ -3498,6 +3636,13 @@ function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
     if (nova.pedido && pedidosDoAtivo.indexOf(nova.pedido) === -1) {
       alert("Atenção: essa caixa é do pedido " + nova.pedido + (nova.fantasia ? " (" + nova.fantasia + ")" : "") + ", que não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + "). A caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
     }
+  }
+  // v161: captura o GPS na 1ª caixa do cliente de verdade (dono do pedido lido),
+  // não necessariamente o selecionado -- assim a localização fica correta mesmo
+  // se o motorista tiver esquecido de trocar o cliente ativo.
+  if (romAtivo && nova.pedido) {
+    var clienteDono = (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === nova.pedido; }); });
+    if (clienteDono) rfClienteLocalCapturarSeNecessario(clienteDono.cliente, clienteDono.cidade);
   }
 }
 // Caixa fracionada: motorista marca manualmente quais pedidos estão naquela caixa
@@ -3553,6 +3698,99 @@ function rfConfClienteTotal(cli) {
 // do cliente inteiro). v154: o total de volumes do romaneio é impresso por CLIENTE (soma de
 // todos os pedidos/notas dele), não por pedido individual — por isso o progresso também
 // precisa ser por cliente, senão clientes com várias notas fechavam com o número errado.
+/* ===================== LOCALIZAÇÃO DOS CLIENTES (v161) =====================
+   Na primeira caixa fotografada de um cliente (que ainda não tem localização
+   salva), captura o GPS do celular do motorista e vincula àquele cliente
+   (chave = nome + cidade normalizados). Assim, romaneios futuros do MESMO
+   cliente já vêm com a localização pronta -- base pra rota otimizada /
+   abrir direto no Google Maps mais pra frente, sem precisar "ficar rodando"
+   pra achar de novo. */
+var RF_CLIENTES_LOCAIS_TABELA = "conferencia_clientes_locais";
+function rfClienteChave(nome, cidade) {
+  return (String(nome || "").trim().toUpperCase()) + "|" + (String(cidade || "").trim().toUpperCase());
+}
+function rfClienteLocalParaJS(r) {
+  return { chave: r.chave, clienteNome: r.cliente_nome || "", cidade: r.cidade || "",
+    latitude: r.latitude, longitude: r.longitude, precisaoM: r.precisao_m, fotoFachada: r.foto_fachada || "",
+    atualizadoPor: r.atualizado_por || "", atualizadoEm: Number(r.atualizado_em) || 0 };
+}
+function rfClientesLocaisCarregar() {
+  rfGetClient().then(function (sb) {
+    if (!sb || !sessaoValida()) return;
+    sb.from(RF_CLIENTES_LOCAIS_TABELA).select("*").then(function (res) {
+      if (res.error) { console.warn("conferencia_clientes_locais:", res.error.message); return; }
+      state.clientesLocais = (res.data || []).map(rfClienteLocalParaJS);
+      render(); // v156: nunca salvar() aqui, só render() -- ver histórico em rfRomaneiosCarregar()
+    });
+  });
+}
+function rfClientesLocaisAssinarTempoReal() {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    if (!window.__rfClientesLocaisCanal) {
+      window.__rfClientesLocaisCanal = sb.channel("conferencia-clientes-locais-rf")
+        .on("postgres_changes", { event: "*", schema: "public", table: RF_CLIENTES_LOCAIS_TABELA }, function () { rfClientesLocaisCarregar(); })
+        .subscribe();
+    }
+  });
+}
+function rfClienteLocalObter(nome, cidade) {
+  var chave = rfClienteChave(nome, cidade);
+  return (state.clientesLocais || []).find(function (x) { return x.chave === chave; }) || null;
+}
+// Só captura GPS na 1ª caixa de um cliente que ainda não tem localização salva.
+// Silencioso em qualquer falha (sem permissão, sem GPS, etc.) -- nunca atrapalha
+// o fluxo de conferência da caixa, que já foi salva antes disso ser chamado.
+function rfClienteLocalCapturarSeNecessario(nome, cidade) {
+  if (!nome) return;
+  if (rfClienteLocalObter(nome, cidade)) return;
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var chave = rfClienteChave(nome, cidade);
+    var registro = { chave: chave, cliente_nome: nome, cidade: cidade || "",
+      latitude: pos.coords.latitude, longitude: pos.coords.longitude, precisao_m: pos.coords.accuracy || null,
+      atualizado_por: (state.sessao && state.sessao.uid) || null, atualizado_em: Date.now() };
+    rfGetClient().then(function (sb) {
+      if (!sb) return;
+      sb.from(RF_CLIENTES_LOCAIS_TABELA).upsert(registro).then(function (res) {
+        if (res.error) { console.warn("conferencia_clientes_locais upsert:", res.error.message); return; }
+        state.clientesLocais.push(rfClienteLocalParaJS(registro));
+        render();
+      });
+    });
+  }, function () { /* sem permissão ou GPS indisponível -- ignora silenciosamente */ },
+  { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
+// v162: foto da fachada do cliente -- OPCIONAL, motorista pode pular. Serve de
+// referência visual (fica salva junto com a localização) pra ele ou outro
+// motorista reconhecerem o local mais rápido da próxima vez.
+function rfClienteFachadaUpload(input, nomeCliente, cidade) {
+  var file = input.files && input.files[0];
+  input.value = "";
+  if (!file || !nomeCliente) return;
+  rfComprimirImagem(file).then(function (blob) {
+    rfGetClient().then(function (sb) {
+      if (!sb) { alert("Sem conexão com a nuvem."); return; }
+      var chave = rfClienteChave(nomeCliente, cidade);
+      var path = "conferencia/fachadas/" + chave.replace(/[^A-Z0-9]+/gi, "-") + "-" + Date.now() + ".jpg";
+      sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }).then(function (resUp) {
+        if (resUp.error) { alert("Não consegui enviar a foto da fachada: " + resUp.error.message); return; }
+        var registro = { chave: chave, cliente_nome: nomeCliente, cidade: cidade || "", foto_fachada: path,
+          atualizado_por: (state.sessao && state.sessao.uid) || null, atualizado_em: Date.now() };
+        sb.from(RF_CLIENTES_LOCAIS_TABELA).upsert(registro).then(function (res) {
+          if (res.error) { alert("Não consegui salvar a foto da fachada: " + res.error.message); return; }
+          var existente = state.clientesLocais.find(function (x) { return x.chave === chave; });
+          if (existente) existente.fotoFachada = path;
+          else state.clientesLocais.push(rfClienteLocalParaJS(registro));
+          render();
+        });
+      });
+    });
+  }).catch(function (e) { alert("Erro ao processar a foto: " + (e.message || e)); });
+}
+function rfConfVerNoMapa(lat, lng) {
+  window.open("https://www.google.com/maps/search/?api=1&query=" + lat + "," + lng, "_blank");
+}
 function rfConfProgressoRomaneio(romaneioId) {
   var rom = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
   if (!rom) return {};
@@ -3618,8 +3856,9 @@ function rfConfRomaneioCardMotorista(rom) {
       const total = rfConfClienteTotal(cli);
       const fechado = conferidas >= total;
       const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
+      const local = rfClienteLocalObter(cli.cliente, cli.cidade);
       return `<button onclick="rfConfSelecionarCliente('${rom.id}',${i})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;gap:8px;padding:10px 12px;margin-bottom:6px;background:#161616;border:1px solid #262626;border-radius:8px;color:#fff;font-size:13px;">
-        <span>${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></span>
+        <span>${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span>${local ? ` <span title="localização salva" style="color:#2E7D32;">📍</span>` : ""}</span>
         <span style="text-align:right;white-space:nowrap;">
           <span style="font-weight:700;color:${cor};">${total === 0 ? "✓ sem caixa" : `${fechado ? "✓" : "●"} ${conferidas}/${total}`}</span>
           ${total > 0 ? `<div style="font-size:10px;color:#999;font-weight:400;">${total} caixa${total === 1 ? "" : "s"} no total</div>` : ""}
@@ -3637,6 +3876,7 @@ function rfConfRomaneioCardMotorista(rom) {
   const totalAtivo = rfConfClienteTotal(cliAtivo);
   const uidLogado = state.sessao ? state.sessao.uid : null;
   const pedidosDoAtivo = (cliAtivo.pedidos || []).map((p) => p.pedido);
+  const localAtivo = rfClienteLocalObter(cliAtivo.cliente, cliAtivo.cidade);
   const minhas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.motoristaUid === uidLogado &&
       (pedidosDoAtivo.indexOf(c.pedido) !== -1 || (c.fracionada && (c.pedidosExtra || []).some((p) => pedidosDoAtivo.indexOf(p) !== -1))))
     .sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8);
@@ -3646,6 +3886,10 @@ function rfConfRomaneioCardMotorista(rom) {
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div>
           <div style="font-weight:700;color:#fff;">🚚 Entregando: ${esc(cliAtivo.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cliAtivo.cidade || "")}</span></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+            ${localAtivo ? `<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfConfVerNoMapa(${localAtivo.latitude},${localAtivo.longitude})">📍 ver no mapa</button>` : `<span style="font-size:10px;color:#999;">📍 localização será salva na 1ª caixa fotografada</span>`}
+            ${localAtivo && localAtivo.fotoFachada ? `<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfConfVerFoto('${localAtivo.fotoFachada}')">🏠 ver fachada</button>` : `<label class="btn-outline" style="font-size:10px;padding:2px 8px;cursor:pointer;">🏠 fotografar fachada (opcional)<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfClienteFachadaUpload(this, '${esc(cliAtivo.cliente || "").replace(/'/g, "\\'")}', '${esc(cliAtivo.cidade || "").replace(/'/g, "\\'")}')"></label>`}
+          </div>
         </div>
         <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="rfConfSelecionarCliente('${rom.id}', null)">🔁 trocar cliente</button>
       </div>
@@ -3664,10 +3908,11 @@ function rfConfRomaneioCardMotorista(rom) {
         <span style="color:#ccc;">
           ${c.fracionada ? (c.semEtiqueta ? "📦 sem etiqueta" : "📦 etiqueta ilegível") : `Pedido ${esc(c.pedido)} (${c.volAtual}/${c.volTotal})${c.fantasia ? " — " + esc(c.fantasia) : ""}`}
           ${c.sinalizada ? `<span style="color:#C0392B;"> · sinalizada</span>` : ""}
+          ${c.confirmadaOffline && !c.foto ? `<span style="color:${GOLD};"> · ⏳ foto pendente de envio</span>` : ""}
           ${c.fracionada && (c.pedidosExtra || []).length ? `<span style="color:#2E7D32;"> · marcada: ${c.pedidosExtra.map(esc).join(", ")}</span>` : ""}
         </span>
         <span style="display:flex;gap:6px;">
-          <button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfVerFoto('${c.foto}')">ver</button>
+          ${c.foto ? `<button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfVerFoto('${c.foto}')">ver</button>` : ""}
           ${c.fracionada && !c.sinalizada ? `<button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfCaixaMarcarPedidos('${c.id}','${rom.id}')">marcar pedido</button>
           <button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfConfCaixaSinalizar('${c.id}')">sinalizar</button>` : ""}
           <button class="btn-del" style="font-size:10px;padding:2px 6px;" onclick="rfCaixaExcluir('${c.id}')">✕</button>
@@ -3688,10 +3933,11 @@ function rfConfRomaneioCardAdmin(rom) {
     const fechado = conferidas >= total;
     if (fechado) totalFechados++;
     const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
+    const local = rfClienteLocalObter(cli.cliente, cli.cidade);
     const pedidosHTML = (cli.pedidos || []).map((p) => `<div style="font-size:11px;color:#888;padding:1px 0;">Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}</div>`).join("");
     return `<div style="background:#0E0E0E;border:1px solid #262626;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
-        <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span></div>
+        <div style="font-weight:700;color:#fff;font-size:13px;">${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span>${local ? ` <button class="btn-outline" style="font-size:10px;padding:1px 6px;" onclick="rfConfVerNoMapa(${local.latitude},${local.longitude})">📍 ver no mapa</button>` : ""}</div>
         <span style="font-weight:700;color:${cor};font-size:13px;">${total === 0 ? "✓ sem caixa física (ajuste)" : `${fechado ? "✓" : "●"} ${conferidas}/${total} caixas`}</span>
       </div>
       ${pedidosHTML}
@@ -3720,7 +3966,7 @@ function rfConfRomaneioCardAdmin(rom) {
       ${sinalizadas.map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:4px 0;flex-wrap:wrap;">
         <span style="color:#ddd;">${esc(c.sinalizadaMotivo || "sem detalhe")} ${c.motoristaNome ? `— ${esc(c.motoristaNome)}` : ""}</span>
         <span style="display:flex;gap:6px;">
-          <button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfConfVerFoto('${c.foto}')">📷 ver foto</button>
+          ${c.foto ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfConfVerFoto('${c.foto}')">📷 ver foto</button>` : `<span style="font-size:11px;color:${GOLD};">⏳ foto pendente de envio</span>`}
           <button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfConfCaixaMarcarPedidos('${c.id}','${rom.id}')">marcar pedido(s)</button>
           <button class="btn-gold" style="font-size:11px;padding:2px 8px;" onclick="rfConfCaixaResolverSinalizacao('${c.id}')">✓ resolvido</button>
         </span>
@@ -4372,6 +4618,7 @@ function painelMotoristaHTML() {
     <div style="padding:0 24px 32px;">
       <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">📦 Conferência de Carga</div>
       <div style="font-size:12px;color:#999;margin-bottom:16px;">Escolha o cliente que você vai entregar agora e fotografe a etiqueta de cada caixa dele. O sistema lê sozinho o pedido e confere. Se a caixa não tiver etiqueta (ou tiver mais de uma colada), marque manualmente o pedido ou sinalize pra equipe resolver.</div>
+      ${state._filaOfflinePendentes > 0 ? `<div style="background:#2a2410;border:1px solid ${GOLD};border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:${GOLD};">⏳ ${state._filaOfflinePendentes} foto${state._filaOfflinePendentes === 1 ? "" : "s"} aguardando sinal pra enviar — as caixas já foram confirmadas e contam normalmente, só a foto ainda não subiu.</div>` : ""}
       ${(function () { var meusRomaneios = rfConfRomaneiosDoMotorista();
         return meusRomaneios.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio direcionado pra você ainda. Fale com a equipe.</div>` : meusRomaneios.map((r) => rfConfRomaneioCardMotorista(r)).join(""); })()}
     </div>
@@ -6913,6 +7160,13 @@ revalidarSessaoAoAbrir();
   // codigo ja foi executado) antes de chamar iniciar() pela primeira vez.
   if (document.readyState === "complete") { iniciar(); }
   else { window.addEventListener("load", iniciar); }
+
+  // v163: assim que o celular pegar sinal de novo, tenta subir sozinho o que
+  // ficou pendente na fila offline (fotos de caixa confirmadas sem internet).
+  // O temporizador cobre o caso do evento "online" do navegador não disparar
+  // de forma confiável (comum em redes móveis instáveis).
+  window.addEventListener("online", function () { if (typeof rfOfflineTentarSincronizar === "function") rfOfflineTentarSincronizar(); });
+  setInterval(function () { if (typeof rfOfflineTentarSincronizar === "function") rfOfflineTentarSincronizar(); }, 30000);
 
   // v92: chamado só depois que carregarPerfilEEntrar() confirma que o papel
   // logado NÃO é motorista. É a única porta de entrada pra baixar/subir a
