@@ -4108,6 +4108,30 @@ function gerarContextoAssistente() {
   const abastMesAprovado = (state.abastecimentos || [])
     .filter((a) => a.status === "aprovado" && a.data && a.data.slice(0, 7) === state.mesAtivo)
     .reduce((s, a) => s + (Number(a.valor) || 0), 0);
+  // v150: lista detalhada de abastecimentos, pra IA conseguir revisar de
+  // verdade antes da equipe aprovar (antes só ia contagem/soma, sem dados
+  // pra checar nada). Pendentes primeiro (é o que precisa de revisão), depois
+  // os aprovados/rejeitados mais recentes como referência de histórico.
+  const abastOrdenados = (state.abastecimentos || []).slice().sort((a, b) => {
+    if (a.status === "pendente" && b.status !== "pendente") return -1;
+    if (a.status !== "pendente" && b.status === "pendente") return 1;
+    return (b.criadoEm || 0) - (a.criadoEm || 0);
+  });
+  const linhasAbastecimento = abastOrdenados.slice(0, 60).map((a) => {
+    const litros = Number(a.litros) || 0;
+    const valor = Number(a.valor) || 0;
+    const precoLitro = litros > 0 ? valor / litros : 0;
+    const fotosFaltando = [];
+    if (!a.fotoKm) fotosFaltando.push("KM painel");
+    if (!a.fotoBomba) fotosFaltando.push("bomba");
+    if (!a.fotoNota) fotosFaltando.push("nota");
+    return `- ${a.data || "sem data"} | ${a.placa || "sem placa"} | ${a.motoristaNome || "?"} | status ${a.status || "?"}` +
+      ` | KM ${a.kmAtual || "?"} | ${litros ? litros.toFixed(1) + "L" : "sem litros"} | ${fmtR(valor)}` +
+      (precoLitro ? ` (R$ ${precoLitro.toFixed(3)}/L)` : "") +
+      ` | fotos faltando: ${fotosFaltando.length ? fotosFaltando.join(", ") : "nenhuma"}` +
+      (a.obs ? ` | obs: ${a.obs}` : "") +
+      (a.status === "rejeitado" && a.motivoRejeicao ? ` | motivo rejeição: ${a.motivoRejeicao}` : "");
+  }).join("\n");
   const seguroVencendo = veiculosComMes().filter((v) => { const dias = diasPara(v.venctoSeguro); return dias !== null && dias <= 30; })
     .map((v) => `- ${v.placa}: seguro vence em ${v.venctoSeguro}`).join("\n");
 
@@ -4224,7 +4248,10 @@ Dívidas vencendo nos próximos 15 dias:
 ${dividasVencendo || "(nenhuma)"}
 
 Seguros vencendo nos próximos 30 dias:
-${seguroVencendo || "(nenhum)"}`;
+${seguroVencendo || "(nenhum)"}
+
+Abastecimentos (pendentes primeiro, depois os mais recentes já revisados — até 60 registros; "fotos faltando: nenhuma" quer dizer que as 3 fotos obrigatórias foram enviadas):
+${linhasAbastecimento || "(nenhum abastecimento lançado)"}`;
 }
 function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
