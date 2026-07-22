@@ -2,11 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v170)</title>
-<!-- v170: o "relógio da rota" (🕐, % concluído + previsão recalculada) agora
-     aparece pro motorista também, não só pra equipe -- mesmo widget,
-     reaproveitado (rfConfRomaneioRelogioHTML), no topo do card do romaneio
-     dele, tanto na tela de escolher cliente quanto na de "Entregando".
+<title>RF Logística — Painel da Frota (v172)</title>
+<!-- v172: corrigido caso de "tirei a foto e não aconteceu nada" -- se o app
+     da câmera do celular não confirma a captura (ex: tira a foto mas não
+     aperta o ✓ de usar, ou cancela na tela de preview), o input de arquivo
+     volta sem nenhum arquivo selecionado. Antes disso o app simplesmente não
+     fazia nada, sem avisar (parecia bug/travado). Agora avisa claramente e
+     pede pra tentar de novo, tanto na foto da etiqueta da caixa quanto na
+     foto de fachada do cliente.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3181,6 +3184,7 @@ function rfRomaneioParaJS(r) {
     conhecimento: r.conhecimento || "",
     carregamentos: r.carregamentos || "",
     diasPrevistos: r.dias_previstos != null ? Number(r.dias_previstos) : null,
+    rota: Array.isArray(r.rota) ? r.rota : [],
     criadoPor: r.criado_por || "",
     criadoEm: Number(r.criado_em) || 0,
   };
@@ -3195,6 +3199,7 @@ function rfRomaneioParaDB(r) {
     conhecimento: r.conhecimento || "",
     carregamentos: r.carregamentos || "",
     dias_previstos: r.diasPrevistos != null ? Number(r.diasPrevistos) : null,
+    rota: r.rota || [],
     criado_por: r.criadoPor || null,
     criado_em: r.criadoEm || Date.now(),
   };
@@ -3501,7 +3506,7 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
               }
             }
             var novo = { id: "rom-" + Date.now(), placa: placa || "", viagemId: "", nomeArquivo: nomeExibicao, clientes: clientes,
-              conhecimento: conhecimento, carregamentos: carregamentos, diasPrevistos: diasPrevistos || null,
+              conhecimento: conhecimento, carregamentos: carregamentos, diasPrevistos: diasPrevistos || null, rota: (j && j.rota) || [],
               criadoPor: (state.sessao && state.sessao.uid) || "", criadoEm: Date.now() };
             state.romaneios.unshift(novo);
             state.aba = "conferencia";
@@ -3523,6 +3528,35 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
 // contra o que o PRÓPRIO documento declara no rodapé. Se bater, silencioso
 // (não precisa incomodar); se não bater, avisa claramente -- é o sinal mais
 // forte de erro de leitura, principalmente em foto de romaneio físico.
+// v171: monta o link de rota no Google Maps usando a sequência de cidades
+// que o próprio romaneio já declara (tabela "TRECHOS DA ROTA" do documento,
+// extraída pela IA). Se o documento não tiver essa tabela, usa as cidades
+// dos clientes na ordem em que aparecem no romaneio, como alternativa.
+function rfConfRotaGoogleMapsUrl(rom) {
+  var cidades = (rom.rota && rom.rota.length) ? rom.rota.slice() : [];
+  if (!cidades.length) {
+    (rom.clientes || []).forEach(function (c) {
+      var cidade = (c.cidade || "").trim();
+      if (cidade && cidades.indexOf(cidade) === -1) cidades.push(cidade);
+    });
+  }
+  if (cidades.length < 2) return null;
+  var paradas = cidades.map(function (c) { return c + ", Brasil"; });
+  var origem = paradas[0];
+  var destino = paradas[paradas.length - 1];
+  var meio = paradas.slice(1, -1);
+  return "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent(origem) +
+    "&destination=" + encodeURIComponent(destino) +
+    (meio.length ? "&waypoints=" + meio.map(encodeURIComponent).join("|") : "") +
+    "&travelmode=driving";
+}
+function rfConfVerRotaMaps(romaneioId) {
+  var rom = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  if (!rom) return;
+  var url = rfConfRotaGoogleMapsUrl(rom);
+  if (!url) { alert("Não encontrei cidades suficientes nesse romaneio pra montar uma rota."); return; }
+  window.open(url, "_blank");
+}
 function rfConfConferirExtracaoRomaneio(clientes, j) {
   if (j.declaradoClientes == null && j.declaradoVolumes == null && j.declaradoNotas == null) return; // documento sem essa linha -- nada pra conferir
   const clientesExtraidos = clientes.length;
@@ -3663,7 +3697,12 @@ function rfConfEtiquetaSalvarOffline(romaneioId, blob, pedido, volAtual, volTota
 function rfConfEtiquetaProcessar(input, romaneioId) {
   var file = input.files && input.files[0];
   input.value = "";
-  if (!file || !romaneioId) return;
+  // v172: se o app da câmera não confirmar a foto (ex: tirou mas não apertou
+  // o ✓ de usar), o input volta sem nenhum arquivo -- antes isso não avisava
+  // nada, parecia que o botão não tinha feito nada. Agora avisa e pede pra
+  // tentar de novo, em vez de falhar em silêncio.
+  if (!file) { alert("Não recebi nenhuma foto — parece que a câmera não confirmou a captura. Tenta de novo e, depois de tirar a foto, confirma/usa ela na tela da câmera."); return; }
+  if (!romaneioId) return;
   state._confLendoEtiqueta = true; render();
   rfComprimirImagem(file).then(function (blob) {
     if (!navigator.onLine) { rfConfEtiquetaManual(blob, romaneioId, true); return; }
@@ -3956,7 +3995,8 @@ function rfClienteLocalCapturarSeNecessario(nome, cidade) {
 function rfClienteFachadaUpload(input, nomeCliente, cidade) {
   var file = input.files && input.files[0];
   input.value = "";
-  if (!file || !nomeCliente) return;
+  if (!file) { alert("Não recebi nenhuma foto — confirma/usa a foto na tela da câmera antes de sair dela. Como é opcional, pode pular também."); return; }
+  if (!nomeCliente) return;
   rfComprimirImagem(file).then(function (blob) {
     rfGetClient().then(function (sb) {
       if (!sb) { alert("Sem conexão com a nuvem."); return; }
@@ -4037,6 +4077,7 @@ function rfConfRomaneioCardMotorista(rom) {
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}${rom.placa ? ` — ${esc(rom.placa)}` : ""}</div>
         <div style="font-size:11px;color:#777;">${totalFechados}/${totalClientes} clientes conferidos</div>
       </div>
+      ${rfConfRotaGoogleMapsUrl(rom) ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="rfConfVerRotaMaps('${rom.id}')">🗺️ Ver rota</button>` : ""}
     </div>`;
   const relogioHTML = rfConfRomaneioRelogioHTML(rom);
 
@@ -4144,6 +4185,7 @@ function rfConfRomaneioCardAdmin(rom) {
       </div>
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
     </div>
+    ${rfConfRotaGoogleMapsUrl(rom) ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;margin-bottom:8px;" onclick="rfConfVerRotaMaps('${rom.id}')">🗺️ Ver rota no Google Maps${rom.rota && rom.rota.length ? ` (${rom.rota.length} cidades da rota do romaneio)` : ` (${(function(){var s=new Set();(rom.clientes||[]).forEach(function(c){if(c.cidade)s.add(c.cidade);});return s.size;})()} cidades dos clientes)`}</button>` : ""}
     <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px;flex-wrap:wrap;">
       <span style="font-size:12px;color:#999;">Direcionado pra:</span>
       <select onchange="rfRomaneioAtualizarPlaca('${rom.id}', this.value)" style="font-size:12px;min-width:220px;${rom.placa ? "" : "border-color:#C0392B;"}">
