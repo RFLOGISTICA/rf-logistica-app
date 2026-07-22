@@ -2,14 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v172)</title>
-<!-- v172: corrigido caso de "tirei a foto e não aconteceu nada" -- se o app
-     da câmera do celular não confirma a captura (ex: tira a foto mas não
-     aperta o ✓ de usar, ou cancela na tela de preview), o input de arquivo
-     volta sem nenhum arquivo selecionado. Antes disso o app simplesmente não
-     fazia nada, sem avisar (parecia bug/travado). Agora avisa claramente e
-     pede pra tentar de novo, tanto na foto da etiqueta da caixa quanto na
-     foto de fachada do cliente.
+<title>RF Logística — Painel da Frota (v173)</title>
+<!-- v173: corrigido caso do botão "🗺️ Ver rota" não aparecer quando o
+     romaneio só tem 1 cidade (comum em romaneios lidos antes da v171, sem a
+     tabela TRECHOS DA ROTA extraída, e cujos clientes ficam todos na mesma
+     cidade) -- antes a função exigia pelo menos 2 cidades pra gerar link;
+     agora, com 1 cidade só, gera rota saindo da base da empresa (Feira de
+     Santana, BA) até lá, em vez de simplesmente esconder o botão.
 -->
 
 <!-- v117: as 3 fotos de abastecimento (painel, bomba, nota) agora permitem
@@ -3540,7 +3539,15 @@ function rfConfRotaGoogleMapsUrl(rom) {
       if (cidade && cidades.indexOf(cidade) === -1) cidades.push(cidade);
     });
   }
-  if (cidades.length < 2) return null;
+  if (!cidades.length) return null;
+  // v173: romaneio com só 1 cidade (comum quando o documento não tem a
+  // tabela "TRECHOS DA ROTA" e todos os clientes ficam na mesma cidade) --
+  // ainda assim gera um link útil, saindo da base da empresa até lá, em vez
+  // de simplesmente não mostrar o botão.
+  if (cidades.length === 1) {
+    return "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent("Feira de Santana, BA, Brasil") +
+      "&destination=" + encodeURIComponent(cidades[0] + ", Brasil") + "&travelmode=driving";
+  }
   var paradas = cidades.map(function (c) { return c + ", Brasil"; });
   var origem = paradas[0];
   var destino = paradas[paradas.length - 1];
