@@ -4089,14 +4089,34 @@ function rfConfRomaneioCardMotorista(rom) {
   const relogioHTML = rfConfRomaneioRelogioHTML(rom);
 
   if (!cliAtivo) {
+    // v175: alguns romaneios (Mateus) trazem o MESMO cliente em blocos separados
+    // (nome+cidade iguais, pedidos diferentes) -- o parser nunca junta esses blocos
+    // (v155, pra bater com o rodapé do PDF), mas a lista pra escolher o cliente
+    // mostrava os dois com o MESMO texto, sem nada pra diferenciar. Motorista
+    // escolhia o bloco errado (mesmo com a caixa certa na mão) e a conferência
+    // acusava "pedido não é desse cliente" -- parecia bug de leitura, mas era
+    // ambiguidade na tela. Agora: quando o nome+cidade se repete, mostra
+    // "(bloco X/Y)" e os números de pedido de cada bloco, pra bater com a nota física.
+    const chaveDe = (cli) => (cli.cliente || "") + "||" + (cli.cidade || "");
+    const contagemChave = {};
+    (rom.clientes || []).forEach((cli) => { const k = chaveDe(cli); contagemChave[k] = (contagemChave[k] || 0) + 1; });
+    const temDuplicado = Object.values(contagemChave).some((n) => n > 1);
+    const ordemChave = {};
     const listaHTML = (rom.clientes || []).map((cli, i) => {
       const conferidas = (porCliente[i] || new Set()).size;
       const total = rfConfClienteTotal(cli);
       const fechado = conferidas >= total;
       const cor = fechado ? "#2E7D32" : conferidas > 0 ? "#D4A017" : "#555";
       const local = rfClienteLocalObter(cli.cliente, cli.cidade);
-      return `<button onclick="rfConfSelecionarCliente('${rom.id}',${i})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;gap:8px;padding:10px 12px;margin-bottom:6px;background:#161616;border:1px solid #262626;border-radius:8px;color:#fff;font-size:13px;">
-        <span>${esc(cli.cliente || "")} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span>${local ? ` <span title="localização salva" style="color:#2E7D32;">📍</span>` : ""}</span>
+      const k = chaveDe(cli);
+      const totalMesmoNome = contagemChave[k];
+      ordemChave[k] = (ordemChave[k] || 0) + 1;
+      const rotuloBloco = totalMesmoNome > 1 ? ` <span style="color:${GOLD};font-weight:700;">(bloco ${ordemChave[k]}/${totalMesmoNome})</span>` : "";
+      const pedidosPreview = (cli.pedidos || []).map((p) => p.pedido).filter(Boolean).join(", ");
+      return `<button onclick="rfConfSelecionarCliente('${rom.id}',${i})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;gap:8px;padding:10px 12px;margin-bottom:6px;background:#161616;border:1px solid ${totalMesmoNome > 1 ? GOLD : "#262626"};border-radius:8px;color:#fff;font-size:13px;">
+        <span>${esc(cli.cliente || "")}${rotuloBloco} <span style="color:#999;font-weight:400;">— ${esc(cli.cidade || "")}</span>${local ? ` <span title="localização salva" style="color:#2E7D32;">📍</span>` : ""}
+          ${totalMesmoNome > 1 && pedidosPreview ? `<div style="font-size:10px;color:${GOLD};margin-top:2px;">Pedido(s) desse bloco: ${esc(pedidosPreview)}</div>` : ""}
+        </span>
         <span style="text-align:right;white-space:nowrap;">
           <span style="font-weight:700;color:${cor};">${total === 0 ? "✓ sem caixa" : `${fechado ? "✓" : "●"} ${conferidas}/${total}`}</span>
           ${total > 0 ? `<div style="font-size:10px;color:#999;font-weight:400;">${total} caixa${total === 1 ? "" : "s"} no total</div>` : ""}
@@ -4107,6 +4127,7 @@ function rfConfRomaneioCardMotorista(rom) {
       ${cabecalho}
       ${relogioHTML}
       <div style="font-size:11px;color:#777;margin-bottom:8px;">Toque no cliente que você vai entregar agora:</div>
+      ${temDuplicado ? `<div style="font-size:11px;color:${GOLD};background:#1A1608;border:1px solid ${GOLD};border-radius:6px;padding:8px 10px;margin-bottom:10px;">⚠️ Esse romaneio tem cliente(s) repetido(s) em blocos diferentes. Confira o número do PEDIDO na nota física antes de escolher — os blocos marcados em dourado mostram os pedidos de cada um.</div>` : ""}
       ${listaHTML}
     </div>`;
   }
