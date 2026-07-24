@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v173)</title>
+<title>RF Logística — Painel da Frota (v174)</title>
+<!-- v174: nova aba "Status do Dia" (equipe) + formulário de entregas/situação no card
+     de viagem do motorista. NOTA: o título ficou parado em v173 por um tempo enquanto
+     os comentários internos já iam até v176 -- a partir de agora sempre bater o
+     título com o número real que aparece pro Renato. -->
 <!-- v173: corrigido caso do botão "🗺️ Ver rota" não aparecer quando o
      romaneio só tem 1 cidade (comum em romaneios lidos antes da v171, sem a
      tabela TRECHOS DA ROTA extraída, e cujos clientes ficam todos na mesma
@@ -4185,7 +4189,7 @@ function rfConfRomaneioCardMotorista(rom) {
 }
 
 // Card de um romaneio na visão da equipe: progresso por cliente + caixas sinalizadas.
-// v177: aba "Status do Dia" -- atualização diária (entregas feitas, situação, observação)
+// v174: aba "Status do Dia" -- atualização diária (entregas feitas, situação, observação)
 // de cada viagem em andamento. Editável pela equipe aqui e pelo motorista no próprio app.
 var STATUS_DIA_OPCOES = {
   em_rota: { label: "Em rota", cor: "#D4A017" },
@@ -4628,7 +4632,7 @@ function motoristaCarregarViagensAtivas() {
           id: r.id, data: r.data, cliente: r.cliente, status: r.status_motorista,
           valorViagem: Number(r.valor_viagem) || 0, fotoKmSaida: r.foto_km_saida || "", fotoKmChegada: r.foto_km_chegada || "",
           placa: r.placa || "",
-          // v177: pode não vir ainda se a RPC no banco não tiver sido atualizada -- cai em vazio/zero.
+          // v174: pode não vir ainda se a RPC no banco não tiver sido atualizada -- cai em vazio/zero.
           entregasTotal: Number(r.entregas_total) || 0, entregasFeitas: Number(r.entregas_feitas) || 0,
           statusDia: r.status_dia || "", obsStatusDia: r.obs_status_dia || "",
         };
@@ -4683,7 +4687,7 @@ function motoristaUploadEConfirmar(input, viagemId, tipo) {
     }).catch(function (e) { alert("Erro ao confirmar: " + (e.message || e)); });
   });
 }
-// v177: motorista atualiza entregas/situação da viagem em andamento. O celular do
+// v174: motorista atualiza entregas/situação da viagem em andamento. O celular do
 // motorista nunca baixa a caixa geral (painel_dados) -- por isso isso tem que ser uma
 // RPC própria no banco (igual motorista_confirmar_inicio/fim), não uma escrita direta.
 function motoristaAtualizarStatusDia(viagemId) {
@@ -6828,7 +6832,7 @@ function renderTabela() {
   }
 
   if (state.aba === "statusdia") {
-    // v177: viagem "em andamento" = já confirmou saída (foto KM inicial) mas ainda não
+    // v174: viagem "em andamento" = já confirmou saída (foto KM inicial) mas ainda não
     // confirmou chegada (foto KM final). É essa lista que a carteira fecha no fim do dia.
     const ativas = state.viagens.filter((v) => v.fotoKmSaida && !v.fotoKmChegada);
     wrap.innerHTML = `
