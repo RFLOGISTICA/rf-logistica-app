@@ -2168,6 +2168,7 @@ var ABAS_DEF = [
   { id: "viagem", label: "Despesas de Viagem", grupo: "OPERAÇÃO" },
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
+  { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
   { id: "motoristas", label: "Motoristas 💰", grupo: "OPERAÇÃO" },
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
   { id: "custos", label: "Análise de Custos 📊", grupo: "FINANCEIRO" },
@@ -2186,6 +2187,7 @@ var TAB_DESCRICOES = {
   viagem: "Lançamento das despesas de cada viagem",
   abastecimento: "Abastecimentos lançados pelos motoristas (fotos de KM e da bomba) — aguardando confirmação",
   conferencia: "Conferência de carga por foto: motorista fotografa cada caixa, o sistema confere pedido a pedido até fechar o cliente",
+  statusdia: "Status diário das viagens em andamento: entregas feitas, situação e observações — atualizado pela carteira e pelo motorista",
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
   custos: "Análise de custos por categoria",
@@ -4183,6 +4185,50 @@ function rfConfRomaneioCardMotorista(rom) {
 }
 
 // Card de um romaneio na visão da equipe: progresso por cliente + caixas sinalizadas.
+// v177: aba "Status do Dia" -- atualização diária (entregas feitas, situação, observação)
+// de cada viagem em andamento. Editável pela equipe aqui e pelo motorista no próprio app.
+var STATUS_DIA_OPCOES = {
+  em_rota: { label: "Em rota", cor: "#D4A017" },
+  descarregando: { label: "Descarregando", cor: "#3498DB" },
+  sem_contato: { label: "Sem contato", cor: "#C0392B" },
+  finalizado_hoje: { label: "Finalizado hoje", cor: "#2E7D32" },
+  chega_amanha: { label: "Chega amanhã", cor: "#8E44AD" },
+};
+function rfStatusDiaAtualizar(viagemId, campo, valor) {
+  const v = state.viagens.find((x) => String(x.id) === String(viagemId));
+  if (!v) return;
+  if (campo === "entregasTotal" || campo === "entregasFeitas") {
+    v[campo] = valor === "" ? 0 : Math.max(0, parseInt(valor, 10) || 0);
+  } else {
+    v[campo] = valor;
+  }
+  v.statusDiaAtualizadoEm = Date.now();
+  v.statusDiaAtualizadoPor = (state.sessao && state.sessao.nome) || "equipe";
+  salvar();
+  render();
+}
+function rfStatusDiaCardAdmin(v) {
+  const opt = STATUS_DIA_OPCOES[v.statusDia] || null;
+  const feitas = v.entregasFeitas || 0;
+  const total = v.entregasTotal || 0;
+  return `<div style="border:1px solid #2A2A2A;border-radius:10px;padding:14px 16px;margin-bottom:14px;background:#111;">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-weight:700;color:#fff;font-size:14px;">${esc(v.cliente || "(sem cliente)")}</span>
+      <span style="font-size:12px;color:#999;">${esc(v.placa || "")}${v.motoristaNaEpoca ? " — " + esc(v.motoristaNaEpoca) : ""}</span>
+      ${opt ? `<span style="margin-left:auto;font-size:11px;font-weight:700;color:${opt.cor};border:1px solid ${opt.cor};border-radius:6px;padding:2px 8px;">${opt.label}</span>` : ""}
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <label style="font-size:11px;color:#999;">Entregas totais<br><input type="number" min="0" value="${total}" style="width:90px;" onchange="rfStatusDiaAtualizar('${v.id}','entregasTotal',this.value)"></label>
+      <label style="font-size:11px;color:#999;">Entregas feitas<br><input type="number" min="0" value="${feitas}" style="width:90px;" onchange="rfStatusDiaAtualizar('${v.id}','entregasFeitas',this.value)"></label>
+      <label style="font-size:11px;color:#999;">Situação<br><select onchange="rfStatusDiaAtualizar('${v.id}','statusDia',this.value)">
+        <option value="">—</option>
+        ${Object.keys(STATUS_DIA_OPCOES).map((k) => `<option value="${k}" ${v.statusDia === k ? "selected" : ""}>${STATUS_DIA_OPCOES[k].label}</option>`).join("")}
+      </select></label>
+    </div>
+    <label style="font-size:11px;color:#999;display:block;">Observação<textarea rows="2" style="width:100%;" placeholder="ex: sem contato, mas informou que chega hoje" onchange="rfStatusDiaAtualizar('${v.id}','obsStatusDia',this.value)">${esc(v.obsStatusDia || "")}</textarea></label>
+    ${v.statusDiaAtualizadoEm ? `<div style="font-size:10px;color:#666;margin-top:6px;">Última atualização: ${new Date(v.statusDiaAtualizadoEm).toLocaleString("pt-BR")}${v.statusDiaAtualizadoPor ? " — " + esc(v.statusDiaAtualizadoPor) : ""}</div>` : ""}
+  </div>`;
+}
 function rfConfRomaneioCardAdmin(rom) {
   const porCliente = rfConfProgressoRomaneio(rom.id);
   const sinalizadas = (state.caixasConferencia || []).filter((c) => String(c.romaneioId) === String(rom.id) && c.sinalizada);
@@ -4582,6 +4628,9 @@ function motoristaCarregarViagensAtivas() {
           id: r.id, data: r.data, cliente: r.cliente, status: r.status_motorista,
           valorViagem: Number(r.valor_viagem) || 0, fotoKmSaida: r.foto_km_saida || "", fotoKmChegada: r.foto_km_chegada || "",
           placa: r.placa || "",
+          // v177: pode não vir ainda se a RPC no banco não tiver sido atualizada -- cai em vazio/zero.
+          entregasTotal: Number(r.entregas_total) || 0, entregasFeitas: Number(r.entregas_feitas) || 0,
+          statusDia: r.status_dia || "", obsStatusDia: r.obs_status_dia || "",
         };
       });
       render();
@@ -4634,6 +4683,27 @@ function motoristaUploadEConfirmar(input, viagemId, tipo) {
     }).catch(function (e) { alert("Erro ao confirmar: " + (e.message || e)); });
   });
 }
+// v177: motorista atualiza entregas/situação da viagem em andamento. O celular do
+// motorista nunca baixa a caixa geral (painel_dados) -- por isso isso tem que ser uma
+// RPC própria no banco (igual motorista_confirmar_inicio/fim), não uma escrita direta.
+function motoristaAtualizarStatusDia(viagemId) {
+  var elFeitas = document.getElementById("sd-feitas-" + viagemId);
+  var elStatus = document.getElementById("sd-status-" + viagemId);
+  var elObs = document.getElementById("sd-obs-" + viagemId);
+  var feitas = elFeitas && elFeitas.value !== "" ? parseInt(elFeitas.value, 10) : null;
+  var statusDia = elStatus ? elStatus.value : "";
+  var obs = elObs ? elObs.value : "";
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem."); return; }
+    sb.rpc("motorista_atualizar_status_dia", {
+      p_viagem_id: viagemId, p_entregas_feitas: feitas, p_status_dia: statusDia || null, p_obs: obs || null,
+    }).then(function (res) {
+      if (res.error) { alert("Não consegui salvar (a equipe ainda vai configurar essa função no banco). Erro: " + res.error.message); return; }
+      alert("✓ Status atualizado!");
+      motoristaCarregarViagensAtivas();
+    });
+  });
+}
 function motoristaVerFotoKm(path) {
   rfGetClient().then(function (sb) {
     if (!sb) return;
@@ -4670,6 +4740,21 @@ function motoristaViagemCard(vg) {
         <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')"></label>
         <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')"></label>
       </div>
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #222;">
+      <div style="font-size:11px;color:#999;margin-bottom:6px;">📍 Status do dia — atualize antes de encerrar o expediente</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <input id="sd-feitas-${vg.id}" type="number" min="0" placeholder="Entregas feitas" value="${vg.entregasFeitas || ""}" style="width:120px;">
+        <select id="sd-status-${vg.id}" style="min-width:150px;">
+          <option value="">Situação...</option>
+          <option value="em_rota" ${vg.statusDia === "em_rota" ? "selected" : ""}>Em rota</option>
+          <option value="descarregando" ${vg.statusDia === "descarregando" ? "selected" : ""}>Descarregando</option>
+          <option value="finalizado_hoje" ${vg.statusDia === "finalizado_hoje" ? "selected" : ""}>Finalizado hoje</option>
+          <option value="chega_amanha" ${vg.statusDia === "chega_amanha" ? "selected" : ""}>Chega amanhã</option>
+        </select>
+      </div>
+      <textarea id="sd-obs-${vg.id}" rows="2" style="width:100%;margin-bottom:6px;" placeholder="Observação (opcional)">${esc(vg.obsStatusDia || "")}</textarea>
+      <button class="btn-gold" style="font-size:12px;" onclick="motoristaAtualizarStatusDia('${vg.id}')">Atualizar status</button>
     </div>` : ""}
     ${vg.status === "aguardando_equipe" ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
       ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
@@ -6742,6 +6827,19 @@ function renderTabela() {
     `;
   }
 
+  if (state.aba === "statusdia") {
+    // v177: viagem "em andamento" = já confirmou saída (foto KM inicial) mas ainda não
+    // confirmou chegada (foto KM final). É essa lista que a carteira fecha no fim do dia.
+    const ativas = state.viagens.filter((v) => v.fotoKmSaida && !v.fotoKmChegada);
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:20px; font-weight:800; color:${GOLD};">📍 Status do Dia</div>
+      </div>
+      <div style="font-size:12px;color:#999;margin-bottom:16px;">Viagens em andamento agora (já saíram, ainda não confirmaram chegada). A carteira atualiza aqui no fim do dia — o motorista também pode atualizar direto pelo celular dele.</div>
+      ${ativas.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhuma viagem em andamento agora.</div>` : ativas.map((v) => rfStatusDiaCardAdmin(v)).join("")}
+    `;
+  }
+
   if (state.aba === "saldocaminhao") {
     if (!state.saldoCamVeiculoId && state.veiculos[0]) state.saldoCamVeiculoId = state.veiculos[0].id;
     const r = calcularSaldoCaminhao(state.saldoCamVeiculoId);
@@ -7859,6 +7957,20 @@ function rfKmUpload(input, viagemId, tipo) {
         if (tipo === "saida") v.fotoKmSaida = path; else v.fotoKmChegada = path;
         input.value = "";
         salvar(); render();
+        // v175: anexo manual na aba Despesas de Viagem agora também manda a
+        // foto pra IA ler o KM sozinha (mesma leitura já usada no app do
+        // motorista e no abastecimento) -- antes só guardava a foto e
+        // deixava o campo de KM pra digitar na mão.
+        if (isImg) {
+          rfLerFotoIA("km", p.blob, function (j) {
+            var km = (j && Number(j.km)) || 0;
+            if (km > 0) {
+              if (tipo === "saida") v.kmSaida = km; else v.kmChegada = km;
+              recalcularKmDaViagem(v);
+              salvar(); render();
+            }
+          });
+        }
       });
     }).catch(function (e) { alert("Erro ao anexar foto: " + (e.message || e)); });
   });
