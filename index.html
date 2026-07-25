@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v182)</title>
+<title>RF Logística — Painel da Frota (v183)</title>
+<!-- v183: assistente com ACESSO TOTAL. Passa a receber também Óleo & Filtros,
+     Status do Dia, Motoristas, Saldo por Caminhão, Almoxarifado e Vencimentos.
+     Cada bloco respeita a permissão de módulo do usuário logado.
+     REGRA PERMANENTE: toda atualização nova tem que alimentar o assistente
+     também -- ver gerarContextoAssistente(). -->
 <!-- v182: percentuais. "Total despesas" e "Sobra total" agora mostram o % sobre o
      total recebido, e cada viagem mostra a margem em % do valor da viagem. -->
 <!-- v181: aba Troca de Óleo -- KM atual passa a se atualizar sozinha pelo maior
@@ -5591,6 +5596,93 @@ function gerarContextoAssistente() {
       return `- ${v.data || "sem data"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.pago ? "paga" : "pendente"}`;
     }).join("\n");
 
+  // v183: ACESSO TOTAL — o assistente passa a receber também as abas que faltavam:
+  // Óleo & Filtros, Status do Dia, Motoristas, Saldo por Caminhão, Almoxarifado e
+  // Vencimentos. IMPORTANTE: cada bloco respeita a permissão de módulo do usuário
+  // logado — quem não enxerga a aba na tela também não recebe o dado aqui, senão o
+  // chat viraria um jeito de furar o controle de acesso da aba Usuários.
+  const podeOleo = podeVerAba("oleo");
+  const podeStatusDia = podeVerAba("statusdia");
+  const podeMot = podeVerAba("motoristas");
+  const podeSaldoCam = podeVerAba("saldocaminhao");
+  const podeAlmox = podeVerAba("almox");
+  const podeVenc = podeVerAba("manutencao");
+
+  // --- Óleo & Filtros ---
+  const avisoOleoCtx = (state.config && state.config.avisoOleoKm != null) ? state.config.avisoOleoKm : 1000;
+  const linhasOleo = !podeOleo ? "" : veiculosComMes().filter((v) => v.placa).map((v) => {
+    const ol = oleoStatusV(v);
+    const hist = trocasDoVeiculo(v.placa);
+    const gastoTot = hist.reduce((s, t) => s + totalTroca(t), 0);
+    const kmA = kmAtualVeiculo(v).toLocaleString("pt-BR");
+    const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)}`;
+    if (!ol) return `- ${v.placa}: KM atual ${kmA}, SEM última troca registrada (não dá pra calcular a próxima), ${extra}`;
+    const sit = ol.falta <= 0
+      ? `VENCIDA — já passou ${Math.abs(ol.falta).toLocaleString("pt-BR")} km do ponto de troca`
+      : (ol.falta <= avisoOleoCtx ? `ATENÇÃO — faltam só ${ol.falta.toLocaleString("pt-BR")} km` : `ok — faltam ${ol.falta.toLocaleString("pt-BR")} km`);
+    return `- ${v.placa}: KM atual ${kmA}, última troca em ${ol.ultima.toLocaleString("pt-BR")} km, intervalo ${ol.intervalo.toLocaleString("pt-BR")} km, próxima em ${ol.proximo.toLocaleString("pt-BR")} km → ${sit}. ${extra}`;
+  }).join("\n");
+
+  // --- Status do Dia (viagens em andamento agora) ---
+  const linhasStatusDia = !podeStatusDia ? "" : state.viagens
+    .filter((v) => v.fotoKmSaida && !v.fotoKmChegada)
+    .map((v) => {
+      const opt = STATUS_DIA_OPCOES[v.statusDia] || null;
+      const feitas = Number(v.entregasFeitas) || 0;
+      const tot = Number(v.entregasTotal) || 0;
+      return `- ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | motorista ${motoristaDaViagem(v) || "(sem)"} | saída ${v.data || "?"} | situação: ${opt ? opt.label : "(não informada)"} | entregas ${feitas}${tot ? "/" + tot : ""}${v.obsStatusDia ? " | obs: " + v.obsStatusDia : ""} | ${v.statusDiaAtualizadoEm ? "atualizado em " + new Date(v.statusDiaAtualizadoEm).toLocaleString("pt-BR") + (v.statusDiaAtualizadoPor ? " por " + v.statusDiaAtualizadoPor : "") : "NUNCA atualizado pela carteira"}`;
+    }).join("\n");
+
+  // --- Motoristas: quanto cada um gerou, quanto já recebeu e o saldo em aberto ---
+  const linhasMotoristas = !podeMot ? "" : (function () {
+    try {
+      return nomesMotoristasPorViagem().map((nome) => {
+        const s = saldoMotorista(nome);
+        const vales = (state.pagamentosMotorista || []).filter((p) => p.motorista === nome).length;
+        return `- ${nome}: gerou ${fmtR(s.gerado)} em viagens, já recebeu ${fmtR(s.pago)} (${vales} pagamento/vale), saldo em aberto ${fmtR(s.saldo)}`;
+      }).join("\n");
+    } catch (e) { return ""; }
+  })();
+
+  // --- Saldo por caminhão (resultado acumulado de cada veículo) ---
+  const linhasSaldoCam = !podeSaldoCam ? "" : (function () {
+    try {
+      return state.veiculos.filter((v) => v.placa).map((v) => {
+        const r = calcularSaldoCaminhao(v.id);
+        if (!r || !r.meses || !r.meses.length) return `- ${v.placa}: sem movimento registrado`;
+        const totalRes = r.meses.reduce((s, m) => s + (m.resultadoMes || 0), 0);
+        const ultimo = r.meses[r.meses.length - 1];
+        return `- ${v.placa}: resultado acumulado ${fmtR(totalRes)} em ${r.meses.length} mês(es), saldo final atual ${fmtR(ultimo.saldoFinal || 0)}`;
+      }).join("\n");
+    } catch (e) { return ""; }
+  })();
+
+  // --- Almoxarifado (estoque de peças) ---
+  const linhasAlmox = !podeAlmox ? "" : (state.almoxarifado || []).map((it) => {
+    const saldo = almoxSaldo(it);
+    const baixo = almoxBaixo(it);
+    return `- ${it.nome || "(sem nome)"}: saldo ${saldo} ${it.unidade || "un"}, mínimo ${it.qtdMin || 0}, custo unitário ${fmtR(Number(it.custoUnit) || 0)}, valor em estoque ${fmtR(saldo * (Number(it.custoUnit) || 0))}${baixo ? " ⚠ ABAIXO DO MÍNIMO" : ""}`;
+  }).join("\n");
+
+  // --- Vencimentos de documentos por veículo ---
+  const linhasVencimentos = !podeVenc ? "" : veiculosComMes().filter((v) => v.placa).map((v) => {
+    const partes = [];
+    const add = (rot, data) => {
+      const d = diasPara(data);
+      if (d === null) return;
+      partes.push(`${rot} ${data} (${d < 0 ? "VENCIDO há " + Math.abs(d) + " dia(s)" : (d === 0 ? "vence HOJE" : "faltam " + d + " dia(s)")})`);
+    };
+    add("emplacamento", v.emplacamento);
+    add("seguro", v.venctoSeguro);
+    add("cronotacógrafo", v.venctoCronotacografo);
+    add("última revisão", v.ultimaRevisao);
+    return partes.length ? `- ${v.placa}: ${partes.join("; ")}` : `- ${v.placa}: nenhuma data de vencimento cadastrada`;
+  }).join("\n");
+
+  // Quais abas este usuário enxerga (o assistente precisa saber pra não prometer
+  // dado que não recebeu e pra não dizer "não existe" quando na verdade é permissão).
+  const abasDoUsuario = ABAS_DEF.filter((a) => podeVerAba(a.id)).map((a) => a.label.replace(/[^\wÀ-ÿ &/]/g, "").trim()).join(", ");
+
   return `Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -5661,7 +5753,29 @@ Abastecimentos (pendentes primeiro, depois os mais recentes já revisados — at
 ${linhasAbastecimento || "(nenhum abastecimento lançado)"}
 
 Romaneios / Conferência de Carga (entregas em andamento, uma linha por romaneio anexado — "clientes/entregas concluídos" é quanto já foi CONFERIDO por foto/confirmação do motorista; a previsão RECALCULADA usa o ritmo real de entregas até agora, é sempre uma estimativa que se ajusta sozinha conforme a rota avança):
-${linhasRomaneios || "(nenhum romaneio anexado)"}`;
+${linhasRomaneios || "(nenhum romaneio anexado)"}
+
+Status do Dia — viagens EM ANDAMENTO agora (já saíram, ainda não confirmaram chegada). "NUNCA atualizado pela carteira" significa que ninguém deu baixa no fim do dia:
+${podeStatusDia ? (linhasStatusDia || "(nenhuma viagem em andamento agora)") : "(sem permissão pra esta aba)"}
+
+Óleo & Filtros — controle de troca por caminhão. O KM atual é o maior hodômetro já registrado (foto do abastecimento, KM das viagens ou o KM da própria troca). O aviso está configurado pra alertar quando faltarem ${avisoOleoCtx.toLocaleString("pt-BR")} km:
+${podeOleo ? (linhasOleo || "(nenhum veículo cadastrado)") : "(sem permissão pra esta aba)"}
+
+Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
+${podeMot ? (linhasMotoristas || "(nenhum motorista por viagem cadastrado)") : "(sem permissão pra esta aba)"}
+
+Saldo por Caminhão — resultado acumulado de cada veículo mês a mês:
+${podeSaldoCam ? (linhasSaldoCam || "(nenhum veículo com movimento)") : "(sem permissão pra esta aba)"}
+
+Almoxarifado — estoque de peças (saldo já é entradas − saídas − uso em manutenção):
+${podeAlmox ? (linhasAlmox || "(nenhum item no estoque)") : "(sem permissão pra esta aba)"}
+
+Vencimentos por veículo (emplacamento, seguro, cronotacógrafo, última revisão):
+${podeVenc ? (linhasVencimentos || "(nenhum veículo cadastrado)") : "(sem permissão pra esta aba)"}
+
+ABAS QUE ESTE USUÁRIO PODE VER: ${abasDoUsuario || "(nenhuma)"}
+Se ele perguntar sobre algo marcado acima como "(sem permissão pra esta aba)", NÃO invente e NÃO diga que o dado não existe — explique que esse módulo não está liberado no acesso dele e que o Renato pode liberar na aba Usuários.
+Nunca invente número que não esteja neste contexto. Se o dado não estiver aqui, diga que não recebeu essa informação.`;
 }
 function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
