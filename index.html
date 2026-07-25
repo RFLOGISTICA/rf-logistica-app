@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v180)</title>
+<title>RF Logística — Painel da Frota (v181)</title>
+<!-- v181: aba Troca de Óleo -- KM atual passa a se atualizar sozinha pelo maior
+     hodômetro registrado (foto do abastecimento, KM das viagens, KM da troca);
+     novas colunas "Próximas programadas" e "Histórico" (expansível, com KM rodado
+     entre trocas e custo acumulado por caminhão). -->
 <!-- v180: aba Troca de Óleo -- corrigido o cálculo de "Próx. troca" e "Faltam",
      que ficava "—" porque o intervalo padrão (10.000 km) só existia no campo da
      tela e não no cálculo. Nada mais foi alterado. -->
@@ -1998,6 +2002,66 @@ function setAvisoBoletoDias(valor) {
 
 // ===== Troca de óleo: KM regressivo por veículo (v49) =====
 // Retorna null se não configurado. proximo = km da última troca + intervalo; falta = proximo - km atual.
+// v181: KM atual deixa de depender só de digitação. O hodômetro real do caminhão é
+// o MAIOR número já registrado em qualquer lugar do sistema: foto de KM do
+// abastecimento, KM de saída/chegada das viagens e o KM da própria troca de óleo.
+// O campo continua editável (serve de ponto de partida e de correção pra cima).
+function kmMaxRegistrado(placa) {
+  if (!placa) return 0;
+  let mx = 0;
+  (state.abastecimentos || []).forEach(function (a) {
+    if (a.placa === placa) mx = Math.max(mx, Number(a.kmAtual) || 0);
+  });
+  (state.viagens || []).forEach(function (vi) {
+    if (vi.placa === placa) mx = Math.max(mx, Number(vi.kmChegada) || 0, Number(vi.kmSaida) || 0);
+  });
+  (state.oleoTrocas || []).forEach(function (t) {
+    if (t.placa === placa) mx = Math.max(mx, Number(t.km) || 0);
+  });
+  return mx;
+}
+// KM atual efetivo: o digitado ou o lido automaticamente, o que for maior.
+function kmAtualVeiculo(v) {
+  return Math.max(Number(v.kmAtual) || 0, kmMaxRegistrado(v.placa));
+}
+// Onde o sistema encontrou o KM automático (só pra mostrar a origem na tela).
+function origemKmAuto(placa) {
+  let mx = 0, origem = "";
+  (state.abastecimentos || []).forEach(function (a) {
+    if (a.placa === placa && (Number(a.kmAtual) || 0) > mx) { mx = Number(a.kmAtual) || 0; origem = "abastecimento"; }
+  });
+  (state.viagens || []).forEach(function (vi) {
+    if (vi.placa !== placa) return;
+    if ((Number(vi.kmChegada) || 0) > mx) { mx = Number(vi.kmChegada) || 0; origem = "viagem"; }
+    if ((Number(vi.kmSaida) || 0) > mx) { mx = Number(vi.kmSaida) || 0; origem = "viagem"; }
+  });
+  (state.oleoTrocas || []).forEach(function (t) {
+    if (t.placa === placa && (Number(t.km) || 0) > mx) { mx = Number(t.km) || 0; origem = "troca de óleo"; }
+  });
+  return { km: mx, origem: origem };
+}
+// Lista das próximas trocas programadas a partir da última feita (v181).
+function proximasTrocasOleo(v, quantas) {
+  const ol = oleoStatusV(v);
+  if (!ol) return [];
+  const arr = [];
+  for (let i = 1; i <= (quantas || 3); i++) arr.push(ol.ultima + ol.intervalo * i);
+  return arr;
+}
+// Histórico de trocas de um caminhão, da mais recente (maior KM) pra mais antiga (v181).
+function trocasDoVeiculo(placa) {
+  return (state.oleoTrocas || [])
+    .filter(function (t) { return t.placa === placa && t.km !== "" && t.km != null; })
+    .slice()
+    .sort(function (a, b) { return (Number(b.km) || 0) - (Number(a.km) || 0); });
+}
+// Abre/fecha o histórico de trocas de um caminhão na tabela (v181).
+function toggleHistoricoOleo(placa) {
+  if (!state.oleoHistAberto) state.oleoHistAberto = {};
+  state.oleoHistAberto[placa] = !state.oleoHistAberto[placa];
+  render();
+}
+
 function oleoStatusV(v) {
   // v180: a tabela SEMPRE mostra 10000 no campo "intervalo" quando o veículo ainda
   // não tem oleoIntervalo salvo, mas o cálculo aqui usava 0 e devolvia null --
@@ -2008,7 +2072,7 @@ function oleoStatusV(v) {
   const ultRaw = v.oleoKmUltima;
   if (ultRaw === "" || ultRaw == null || !intv) return null;
   const ult = Number(ultRaw) || 0;
-  const km = Number(v.kmAtual) || 0;
+  const km = kmAtualVeiculo(v); // v181: hodômetro real (digitado ou lido automaticamente)
   const proximo = ult + intv;
   return { proximo, falta: proximo - km, km, intervalo: intv, ultima: ult };
 }
@@ -7398,9 +7462,9 @@ function renderTabela() {
           <span style="font-size:12px; color:#bbb;">km</span>
         </div>
       </div>
-      <div style="font-size:11px; color:#777; margin-bottom:10px;">Preencha a <b>KM atual</b> do hodômetro e o <b>intervalo</b> (padrão 10.000 km). A <b>última troca</b> é preenchida sozinha quando você lança uma troca embaixo (ou pode ajustar à mão).</div>
-      <table style="min-width:920px;"><thead><tr>
-        <th>Placa</th><th>Tipo</th><th>KM atual</th><th>Últ. troca (km)</th><th>Intervalo (km)</th><th>Próx. troca</th><th>Faltam</th>
+      <div style="font-size:11px; color:#777; margin-bottom:10px;">A <b>KM atual</b> se atualiza sozinha pelo maior hodômetro já registrado do caminhão — foto de KM do abastecimento, KM das viagens e o KM da própria troca (marcado com <b style="color:${GOLD};">🔄 auto</b>). Você só precisa digitar uma vez, como ponto de partida. A <b>última troca</b> é preenchida sozinha quando você lança uma troca embaixo, e as <b>próximas programadas</b> saem dela + o intervalo (padrão 10.000 km).</div>
+      <table style="min-width:1180px;"><thead><tr>
+        <th>Placa</th><th>Tipo</th><th>KM atual</th><th>Últ. troca (km)</th><th>Intervalo (km)</th><th>Próx. troca</th><th>Faltam</th><th>Próximas programadas</th><th>Histórico</th>
       </tr></thead><tbody>
         ${vs.map((v) => {
           const ol = oleoStatusV(v);
@@ -7409,14 +7473,59 @@ function renderTabela() {
           else if (ol.falta <= 0) { faltaTxt = "🔴 trocar (passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km)"; faltaCor = "#C0392B"; }
           else if (ol.falta <= avisoOleo) { faltaTxt = "🟡 " + ol.falta.toLocaleString("pt-BR") + " km"; faltaCor = GOLD; }
           else { faltaTxt = "🟢 " + ol.falta.toLocaleString("pt-BR") + " km"; faltaCor = "#2E7D32"; }
+          // v181: KM automático (maior hodômetro já registrado) x KM digitado
+          const auto = origemKmAuto(v.placa);
+          const digitado = Number(v.kmAtual) || 0;
+          const kmEfetivo = Math.max(digitado, auto.km);
+          const usandoAuto = auto.km > digitado;
+          const hintKm = usandoAuto
+            ? `<div style="font-size:9px;color:${GOLD};margin-top:2px;" title="Lido automaticamente do maior hodômetro registrado">🔄 auto — ${auto.origem}</div>`
+            : (auto.km ? `<div style="font-size:9px;color:#666;margin-top:2px;">manual</div>` : "");
+          // v181: próximas trocas programadas a partir da última feita
+          const prox = proximasTrocasOleo(v, 3);
+          const proxTxt = prox.length
+            ? prox.map((k, i) => `<span style="color:${i === 0 ? GOLD : "#777"};font-weight:${i === 0 ? 700 : 400};">${k.toLocaleString("pt-BR")}</span>`).join(`<span style="color:#444;"> · </span>`)
+            : `<span style="color:#555;">—</span>`;
+          // v181: histórico de trocas do caminhão (expansível)
+          const hist = trocasDoVeiculo(v.placa);
+          const aberto = !!(state.oleoHistAberto && state.oleoHistAberto[v.placa]);
+          const histBtn = hist.length
+            ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="toggleHistoricoOleo('${esc(v.placa)}')">${hist.length} troca${hist.length > 1 ? "s" : ""} ${aberto ? "▴" : "▾"}</button>`
+            : `<span style="color:#555;font-size:11px;">sem registro</span>`;
+          let linhaHist = "";
+          if (aberto && hist.length) {
+            const linhas = hist.map((t, i) => {
+              const anterior = hist[i + 1];
+              const rodou = anterior ? ((Number(t.km) || 0) - (Number(anterior.km) || 0)) : null;
+              return `<tr>
+                <td style="color:#bbb;">${esc(t.data || "—")}</td>
+                <td style="font-weight:700;color:${GOLD};">${(Number(t.km) || 0).toLocaleString("pt-BR")} km</td>
+                <td style="color:#999;">${rodou != null ? rodou.toLocaleString("pt-BR") + " km rodados" : "—"}</td>
+                <td style="color:#bbb;">${esc(t.tipoOleo || "—")}</td>
+                <td style="color:#999;">${(Array.isArray(t.filtros) ? t.filtros : []).filter((f) => f.nome).map((f) => esc(f.nome)).join(", ") || "—"}</td>
+                <td style="font-weight:700;">${fmtR(totalTroca(t))}</td>
+                <td style="color:#777;font-size:11px;">${esc(t.obs || "")}</td>
+              </tr>`;
+            }).join("");
+            const totalGasto = hist.reduce((s, t) => s + totalTroca(t), 0);
+            linhaHist = `<tr><td colspan="9" style="background:#0B0B0B;padding:10px 16px;">
+              <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:6px;">Histórico de trocas — ${esc(v.placa)}</div>
+              <table style="min-width:720px;"><thead><tr>
+                <th>Data</th><th>KM da troca</th><th>Rodou desde a anterior</th><th>Óleo</th><th>Filtros</th><th>Custo</th><th>Obs.</th>
+              </tr></thead><tbody>${linhas}</tbody>
+              <tfoot><tr><td colspan="5" style="font-weight:700;color:#fff;">Total gasto neste caminhão</td><td style="font-weight:800;color:${GOLD};">${fmtR(totalGasto)}</td><td></td></tr></tfoot>
+              </table></td></tr>`;
+          }
           return `<tr>
             <td>${esc(v.placa) || "—"}</td><td>${v.tipo}</td>
-            <td><input type="number" min="0" value="${Number(v.kmAtual) || 0}" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:100px;"></td>
+            <td><input type="number" min="0" value="${kmEfetivo}" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:100px;">${hintKm}</td>
             <td><input type="number" min="0" value="${esc(v.oleoKmUltima != null ? v.oleoKmUltima : "")}" placeholder="—" onchange="atualizarVeiculo('${v.id}','oleoKmUltima',this.value)" style="width:100px;"></td>
             <td><input type="number" min="0" value="${esc(v.oleoIntervalo != null && v.oleoIntervalo !== "" ? v.oleoIntervalo : 10000)}" onchange="atualizarVeiculo('${v.id}','oleoIntervalo',this.value)" style="width:100px;"></td>
             <td style="color:#999;">${ol ? ol.proximo.toLocaleString("pt-BR") : "—"}</td>
             <td style="font-weight:800;color:${faltaCor};">${faltaTxt}</td>
-          </tr>`;
+            <td style="font-size:12px;">${proxTxt}</td>
+            <td>${histBtn}</td>
+          </tr>${linhaHist}`;
         }).join("")}
       </tbody></table>
 
