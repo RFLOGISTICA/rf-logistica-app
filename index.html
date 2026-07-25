@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v183)</title>
+<title>RF Logística — Painel da Frota (v184)</title>
+<!-- v184: troca de óleo ganha origem (📦 do almoxarifado x 🛒 comprado fora), igual
+     já existia na Manutenção. Peça de estoque dá baixa no almoxarifado e NÃO conta
+     como gasto novo (já foi paga no boleto de entrada). Resumo do mês separa
+     "gasto novo" de "do estoque". Assistente atualizado junto (regra permanente). -->
 <!-- v183: assistente com ACESSO TOTAL. Passa a receber também Óleo & Filtros,
      Status do Dia, Motoristas, Saldo por Caminhão, Almoxarifado e Vencimentos.
      Cada bloco respeita a permissão de módulo do usuário logado.
@@ -1731,7 +1735,8 @@ function almoxSaidasManuaisTotal(item) {
 }
 function almoxSaldo(item) {
   if (!item) return 0;
-  return almoxEntradasTotal(item) - almoxSaidasManuaisTotal(item) - almoxConsumoManut(item.id);
+  // v184: além do consumo em manutenções, desconta o que saiu em trocas de óleo
+  return almoxEntradasTotal(item) - almoxSaidasManuaisTotal(item) - almoxConsumoManut(item.id) - almoxConsumoOleo(item.id);
 }
 function almoxBaixo(item) {
   return almoxSaldo(item) <= (Number(item.qtdMin) || 0);
@@ -2105,7 +2110,10 @@ function adicionarTrocaOleo() {
   state.oleoTrocas.unshift({
     id: uid(), placa: placas[0] || "", data: hoje, km: "", tipoOleo: "",
     litros: "", precoLitro: (ultPreco != null ? ultPreco : ""), valorOleo: 0,
-    filtros: [{ id: uid(), nome: "", modelo: "", valor: 0 }], obs: "",
+    // v184: origem do óleo — "fora" (comprado/serviço fora, gasto novo) ou
+    // "almox" (saiu do nosso estoque, já foi pago na entrada via boleto).
+    origemOleo: "fora", oleoAlmoxId: "", oleoQtdAlmox: 0, oleoCustoUnitSnap: 0,
+    filtros: [{ id: uid(), nome: "", modelo: "", valor: 0, origem: "fora", almoxId: "", qtd: 1, custoUnitSnap: 0 }], obs: "",
   });
   if (placas[0]) sincronizarOleoUltima(placas[0]);
   salvar(); render();
@@ -2124,6 +2132,7 @@ function atualizarTrocaOleo(id, campo, valor) {
 }
 // Valor do óleo = litros × preço/litro (só recalcula quando os dois estão preenchidos; senão fica manual)
 function recalcValorOleo(t) {
+  if (t.origemOleo === "almox") return; // v184: valor vem do estoque (qtd × custo), não de litros × preço
   const temL = t.litros !== "" && t.litros != null;
   const temP = t.precoLitro !== "" && t.precoLitro != null;
   if (!temL || !temP) return;
@@ -2143,7 +2152,7 @@ function adicionarFiltroTroca(trocaId) {
   const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
   if (!t) return;
   if (!Array.isArray(t.filtros)) t.filtros = [];
-  t.filtros.push({ id: uid(), nome: "", modelo: "", valor: 0 });
+  t.filtros.push({ id: uid(), nome: "", modelo: "", valor: 0, origem: "fora", almoxId: "", qtd: 1, custoUnitSnap: 0 });
   salvar(); render();
 }
 function atualizarFiltroTroca(trocaId, filtroId, campo, valor) {
@@ -2165,6 +2174,99 @@ function somaFiltros(t) {
   return t.filtros.reduce((s, f) => s + (Number(f.valor) || 0), 0);
 }
 function totalTroca(t) { return (Number(t.valorOleo) || 0) + somaFiltros(t); }
+// ===== v184: origem do óleo e dos filtros — estoque (almoxarifado) x comprado fora =====
+// Mesma regra que já vale na aba Manutenção: o que sai do NOSSO estoque não é gasto
+// novo (já foi pago no boleto quando entrou no almoxarifado). Contar de novo aqui
+// seria dobrar a despesa. Só o que foi comprado/feito fora é dinheiro novo saindo.
+function trocaCustoNovo(t) {
+  const oleo = (t.origemOleo === "almox") ? 0 : (Number(t.valorOleo) || 0);
+  const filt = (Array.isArray(t.filtros) ? t.filtros : [])
+    .reduce((s, f) => s + (f.origem === "almox" ? 0 : (Number(f.valor) || 0)), 0);
+  return oleo + filt;
+}
+function trocaCustoEstoque(t) { return totalTroca(t) - trocaCustoNovo(t); }
+// Quanto de um item do almoxarifado já foi consumido em trocas de óleo
+function almoxConsumoOleo(itemId) {
+  let q = 0;
+  (state.oleoTrocas || []).forEach((t) => {
+    if (t.origemOleo === "almox" && t.oleoAlmoxId === itemId) q += Number(t.oleoQtdAlmox) || 0;
+    (Array.isArray(t.filtros) ? t.filtros : []).forEach((f) => {
+      if (f.origem === "almox" && f.almoxId === itemId) q += Number(f.qtd) || 0;
+    });
+  });
+  return q;
+}
+function definirOrigemOleoTroca(trocaId, origem) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t) return;
+  t.origemOleo = origem;
+  if (origem === "almox") {
+    if (!t.oleoQtdAlmox || t.oleoQtdAlmox <= 0) t.oleoQtdAlmox = Number(t.litros) || 1;
+    recalcOleoAlmox(t);
+  } else {
+    t.oleoAlmoxId = ""; t.oleoCustoUnitSnap = 0;
+    recalcValorOleo(t);
+  }
+  salvar(); render();
+}
+function definirAlmoxOleoTroca(trocaId, almoxId) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t) return;
+  t.oleoAlmoxId = almoxId;
+  const ai = almoxItemPorId(almoxId);
+  t.oleoCustoUnitSnap = ai ? (Number(ai.custoUnit) || 0) : 0; // congela o custo do momento
+  if (ai && (!t.tipoOleo || t.tipoOleo.trim() === "")) t.tipoOleo = ai.nome || "";
+  recalcOleoAlmox(t);
+  salvar(); render();
+}
+function definirQtdOleoTroca(trocaId, qtd) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t) return;
+  t.oleoQtdAlmox = Number(String(qtd).replace(",", ".")) || 0;
+  recalcOleoAlmox(t);
+  salvar(); render();
+}
+function recalcOleoAlmox(t) {
+  if (t.origemOleo !== "almox") return;
+  t.valorOleo = Math.round((Number(t.oleoQtdAlmox) || 0) * (Number(t.oleoCustoUnitSnap) || 0) * 100) / 100;
+}
+function definirOrigemFiltroTroca(trocaId, filtroId, origem) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t || !Array.isArray(t.filtros)) return;
+  const f = t.filtros.find((x) => String(x.id) === String(filtroId));
+  if (!f) return;
+  f.origem = origem;
+  if (origem === "almox") {
+    if (!f.qtd || f.qtd < 1) f.qtd = 1;
+    recalcFiltroAlmox(f);
+  } else { f.almoxId = ""; f.custoUnitSnap = 0; }
+  salvar(); render();
+}
+function definirAlmoxFiltroTroca(trocaId, filtroId, almoxId) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t || !Array.isArray(t.filtros)) return;
+  const f = t.filtros.find((x) => String(x.id) === String(filtroId));
+  if (!f) return;
+  f.almoxId = almoxId;
+  const ai = almoxItemPorId(almoxId);
+  f.custoUnitSnap = ai ? (Number(ai.custoUnit) || 0) : 0;
+  if (ai && (!f.nome || f.nome.trim() === "")) f.nome = ai.nome || "";
+  recalcFiltroAlmox(f);
+  salvar(); render();
+}
+function definirQtdFiltroTroca(trocaId, filtroId, qtd) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t || !Array.isArray(t.filtros)) return;
+  const f = t.filtros.find((x) => String(x.id) === String(filtroId));
+  if (!f) return;
+  f.qtd = Number(String(qtd).replace(",", ".")) || 0;
+  recalcFiltroAlmox(f);
+  salvar(); render();
+}
+function recalcFiltroAlmox(f) {
+  if (f.origem !== "almox") return;
+  f.valor = Math.round((Number(f.qtd) || 0) * (Number(f.custoUnitSnap) || 0) * 100) / 100;
+}
 // Migração v51: filtros de string única -> lista de itens {nome, modelo, valor}
 function migrarTrocasOleoFiltros() {
   if (!Array.isArray(state.oleoTrocas)) { state.oleoTrocas = []; return; }
@@ -2194,16 +2296,18 @@ function sincronizarOleoUltima(placa) {
 }
 // Gasto de óleo+filtros no mês, agrupado por placa.
 function gastoOleoMes(mes) {
-  const porPlaca = {}; let totalGeral = 0;
+  const porPlaca = {}; let totalGeral = 0, totalNovo = 0, totalEstoque = 0;
   (state.oleoTrocas || []).forEach((t) => {
     if (!t.data || t.data.slice(0, 7) !== mes) return;
     const p = t.placa || "—";
-    if (!porPlaca[p]) porPlaca[p] = { qtd: 0, oleo: 0, filtros: 0, total: 0 };
+    if (!porPlaca[p]) porPlaca[p] = { qtd: 0, oleo: 0, filtros: 0, total: 0, novo: 0, estoque: 0 };
     const o = Number(t.valorOleo) || 0, f = somaFiltros(t);
+    const nv = trocaCustoNovo(t), es = trocaCustoEstoque(t); // v184
     porPlaca[p].qtd++; porPlaca[p].oleo += o; porPlaca[p].filtros += f; porPlaca[p].total += o + f;
-    totalGeral += o + f;
+    porPlaca[p].novo += nv; porPlaca[p].estoque += es;
+    totalGeral += o + f; totalNovo += nv; totalEstoque += es;
   });
-  return { porPlaca, totalGeral };
+  return { porPlaca, totalGeral, totalNovo, totalEstoque };
 }
 function exportarOleoExcel() {
   const cab = ["Data", "Placa", "KM", "Tipo de oleo", "Litros", "Preco/litro", "Filtros (detalhe)", "Valor oleo", "Valor filtros", "Total", "Obs"];
@@ -5615,7 +5719,7 @@ function gerarContextoAssistente() {
     const hist = trocasDoVeiculo(v.placa);
     const gastoTot = hist.reduce((s, t) => s + totalTroca(t), 0);
     const kmA = kmAtualVeiculo(v).toLocaleString("pt-BR");
-    const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)}`;
+    const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)} (dos quais ${fmtR(hist.reduce((s, t) => s + trocaCustoNovo(t), 0))} foi comprado fora e ${fmtR(hist.reduce((s, t) => s + trocaCustoEstoque(t), 0))} saiu do almoxarifado)`;
     if (!ol) return `- ${v.placa}: KM atual ${kmA}, SEM última troca registrada (não dá pra calcular a próxima), ${extra}`;
     const sit = ol.falta <= 0
       ? `VENCIDA — já passou ${Math.abs(ol.falta).toLocaleString("pt-BR")} km do ponto de troca`
@@ -5758,7 +5862,8 @@ ${linhasRomaneios || "(nenhum romaneio anexado)"}
 Status do Dia — viagens EM ANDAMENTO agora (já saíram, ainda não confirmaram chegada). "NUNCA atualizado pela carteira" significa que ninguém deu baixa no fim do dia:
 ${podeStatusDia ? (linhasStatusDia || "(nenhuma viagem em andamento agora)") : "(sem permissão pra esta aba)"}
 
-Óleo & Filtros — controle de troca por caminhão. O KM atual é o maior hodômetro já registrado (foto do abastecimento, KM das viagens ou o KM da própria troca). O aviso está configurado pra alertar quando faltarem ${avisoOleoCtx.toLocaleString("pt-BR")} km:
+Óleo & Filtros — controle de troca por caminhão. O KM atual é o maior hodômetro já registrado (foto do abastecimento, KM das viagens ou o KM da própria troca). O aviso está configurado pra alertar quando faltarem ${avisoOleoCtx.toLocaleString("pt-BR")} km.
+ATENÇÃO ao responder sobre custo de óleo: estes valores NÃO entram no Financeiro nem na Manutenção real — a troca é feita no galpão próprio e o óleo/filtro que sai do almoxarifado já foi pago no boleto de entrada do estoque. Só o que foi "comprado fora" é dinheiro novo. Nunca some esse gasto ao resultado do mês:
 ${podeOleo ? (linhasOleo || "(nenhum veículo cadastrado)") : "(sem permissão pra esta aba)"}
 
 Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
@@ -7670,28 +7775,61 @@ function renderTabela() {
             <div><div style="${lblStyle}">KM</div><input type="number" min="0" value="${esc(t.km != null ? t.km : "")}" placeholder="km" onchange="atualizarTrocaOleo('${t.id}','km',this.value)" style="width:100px;"></div>
             <div><div style="${lblStyle}">Tipo de óleo</div><input value="${esc(t.tipoOleo || "")}" placeholder="Ex: 15W40 mineral" onchange="atualizarTrocaOleo('${t.id}','tipoOleo',this.value)" style="width:160px;"></div>
             <div><div style="${lblStyle}">Litros</div><input type="number" min="0" step="0.1" value="${esc(t.litros != null ? t.litros : "")}" placeholder="ex: 18" onchange="atualizarTrocaOleo('${t.id}','litros',this.value)" style="width:90px;"></div>
+            <div style="border-left:2px solid ${t.origemOleo === "almox" ? "#2E7D32" : GOLD};padding-left:10px;">
+              <div style="${lblStyle}">Origem do óleo</div>
+              <select onchange="definirOrigemOleoTroca('${t.id}',this.value)" style="width:190px;">
+                <option value="fora" ${t.origemOleo !== "almox" ? "selected" : ""}>🛒 Comprado fora (gasto novo)</option>
+                <option value="almox" ${t.origemOleo === "almox" ? "selected" : ""}>📦 Do almoxarifado (já pago)</option>
+              </select>
+              ${t.origemOleo === "almox" ? `<div style="display:flex;gap:6px;margin-top:5px;align-items:center;">
+                <select onchange="definirAlmoxOleoTroca('${t.id}',this.value)" style="width:150px;">
+                  <option value="">— escolher item —</option>
+                  ${(state.almoxarifado || []).map((ai) => `<option value="${ai.id}" ${t.oleoAlmoxId === ai.id ? "selected" : ""}>${esc(ai.nome || "(sem nome)")} (saldo ${almoxSaldo(ai)})</option>`).join("")}
+                </select>
+                <input type="number" min="0" step="0.1" value="${esc(t.oleoQtdAlmox != null ? t.oleoQtdAlmox : 0)}" title="Quantidade retirada do estoque" onchange="definirQtdOleoTroca('${t.id}',this.value)" style="width:70px;">
+                <span style="font-size:10px;color:#666;">× ${fmtR(Number(t.oleoCustoUnitSnap) || 0)}</span>
+              </div>` : ""}
+            </div>
             <div><div style="${lblStyle}">Preço/litro (R$)</div><input type="number" min="0" step="0.01" value="${esc(t.precoLitro != null ? t.precoLitro : "")}" placeholder="ex: 32,00" onchange="atualizarTrocaOleo('${t.id}','precoLitro',this.value)" style="width:120px;"></div>
             <div><div style="${lblStyle}">Valor do óleo (R$)</div><input type="number" min="0" step="0.01" value="${esc(t.valorOleo != null ? t.valorOleo : 0)}" onchange="atualizarTrocaOleo('${t.id}','valorOleo',this.value)" style="width:120px;" title="Calculado por litros × preço/litro. Pode ajustar à mão."><div style="font-size:9px;color:#666;margin-top:2px;">${(t.litros!==""&&t.litros!=null&&t.precoLitro!==""&&t.precoLitro!=null)?"auto (litros × preço)":"manual"}</div></div>
             <button class="btn-del" onclick="removerTrocaOleo('${t.id}')" style="margin-left:auto;">✕ remover troca</button>
           </div>
           <div style="margin-top:12px; border-top:1px solid #222; padding-top:10px;">
             <div style="font-size:12px; font-weight:700; color:${GOLD}; margin-bottom:6px;">Filtros desta troca</div>
-            <table style="min-width:620px;"><thead><tr><th>Filtro</th><th>Modelo / marca</th><th>Valor R$</th><th></th></tr></thead><tbody>
+            <table style="min-width:620px;"><thead><tr><th>Filtro</th><th>Modelo / marca</th><th>Origem</th><th>Valor R$</th><th></th></tr></thead><tbody>
               ${filtros.length ? filtros.map((f) => `<tr>
                 <td><input list="filtrosComuns" value="${esc(f.nome || "")}" placeholder="Ex: Filtro de ar" onchange="atualizarFiltroTroca('${t.id}','${f.id}','nome',this.value)" style="width:180px;"></td>
                 <td><input value="${esc(f.modelo || "")}" placeholder="Ex: Tecfil AP7998" onchange="atualizarFiltroTroca('${t.id}','${f.id}','modelo',this.value)" style="width:180px;"></td>
-                <td><input type="number" min="0" step="0.01" value="${esc(f.valor != null ? f.valor : 0)}" onchange="atualizarFiltroTroca('${t.id}','${f.id}','valor',this.value)" style="width:110px;"></td>
+                <td>
+                  <select onchange="definirOrigemFiltroTroca('${t.id}','${f.id}',this.value)" style="width:150px;">
+                    <option value="fora" ${f.origem !== "almox" ? "selected" : ""}>🛒 Comprado fora</option>
+                    <option value="almox" ${f.origem === "almox" ? "selected" : ""}>📦 Do almoxarifado</option>
+                  </select>
+                  ${f.origem === "almox" ? `<div style="display:flex;gap:5px;margin-top:4px;align-items:center;">
+                    <select onchange="definirAlmoxFiltroTroca('${t.id}','${f.id}',this.value)" style="width:110px;font-size:11px;">
+                      <option value="">— item —</option>
+                      ${(state.almoxarifado || []).map((ai) => `<option value="${ai.id}" ${f.almoxId === ai.id ? "selected" : ""}>${esc(ai.nome || "(sem nome)")} (${almoxSaldo(ai)})</option>`).join("")}
+                    </select>
+                    <input type="number" min="0" step="1" value="${esc(f.qtd != null ? f.qtd : 1)}" title="Quantidade" onchange="definirQtdFiltroTroca('${t.id}','${f.id}',this.value)" style="width:55px;">
+                  </div>` : ""}
+                </td>
+                <td><input type="number" min="0" step="0.01" value="${esc(f.valor != null ? f.valor : 0)}" ${f.origem === "almox" ? "disabled title='Calculado pelo estoque: quantidade × custo unitário'" : ""} onchange="atualizarFiltroTroca('${t.id}','${f.id}','valor',this.value)" style="width:110px;"></td>
                 <td><button class="btn-del" onclick="removerFiltroTroca('${t.id}','${f.id}')">✕</button></td>
-              </tr>`).join("") : `<tr><td colspan="4" style="color:#777;font-size:12px;padding:8px;">Nenhum filtro. Clique em "+ Adicionar filtro".</td></tr>`}
+              </tr>`).join("") : `<tr><td colspan="5" style="color:#777;font-size:12px;padding:8px;">Nenhum filtro. Clique em "+ Adicionar filtro".</td></tr>`}
             </tbody></table>
             <button class="btn-outline" onclick="adicionarFiltroTroca('${t.id}')" style="margin-top:8px;">+ Adicionar filtro</button>
           </div>
           <div style="display:flex; gap:12px; align-items:flex-end; margin-top:12px; flex-wrap:wrap;">
             <div style="flex:1; min-width:220px;"><div style="${lblStyle}">Observação</div><input value="${esc(t.obs || "")}" placeholder="—" onchange="atualizarTrocaOleo('${t.id}','obs',this.value)" style="width:100%;"></div>
-            <div style="text-align:right; min-width:160px;">
+            <div style="text-align:right; min-width:200px;">
               <div style="font-size:11px;color:#999;">Total da troca</div>
               <div style="font-size:18px;font-weight:800;color:${GOLD};">${fmtR(totalTroca(t))}</div>
               <div style="font-size:10px;color:#777;">óleo ${fmtR(Number(t.valorOleo) || 0)} + filtros ${fmtR(somaFiltros(t))}</div>
+              <div style="font-size:11px;margin-top:4px;">
+                <span style="color:#C0392B;font-weight:700;">${fmtR(trocaCustoNovo(t))}</span> <span style="color:#666;">gasto novo</span>
+                <span style="color:#444;"> · </span>
+                <span style="color:#2E7D32;font-weight:700;">${fmtR(trocaCustoEstoque(t))}</span> <span style="color:#666;">do estoque</span>
+              </div>
             </div>
           </div>
         </div>`;
@@ -7700,8 +7838,8 @@ function renderTabela() {
       <!-- RESUMO DO MÊS POR CAMINHÃO -->
       <div style="margin-top:28px; font-size:16px; font-weight:800; color:${GOLD};">Gasto com óleo e filtros — ${mesLabel(state.mesAtivo)}</div>
       <div style="font-size:11px; color:#777; margin:4px 0 10px;">Soma das trocas lançadas no mês selecionado, por caminhão.</div>
-      <table style="min-width:760px;"><thead><tr>
-        <th>Placa</th><th>Nº trocas</th><th>Óleo R$</th><th>Filtros R$</th><th>Total no mês</th>
+      <table style="min-width:900px;"><thead><tr>
+        <th>Placa</th><th>Nº trocas</th><th>Óleo R$</th><th>Filtros R$</th><th>🛒 Gasto novo</th><th>📦 Do estoque</th><th>Total no mês</th>
       </tr></thead><tbody>
         ${placasGasto.length ? placasGasto.map((p) => {
           const g = gasto.porPlaca[p];
@@ -7710,15 +7848,24 @@ function renderTabela() {
             <td style="text-align:center;color:#999;">${g.qtd}</td>
             <td>${fmtR(g.oleo)}</td>
             <td>${fmtR(g.filtros)}</td>
+            <td style="color:#C0392B;font-weight:700;">${fmtR(g.novo)}</td>
+            <td style="color:#2E7D32;font-weight:700;">${fmtR(g.estoque)}</td>
             <td style="font-weight:800;color:${GOLD};">${fmtR(g.total)}</td>
           </tr>`;
-        }).join("") : `<tr><td colspan="5" style="text-align:center;color:#777;padding:24px;">Nenhuma troca lançada em ${mesLabel(state.mesAtivo)}.</td></tr>`}
+        }).join("") : `<tr><td colspan="7" style="text-align:center;color:#777;padding:24px;">Nenhuma troca lançada em ${mesLabel(state.mesAtivo)}.</td></tr>`}
       </tbody>
       ${placasGasto.length ? `<tfoot><tr>
         <td style="font-weight:800;color:#fff;" colspan="4">TOTAL DA FROTA — ${mesLabel(state.mesAtivo)}</td>
-        <td style="font-weight:800;color:#C0392B;">${fmtR(gasto.totalGeral)}</td>
+        <td style="font-weight:800;color:#C0392B;">${fmtR(gasto.totalNovo)}</td>
+        <td style="font-weight:800;color:#2E7D32;">${fmtR(gasto.totalEstoque)}</td>
+        <td style="font-weight:800;color:${GOLD};">${fmtR(gasto.totalGeral)}</td>
       </tr></tfoot>` : ""}
-      </table>`;
+      </table>
+      <div style="font-size:11px;color:#777;margin-top:10px;">
+        <b style="color:#C0392B;">🛒 Gasto novo</b> = óleo/filtro comprado fora nesta troca — dinheiro que saiu agora.
+        <b style="color:#2E7D32;">📦 Do estoque</b> = saiu do almoxarifado, já foi pago lá atrás no boleto de entrada; aparece aqui só pra você saber o custo real do caminhão, <b>não conta como despesa nova</b> (senão dobrava).
+        Nenhum destes valores entra no Financeiro nem na Manutenção — a troca de óleo é controle de frota, não lançamento de despesa.
+      </div>`;
   }
 
   if (state.aba === "documentos") {
