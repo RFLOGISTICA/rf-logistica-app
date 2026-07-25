@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v175)</title>
+<title>RF Logística — Painel da Frota (v179)</title>
 <!-- v174: nova aba "Status do Dia" (equipe) + formulário de entregas/situação no card
      de viagem do motorista. NOTA: o título ficou parado em v173 por um tempo enquanto
      os comentários internos já iam até v176 -- a partir de agora sempre bater o
@@ -2847,7 +2847,32 @@ function rfAbastCard(a, souMotorista) {
             </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
         ${a.notaValorLido > 0 && Number(a.valor) > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
+      <div>
+        <div style="font-size:10px;color:${a.fotoComprovante ? "#999" : "#C0392B"};margin-bottom:4px;">💳 Foto do comprovante de pagamento <b>(obrigatória)</b></div>
+        ${a.fotoComprovante
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoComprovante}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','comprovante')">✕</button>` : ""}`
+          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','comprovante')"></label>
+              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','comprovante')"></label>
+            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+        ${a.comprovanteOcrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo valor pago automaticamente...</div>` : ""}
+        ${a.comprovanteValorLido > 0 && Number(a.valor) > 0 && !a.comprovanteAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Comprovante confere com o valor da bomba.</div>` : ""}
+      </div>
+      <div>
+        <div style="font-size:10px;color:${a.fotoPixPosto ? "#999" : "#C0392B"};margin-bottom:4px;">📱 Foto do Pix do posto <b>(obrigatória)</b></div>
+        ${a.fotoPixPosto
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoPixPosto}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','pixposto')">✕</button>` : ""}`
+          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','pixposto')"></label>
+              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','pixposto')"></label>
+            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
+        ${a.pixPostoOcrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo dados do Pix do posto...</div>` : ""}
+        ${a.pixPostoCnpjLido && a.comprovanteCnpjLido && !a.comprovanteAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ CNPJ do Pix confere com o destino do comprovante.</div>` : ""}
+      </div>
     </div>
+    ${a.comprovanteAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">
+      ⚠ ${esc(a.comprovanteAlerta)}
+    </div>` : ""}
     ${a.ocrAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">
       ⚠ ${esc(a.ocrAlerta)}
       ${editavel ? `<div style="margin-top:6px;"><button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastConfirmarDivergencia('${a.id}')">✓ Confirmar assim mesmo (explicar motivo)</button></div>` : ""}
@@ -2875,6 +2900,13 @@ function rfAbastCard(a, souMotorista) {
     </div>` : ""}
     ${a.status === "aprovado" ? `<div style="margin-top:10px;font-size:11px;color:#2E7D32;">Vinculado a uma viagem.${!souMotorista ? ` <button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="reabrirAbastecimento('${a.id}')">reabrir</button>` : ""}</div>` : ""}
     ${a.status === "rejeitado" ? `<div style="margin-top:10px;font-size:11px;color:#C0392B;">Rejeitado${a.motivoRejeicao ? ": " + esc(a.motivoRejeicao) : ""}.${!souMotorista ? ` <button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="reabrirAbastecimento('${a.id}')">reabrir</button>` : ""}</div>` : ""}
+    ${!souMotorista && viagensDoCaminhao.length ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #333;">
+      <div style="font-size:10px;color:#999;margin-bottom:3px;">🔗 Direcionar manualmente pra outra viagem${a.viagemId ? " (troca a atual)" : ""}</div>
+      <select id="vincman-${a.id}" style="min-width:220px;">
+        ${viagensDoCaminhao.map((v) => `<option value="${v.id}" ${a.viagemId === v.id ? "selected" : ""}>${v.data || "sem data"} — ${esc(v.cliente || "sem cliente")}</option>`).join("")}
+      </select>
+      <button class="btn-outline" style="font-size:11px;" onclick="rfAbastVincularManual('${a.id}', document.getElementById('vincman-${a.id}').value)">Vincular</button>
+    </div>` : ""}
   </div>`;
 }
 function tabBtn(id, label) {
@@ -5094,18 +5126,19 @@ function aprovarAbastecimentoNovaViagem(id) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
   if (!a.placa) { alert("Este abastecimento não tem um caminhão definido."); return; }
-  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: o visor da bomba e a nota/comprovante precisam estar anexados antes de aprovar."); return; }
+  if (!a.fotoBomba || !a.fotoNota || !a.fotoComprovante || !a.fotoPixPosto) { alert("Faltam fotos obrigatórias: visor da bomba, nota, comprovante de pagamento e Pix do posto precisam estar anexados antes de aprovar."); return; }
+  const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
   const novaViagem = {
     id: uid(), placa: a.placa, cliente: "", data: a.data || hojeISO(), criadoEm: Date.now(),
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: "",
-    combustivelItens: [{ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") }],
+    combustivelItens: [itemComb],
     vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     motoristaNaEpoca: (state.veiculos.find((x) => x.placa === a.placa) || {}).motorista || "",
     outrosItens: [], origemMotorista: true, origemMotoristaNome: a.motoristaNome || "",
   };
   state.viagens.push(novaViagem);
-  a.status = "aprovado"; a.viagemId = novaViagem.id;
+  a.status = "aprovado"; a.viagemId = novaViagem.id; a.combustivelItemId = itemComb.id;
   state.filtroPlacaViagem = a.placa; state.filtroClienteViagem = "Todos"; state.aba = "viagem";
   salvar(); render();
   rfAbastSalvarLinha(a);
@@ -5117,17 +5150,46 @@ function vincularAbastecimentoAViagem(id, viagemId) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!a || !v) return;
-  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: o visor da bomba e a nota/comprovante precisam estar anexados antes de aprovar."); return; }
+  if (!a.fotoBomba || !a.fotoNota || !a.fotoComprovante || !a.fotoPixPosto) { alert("Faltam fotos obrigatórias: visor da bomba, nota, comprovante de pagamento e Pix do posto precisam estar anexados antes de aprovar."); return; }
   if (!v.combustivelItens) v.combustivelItens = [];
-  v.combustivelItens.push({ id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") });
+  const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
+  v.combustivelItens.push(itemComb);
   if ((Number(a.kmAtual) || 0) > (Number(v.kmChegada) || 0)) { v.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(v); }
   // v113: NAO usar mais a foto do abastecimento como foto de chegada da viagem --
   // sao coisas diferentes e a foto de KM final da viagem e critica, nao pode
   // ficar confundida com o comprovante de abastecimento. A foto do abastecimento
   // continua visivel normalmente na propria aba Abastecimento (botao "ver foto").
-  a.status = "aprovado"; a.viagemId = v.id;
+  a.status = "aprovado"; a.viagemId = v.id; a.combustivelItemId = itemComb.id;
   salvar(); render();
   rfAbastSalvarLinha(a);
+}
+// v179: redireciona manualmente um abastecimento já aprovado (ou pendente) pra
+// outra viagem do mesmo caminhão -- tira o valor de combustível da viagem onde
+// estava (usando o id salvo em a.combustivelItemId) e soma na viagem nova.
+function rfAbastVincularManual(abastId, novoViagemId) {
+  if (!novoViagemId) { alert("Selecione a viagem certa."); return; }
+  const a = (state.abastecimentos || []).find((x) => String(x.id) === String(abastId));
+  const destino = state.viagens.find((x) => String(x.id) === String(novoViagemId));
+  if (!a || !destino) return;
+  if (String(a.viagemId) === String(novoViagemId)) { alert("Esse abastecimento já está vinculado a essa viagem."); return; }
+  if (a.viagemId) {
+    const origem = state.viagens.find((x) => String(x.id) === String(a.viagemId));
+    if (origem && a.combustivelItemId) {
+      origem.combustivelItens = (origem.combustivelItens || []).filter((it) => String(it.id) !== String(a.combustivelItemId));
+      // limpa viagem solta (criada só pra esse abastecimento) se ficou vazia
+      if (origem.origemMotorista && !origem.cliente && !(origem.combustivelItens || []).length) {
+        state.viagens = state.viagens.filter((x) => String(x.id) !== String(origem.id));
+      }
+    }
+  }
+  if (!destino.combustivelItens) destino.combustivelItens = [];
+  const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
+  destino.combustivelItens.push(itemComb);
+  if ((Number(a.kmAtual) || 0) > (Number(destino.kmChegada) || 0)) { destino.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(destino); }
+  a.viagemId = destino.id; a.combustivelItemId = itemComb.id; a.status = "aprovado";
+  salvar(); render();
+  rfAbastSalvarLinha(a);
+  alert("✓ Abastecimento vinculado à viagem certa.");
 }
 function rejeitarAbastecimento(id) {
   const motivo = prompt("Motivo da rejeição (fica visível pro motorista) — opcional:", "") || "";
@@ -8060,7 +8122,11 @@ function rfAbastUpload(input, abastId, tipo) {
       var path = "abast/" + (a.placa || "sem-placa") + "/" + a.id + "-" + tipo + "-" + Date.now() + "." + p.ext;
       return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
-        if (tipo === "km") a.fotoKm = path; else if (tipo === "nota") a.fotoNota = path; else a.fotoBomba = path;
+        if (tipo === "km") a.fotoKm = path;
+        else if (tipo === "nota") a.fotoNota = path;
+        else if (tipo === "comprovante") a.fotoComprovante = path;
+        else if (tipo === "pixposto") a.fotoPixPosto = path;
+        else a.fotoBomba = path;
         input.value = "";
         if (tipo === "km" && isImg) {
           a.ocrKmStatus = "lendo";
@@ -8070,6 +8136,12 @@ function rfAbastUpload(input, abastId, tipo) {
           rfAbastLerBombaAuto(a.id, p.blob);
         } else if (tipo === "nota" && isImg) {
           rfAbastLerNotaAuto(a.id, p.blob);
+        } else if (tipo === "comprovante" && isImg) {
+          a.comprovanteOcrStatus = "lendo";
+          rfAbastLerComprovanteAuto(a.id, p.blob);
+        } else if (tipo === "pixposto" && isImg) {
+          a.pixPostoOcrStatus = "lendo";
+          rfAbastLerPixPostoAuto(a.id, p.blob);
         }
         render();
         rfAbastSalvarCampoMotorista(a);
@@ -8104,6 +8176,47 @@ function rfLerFotoIA(tipo, blob, aoTerminar) {
   };
   reader.onerror = function () { aoTerminar(null); };
   reader.readAsDataURL(blob);
+}
+// v179: comprovante de pagamento (pix feito pra o posto) -- lê o valor pago e o
+// CNPJ/chave de DESTINO do comprovante, pra cruzar com a foto do Pix do posto
+// (mesmo princípio da nota x bomba: confere que o dinheiro foi pro posto certo).
+function rfAbastLerComprovanteAuto(abastId, blob) {
+  rfLerFotoIA("comprovante", blob, function (j) {
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a || a.status !== "pendente") return;
+    var valor = (j && Number(j.valor)) || 0;
+    var cnpj = (j && String(j.cnpj || j.cnpjDestino || "").replace(/\D/g, "")) || "";
+    a.comprovanteValorLido = valor;
+    a.comprovanteCnpjLido = cnpj;
+    a.comprovanteOcrStatus = valor > 0 ? "ok" : "erro";
+    rfAbastConferirComprovante(a);
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  });
+}
+function rfAbastLerPixPostoAuto(abastId, blob) {
+  rfLerFotoIA("pixposto", blob, function (j) {
+    var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+    if (!a || a.status !== "pendente") return;
+    var cnpj = (j && String(j.cnpj || "").replace(/\D/g, "")) || "";
+    a.pixPostoCnpjLido = cnpj;
+    a.pixPostoNomeLido = (j && j.nome) || "";
+    a.pixPostoOcrStatus = cnpj ? "ok" : "erro";
+    rfAbastConferirComprovante(a);
+    render();
+    rfAbastSalvarCampoMotorista(a);
+  });
+}
+function rfAbastConferirComprovante(a) {
+  a.comprovanteAlerta = "";
+  var valorBomba = Number(a.valor) || 0;
+  if (a.comprovanteValorLido > 0 && valorBomba > 0 && Math.abs(a.comprovanteValorLido - valorBomba) > 2) {
+    a.comprovanteAlerta = "O valor pago no comprovante (" + fmtR(a.comprovanteValorLido) + ") não bate com o valor da bomba (" + fmtR(valorBomba) + ").";
+    return;
+  }
+  if (a.comprovanteCnpjLido && a.pixPostoCnpjLido && a.comprovanteCnpjLido !== a.pixPostoCnpjLido) {
+    a.comprovanteAlerta = "O CNPJ de destino do comprovante não bate com o CNPJ do Pix do posto — confira se o pagamento foi pro posto certo.";
+  }
 }
 function rfAbastLerBombaAuto(abastId, blob) {
   rfLerFotoIA("bomba", blob, function (j) {
@@ -8175,13 +8288,14 @@ function rfAbastExcluir(abastId, tipo) {
   var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
   if (!a) return;
   if (a.status !== "pendente") { alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado."); rfAbastCarregar(); return; }
-  var path = tipo === "km" ? a.fotoKm : tipo === "nota" ? a.fotoNota : a.fotoBomba;
+  var campoFoto = { km: "fotoKm", nota: "fotoNota", bomba: "fotoBomba", comprovante: "fotoComprovante", pixposto: "fotoPixPosto" }[tipo] || "fotoBomba";
+  var path = a[campoFoto];
   if (!path) return;
   rfGetClient().then(function (sb) {
     if (!sb) return;
     sb.storage.from(RF_BUCKET).remove([path]).then(function (res) {
       if (res.error) { alert("Erro ao excluir a foto."); return; }
-      if (tipo === "km") a.fotoKm = ""; else if (tipo === "nota") a.fotoNota = ""; else a.fotoBomba = "";
+      a[campoFoto] = "";
       render();
       rfAbastSalvarCampoMotorista(a);
     });
