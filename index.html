@@ -2,7 +2,9 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v181)</title>
+<title>RF Logística — Painel da Frota (v182)</title>
+<!-- v182: percentuais. "Total despesas" e "Sobra total" agora mostram o % sobre o
+     total recebido, e cada viagem mostra a margem em % do valor da viagem. -->
 <!-- v181: aba Troca de Óleo -- KM atual passa a se atualizar sozinha pelo maior
      hodômetro registrado (foto do abastecimento, KM das viagens, KM da troca);
      novas colunas "Próximas programadas" e "Histórico" (expansível, com KM rodado
@@ -6476,6 +6478,9 @@ function renderTabela() {
     const totalGeralReceita = viagensFiltro.reduce((s, v) => s + (Number(v.valorViagem) || 0), 0);
     const totalGeralDespesas = viagensFiltro.reduce((s, v) => s + calcularViagem(v).totalDesp, 0);
     const totalGeralSobra = totalGeralReceita - totalGeralDespesas;
+    // v182: percentual de despesa e de margem sobre o total recebido
+    const pctDespesas = totalGeralReceita > 0 ? (totalGeralDespesas / totalGeralReceita * 100) : 0;
+    const pctSobra = totalGeralReceita > 0 ? (totalGeralSobra / totalGeralReceita * 100) : 0;
     const totalGeralPagMot = viagensFiltro.reduce((s, v) => s + (Number(v.vgPagMotorista) || 0), 0);
     const totalRecebidoPago = viagensFiltro.reduce((s, v) => s + (v.pago ? (Number(v.valorViagem) || 0) : 0), 0);
     const totalRecebidoPendente = viagensFiltro.reduce((s, v) => s + (!v.pago ? (Number(v.valorViagem) || 0) : 0), 0);
@@ -6641,8 +6646,8 @@ function renderTabela() {
       })()}
       <div style="display:flex; gap:24px; margin-bottom:14px; font-size:13px; color:#bbb; flex-wrap:wrap;">
         <span>Total recebido: <b style="color:#2E7D32;">${fmtR(totalGeralReceita)}</b></span>
-        <span>Total despesas: <b style="color:#C0392B;">${fmtR(totalGeralDespesas)}</b></span>
-        <span>Sobra total: <b style="color:${totalGeralSobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(totalGeralSobra)}</b></span>
+        <span>Total despesas: <b style="color:#C0392B;">${fmtR(totalGeralDespesas)}</b> <span style="color:#777;font-size:11px;">(${pctDespesas.toFixed(1)}% do recebido)</span></span>
+        <span>Sobra total: <b style="color:${totalGeralSobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(totalGeralSobra)}</b> <span style="color:${totalGeralSobra >= 0 ? "#2E7D32" : "#C0392B"};font-size:11px;font-weight:700;">(${pctSobra.toFixed(1)}% de margem)</span></span>
         <span>Total Pag. Mot.: <b style="color:${GOLD};">${fmtR(totalGeralPagMot)}</b></span>
       </div>
       <div style="display:flex; gap:24px; margin-bottom:18px; font-size:13px; color:#bbb; flex-wrap:wrap; padding:10px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
@@ -6786,7 +6791,7 @@ function renderTabela() {
               ${itensOutros.length > 0 ? `<div style="font-size:11px;color:#D4A017;margin-top:3px;">Subtotal: ${fmtR(c.outros)}</div>` : ""}
             </td>
             <td style="font-weight:700;color:#C0392B;">${fmtR(c.totalDesp)}</td>
-            <td style="font-weight:800;color:${c.sobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(c.sobra)}</td>
+            <td style="font-weight:800;color:${c.sobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(c.sobra)}${c.valorViagem > 0 ? `<div style="font-size:11px;font-weight:700;margin-top:2px;color:${c.sobra >= 0 ? "#2E7D32" : "#C0392B"};">${(c.sobra / c.valorViagem * 100).toFixed(1)}% da viagem</div>` : ""}</td>
             <td style="pointer-events:auto; white-space:nowrap;">
               <button onclick="toggleTravarViagem('${v.id}')" title="${v.trancada ? (ehAdmin() ? "Destravar (Admin)" : "Travada — só Admin destrava") : "Travar viagem (ninguém mais poderá editar)"}" style="background:none; border:none; cursor:${(!v.trancada || ehAdmin()) ? "pointer" : "not-allowed"}; font-size:16px; margin-right:6px;" ${(v.trancada && !ehAdmin()) ? "disabled" : ""}>${v.trancada ? "🔒" : "🔓"}</button>
               <button class="btn-del" onclick="removerViagem('${v.id}')" style="${v.trancada ? "opacity:0.3; pointer-events:none;" : ""}">✕</button>
