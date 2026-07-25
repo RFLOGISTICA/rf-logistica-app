@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v174)</title>
+<title>RF Logística — Painel da Frota (v175)</title>
 <!-- v174: nova aba "Status do Dia" (equipe) + formulário de entregas/situação no card
      de viagem do motorista. NOTA: o título ficou parado em v173 por um tempo enquanto
      os comentários internos já iam até v176 -- a partir de agora sempre bater o
@@ -5069,6 +5069,27 @@ function removerAbastecimento(id) {
 }
 // Aprovar criando uma viagem NOVA já com KM de chegada e o item de combustível preenchidos —
 // a equipe só completa cliente, valor da viagem e KM de saída.
+// v175: mescla uma viagem "solta" (criada automaticamente ao aprovar um abastecimento
+// lançado ANTES do motorista confirmar início de viagem) na viagem certa do mesmo
+// caminhão. Move o combustível, atualiza o KM de chegada se for maior, reaponta os
+// abastecimentos ligados a ela e apaga a viagem solta.
+function rfMesclarViagemAbastSolto(idOrigem, idDestino) {
+  if (!idDestino) { alert("Selecione a viagem certa pra vincular."); return; }
+  const origem = state.viagens.find((x) => String(x.id) === String(idOrigem));
+  const destino = state.viagens.find((x) => String(x.id) === String(idDestino));
+  if (!origem || !destino) return;
+  if (!confirm(`Mover o combustível da viagem solta pra "${destino.cliente || "sem cliente"} — ${destino.data || "sem data"}" e apagar a viagem solta?`)) return;
+  if (!destino.combustivelItens) destino.combustivelItens = [];
+  (origem.combustivelItens || []).forEach((item) => destino.combustivelItens.push(item));
+  if ((Number(origem.kmChegada) || 0) > (Number(destino.kmChegada) || 0)) {
+    destino.kmChegada = Number(origem.kmChegada) || 0;
+    recalcularKmDaViagem(destino);
+  }
+  (state.abastecimentos || []).forEach((a) => { if (String(a.viagemId) === String(origem.id)) a.viagemId = destino.id; });
+  state.viagens = state.viagens.filter((x) => String(x.id) !== String(origem.id));
+  salvar(); render();
+  alert("✓ Combustível vinculado à viagem certa. A viagem solta foi removida.");
+}
 function aprovarAbastecimentoNovaViagem(id) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
@@ -6512,6 +6533,17 @@ function renderTabela() {
           const temAjudante = v.temAjudante !== false;
           return `<tr style="${v.trancada ? "pointer-events:none; opacity:0.55;" : ""}">
             <td><select onchange="atualizarViagem('${v.id}','placa',this.value)">${state.veiculos.map((vc) => `<option ${v.placa === vc.placa ? "selected" : ""}>${esc(vc.placa) || "(sem placa)"}</option>`).join("")}</select>
+              ${v.origemMotorista && !v.cliente ? (() => {
+                const outrasDoCaminhao = state.viagens.filter((x) => x.placa === v.placa && x.id !== v.id);
+                return `<div style="margin-top:4px;padding:5px 6px;background:#2A1A00;border:1px solid ${GOLD};border-radius:6px;">
+                  <div style="font-size:9px;color:${GOLD};font-weight:700;">⚠ abastecimento solto (motorista abasteceu antes de iniciar a viagem)</div>
+                  ${outrasDoCaminhao.length ? `<select id="mesc-${v.id}" style="font-size:9px;margin-top:3px;max-width:150px;">
+                      ${outrasDoCaminhao.map((x) => `<option value="${x.id}">${x.data || "sem data"} — ${esc(x.cliente || "sem cliente")}</option>`).join("")}
+                    </select>
+                    <button class="btn-outline" style="font-size:9px;padding:2px 6px;margin-top:3px;" onclick="rfMesclarViagemAbastSolto('${v.id}', document.getElementById('mesc-${v.id}').value)">🔗 Vincular a essa viagem</button>`
+                    : `<div style="font-size:9px;color:#999;margin-top:3px;">nenhuma outra viagem desse caminhão ainda</div>`}
+                </div>`;
+              })() : ""}
               ${(() => {
                 const sm = v.statusMotorista;
                 if (!sm) {
