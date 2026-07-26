@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v208)</title>
+<title>RF Logística — Painel da Frota (v209)</title>
+<!-- v209: botão que baixa e lê TODOS os CRLVs já anexados de uma vez, extraindo
+     a carroceria registrada de cada um. Monta a lista dos caminhões cujo
+     documento NÃO diz carroceria fechada -- que é o que precisa ser regularizado
+     no DETRAN -- e exporta em planilha com RENAVAM e chassi. O campo Status Baú
+     da Frota não é alterado: ele continua sendo o que a equipe informa. -->
 <!-- v208: a carroceria passa a ser lida do CRLV, que é a fonte legal. O parser
      extrai o campo CARROCERIA por lista fechada de valores do DENATRAN, grava em
      `carroceriaCrlv` e o sistema cruza com o status digitado. Divergência entre
@@ -8616,6 +8621,10 @@ function renderTabela() {
         <div id="docsDiag" style="font-size:12px;color:#bbb;margin-top:8px;line-height:1.7;"></div>
         <div id="docsCrlv"></div>
         <div id="docsOrfaos"></div>
+        <div style="margin-top:10px;">
+          <button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="rfCrlvReprocessarTodos()">🔎 Ler todos os CRLVs anexados (carroceria registrada)</button>
+        </div>
+        <div id="docsRelatorioCrlv"></div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Fotos são compactadas automaticamente (~4MB → ~300KB). PDFs são enviados como estão.</div>
       </div>
       ${vSel ? `
@@ -9618,6 +9627,95 @@ function rfDocsMoverTodosOrfaos() {
   pend.reduce(function (fila, x) {
     return fila.then(function () { return rfDocsMoverOrfao(x.pasta, x.destino); });
   }, Promise.resolve());
+}
+
+/* ===== v209: LER TODOS OS CRLVs ANEXADOS DE UMA VEZ =======================
+   O status de baú digitado à mão diz o que o caminhão É. O CRLV diz o que ele
+   está REGISTRADO como -- e é o registro que vale numa fiscalização. Renato
+   precisa da lista real pra levar ao DETRAN, então em vez de esperar ele
+   reanexar 19 documentos, o sistema baixa os que já estão lá e lê todos. */
+function rfCrlvEhArquivoCrlv(nome) {
+  return /\.pdf$/i.test(nome || "");   // só PDF tem camada de texto pra ler
+}
+function rfCrlvReprocessarTodos() {
+  const out = document.getElementById("docsRelatorioCrlv");
+  const idx = state._docsIndex || {};
+  const placas = Object.keys(idx);
+  if (!placas.length) {
+    if (out) out.innerHTML = '<span style="color:#C0392B;font-size:12px;">Nenhum documento indexado ainda. Aguarde alguns segundos e tente de novo.</span>';
+    return;
+  }
+  const tarefas = [];
+  placas.forEach(function (pl) {
+    (idx[pl] || []).forEach(function (a) { if (rfCrlvEhArquivoCrlv(a.nome)) tarefas.push({ placa: pl, caminho: a.caminho, nome: a.nome }); });
+  });
+  if (!tarefas.length) { if (out) out.innerHTML = '<span style="color:#777;font-size:12px;">Nenhum PDF anexado pra ler.</span>'; return; }
+  const resultados = [];
+  let i = 0;
+  function passo() {
+    if (out) out.innerHTML = '<span style="color:' + GOLD + ';font-size:12px;">🔎 lendo ' + (i + 1) + ' de ' + tarefas.length + ' documento(s)...</span>';
+    if (i >= tarefas.length) { rfCrlvRelatorioRender(resultados); return; }
+    const t = tarefas[i++];
+    rfGetClient().then(function (sb) {
+      if (!sb) { passo(); return; }
+      return sb.storage.from(RF_BUCKET).download(t.caminho).then(function (r) {
+        if (r.error || !r.data) { resultados.push({ placa: t.placa, erro: "não consegui baixar" }); passo(); return; }
+        return rfCrlvExtrairTexto(r.data).then(function (txt) {
+          const d = rfCrlvParse(txt);
+          if (!d.ehCrlv) { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "não é um CRLV" }); passo(); return; }
+          if (d.placa && d.placa !== t.placa) { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "documento é do " + d.placa }); passo(); return; }
+          // grava o que veio do documento -- carroceria é o que interessa agora
+          const v = (state.veiculos || []).find(function (x) { return x.placa === t.placa; });
+          if (v && d.carroceria) v.carroceriaCrlv = d.carroceria;
+          if (v && d.exercicio) v.crlvExercicio = d.exercicio;
+          resultados.push({ placa: t.placa, arquivo: t.nome, carroceria: d.carroceria || null, exercicio: d.exercicio || null, bau: v ? v.bau : null });
+          passo();
+        }).catch(function () { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "PDF sem texto (escaneado)" }); passo(); });
+      }).catch(function () { resultados.push({ placa: t.placa, erro: "falha ao baixar" }); passo(); });
+    }).catch(function () { passo(); });
+  }
+  passo();
+}
+function rfCrlvRelatorioRender(res) {
+  const out = document.getElementById("docsRelatorioCrlv");
+  if (!out) return;
+  try { salvar(); } catch (e) {}
+  const comCarroceria = res.filter(function (r) { return r.carroceria; });
+  const precisa = comCarroceria.filter(function (r) { return carroceriaClasse(r.carroceria) !== "fechada"; });
+  const okDoc = comCarroceria.filter(function (r) { return carroceriaClasse(r.carroceria) === "fechada"; });
+  const falhas = res.filter(function (r) { return r.erro; });
+  const linha = function (r) {
+    const cl = carroceriaClasse(r.carroceria);
+    const cor = cl === "fechada" ? "#2E7D32" : "#C0392B";
+    return '<tr><td style="font-weight:700;">' + esc(r.placa) + '</td>'
+      + '<td style="color:' + cor + ';font-weight:700;">' + esc(r.carroceria) + '</td>'
+      + '<td style="color:#999;">' + esc(r.bau || "—") + '</td>'
+      + '<td style="color:#777;">' + esc(r.exercicio || "—") + '</td>'
+      + '<td style="color:' + cor + ';">' + (cl === "fechada" ? "documento OK" : "REGULARIZAR no DETRAN") + '</td></tr>';
+  };
+  out.innerHTML = '<div style="margin-top:12px;padding:12px;border:1px solid ' + (precisa.length ? "#C0392B" : "#2E7D32") + ';border-radius:8px;background:#0E0E0E;">'
+    + '<div style="font-size:13px;font-weight:800;color:' + (precisa.length ? "#C0392B" : "#2E7D32") + ';margin-bottom:8px;">'
+    + (precisa.length ? '⚠ ' + precisa.length + ' caminhão(ões) com o documento dizendo que NÃO é carroceria fechada' : '✔ Todos os documentos lidos dizem carroceria fechada')
+    + '</div>'
+    + (comCarroceria.length
+      ? '<table style="min-width:640px;"><thead><tr><th>Placa</th><th>Carroceria no CRLV</th><th>Status no sistema</th><th>Exercício</th><th>Ação</th></tr></thead><tbody>'
+        + precisa.map(linha).join("") + okDoc.map(linha).join("") + '</tbody></table>'
+      : '<div style="font-size:12px;color:#777;">Nenhum documento trouxe o campo carroceria.</div>')
+    + (falhas.length ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Não deu pra ler ' + falhas.length + ': ' + falhas.map(function (f) { return esc(f.placa) + " (" + esc(f.erro) + ")"; }).join(", ") + '</div>' : "")
+    + '<div style="font-size:11px;color:#777;margin-top:8px;">Lido do próprio documento anexado. O campo Status Baú da aba Frota não foi alterado — ele continua sendo o que você informa sobre o caminhão; esta coluna é o que o DETRAN tem registrado.</div>'
+    + '<button class="btn-outline" style="margin-top:10px;font-size:11px;padding:5px 12px;" onclick="exportarRegularizacaoCrlvExcel()">⬇ Exportar lista pra regularização</button>'
+    + '</div>';
+  state._crlvRelatorio = res;
+}
+function exportarRegularizacaoCrlvExcel() {
+  const res = state._crlvRelatorio || [];
+  const cab = ["Placa", "Carroceria no CRLV", "Status Bau (sistema)", "Exercicio CRLV", "Precisa regularizar", "Modelo", "Ano", "RENAVAM", "Chassi"];
+  const linhas = res.filter(function (r) { return r.carroceria; }).map(function (r) {
+    const v = (state.veiculos || []).find(function (x) { return x.placa === r.placa; }) || {};
+    return [r.placa, r.carroceria, r.bau || "", r.exercicio || "",
+            carroceriaClasse(r.carroceria) === "fechada" ? "nao" : "SIM", v.modelo || "", v.ano || "", v.renavam || "", v.chassi || ""];
+  });
+  exportarCSV("rf-regularizacao-carroceria-" + new Date().toISOString().slice(0, 10) + ".csv", cab, linhas);
 }
 
 function rfDocsUpload(input) {
