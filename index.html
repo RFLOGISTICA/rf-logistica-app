@@ -2,7 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v201)</title>
+<title>RF Logística — Painel da Frota (v203)</title>
+<!-- v203: liberação do assistente virou um CHECK na aba Usuários, por pessoa.
+     Na v202 eu tinha feito ao contrário (todo user ganhava e desmarcava-se quem
+     não devia); agora é liberação explícita, então um login criado amanhã não
+     ganha o assistente sem alguém marcar. Admin sempre tem. Motorista e cliente
+     nunca. A permissão fica fora de ABAS_DEF pra não virar aba fantasma. -->
+<!-- v202: o assistente não aparecia pro login "compras" (Marcelo). Causa: o
+     widget estava travado em ehAdmin() desde a v122, quando era "Fase 1, só
+     admin" -- e ninguém tirou depois. A Edge Function sempre aceitou papel
+     "user". Agora aparece pra toda a equipe interna (admin e user), com os
+     dados de cada um seguindo filtrados pelos módulos. Motorista e cliente
+     continuam fora. (Substituído na v203 pelo check por usuário.) -->
 <!-- v201: projeções do assistente estavam MUITO erradas. Causa: o contexto
      mandava dividir os totais do mês pelo número de caminhões "em viagem AGORA"
      (retrato do instante, 8) quando a receita do mês foi feita por TODOS os
@@ -2620,6 +2631,28 @@ function ehMotorista() { return !!(state.sessao && state.sessao.papel === "motor
 // as próprias viagens (buscadas via RPC isolada no banco, nunca a tabela geral).
 function ehCliente() { return !!(state.sessao && state.sessao.papel === "cliente"); }
 function usuarioLogado() { return state.sessao; }
+// v203: permissões que NÃO são abas do menu, mas aparecem como check na tela de
+// Usuários. Ficam fora de ABAS_DEF de propósito -- se entrassem lá, viraria uma
+// aba fantasma na barra superior.
+var PERMISSOES_EXTRA = [
+  { id: "assistente", label: "🤖 Assistente de IA", ajuda: "Libera a bolha do assistente pra este usuário. Os dados que ele recebe continuam limitados às abas marcadas acima." },
+];
+// v202: quem pode usar o assistente. A Edge Function `assistente-chat` sempre
+// aceitou papel "admin" OU "user" -- mas o widget na tela estava travado em
+// ehAdmin() desde a v122 ("Fase 1, só admin"), e ninguém tirou. Por isso o
+// Marcelo (login compras, papel user) nunca via a bolha, mesmo tendo permissão
+// no servidor. Motorista e cliente continuam fora.
+function podeUsarAssistente() {
+  if (!state.sessao) return false;
+  if (ehMotorista() || ehCliente()) return false;      // nunca, por desenho
+  if (ehAdmin()) return true;                          // admin sempre tem
+  if (state.sessao.papel !== "user") return false;
+  // v203: agora é LIBERAÇÃO EXPLÍCITA (opt-in). Antes eu tinha feito ao contrário
+  // (todo user tinha, e desmarcava quem não devia) -- Renato quer poder escolher
+  // quem recebe, inclusive um login que só vai existir amanhã.
+  var mods = state.sessao.modulos || [];
+  return Array.isArray(mods) && mods.indexOf("assistente") !== -1;
+}
 function sessaoValida() { return !!(state.sessao && state.sessao.uid && state.sessao.papel); }
 function podeVerAba(id) {
   if (ehMotorista()) return id === "abastecimento";
@@ -5744,8 +5777,10 @@ function render() {
   const newWrap = document.getElementById("tabela-wrap");
   if (newWrap) newWrap.scrollLeft = scrollLeft;
   window.scrollTo(0, scrollY);
-  // v122: assistente virtual — Fase 1 (só admin, dentro do painel).
-  if (ehAdmin()) {
+  // v122: assistente virtual dentro do painel. v202: liberado pra toda a equipe
+  // interna (admin e user), não só admin — os dados que cada um recebe continuam
+  // filtrados pelos módulos dele, então ninguém enxerga aba que não tem.
+  if (podeUsarAssistente()) {
     root.insertAdjacentHTML("beforeend", assistenteWidgetHTML());
     // v197: religa o arrasto da bolha depois de cada render (o HTML é recriado)
     try { rfBolhaArrastavel(); } catch (e) {}
@@ -6788,6 +6823,14 @@ function renderTabela() {
               <input type="checkbox" onchange="criarUsuarioToggleModulo('${a.id}',this.checked)"> ${esc(a.label)}
             </label>`).join("")}
           </div>
+          <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
+            <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Permissões especiais</div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
+              ${PERMISSOES_EXTRA.map((x) => `<label title="${esc(x.ajuda || "")}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#bbb;">
+                <input type="checkbox" onchange="criarUsuarioToggleModulo('${x.id}',this.checked)"> ${esc(x.label)}
+              </label>`).join("")}
+            </div>
+          </div>
         </div>
         <button id="nuBtnSalvar" class="btn-gold" onclick="criarUsuarioSalvar()">Criar usuário</button>
         <button class="btn-outline-gray" onclick="criarUsuarioFechar()">Cancelar</button>
@@ -6835,6 +6878,18 @@ function renderTabela() {
                   ${esc(a.label)}${sens ? ` <span style="font-size:9px;color:${GOLD};border:1px solid ${GOLD};border-radius:4px;padding:0 4px;">sensível</span>` : ""}
                 </label>`;
               }).join("")}
+            </div>
+            <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
+              <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Permissões especiais</div>
+              <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
+                ${PERMISSOES_EXTRA.map((x) => {
+                  const temX = Array.isArray(p.modulos) && p.modulos.indexOf(x.id) !== -1;
+                  return `<label title="${esc(x.ajuda || "")}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${temX ? "#fff" : "#888"};">
+                    <input type="checkbox" ${temX ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','${x.id}',this.checked)"> ${esc(x.label)}
+                  </label>`;
+                }).join("")}
+              </div>
+              <div style="font-size:11px;color:#777;margin-top:6px;">O assistente só enxerga as abas marcadas acima — liberar o chat não dá acesso a dado que a pessoa já não pudesse ver.</div>
             </div>
           </div>`}
         </div>`).join("") : `<div style="text-align:center;color:#777;padding:30px;border:1px dashed #333;border-radius:10px;">${state._carregandoPerfis ? "Carregando contas..." : "Nenhuma conta encontrada. Crie a primeira em Supabase → Authentication → Add user."}</div>`}
