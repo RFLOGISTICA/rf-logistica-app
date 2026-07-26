@@ -2,7 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v206)</title>
+<title>RF Logística — Painel da Frota (v208)</title>
+<!-- v208: a carroceria passa a ser lida do CRLV, que é a fonte legal. O parser
+     extrai o campo CARROCERIA por lista fechada de valores do DENATRAN, grava em
+     `carroceriaCrlv` e o sistema cruza com o status digitado. Divergência entre
+     documento e realidade vira alerta urgente -- carroceria trocada sem
+     regularizar no DETRAN é risco de multa. Exportação ganhou as colunas. -->
+<!-- v207: adequação de carroceria. Toda a frota opera com BAÚ e a empresa está
+     convertendo os que faltam, então o sistema passa a tratar isso como
+     pendência: bloco no contexto da assistente com a situação por status,
+     item no diagnóstico proativo, exportação "adequacao_bau" que a assistente
+     pode disparar, e botão na aba Frota. -->
 <!-- v206: a assistente passa a APONTAR os problemas sem ser perguntada. Quem
      encontra é o sistema, por regra fixa (rfDiagnosticoSistema): documento em
      pasta errada, caminhão sem documento, emplacamento vencido, veículo sem ano,
@@ -1397,6 +1407,58 @@ function exportarCSV(filename, cabecalho, linhasArr) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+/* ===== v207: ADEQUAÇÃO DE CARROCERIA ======================================
+   Toda a frota da RF opera com BAÚ. Os que ainda não estão em baú são obra em
+   andamento, não um jeito diferente de trabalhar -- por isso o sistema trata
+   como PENDÊNCIA e a assistente aponta sozinha.
+   "Com sider" e "Sem baú" ainda não têm carroceria fechada. "Baú comprado" já
+   tem o baú pago, faltando montar -- é dinheiro parado, então entra na lista.
+   "Baú em negociação" ainda está sendo comprado. */
+/* v208: o CRLV manda. O campo `bau` é o status digitado pela equipe; o
+   `carroceriaCrlv` vem do documento e é o que vale numa fiscalização. Quando os
+   dois discordam, é sinal de carroceria trocada sem regularizar no DETRAN --
+   o caminhão roda com documento que não bate com o que ele é. */
+function carroceriaClasse(txt) {
+  var t = String(txt || "").toUpperCase();
+  if (!t) return null;
+  if (/BAU|FURGAO|FRIGORIFIC|ISOTERMIC|FECHADA/.test(t)) return "fechada";
+  if (/SIDER/.test(t)) return "sider";
+  if (/ABERTA|GRANELEIRA|BASCULANTE|PLATAFORMA|CARGA VIVA/.test(t)) return "aberta";
+  return "outra";                       // ex: MECANISMO OPERACIONAL, TANQUE
+}
+function carroceriaDivergente(v) {
+  if (!v || !v.carroceriaCrlv) return null;
+  var doc = carroceriaClasse(v.carroceriaCrlv);
+  var eq = (v.bau === "Com baú") ? "fechada" : (v.bau === "Com sider" ? "sider" : "aberta");
+  if (v.bau === "Baú comprado" || v.bau === "Baú em negociação") eq = "aberta";
+  if (!doc) return null;
+  if (doc === eq) return null;
+  return { doc: v.carroceriaCrlv, docClasse: doc, sistema: v.bau || "(não informado)" };
+}
+function bauPendente(v) {
+  return v && v.bau && v.bau !== "Com baú";
+}
+function bauSituacao(v) {
+  if (!v || !v.bau) return "não informado";
+  if (v.bau === "Com baú") return "ok";
+  if (v.bau === "Baú comprado") return "baú já comprado, falta montar";
+  if (v.bau === "Baú em negociação") return "em negociação";
+  if (v.bau === "Com sider") return "sider — precisa virar baú";
+  if (v.bau === "Sem baú") return "sem carroceria fechada";
+  return v.bau;
+}
+function veiculosBauPendente() {
+  return veiculosComMes().filter(function (v) { return v.placa && bauPendente(v); });
+}
+function exportarAdequacaoBauExcel() {
+  const cab = ["Placa", "Tipo", "Modelo", "Ano", "Status Bau (sistema)", "Carroceria no CRLV", "Documento confere?", "Situacao", "Motorista", "Status Op", "Obs"];
+  const linhas = veiculosBauPendente().map(function (v) {
+    const dv = carroceriaDivergente(v);
+    return [v.placa, v.tipo, v.modelo, v.ano, v.bau, v.carroceriaCrlv || "(CRLV nao lido)",
+            v.carroceriaCrlv ? (dv ? "NAO - divergente" : "sim") : "-", bauSituacao(v), v.motorista, v.statusOp, v.obs];
+  });
+  exportarCSV("rf-adequacao-bau-" + new Date().toISOString().slice(0, 10) + ".csv", cab, linhas);
 }
 function exportarFrotaExcel() {
   const cab = ["Placa","Tipo","Modelo","Status Bau","Motorista","Status Op","Obs"];
@@ -5777,7 +5839,7 @@ function render() {
       </select>` : ""}
       ${state.aba === "mtcustos" ? `<input id="mtBusca" placeholder="🔍 Buscar peça ou serviço..." value="${esc(state.mtBusca || "")}" style="width:220px;" oninput="state.mtBusca=this.value; renderTabela();">` : ""}
       ${state.aba === "almox" ? `<input id="almoxBusca" placeholder="🔍 Buscar peça..." value="${esc(state.almoxBusca || "")}" style="width:220px;" oninput="state.almoxBusca=this.value; renderTabela();">` : ""}
-      ${state.aba === "frota" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarVeiculo()">+ Adicionar veículo</button><button class="btn-outline" onclick="exportarFrotaExcel()">⬇ Exportar Excel</button>` : ""}
+      ${state.aba === "frota" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarVeiculo()">+ Adicionar veículo</button><button class="btn-outline" onclick="exportarFrotaExcel()">⬇ Exportar Excel</button><button class="btn-outline" title="Só os caminhões que ainda não estão em baú" onclick="exportarAdequacaoBauExcel()">⬇ Adequação de baú</button>` : ""}
       ${state.aba === "manutencao" ? `<button class="btn-outline" style="margin-left:auto;" onclick="exportarManutencaoExcel()">⬇ Exportar Excel</button>` : ""}
       ${state.aba === "mtcustos" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarManutencao()">+ Lançar manutenção</button><button class="btn-outline" onclick="exportarCustosManutExcel()">⬇ Exportar Excel</button>` : ""}
       ${state.aba === "oleo" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarTrocaOleo()">+ Lançar troca de óleo</button><button class="btn-outline" onclick="exportarOleoExcel()">⬇ Exportar Excel</button>` : ""}
@@ -6207,6 +6269,36 @@ O sistema intercepta essas linhas, baixa os arquivos no aparelho da pessoa e som
 não vê essa linha. Use SOMENTE caminhos que aparecem nas listas acima, nunca invente um caminho. No máximo 6 por vez.
 Se a pessoa pedir um arquivo que não está nas listas, diga que não encontrou aquele documento anexado.
 
+ADEQUAÇÃO DE CARROCERIA — REGRA DA CASA: toda a frota da RF Logística opera com BAÚ. Caminhão que ainda não está em baú
+é obra em andamento, não uma escolha — a empresa está convertendo todos. "Com sider" e "Sem baú" ainda NÃO têm carroceria
+fechada; "Baú comprado" já tem o baú pago e falta montar (dinheiro parado); "Baú em negociação" ainda está sendo comprado.
+Situação agora:
+${(function () {
+  var todos = veiculosComMes().filter(function (v) { return v.placa; });
+  var porStatus = {};
+  todos.forEach(function (v) { var k = v.bau || "(não informado)"; (porStatus[k] = porStatus[k] || []).push(v.placa); });
+  var linhas = Object.keys(porStatus).map(function (k) { return "- " + k + " (" + porStatus[k].length + "): " + porStatus[k].join(", "); });
+  var pend = todos.filter(bauPendente);
+  // v208: o que o CRLV diz da carroceria, e onde ele discorda do status digitado
+  var comDoc = todos.filter(function (v) { return v.carroceriaCrlv; });
+  var divs = todos.map(carroceriaDivergente).filter(Boolean);
+  var linhaDoc = "\nCARROCERIA PELO CRLV (fonte legal, lida do documento anexado): "
+    + (comDoc.length
+      ? comDoc.map(function (v) { return v.placa + "=" + v.carroceriaCrlv; }).join("; ")
+        + (comDoc.length < todos.length ? " | sem CRLV lido ainda: " + (todos.length - comDoc.length) + " caminhão(ões)" : "")
+      : "nenhum CRLV lido ainda — anexe os documentos pra ter a informação legal");
+  var linhaDiv = divs.length
+    ? "\n⚠️ DIVERGÊNCIA documento x sistema (carroceria trocada sem regularizar no DETRAN): "
+      + todos.filter(carroceriaDivergente).map(function (v) { var d = carroceriaDivergente(v); return v.placa + " (CRLV diz \"" + d.doc + "\", sistema diz \"" + d.sistema + "\")"; }).join("; ")
+      + ". Isso é risco de multa e de problema em fiscalização — o documento tem que ser atualizado no DETRAN."
+    : "";
+  return linhas.join("\n") + "\n=> FALTAM ADEQUAR: " + pend.length + " de " + todos.length + " caminhões — "
+    + (pend.map(function (v) { return v.placa + " (" + bauSituacao(v) + ")"; }).join("; ") || "nenhum")
+    + linhaDoc + linhaDiv;
+})()}
+Quando a pessoa perguntar sobre carroceria, baú, sider, adequação ou quais caminhões faltam converter, use ESSES números.
+Se ela pedir a lista em planilha/Excel, use a ferramenta gerar_planilha com aba "adequacao_bau".
+
 ⚠️ PROBLEMAS DETECTADOS AGORA (encontrados pelo próprio sistema, por regra fixa — são fatos, não suposições):
 ${(function () { try { return rfDiagnosticoTexto(); } catch (e) { return "(não consegui rodar o diagnóstico)"; } })()}
 
@@ -6254,6 +6346,29 @@ function rfDiagnosticoSistema() {
     if (ol.falta <= 0) add("alto", "Troca de óleo do " + v.placa + " VENCIDA — passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km do ponto.");
     else if (ol.falta <= avisoKm) add("medio", "Troca de óleo do " + v.placa + " a " + ol.falta.toLocaleString("pt-BR") + " km.");
   });
+  // adequação de carroceria: a frota toda deve ser baú
+  try {
+    const pendBau = veiculosBauPendente();
+    if (pendBau.length) {
+      const semNada = pendBau.filter(function (v) { return v.bau === "Sem baú" || v.bau === "Com sider"; });
+      const comprado = pendBau.filter(function (v) { return v.bau === "Baú comprado"; });
+      add(semNada.length ? "alto" : "medio",
+        pendBau.length + " caminhão(ões) ainda sem baú: "
+        + (semNada.length ? semNada.length + " sem carroceria fechada (" + semNada.map(function (v) { return v.placa; }).join(", ") + ")" : "")
+        + (semNada.length && comprado.length ? " e " : "")
+        + (comprado.length ? comprado.length + " com baú já comprado esperando montagem (" + comprado.map(function (v) { return v.placa; }).join(", ") + ")" : "")
+        + ". Aba Frota, coluna Status Baú.");
+    }
+  } catch (e) {}
+  // v208: carroceria do CRLV divergindo do status do sistema
+  try {
+    const divs = vs.filter(carroceriaDivergente);
+    if (divs.length) {
+      add("alto", divs.length + " caminhão(ões) com a CARROCERIA do CRLV diferente do status no sistema: "
+        + divs.map(function (v) { var d = carroceriaDivergente(v); return v.placa + " (documento: " + d.doc + ")"; }).join(", ")
+        + ". O documento é o que vale em fiscalização — se a carroceria foi trocada, precisa regularizar no DETRAN.");
+    }
+  } catch (e) {}
   // abastecimentos parados esperando aprovação
   const pend = (state.abastecimentos || []).filter(function (a) { return a.status === "pendente"; });
   if (pend.length) {
@@ -6445,6 +6560,7 @@ function chatExecutarGerarPlanilha(aba) {
     else if (aba === "abastecimento") exportarAbastecimentosExcel();
     else if (aba === "dividas") exportarDividasExcel();
     else if (aba === "pagamentos_motorista") exportarPagMotoristaExcel();
+    else if (aba === "adequacao_bau") exportarAdequacaoBauExcel();   // v207
     else return false;
     return true;
   } catch (e) { return false; }
@@ -9172,6 +9288,18 @@ function rfCrlvParse(txt) {
   m = U.match(/EM\s+(\d{2}\/\d{2}\/\d{4})/);                      if (m) r.emitidoEm = m[1];
   var onzes = U.match(/\b\d{11}\b/g) || [];                        if (onzes.length) r.renavam = onzes[0];
   if (/CARGA\s+CAMINHAO/.test(U)) r.especie = "CARGA/CAMINHAO";
+  // v208: campo CARROCERIA do CRLV -- é o que vale legalmente, e não o status
+  // digitado à mão. Uso lista fechada dos valores do DENATRAN em vez de tentar
+  // pegar "o que vem depois do rótulo", porque o pdf.js entrega rótulo e valor
+  // separados e a ordem varia.
+  var CARROCERIAS = ["FECHADA/BAU", "FECHADA BAU", "BAU", "FURGAO", "FRIGORIFICA", "ISOTERMICA",
+    "SIDER", "ABERTA", "CARGA ABERTA", "GRANELEIRA", "BASCULANTE", "PLATAFORMA", "PORTA CONTAINER",
+    "TANQUE", "SILO", "MISTURADOR", "CEGONHA", "CARGA VIVA", "MECANISMO OPERACIONAL", "NAO APLICAVEL"];
+  for (var ci = 0; ci < CARROCERIAS.length; ci++) {
+    var alvo = CARROCERIAS[ci];
+    var re = new RegExp("^\\s*" + alvo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "m");
+    if (re.test(U)) { r.carroceria = alvo; break; }
+  }
   return r;
 }
 /* v195: CAMINHO 2 -- documento sem camada de texto (CRLV escaneado ou foto).
@@ -9256,6 +9384,7 @@ function rfCrlvAplicarDados(d, origem) {
   aplica("RENAVAM", "renavam", d.renavam);
   aplica("Chassi", "chassi", d.chassi);
   aplica("UF do emplacamento", "ufEmplacamento", d.uf, "define taxa e alíquota");
+  aplica("Carroceria (pelo CRLV)", "carroceriaCrlv", d.carroceria, "é o que vale numa fiscalização");
   if (d.emitidoEm && (!v.emplacamento || String(v.emplacamento).trim() === "")) {
     var pp = String(d.emitidoEm).split("/");
     if (pp.length === 3 && pp[2].length === 4) {
