@@ -2,7 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v189)</title>
+<title>RF Logística — Painel da Frota (v191)</title>
+<!-- v191: emplacamento por UF. A frota tem caminhão na BA e caminhão ainda no PA
+     (transferência gradual), então taxa, alíquota e isenção passam a sair da UF
+     do emplacamento, gravada no veículo a partir do CRLV. BA: taxa R$181,13 +
+     IPVA 1% + isenção aos 15 anos. PA: TRLAV R$214,51 + IPVA 1%, isenção por
+     idade NÃO confirmada (assume que paga, pra projeção sobrar e não faltar).
+     A UF nunca sai da placa: placa Mercosul não codifica estado. -->
+<!-- v190: botão de diagnóstico do upload na aba Documentos. Testa separadamente
+     LER o bucket, ENVIAR text/plain, ENVIAR image/jpeg e ENVIAR application/pdf,
+     e avisa se um service worker está controlando a página. Botão pra remover o
+     service worker e recarregar. Para de adivinhar a causa do "Failed to fetch". -->
 <!-- v189: tipo do arquivo detectado pela ASSINATURA (primeiros bytes), não pelo
      nome. Arquivo sem extensão ia como application/octet-stream e o bucket
      rejeitava antes do CORS, virando "Failed to fetch". Agora PDF vai como
@@ -2354,9 +2364,43 @@ var TAXA_LICENCIAMENTO_BA_2026 = 181.13;
 var IPVA_ALIQUOTA_CARGA_BA = 0.01;
 var IPVA_ISENCAO_ANOS_BA = 15;
 
-function taxaLicenciamentoAtual() {
-  const c = (state.config && Number(state.config.taxaLicenciamento)) || 0;
-  return c > 0 ? c : TAXA_LICENCIAMENTO_BA_2026;
+/* v191: a frota tem caminhão emplacado na BAHIA e caminhão ainda emplacado no
+   PARÁ (transferência gradual). Cada estado tem taxa e regra de isenção
+   próprias, então a conta passa a ser por UF do EMPLACAMENTO.
+   ATENÇÃO: a UF NÃO sai da placa. Placa Mercosul não codifica estado -- prova
+   viva: o OTQ9B07 manteve a mesma placa ao migrar de PA para BA. A UF vem do
+   CRLV (que diz "DETRAN-BA" ou "DETRAN-PA") e fica gravada no veículo. */
+var UF_EMPLACAMENTO = {
+  BA: {
+    nome: "Bahia",
+    taxa: 181.13,                 // taxa de licenciamento DETRAN-BA 2026
+    aliquota: 0.01,               // caminhão de carga: 1% do valor venal
+    isencaoAnos: 15,              // Lei 6.348/91: 15+ anos isenta de IPVA
+    isencaoConfirmada: true,
+  },
+  PA: {
+    nome: "Pará",
+    taxa: 214.51,                 // TRLAV DETRAN-PA 2026
+    aliquota: 0.01,               // caminhão: 1% (mesma alíquota da BA)
+    isencaoAnos: null,            // regra por idade NÃO confirmada no PA --
+    isencaoConfirmada: false,     // por segurança assume que PAGA (superestima
+                                  // o caixa em vez de deixar o Renato a descoberto)
+  },
+};
+function ufDoVeiculo(v) {
+  const u = String((v && v.ufEmplacamento) || "BA").toUpperCase();
+  return UF_EMPLACAMENTO[u] ? u : "BA";
+}
+function regraUf(v) { return UF_EMPLACAMENTO[ufDoVeiculo(v)]; }
+function taxaLicenciamentoAtual(v) {
+  // Override manual por UF em config vence a referência pesquisada.
+  const uf = ufDoVeiculo(v);
+  const cfg = (state.config && state.config.taxaLicenciamentoUF) || {};
+  const c = Number(cfg[uf]) || 0;
+  if (c > 0) return c;
+  const legado = (state.config && Number(state.config.taxaLicenciamento)) || 0;
+  if (uf === "BA" && legado > 0) return legado;
+  return UF_EMPLACAMENTO[uf].taxa;
 }
 // Valor venal de referência, só usado quando o real não foi preenchido.
 // Depreciação simples de 6% ao ano sobre uma base por tipo. Número grosseiro de
@@ -2371,21 +2415,25 @@ function valorVenalRef(v) {
 }
 // Conta completa do emplacamento de um veículo.
 function emplacamentoCalc(v) {
-  const lic = taxaLicenciamentoAtual();
+  const uf = ufDoVeiculo(v);           // v191
+  const r = UF_EMPLACAMENTO[uf];
+  const lic = taxaLicenciamentoAtual(v);
   const ano = Number(v.ano) || 0;
   const idade = ano ? ((new Date().getFullYear()) - ano) : null;
-  const isento = idade !== null && idade >= IPVA_ISENCAO_ANOS_BA;
+  const isento = (r.isencaoAnos != null) && idade !== null && idade >= r.isencaoAnos;
   let ipva = 0, venal = 0;
   if (!isento) {
     if (v.emplIpva !== "" && v.emplIpva != null && Number(v.emplIpva) > 0) {
       ipva = Number(v.emplIpva) || 0;               // IPVA real, digitado do boleto
     } else {
       venal = valorVenalRef(v);
-      ipva = Math.round(venal * IPVA_ALIQUOTA_CARGA_BA * 100) / 100;
+      ipva = Math.round(venal * r.aliquota * 100) / 100;
     }
   }
   const extras = Number(v.emplExtras) || 0;         // multas, vistoria, despachante
   return {
+    uf: uf, ufNome: r.nome, aliquota: r.aliquota,
+    isencaoAnos: r.isencaoAnos, isencaoConfirmada: r.isencaoConfirmada,
     licenciamento: lic, ipva: ipva, venal: venal, extras: extras,
     isento: isento, idade: idade, semAno: !ano,
     total: Math.round((lic + ipva + extras) * 100) / 100,
@@ -5884,7 +5932,8 @@ function gerarContextoAssistente() {
     add("emplacamento", v.emplacamento);
     if (v.emplacamento) { // v187
       const cE = emplacamentoCalc(v);
-      partes.push("custo do emplacamento " + fmtR(cE.total) + (cE.confirmado ? " (CONFIRMADO no boleto)" : " (ESTIMADO: licenciamento + IPVA, não é o boleto real)")
+      partes.push("emplacado em " + cE.ufNome + " (DETRAN-" + cE.uf + ")");
+      partes.push("custo do emplacamento " + fmtR(cE.total) + (cE.confirmado ? " (CONFIRMADO no boleto)" : " (ESTIMADO pela regra do " + cE.ufNome + ": taxa + IPVA " + (cE.aliquota * 100).toFixed(1) + "%, não é o boleto real)")
         + (cE.isento ? ", isento de IPVA por ter " + cE.idade + " anos" : ""));
       partes.push(emplacamentoJaLancado(v) ? "já lançado em Dívidas Fixas" : "ainda NÃO lançado em contas a pagar");
     }
@@ -8007,6 +8056,11 @@ function renderTabela() {
           </div>
         </div>
         <div id="docsStatus" style="font-size:12px;color:${GOLD};margin-top:10px;min-height:16px;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn-outline" style="font-size:11px;padding:5px 12px;" onclick="rfDocsDiagnostico()">🔧 Testar upload (diagnóstico)</button>
+          <button class="btn-outline" style="font-size:11px;padding:5px 12px;" onclick="rfDesativarSW()">♻ Remover service worker e recarregar</button>
+        </div>
+        <div id="docsDiag" style="font-size:12px;color:#bbb;margin-top:8px;line-height:1.7;"></div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Fotos são compactadas automaticamente (~4MB → ~300KB). PDFs são enviados como estão.</div>
       </div>
       ${vSel ? `
@@ -8059,8 +8113,11 @@ function renderTabela() {
               </label>
               <div style="font-size:11px;color:#777;margin-top:6px;">
                 ${c.semAno ? `⚠ <b style="color:#C0392B;">Preencha o ano</b> pra eu calcular o IPVA.`
-                  : (c.isento ? `IPVA <b style="color:#2E7D32;">isento</b> — veículo com ${c.idade} anos (na Bahia, 15+ anos não paga IPVA).`
-                    : `IPVA estimado em 1% sobre ${fmtR(c.venal)}. Digite o valor real assim que o boleto chegar.`)}
+                  : (c.isento ? `IPVA <b style="color:#2E7D32;">isento</b> — veículo com ${c.idade} anos (${c.ufNome}: ${c.isencaoAnos}+ anos não paga IPVA).`
+                    : `IPVA estimado em ${(c.aliquota * 100).toFixed(1).replace(".", ",")}% sobre ${fmtR(c.venal)} — regra do ${c.ufNome}. Digite o valor real assim que o boleto chegar.`)}
+                ${(!c.isencaoConfirmada && c.idade !== null && c.idade >= 15)
+                  ? `<br><span style="color:#8a6d1f;">⚠ Este caminhão tem ${c.idade} anos. No ${c.ufNome} eu <b>não confirmei</b> se existe isenção por idade, então estou assumindo que PAGA — se houver isenção, a projeção sobra, nunca falta. Confirme na SEFA-PA.</span>`
+                  : ""}
               </div>
               <div style="font-size:11px;margin-top:4px;">${situacao}</div>
             </div>`;
@@ -8498,6 +8555,72 @@ function rfDocsEnviar(placa, file, statusFn) {
         });
       }
       return tentar(0);
+    });
+  });
+}
+
+// ===== v190: DIAGNÓSTICO DE UPLOAD ==========================================
+// Três versões seguidas tentando adivinhar a causa do "Failed to fetch" já foi
+// demais. Este botão testa cada camada separadamente e diz qual delas quebra,
+// sem precisar abrir console em tablet.
+function rfDesativarSW() {
+  if (!("serviceWorker" in navigator)) { alert("Este navegador não usa service worker."); return; }
+  if (!confirm("Isso remove o service worker do PWA e recarrega a página. O sistema continua funcionando normalmente (só perde o modo offline). Continuar?")) return;
+  navigator.serviceWorker.getRegistrations().then(function (rs) {
+    return Promise.all(rs.map(function (r) { return r.unregister(); }));
+  }).then(function () {
+    if (window.caches && caches.keys) return caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); });
+  }).then(function () {
+    alert("Service worker removido. Recarregando — tente anexar o documento de novo.");
+    location.reload(true);
+  }).catch(function (e) { alert("Não consegui remover: " + (e.message || e)); });
+}
+function rfDocsDiagnostico() {
+  var out = document.getElementById("docsDiag");
+  if (!out) return;
+  var linhas = [];
+  function add(t) { linhas.push(t); out.innerHTML = linhas.join("<br>"); }
+  add('<b style="color:' + GOLD + ';">Diagnóstico do upload</b>');
+  var swCtrl = ("serviceWorker" in navigator) && navigator.serviceWorker.controller;
+  add(swCtrl
+    ? '⚠ <b style="color:#C0392B;">Service worker ESTÁ controlando esta página</b> — principal suspeito'
+    : '✔ Nenhum service worker controlando esta página');
+  add(navigator.onLine === false ? '⚠ Aparelho offline' : '✔ Aparelho online');
+
+  rfGetClient().then(function (sb) {
+    if (!sb) { add('❌ Sem cliente Supabase (nem chegou a testar)'); return; }
+    var pref = "documentos/_diagnostico/" + Date.now();
+    function testa(rot, blob, ct) {
+      return sb.storage.from(RF_BUCKET).upload(pref + "-" + rot, blob, { contentType: ct, upsert: true })
+        .then(function (r) {
+          if (r.error) { add('❌ ENVIAR ' + ct + ': ' + esc(r.error.message || String(r.error))); return false; }
+          add('✔ ENVIAR ' + ct + ' funcionou (' + blob.size + ' bytes)');
+          return true;
+        })
+        .catch(function (e) { add('❌ ENVIAR ' + ct + ': ' + esc(e.message || String(e))); return false; });
+    }
+    sb.storage.from(RF_BUCKET).list("documentos", { limit: 1 }).then(function (r) {
+      add(r.error ? '❌ LER o bucket falhou: ' + esc(r.error.message || String(r.error))
+                  : '✔ LER o bucket funcionou (leitura ok, então o bucket existe e o login vale)');
+    }).then(function () {
+      return testa("txt", new Blob(["rf"], { type: "text/plain" }), "text/plain");
+    }).then(function () {
+      return new Promise(function (res) {
+        try {
+          var c = document.createElement("canvas"); c.width = 8; c.height = 8;
+          var x = c.getContext("2d"); x.fillStyle = "#D4A017"; x.fillRect(0, 0, 8, 8);
+          c.toBlob(function (b) { res(b); }, "image/jpeg", 0.8);
+        } catch (e) { res(null); }
+      });
+    }).then(function (b) {
+      if (!b) { add('⚠ não consegui gerar o JPEG de teste'); return; }
+      return testa("jpg", b, "image/jpeg");
+    }).then(function () {
+      return testa("pdf", new Blob(["%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF"], { type: "application/pdf" }), "application/pdf");
+    }).then(function () {
+      add('<span style="color:#999;font-size:11px;">Como ler: <b>LER funcionou mas nenhum ENVIAR</b> → é o service worker ou a rede bloqueando envio com corpo binário. '
+        + '<b>JPEG subiu e PDF não</b> → o bucket bloqueia application/pdf (Storage → ' + RF_BUCKET + ' → Configuration → Allowed MIME types). '
+        + '<b>Tudo subiu</b> → o problema é só com aquele arquivo específico.</span>');
     });
   });
 }
