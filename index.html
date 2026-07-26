@@ -2,7 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v200)</title>
+<title>RF Logística — Painel da Frota (v201)</title>
+<!-- v201: projeções do assistente estavam MUITO erradas. Causa: o contexto
+     mandava dividir os totais do mês pelo número de caminhões "em viagem AGORA"
+     (retrato do instante, 8) quando a receita do mês foi feita por TODOS os
+     caminhões que rodaram no mês. Isso inflava a média por caminhão várias
+     vezes. Agora o contexto entrega a base real já calculada (caminhões
+     distintos que rodaram, receita/despesa/sobra média por caminhão, margem
+     média) e um roteiro de projeção passo a passo com bruto e líquido. -->
 <!-- v200: o assistente estava gerando PLANILHA quando se pedia o CRLV. Causa: a
      ferramenta gerar_planilha era disparada pelas palavras "exportar"/"baixar",
      e quando o modelo chama uma ferramenta o texto vem vazio, então a instrução
@@ -6015,6 +6022,30 @@ Abastecimentos pendentes de aprovação: ${abastPendentes}
 - Total de TODAS as dívidas fixas cadastradas (inclui algumas que podem não estar ativas nesse mês específico): ${fmtR(t.totalDividasFixas)}
 - Dívidas fixas REALMENTE ATIVAS no mês ativo (${mesA}) — É ESSE que entra no cálculo oficial do resultado do mês: ${cxAtivo ? fmtR(cxAtivo.dividasFixasMes) : "(indisponível)"}
 
+${(function () {
+  // v201: base correta pra projeção. O denominador ANTIGO era "caminhões em viagem
+  // AGORA" (um retrato do instante), mas a receita do mês foi feita por TODOS os
+  // caminhões que rodaram no mês. Dividir o mês inteiro por 8 e multiplicar por 21
+  // inflava a projeção várias vezes -- era a causa dos números errados.
+  var vm = (state.viagens || []).filter(function (v) { return v.data && v.data.slice(0, 7) === state.mesAtivo; });
+  var placas = {};
+  vm.forEach(function (v) { if (v.placa) placas[v.placa] = true; });
+  var nPlacas = Object.keys(placas).length;
+  var rec = vm.reduce(function (a, v) { return a + (Number(v.valorViagem) || 0); }, 0);
+  var desp = vm.reduce(function (a, v) { return a + calcularViagem(v).totalDesp; }, 0);
+  var sobra = rec - desp;
+  var f = function (n) { return fmtR(n); };
+  if (!vm.length || !nPlacas) return "BASE POR CAMINHÃO: ainda não há viagens lançadas neste mês, então não dá pra projetar por caminhão.\n";
+  return "BASE REAL POR CAMINHÃO NO MÊS (use ESTES números pra qualquer projeção — já são médias verdadeiras):\n"
+    + "- Caminhões DIFERENTES que rodaram viagem em " + mesA + ": " + nPlacas + "\n"
+    + "- Viagens lançadas no mês: " + vm.length + " (média de " + (vm.length / nPlacas).toFixed(1) + " viagens por caminhão)\n"
+    + "- Receita das viagens: " + f(rec) + " → média de " + f(rec / nPlacas) + " POR CAMINHÃO no mês, e " + f(rec / vm.length) + " por viagem\n"
+    + "- Despesa das viagens: " + f(desp) + " → média de " + f(desp / nPlacas) + " POR CAMINHÃO no mês\n"
+    + "- Sobra das viagens: " + f(sobra) + " → média de " + f(sobra / nPlacas) + " POR CAMINHÃO no mês\n"
+    + "- MARGEM MÉDIA das viagens: " + (rec > 0 ? (sobra / rec * 100).toFixed(1) : "0") + "% da receita\n"
+    + "⚠️ NÃO use o número de \"caminhões em viagem\" (" + (t.emViagem || 0) + ") como divisor de valores do MÊS: aquilo é o "
+    + "status de agora, não quantos rodaram no mês inteiro. O divisor certo é " + nPlacas + ".\n";
+})()}
 FÓRMULA OFICIAL do resultado do mês (a mesma da aba Financeiro — use ESTA fórmula pra qualquer projeção, nunca invente outra):
 Resultado do mês = (Receita fixa/aluguel + Receita das viagens) − (Custo fixo manual + Despesa das viagens sem imposto + Manutenção real) − Imposto das viagens − Dívidas fixas ativas do mês (+ ajuste manual, se houver)
 Componentes do mês ativo (${mesA}):
@@ -6031,7 +6062,14 @@ Posição real do caixa acumulado (saldo que rola pro próximo mês): ${cxAtivo 
 Despesa das viagens por CATEGORIA no mês ativo (${mesA}), da maior pra menor:
 ${linhasCategoria || "(nenhuma despesa lançada)"}
 
-PARA PROJEÇÕES (ex: "e se tivéssemos N caminhões em viagem"): escale SÓ os componentes marcados "ESCALA" acima (calcule a média atual por caminhão em viagem = valor ÷ ${t.emViagem || 1} caminhões em viagem, multiplique pela nova quantidade). Receita fixa, custo fixo e dívidas fixas do mês ficam EXATAMENTE OS MESMOS valores acima, não escalam.
+PARA PROJEÇÕES (ex: "quanto daria com N caminhões em atividade no mês que vem"), siga EXATAMENTE estes passos e MOSTRE a conta:
+1. Pegue da "BASE REAL POR CAMINHÃO NO MÊS" acima a receita média POR CAMINHÃO e a despesa média POR CAMINHÃO. NUNCA divida o total do mês pelo número de caminhões "em viagem agora" — esse número é o status do instante, não quantos rodaram no mês.
+2. Receita bruta projetada = receita média por caminhão × N caminhões.
+3. Despesa das viagens projetada = despesa média por caminhão × N caminhões. (Se preferir, use a margem média: sobra projetada = receita bruta projetada × margem média %.)
+4. Some a receita fixa/aluguel do mês (NÃO escala) e subtraia o custo fixo manual, a manutenção real e as dívidas fixas ativas do mês (nenhum desses escala).
+5. Apresente sempre DOIS números separados: BRUTO (só a receita das viagens projetada) e LÍQUIDO (o resultado depois de todas as subtrações do passo 4).
+6. Diga em uma linha as premissas usadas (quantas viagens por caminhão, qual margem média) e deixe claro que é ESTIMATIVA.
+ATENÇÃO ao mês: se a pessoa pedir projeção pra um mês FUTURO, a base é o mês ativo (${mesA}) — diga isso explicitamente, porque um mês pode ter mais dias úteis que outro.
 
 Frota completa (todos os veículos cadastrados):
 ${frotaTudo || "(nenhum)"}
