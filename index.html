@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v209)</title>
+<title>RF Logística — Painel da Frota (v210)</title>
+<!-- v210: manutenção preventiva por KM generalizada. Correia (60.000 km) e
+     pneus (40.000 km) entram como itens configuráveis, e dá pra adicionar
+     quantos quiser -- todos usam o mesmo hodômetro automático da troca de óleo.
+     Tabela na aba Óleo & Filtros, alerta no diagnóstico proativo, bloco no
+     contexto da assistente e exportação. -->
 <!-- v209: botão que baixa e lê TODOS os CRLVs já anexados de uma vez, extraindo
      a carroceria registrada de cada um. Monta a lista dos caminhões cujo
      documento NÃO diz carroceria fechada -- que é o que precisa ser regularizado
@@ -2504,6 +2509,94 @@ function exportarOleoExcel() {
   });
   exportarCSV("rf-frota-oleo-" + new Date().toISOString().slice(0, 10) + ".csv", cab, linhas);
 }
+/* ===== v210: MANUTENCAO PREVENTIVA POR KM ==================================
+   A troca de oleo ja era controlada por KM. Correia, pneus e o resto seguem a
+   MESMA logica -- so muda o intervalo. Em vez de criar uma aba por item, virou
+   uma lista configuravel: cada item tem nome e intervalo, e todos usam o mesmo
+   hodometro automatico que ja alimenta o oleo (kmAtualVeiculo).
+   Intervalos informados pelo Renato: correia 60.000 km, pneus 40.000 km. */
+var PREVENTIVA_PADRAO = [
+  { id: "correia", nome: "Correia", intervalo: 60000 },
+  { id: "pneus", nome: "Pneus", intervalo: 40000 },
+];
+function preventivaItens() {
+  garantirConfig();
+  if (!Array.isArray(state.config.preventivaItens) || !state.config.preventivaItens.length) {
+    state.config.preventivaItens = PREVENTIVA_PADRAO.map(function (x) { return { id: x.id, nome: x.nome, intervalo: x.intervalo }; });
+  }
+  return state.config.preventivaItens;
+}
+function preventivaAviso() {
+  garantirConfig();
+  const a = Number(state.config.avisoPreventivaKm);
+  return a > 0 ? a : 3000;
+}
+function preventivaStatus(v, item) {
+  const dados = (v.preventiva && v.preventiva[item.id]) || {};
+  const ult = dados.ultimaKm;
+  if (ult === "" || ult == null) return null;
+  const intv = Number(dados.intervalo) > 0 ? Number(dados.intervalo) : (Number(item.intervalo) || 0);
+  if (!intv) return null;
+  const km = kmAtualVeiculo(v);
+  const proximo = (Number(ult) || 0) + intv;
+  return { ultima: Number(ult) || 0, intervalo: intv, km: km, proximo: proximo, falta: proximo - km };
+}
+function preventivaSet(veiculoId, itemId, campo, valor) {
+  const v = (state.veiculos || []).find(function (x) { return String(x.id) === String(veiculoId); });
+  if (!v) return;
+  if (!v.preventiva) v.preventiva = {};
+  if (!v.preventiva[itemId]) v.preventiva[itemId] = {};
+  v.preventiva[itemId][campo] = (valor === "" ? "" : (Number(String(valor).replace(",", ".")) || 0));
+  salvar(); render();
+}
+function preventivaAddItem() {
+  const nome = prompt("Nome do item de manutencao (ex: Freios, Embreagem, Cardan):");
+  if (!nome || !nome.trim()) return;
+  const intv = Number(prompt("A cada quantos KM esse item deve ser trocado/revisado?", "50000"));
+  if (!intv || intv <= 0) { alert("Intervalo invalido."); return; }
+  preventivaItens().push({ id: "it" + Date.now(), nome: nome.trim(), intervalo: intv });
+  salvar(); render();
+}
+function preventivaRemoverItem(id) {
+  if (!confirm("Remover esse item do plano? O KM ja digitado nos caminhoes continua guardado.")) return;
+  state.config.preventivaItens = preventivaItens().filter(function (x) { return x.id !== id; });
+  salvar(); render();
+}
+function preventivaAtualizarItem(id, campo, valor) {
+  const it = preventivaItens().find(function (x) { return x.id === id; });
+  if (!it) return;
+  it[campo] = campo === "intervalo" ? (Number(valor) || 0) : valor;
+  salvar(); render();
+}
+function preventivaPendencias() {
+  const itens = preventivaItens();
+  const aviso = preventivaAviso();
+  const fora = [];
+  veiculosComMes().filter(function (v) { return v.placa; }).forEach(function (v) {
+    itens.forEach(function (it) {
+      const st = preventivaStatus(v, it);
+      if (!st) return;
+      if (st.falta <= 0) fora.push({ placa: v.placa, item: it.nome, nivel: "vencido", falta: st.falta });
+      else if (st.falta <= aviso) fora.push({ placa: v.placa, item: it.nome, nivel: "perto", falta: st.falta });
+    });
+  });
+  return fora;
+}
+function exportarPreventivaExcel() {
+  const itens = preventivaItens();
+  const cab = ["Placa", "KM atual"];
+  itens.forEach(function (it) { cab.push(it.nome + " - ultima (km)", it.nome + " - proxima (km)", it.nome + " - faltam (km)"); });
+  const linhas = veiculosComMes().filter(function (v) { return v.placa; }).map(function (v) {
+    const l = [v.placa, kmAtualVeiculo(v)];
+    itens.forEach(function (it) {
+      const st = preventivaStatus(v, it);
+      l.push(st ? st.ultima : "", st ? st.proximo : "", st ? st.falta : "");
+    });
+    return l;
+  });
+  exportarCSV("rf-preventiva-" + new Date().toISOString().slice(0, 10) + ".csv", cab, linhas);
+}
+
 /* ===== v187: EMPLACAMENTO COMO CONTA A PAGAR ================================
    Taxa de licenciamento DETRAN-BA: valor fixo por veículo, reajustado todo ano.
    Referência pesquisada para 2026: R$ 181,13 (editável em state.config).
@@ -6274,6 +6367,22 @@ O sistema intercepta essas linhas, baixa os arquivos no aparelho da pessoa e som
 não vê essa linha. Use SOMENTE caminhos que aparecem nas listas acima, nunca invente um caminho. No máximo 6 por vez.
 Se a pessoa pedir um arquivo que não está nas listas, diga que não encontrou aquele documento anexado.
 
+MANUTENÇÃO PREVENTIVA POR KM (itens de desgaste, controlados por quilometragem — custo alto, por isso monitorados):
+${(function () {
+  try {
+    const itens = preventivaItens();
+    const linhas = itens.map(function (it) { return "- " + it.nome + ": a cada " + Number(it.intervalo).toLocaleString("pt-BR") + " km"; });
+    const pv = preventivaPendencias();
+    return "Plano em vigor:\n" + linhas.join("\n") + "\n"
+      + (pv.length
+        ? "Situação: " + pv.map(function (x) { return x.item + " do " + x.placa + (x.nivel === "vencido" ? " VENCIDO (passou " + Math.abs(x.falta).toLocaleString("pt-BR") + " km)" : " faltando " + x.falta.toLocaleString("pt-BR") + " km"); }).join("; ")
+        : "Situação: nenhum item vencido nem perto do ponto (ou ainda falta informar o KM da última troca).");
+  } catch (e) { return "(plano de preventiva indisponível)"; }
+})()}
+O KM usado aqui é o hodômetro automático do caminhão, o mesmo da troca de óleo. Se a pessoa perguntar sobre correia, pneus,
+desgaste, ou quando trocar alguma peça, use estes números. Item sem KM da última troca informado não dá pra calcular — nesse
+caso diga que falta informar, não invente.
+
 ADEQUAÇÃO DE CARROCERIA — REGRA DA CASA: toda a frota da RF Logística opera com BAÚ. Caminhão que ainda não está em baú
 é obra em andamento, não uma escolha — a empresa está convertendo todos. "Com sider" e "Sem baú" ainda NÃO têm carroceria
 fechada; "Baú comprado" já tem o baú pago e falta montar (dinheiro parado); "Baú em negociação" ainda está sendo comprado.
@@ -6351,6 +6460,16 @@ function rfDiagnosticoSistema() {
     if (ol.falta <= 0) add("alto", "Troca de óleo do " + v.placa + " VENCIDA — passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km do ponto.");
     else if (ol.falta <= avisoKm) add("medio", "Troca de óleo do " + v.placa + " a " + ol.falta.toLocaleString("pt-BR") + " km.");
   });
+  // v210: preventiva por KM (correia, pneus e o que estiver no plano)
+  try {
+    const pv = preventivaPendencias();
+    const venc = pv.filter(function (x) { return x.nivel === "vencido"; });
+    const perto = pv.filter(function (x) { return x.nivel !== "vencido"; });
+    if (venc.length) add("alto", venc.length + " item(ns) de manutenção VENCIDOS por KM: "
+      + venc.map(function (x) { return x.item + " do " + x.placa + " (passou " + Math.abs(x.falta).toLocaleString("pt-BR") + " km)"; }).join(", ") + ".");
+    if (perto.length) add("medio", perto.length + " item(ns) de manutenção chegando no ponto: "
+      + perto.map(function (x) { return x.item + " do " + x.placa + " (faltam " + x.falta.toLocaleString("pt-BR") + " km)"; }).join(", ") + ".");
+  } catch (e) {}
   // adequação de carroceria: a frota toda deve ser baú
   try {
     const pendBau = veiculosBauPendente();
@@ -8554,6 +8673,49 @@ function renderTabela() {
       }).join("") : `<div style="text-align:center;color:#777;padding:30px;border:1px dashed #333;border-radius:10px;">Nenhuma troca lançada. Clique em <b style="color:${GOLD};">+ Lançar troca de óleo</b>.</div>`}
 
       <!-- RESUMO DO MÊS POR CAMINHÃO -->
+      ${(function () {
+        // v210: plano de manutenção preventiva por KM (correia, pneus, o que mais entrar)
+        const itens = preventivaItens();
+        const aviso = preventivaAviso();
+        const vsP = veiculosComMes().filter(function (x) { return x.placa; });
+        const cel = function (v, it) {
+          const st = preventivaStatus(v, it);
+          const dados = (v.preventiva && v.preventiva[it.id]) || {};
+          let txt = '<span style="color:#555;">—</span>', cor = "#555";
+          if (st) {
+            if (st.falta <= 0) { txt = "🔴 passou " + Math.abs(st.falta).toLocaleString("pt-BR"); cor = "#C0392B"; }
+            else if (st.falta <= aviso) { txt = "🟡 " + st.falta.toLocaleString("pt-BR") + " km"; cor = GOLD; }
+            else { txt = "🟢 " + st.falta.toLocaleString("pt-BR") + " km"; cor = "#2E7D32"; }
+          }
+          return '<td><input type="number" min="0" placeholder="última troca km" value="' + esc(dados.ultimaKm != null ? dados.ultimaKm : "") + '" onchange="preventivaSet(\'' + v.id + '\',\'' + it.id + '\',\'ultimaKm\',this.value)" style="width:105px;">'
+            + '<div style="font-size:11px;font-weight:700;color:' + cor + ';margin-top:3px;">' + txt + '</div>'
+            + (st ? '<div style="font-size:10px;color:#666;">próx: ' + st.proximo.toLocaleString("pt-BR") + '</div>' : "") + '</td>';
+        };
+        return `<div style="margin-top:28px; font-size:16px; font-weight:800; color:${GOLD};">Manutenção preventiva por KM</div>
+        <div style="font-size:11px;color:#777;margin-bottom:10px;">Mesma lógica da troca de óleo, para os outros itens que se medem em quilometragem. O <b>KM atual</b> é o mesmo hodômetro automático — você só informa em que KM foi feita a última troca de cada item. Avisa faltando ${aviso.toLocaleString("pt-BR")} km.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+          ${itens.map(function (it) {
+            return `<span style="display:inline-flex;align-items:center;gap:5px;background:#151515;border:1px solid #2A2A2A;border-radius:6px;padding:4px 8px;">
+              <input value="${esc(it.nome)}" onchange="preventivaAtualizarItem('${it.id}','nome',this.value)" style="width:110px;font-size:12px;">
+              <span style="color:#666;font-size:11px;">a cada</span>
+              <input type="number" min="0" step="1000" value="${esc(it.intervalo)}" onchange="preventivaAtualizarItem('${it.id}','intervalo',this.value)" style="width:85px;font-size:12px;">
+              <span style="color:#666;font-size:11px;">km</span>
+              <button class="btn-del" style="font-size:11px;" onclick="preventivaRemoverItem('${it.id}')">✕</button>
+            </span>`;
+          }).join("")}
+          <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="preventivaAddItem()">+ Item</button>
+          <button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="exportarPreventivaExcel()">⬇ Exportar</button>
+        </div>
+        <table style="min-width:${420 + itens.length * 150}px;"><thead><tr>
+          <th>Placa</th><th>KM atual</th>${itens.map(function (it) { return "<th>" + esc(it.nome) + " (a cada " + Number(it.intervalo).toLocaleString("pt-BR") + " km)</th>"; }).join("")}
+        </tr></thead><tbody>
+          ${vsP.map(function (v) {
+            return "<tr><td style=\"font-weight:700;\">" + esc(v.placa) + "</td>"
+              + "<td style=\"color:#999;\">" + kmAtualVeiculo(v).toLocaleString("pt-BR") + "</td>"
+              + itens.map(function (it) { return cel(v, it); }).join("") + "</tr>";
+          }).join("")}
+        </tbody></table>`;
+      })()}
       <div style="margin-top:28px; font-size:16px; font-weight:800; color:${GOLD};">Gasto com óleo e filtros — ${mesLabel(state.mesAtivo)}</div>
       <div style="font-size:11px; color:#777; margin:4px 0 10px;">Soma das trocas lançadas no mês selecionado, por caminhão.</div>
       <table style="min-width:900px;"><thead><tr>
