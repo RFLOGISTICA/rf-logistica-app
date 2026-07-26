@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v198)</title>
+<title>RF Logística — Painel da Frota (v199)</title>
+<!-- v199: o assistente passa a EXPORTAR arquivos quando pedido. Ganhou o índice
+     dos documentos anexados por caminhão e das fotos de abastecimento, mais a
+     instrução de devolver "BAIXAR: caminho" que o front intercepta e baixa.
+     Não precisou republicar a Edge Function: usa o mesmo mecanismo de marcador
+     que ela já usa pra MEMORIA. -->
 <!-- v198: botões de BAIXAR que faltavam. Antes só dava pra abrir a foto/documento
      numa aba nova; pra mandar pro contador ou pro cliente não havia saída. Agora
      cada foto de abastecimento e cada documento tem um ⬇, mais um "⬇ Baixar
@@ -6080,6 +6085,32 @@ ${podeAlmox ? (linhasAlmox || "(nenhum item no estoque)") : "(sem permissão pra
 Vencimentos por veículo (emplacamento, seguro, cronotacógrafo, última revisão):
 ${podeVenc ? (linhasVencimentos || "(nenhum veículo cadastrado)") : "(sem permissão pra esta aba)"}
 
+ARQUIVOS ANEXADOS que você pode EXPORTAR pra pessoa (documentos por caminhão — CRLV, seguro, etc):
+${(function () {
+  var idx = state._docsIndex || {};
+  var placas = Object.keys(idx);
+  if (!placas.length) return "(nenhum documento anexado ainda, ou o índice ainda está carregando)";
+  return placas.map(function (pl) {
+    return "- " + pl + ": " + idx[pl].map(function (a) { return a.nome + " [" + a.caminho + "]"; }).join(" ; ");
+  }).join("\n");
+})()}
+
+FOTOS DE ABASTECIMENTO que você pode EXPORTAR (uma linha por abastecimento que tem foto):
+${(state.abastecimentos || []).filter(function (a) { return a.fotoKm || a.fotoBomba || a.fotoNota; }).slice(0, 40).map(function (a) {
+  var fs = [];
+  if (a.fotoKm) fs.push("painel/KM [" + a.fotoKm + "]");
+  if (a.fotoBomba) fs.push("visor da bomba [" + a.fotoBomba + "]");
+  if (a.fotoNota) fs.push("nota [" + a.fotoNota + "]");
+  return "- abastecimento " + a.id + " | " + (a.placa || "?") + " | " + (a.data || "?") + " | " + fs.join(" ; ");
+}).join("\n") || "(nenhum abastecimento com foto)"}
+
+COMO EXPORTAR UM ARQUIVO: quando a pessoa pedir pra baixar, exportar, mandar ou salvar um documento ou uma foto,
+responda normalmente em texto E termine a resposta com uma linha separada pra CADA arquivo, no formato exato:
+BAIXAR: <caminho completo do arquivo, exatamente como aparece entre colchetes nas listas acima>
+O sistema intercepta essas linhas, baixa os arquivos no aparelho da pessoa e some com elas da resposta — a pessoa
+não vê essa linha. Use SOMENTE caminhos que aparecem nas listas acima, nunca invente um caminho. No máximo 6 por vez.
+Se a pessoa pedir um arquivo que não está nas listas, diga que não encontrou aquele documento anexado.
+
 ABAS QUE ESTE USUÁRIO PODE VER: ${abasDoUsuario || "(nenhuma)"}
 Se ele perguntar sobre algo marcado acima como "(sem permissão pra esta aba)", NÃO invente e NÃO diga que o dado não existe — explique que esse módulo não está liberado no acesso dele e que o Renato pode liberar na aba Usuários.
 Nunca invente número que não esteja neste contexto. Se o dado não estiver aqui, diga que não recebeu essa informação.`;
@@ -6088,6 +6119,21 @@ function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
   if (!state._chatAberto) chatPararConversa();
   render();
+}
+/* v199: separa as linhas "BAIXAR: caminho" da resposta do assistente.
+   Mesmo mecanismo que a Edge Function ja usa pra "MEMORIA:" -- por isso nao
+   precisei republicar a funcao do assistente, so ensinar pelo contexto. */
+function chatExtrairDownloads(texto) {
+  var linhas = String(texto || "").split("\n");
+  var visiveis = [], caminhos = [];
+  linhas.forEach(function (l) {
+    var m = l.match(/^\s*BAIXAR:\s*(.+?)\s*$/i);
+    if (m && m[1]) {
+      var cam = m[1].replace(/^[\[<"']+|[\]>"']+$/g, "").trim();
+      if (cam && caminhos.length < 6 && cam.indexOf("..") === -1) caminhos.push(cam);
+    } else { visiveis.push(l); }
+  });
+  return { texto: visiveis.join("\n").trim(), caminhos: caminhos };
 }
 function chatEnviarPergunta() {
   const input = document.getElementById("chatInput");
@@ -6135,9 +6181,18 @@ function chatEnviarPergunta() {
             falarTexto(resposta, chatContinuarConversaSeAtivo);
             return;
           }
-          state._chatMensagens.push({ role: "assistant", content: resposta });
+          // v199: intercepta os pedidos de download que o assistente devolve
+          var baixados = chatExtrairDownloads(resposta);
+          var textoLimpo = baixados.texto;
+          if (baixados.caminhos.length) {
+            baixados.caminhos.forEach(function (cam, i) {
+              setTimeout(function () { rfBaixarArquivo(cam); }, i * 900);
+            });
+            textoLimpo = textoLimpo + "\n\n⬇ Baixando " + baixados.caminhos.length + " arquivo(s) — confira os downloads.";
+          }
+          state._chatMensagens.push({ role: "assistant", content: textoLimpo });
           render();
-          falarTexto(resposta, chatContinuarConversaSeAtivo);
+          falarTexto(textoLimpo, chatContinuarConversaSeAtivo);
         }).catch(function (e) { chatErro("Erro de conexão: " + e.message); });
     });
   });
@@ -8447,6 +8502,8 @@ revalidarSessaoAoAbrir();
       // criaria dívida em cima de state vazio e subiria lixo pra nuvem --
       // exatamente o bug de corrida corrigido na v118.
       try { gerarContasEmplacamento(); } catch (e) { console.error("[emplacamento]", e); }
+      // v199: monta o indice de documentos em segundo plano, sem travar a tela
+      setTimeout(function () { try { rfDocsIndexarTudo(); } catch (e) {} }, 2000);
       promoverReceitaRecorrente();
       migrarTrocasOleoFiltros();
       garantirAcesso();
@@ -9003,6 +9060,36 @@ function rfCrlvDesfazer() {
   if (o) o.innerHTML = '<span style="color:#999;font-size:12px;">↶ Desfeito — o cadastro voltou como estava.</span>';
 }
 
+/* ===== v199: ASSISTENTE PASSA A EXPORTAR ARQUIVOS ==========================
+   O assistente sabia de tudo do sistema menos dos ARQUIVOS anexados -- porque a
+   lista deles vem de uma chamada assincrona ao storage, e o contexto e montado
+   de forma sincrona. Resolvido com um indice em memoria, atualizado em segundo
+   plano e sempre que um documento sobe ou e excluido. */
+function rfDocsIndexarTudo() {
+  return rfGetClient().then(function (sb) {
+    if (!sb) return null;
+    var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
+    if (!placas.length) return null;
+    return Promise.all(placas.map(function (pl) {
+      return sb.storage.from(RF_BUCKET).list("documentos/" + pl, { limit: 100 })
+        .then(function (r) {
+          var arq = (r && r.data ? r.data : []).filter(function (f) { return f.name && f.name !== ".emptyFolderPlaceholder"; });
+          return { placa: pl, arquivos: arq.map(function (f) {
+            return { nome: f.name.replace(/^\d{10,}-/, ""), caminho: "documentos/" + pl + "/" + f.name,
+                     kb: Math.round(((f.metadata && f.metadata.size) || 0) / 1024) };
+          }) };
+        })
+        .catch(function () { return { placa: pl, arquivos: [] }; });
+    })).then(function (lista) {
+      var idx = {};
+      lista.forEach(function (x) { if (x.arquivos.length) idx[x.placa] = x.arquivos; });
+      state._docsIndex = idx;
+      state._docsIndexEm = Date.now();
+      return idx;
+    });
+  }).catch(function () { return null; });
+}
+
 function rfDocsUpload(input) {
   var placa = state.docPlaca || (state.veiculos[0] && state.veiculos[0].placa) || "";
   var st = document.getElementById("docsStatus");
@@ -9031,6 +9118,7 @@ function rfDocsUpload(input) {
       }
       input.value = "";
       rfDocsRenderLista(placa);
+      try { rfDocsIndexarTudo(); } catch (e) {}   // v199: assistente enxerga o arquivo novo
       return;
     }
     var f = files[i];
