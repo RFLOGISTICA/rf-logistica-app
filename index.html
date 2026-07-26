@@ -2,7 +2,23 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v192)</title>
+<title>RF Logística — Painel da Frota (v195)</title>
+<!-- v195: leitura do CRLV com dois caminhos automáticos. 1) PDF com camada de
+     texto (CRLV-e digital): extração exata pelo pdf.js, de graça. 2) PDF
+     escaneado ou FOTO do documento: pdf.js renderiza a página em 2x e manda pro
+     tipo "crlv" da Edge Function (gpt-5.4-mini), publicada na v5. Os dois
+     caminhos gravam pela MESMA função, com a mesma trava de placa divergente. -->
+<!-- v194: leitura do CRLV passa a APLICAR SOZINHA, sem clique de confirmação
+     (Renato pediu zero interferência dele; a conferência acontece na hora de
+     pagar). Preenche ano, modelo, RENAVAM, chassi, UF do emplacamento e, se o
+     campo estiver vazio, o próximo vencimento (emissão do CRLV + 1 ano).
+     Mantidas só duas travas: não aplica se a placa do documento não bater com o
+     caminhão aberto, e tem botão de desfazer. -->
+<!-- v193: leitura do CRLV direto do PDF, sem IA. O CRLV-e tem camada de texto,
+     então pdf.js extrai e um parser lê placa, RENAVAM, chassi, ano de fabricação,
+     ano modelo, exercício, marca/modelo e a UF do DETRAN emissor. Parser testado
+     contra os dois CRLVs reais do OTQ9B07. Nada é gravado sozinho: mostra o que
+     muda e só aplica quando o Renato confirma. Bloqueia se a placa não bater. -->
 <!-- v192: CAUSA DO "Failed to fetch" ENCONTRADA. O diagnóstico mostrou que enviar
      texto, JPEG e PDF funciona quando o blob é criado em memória. O arquivo do
      seletor é um File apoiado em content:// do Android: os primeiros bytes leem
@@ -187,6 +203,8 @@
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- v193: pdf.js para ler o texto do CRLV-e direto no navegador (sem IA, sem custo) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -8067,6 +8085,7 @@ function renderTabela() {
           <button class="btn-outline" style="font-size:11px;padding:5px 12px;" onclick="rfDesativarSW()">♻ Remover service worker e recarregar</button>
         </div>
         <div id="docsDiag" style="font-size:12px;color:#bbb;margin-top:8px;line-height:1.7;"></div>
+        <div id="docsCrlv"></div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Fotos são compactadas automaticamente (~4MB → ~300KB). PDFs são enviados como estão.</div>
       </div>
       ${vSel ? `
@@ -8552,7 +8571,7 @@ function rfDocsPreparar(file, statusFn) {
     if (/^image\//.test(ct)) {
       if (statusFn) statusFn("compactando " + file.name + "...");
       return rfComprimirImagem(file)
-        .then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
+        .then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg", imagem: true }; })
         .catch(function () {
           return rfDocsMaterializar(file).then(function (b) { return { blob: b, ext: ext, ct: ct }; });
         });
@@ -8560,7 +8579,7 @@ function rfDocsPreparar(file, statusFn) {
     // v192: PDF e demais tipos passam a ser materializados em memória também.
     if (statusFn) statusFn("preparando " + file.name + "...");
     return rfDocsMaterializar(file).then(function (b) {
-      if (ct === "application/pdf") return { blob: b, ext: "pdf", ct: "application/pdf" };
+      if (ct === "application/pdf") return { blob: b, ext: "pdf", ct: "application/pdf", pdf: true };
       return { blob: b, ext: ext || "bin", ct: ct || "application/octet-stream", desconhecido: !s && !file.type };
     });
   });
@@ -8589,7 +8608,10 @@ function rfDocsEnviar(placa, file, statusFn) {
           throw e;
         });
       }
-      return tentar(0);
+      return tentar(0).then(function (caminho) {
+        // v193/v195: guarda o blob em memória pra leitura do CRLV logo depois
+        return { path: caminho, blob: p.blob, pdf: !!p.pdf, imagem: !!p.imagem };
+      });
     });
   });
 }
@@ -8660,6 +8682,223 @@ function rfDocsDiagnostico() {
   });
 }
 
+/* ===== v193: LEITURA DO CRLV DIRETO DO PDF =================================
+   O CRLV-e do SENATRAN é PDF com camada de texto -- não é imagem escaneada.
+   Então dá pra ler os campos SEM IA: sem depender da Edge Function
+   `ler-foto-abastecimento` (que não conhece o tipo "crlv"), sem custo de API e
+   sem risco de a IA "achar" um número errado que vira conta a pagar.
+   O parser abaixo foi testado contra os dois CRLVs reais do OTQ9B07 (o do PA,
+   exercício 2025, e o da BA, exercício 2026) e acertou todos os campos críticos.
+   NADA é gravado sozinho: o resultado aparece na tela pra conferência e só entra
+   no cadastro quando o Renato clica em aplicar. */
+function rfCrlvExtrairTexto(blob) {
+  return new Promise(function (resolve, reject) {
+    if (!window.pdfjsLib) { reject(new Error("leitor de PDF não carregou (verifique a internet)")); return; }
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      var fr = new FileReader();
+      fr.onload = function () {
+        pdfjsLib.getDocument({ data: new Uint8Array(fr.result) }).promise.then(function (doc) {
+          var paginas = [];
+          for (var i = 1; i <= Math.min(doc.numPages, 3); i++) paginas.push(i);
+          return Promise.all(paginas.map(function (n) {
+            return doc.getPage(n).then(function (pg) {
+              return pg.getTextContent().then(function (tc) {
+                // Reagrupa por linha usando a coordenada Y, senão tudo vira uma linha só
+                var linhas = {}, ordem = [];
+                tc.items.forEach(function (it) {
+                  var y = Math.round((it.transform && it.transform[5]) || 0);
+                  if (!linhas[y]) { linhas[y] = []; ordem.push(y); }
+                  linhas[y].push({ x: (it.transform && it.transform[4]) || 0, s: it.str });
+                });
+                ordem.sort(function (a, b) { return b - a; });
+                return ordem.map(function (y) {
+                  return linhas[y].sort(function (a, b) { return a.x - b.x; })
+                    .map(function (o) { return o.s; }).join(" ").replace(/\s+/g, " ").trim();
+                }).join("\n");
+              });
+            });
+          })).then(function (txts) { resolve(txts.join("\n")); });
+        }).catch(reject);
+      };
+      fr.onerror = function () { reject(new Error("não consegui ler o PDF")); };
+      fr.readAsArrayBuffer(blob);
+    } catch (e) { reject(e); }
+  });
+}
+function rfCrlvParse(txt) {
+  var T = String(txt || "").replace(/\u00a0/g, " ");
+  var U = T.toUpperCase();
+  var r = { ehCrlv: /CERTIFICADO DE REGISTRO E LICENCIAMENTO/.test(U) }, m;
+  m = U.match(/DETRAN[\s\-]*([A-Z]{2})\b/);            if (m) r.uf = m[1];
+  m = U.match(/\b([A-Z]{3}\d[A-Z]\d{2})\b/) || U.match(/\b([A-Z]{3}\d{4})\b/); if (m) r.placa = m[1];
+  m = U.match(/\b([A-HJ-NPR-Z0-9]{17})\b/);            if (m) r.chassi = m[1];
+  // Dois anos na MESMA linha = fabricação e modelo. Com \s+ solto, o exercício da
+  // linha de cima casava com o ano de fabricação da de baixo e devolvia par errado.
+  m = U.match(/^[ \t]*(19\d{2}|20\d{2})[ \t]+(19\d{2}|20\d{2})[ \t]*$/m);
+  if (m) { r.anoFab = m[1]; r.anoModelo = m[2]; }
+  if (r.placa) { m = U.match(new RegExp(r.placa + "\\s+(20\\d{2})")); if (m) r.exercicio = m[1]; }
+  m = U.match(/\b([A-Z]{2,}\/[A-Z0-9][A-Z0-9 .\-]{2,30})\s*$/m); if (m) r.marcaModelo = m[1].trim();
+  m = U.match(/\b(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\b/);          if (m) r.cnpj = m[1];
+  m = U.match(/\b(BRANCA|PRATA|PRETA|VERMELHA|AZUL|CINZA|VERDE|AMARELA)\s+(DIESEL|GASOLINA|ALCOOL|FLEX|ELETRICO)\b/);
+  if (m) { r.cor = m[1]; r.combustivel = m[2]; }
+  m = U.match(/EM\s+(\d{2}\/\d{2}\/\d{4})/);                      if (m) r.emitidoEm = m[1];
+  var onzes = U.match(/\b\d{11}\b/g) || [];                        if (onzes.length) r.renavam = onzes[0];
+  if (/CARGA\s+CAMINHAO/.test(U)) r.especie = "CARGA/CAMINHAO";
+  return r;
+}
+/* v195: CAMINHO 2 -- documento sem camada de texto (CRLV escaneado ou foto).
+   O pdf.js renderiza a primeira página como imagem e manda pro tipo "crlv" da
+   Edge Function `ler-foto-abastecimento` (publicada na v5, usa gpt-5.4-mini).
+   A extração de texto continua sendo o caminho principal: quando o PDF é o
+   CRLV-e digital, ela é exata e de graça. A IA entra só onde não há texto. */
+function rfCrlvRenderizarImagem(blob) {
+  return new Promise(function (resolve, reject) {
+    if (!window.pdfjsLib) { reject(new Error("leitor de PDF não carregou")); return; }
+    var fr = new FileReader();
+    fr.onload = function () {
+      pdfjsLib.getDocument({ data: new Uint8Array(fr.result) }).promise.then(function (doc) {
+        return doc.getPage(1).then(function (pg) {
+          // escala 2x: o CRLV tem fonte pequena, em 1x a IA erra dígito
+          var vp = pg.getViewport({ scale: 2 });
+          var cv = document.createElement("canvas");
+          cv.width = vp.width; cv.height = vp.height;
+          return pg.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise.then(function () {
+            resolve(cv.toDataURL("image/jpeg", 0.85).split(",")[1] || "");
+          });
+        });
+      }).catch(reject);
+    };
+    fr.onerror = function () { reject(new Error("não consegui ler o PDF")); };
+    fr.readAsArrayBuffer(blob);
+  });
+}
+function rfCrlvBlobParaBase64(blob) {
+  return new Promise(function (resolve, reject) {
+    var fr = new FileReader();
+    fr.onload = function () { resolve(String(fr.result || "").split(",")[1] || ""); };
+    fr.onerror = function () { reject(new Error("não consegui ler a imagem")); };
+    fr.readAsDataURL(blob);
+  });
+}
+function rfCrlvViaIA(base64, mime) {
+  return new Promise(function (resolve, reject) {
+    if (!base64) { reject(new Error("imagem vazia")); return; }
+    rfGetClient().then(function (sb) {
+      if (!sb) { reject(new Error("sem conexão")); return; }
+      sb.auth.getSession().then(function (res) {
+        var token = res.data && res.data.session && res.data.session.access_token;
+        if (!token) { reject(new Error("sessão expirada")); return; }
+        fetch(RF_SB_URL + "/functions/v1/ler-foto-abastecimento", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ imagemBase64: base64, mimeType: mime || "image/jpeg", tipo: "crlv" }),
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          if (!j || j.erro || j.error) { reject(new Error((j && (j.erro || j.error)) || "resposta vazia")); return; }
+          resolve(j);
+        }).catch(reject);
+      }).catch(reject);
+    }).catch(reject);
+  });
+}
+var _rfCrlvDesfazer = null;   // v194: cópia dos valores anteriores, pra desfazer
+// Aplica os dados lidos no cadastro do caminhão aberto. Usado pelos DOIS
+// caminhos (texto e IA), pra a regra de gravação ser exatamente a mesma.
+function rfCrlvAplicarDados(d, origem) {
+  var out = document.getElementById("docsCrlv");
+  var v = state.veiculos.find(function (x) { return x.placa === state.docPlaca; });
+  if (!v || !out) return;
+  if (d.placa && v.placa && d.placa !== v.placa) {
+    out.innerHTML = '<div style="padding:10px;border:1px solid #C0392B;border-radius:8px;background:#1A0E0E;font-size:12px;color:#F5A9A9;">'
+      + '⚠ <b>Placa do documento não bate.</b> O CRLV é do <b>' + esc(d.placa) + '</b>, mas você está no cadastro do <b>' + esc(v.placa) + '</b>. '
+      + 'Não preenchi nada — o documento subiu, mas confira se anexou no caminhão certo.</div>';
+    return;
+  }
+  var mudou = [], antes = {};
+  function aplica(rot, campo, novo, obs) {
+    if (novo == null || novo === "") return;
+    var atual = v[campo];
+    if (String(atual == null ? "" : atual) === String(novo)) return;
+    antes[campo] = atual; v[campo] = novo;
+    mudou.push({ rot: rot, atual: (atual == null || String(atual).trim() === "") ? null : atual, novo: novo, obs: obs || "" });
+  }
+  aplica("Ano de fabricação", "ano", d.anoFab, "decide isenção de IPVA");
+  aplica("Modelo", "modelo", d.marcaModelo);
+  aplica("RENAVAM", "renavam", d.renavam);
+  aplica("Chassi", "chassi", d.chassi);
+  aplica("UF do emplacamento", "ufEmplacamento", d.uf, "define taxa e alíquota");
+  if (d.emitidoEm && (!v.emplacamento || String(v.emplacamento).trim() === "")) {
+    var pp = String(d.emitidoEm).split("/");
+    if (pp.length === 3 && pp[2].length === 4) {
+      antes.emplacamento = v.emplacamento;
+      v.emplacamento = (parseInt(pp[2], 10) + 1) + "-" + pp[1] + "-" + pp[0];
+      mudou.push({ rot: "Vencimento do emplacamento", atual: null, novo: v.emplacamento, obs: "estimado: emissão do CRLV + 1 ano" });
+    }
+  }
+  _rfCrlvDesfazer = mudou.length ? { placa: v.placa, antes: antes } : null;
+  if (mudou.length) { salvar(); render(); }
+  var out2 = document.getElementById("docsCrlv");
+  if (!out2) return;
+  var linhas = mudou.map(function (c) {
+    return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;padding:3px 0;border-bottom:1px solid #1c1c1c;">'
+      + '<span style="min-width:170px;color:#999;">' + esc(c.rot) + '</span>'
+      + (c.atual != null ? '<span style="color:#C0392B;text-decoration:line-through;">' + esc(c.atual) + '</span> <span style="color:#666;">→</span> ' : '')
+      + '<b style="color:#2E7D32;">' + esc(c.novo) + '</b>'
+      + (c.obs ? ' <span style="color:#666;font-size:11px;">(' + esc(c.obs) + ')</span>' : '') + '</div>';
+  }).join("");
+  var selo = origem === "ia"
+    ? '<span style="font-size:10px;color:#8a6d1f;border:1px solid #8a6d1f;border-radius:4px;padding:1px 5px;margin-left:6px;">lido por IA</span>'
+    : '<span style="font-size:10px;color:#2E7D32;border:1px solid #2E7D32;border-radius:4px;padding:1px 5px;margin-left:6px;">texto do PDF</span>';
+  out2.innerHTML = '<div style="margin-top:10px;padding:12px;border:1px solid #2E7D32;border-radius:8px;background:#0E0E0E;">'
+    + '<div style="font-size:12px;font-weight:800;color:#2E7D32;margin-bottom:8px;">✔ CRLV de ' + esc(d.placa || v.placa)
+    + (d.exercicio ? ' (exercício ' + esc(d.exercicio) + ')' : '') + (d.uf ? ' — DETRAN-' + esc(d.uf) : '') + ' aplicado sozinho' + selo + '</div>'
+    + (mudou.length ? '<div style="font-size:12px;">' + linhas + '</div>'
+      + '<button class="btn-outline" style="margin-top:10px;font-size:11px;padding:5px 12px;" onclick="rfCrlvDesfazer()">↶ desfazer</button>'
+      : '<div style="font-size:12px;color:#999;">O cadastro já batia com o documento — nada mudou.</div>')
+    + (origem === "ia" ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Documento sem camada de texto, então foi lido por IA a partir da imagem. Campos ilegíveis ficam em branco em vez de serem chutados.</div>' : '')
+    + (d.exercicio ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Este CRLV comprova o licenciamento <b>' + esc(d.exercicio) + '</b> já pago; o próximo vencimento é o do ano seguinte.</div>' : '')
+    + '</div>';
+}
+function rfCrlvAnalisar(blob, nomeArq, ehImagem) {
+  var out = document.getElementById("docsCrlv");
+  if (!out) return;
+  out.innerHTML = '<span style="color:' + GOLD + ';font-size:12px;">🔎 lendo o documento...</span>';
+  function caiPraIA(motivo) {
+    var o = document.getElementById("docsCrlv");
+    if (o) o.innerHTML = '<span style="color:' + GOLD + ';font-size:12px;">🤖 sem texto no arquivo — mandando pra IA ler a imagem...</span>';
+    var prep = ehImagem ? rfCrlvBlobParaBase64(blob) : rfCrlvRenderizarImagem(blob);
+    return prep.then(function (b64) { return rfCrlvViaIA(b64, "image/jpeg"); })
+      .then(function (d) {
+        if (!d || !d.placa) {
+          var o2 = document.getElementById("docsCrlv");
+          if (o2) o2.innerHTML = '<span style="color:#777;font-size:12px;">Documento anexado. A IA não reconheceu um CRLV nele, então não preenchi nada.</span>';
+          return;
+        }
+        rfCrlvAplicarDados(d, "ia");
+      })
+      .catch(function (e) {
+        var o3 = document.getElementById("docsCrlv");
+        if (o3) o3.innerHTML = '<span style="color:#C0392B;font-size:12px;">Documento anexado, mas não consegui ler os dados: ' + esc(e.message || e) + '</span>';
+      });
+  }
+  if (ehImagem) { caiPraIA("imagem"); return; }
+  rfCrlvExtrairTexto(blob).then(function (txt) {
+    var d = rfCrlvParse(txt);
+    if (d.ehCrlv && d.placa) { rfCrlvAplicarDados(d, "texto"); return; }
+    caiPraIA("sem texto util");   // PDF escaneado: sem camada de texto
+  }).catch(function () { caiPraIA("falha na extracao"); });
+}
+function rfCrlvDesfazer() {
+  if (!_rfCrlvDesfazer) return;
+  var v = state.veiculos.find(function (x) { return x.placa === _rfCrlvDesfazer.placa; });
+  if (!v) return;
+  Object.keys(_rfCrlvDesfazer.antes).forEach(function (k) { v[k] = _rfCrlvDesfazer.antes[k]; });
+  _rfCrlvDesfazer = null;
+  salvar(); render();
+  var o = document.getElementById("docsCrlv");
+  if (o) o.innerHTML = '<span style="color:#999;font-size:12px;">↶ Desfeito — o cadastro voltou como estava.</span>';
+}
+
 function rfDocsUpload(input) {
   var placa = state.docPlaca || (state.veiculos[0] && state.veiculos[0].placa) || "";
   var st = document.getElementById("docsStatus");
@@ -8693,7 +8932,16 @@ function rfDocsUpload(input) {
     var f = files[i];
     if (st) { st.style.color = "#D4A017"; st.textContent = "Enviando " + (i + 1) + "/" + files.length + ": " + f.name + " (" + rfDocsTamanhoStr(f.size) + ")..."; }
     rfDocsEnviar(placa, f, function (m) { if (st) st.textContent = m; })
-      .then(function () { ok++; i++; next(); })
+      .then(function (res) {
+        ok++;
+        // v193: se for PDF, tenta ler o CRLV e propor o preenchimento
+        // v195: PDF vai pela extração de texto (com IA de reserva); FOTO do
+        // documento vai direto pra IA, porque imagem não tem texto pra extrair.
+        if (res && res.blob && (res.pdf || res.imagem)) {
+          try { rfCrlvAnalisar(res.blob, f.name, !!res.imagem); } catch (e) { console.error("[crlv]", e); }
+        }
+        i++; next();
+      })
       .catch(function (e) {
         var msg = (e && (e.message || e.error || e.statusCode)) ? (e.message || e.error || e.statusCode) : String(e);
         if (e && e.__rfTransporte) houveTransporte = true;
