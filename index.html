@@ -2,7 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v185)</title>
+<title>RF Logística — Painel da Frota (v187)</title>
+<!-- v187: emplacamento vira conta a pagar. Cada veículo ganha licenciamento
+     (R$181,13 DETRAN-BA/2026), valor venal + IPVA 1% de carga com isenção
+     automática pra 15+ anos (Lei 6.348/91), extras e total, marcado
+     estimado/confirmado. Faltando N dias (padrão 10) o total entra sozinho em
+     Dívidas Fixas, 1 parcela no mês do vencimento, chave placa+ano pra nunca
+     duplicar. Assistente atualizado junto (regra permanente). -->
+<!-- v186: aba Documentos. A mensagem "✔ N arquivo(s) enviado(s)" era escrita mesmo
+     quando o upload falhava (rodava depois do catch e apagava o erro da tela) --
+     por isso aparecia "enviado" com a lista vazia. Agora conta só o que subiu de
+     verdade e mostra o erro real. Upload passou pra pasta "documentos/<PLACA>/",
+     igual aos outros uploads que funcionam; a listagem lê as duas pastas. -->
 <!-- v185: retiradas as 2 fotos extras do abastecimento (comprovante de pagamento e
      Pix do posto) -- os motoristas não se adaptaram. Voltou a exigir só as 3 de
      sempre: painel/KM, visor da bomba e nota. As fotos de quem já mandou continuam
@@ -792,6 +803,8 @@ function garantirConfig() {
   if (state.config.avisoBoletoDias == null) state.config.avisoBoletoDias = 5;          // v48: antecedência do alerta
   if (!state.config.dividasPagas || typeof state.config.dividasPagas !== "object") state.config.dividasPagas = {}; // v48: { "AAAA-MM": { dividaId: true } }
   if (state.config.avisoOleoKm == null) state.config.avisoOleoKm = 1000;               // v49: avisar troca de óleo faltando X km
+  if (state.config.emplAvisoDias == null) state.config.emplAvisoDias = 10;             // v187: lança emplacamento em contas a pagar faltando X dias
+  if (state.config.taxaLicenciamento == null) state.config.taxaLicenciamento = TAXA_LICENCIAMENTO_BA_2026; // v187: taxa DETRAN-BA (reajusta todo ano)
 }
 function impostoPctNum() { garantirConfig(); return Number(state.config.impostoPct) || 0; }
 function impostoFator() { return impostoPctNum() / 100; }
@@ -2321,6 +2334,98 @@ function exportarOleoExcel() {
   });
   exportarCSV("rf-frota-oleo-" + new Date().toISOString().slice(0, 10) + ".csv", cab, linhas);
 }
+/* ===== v187: EMPLACAMENTO COMO CONTA A PAGAR ================================
+   Taxa de licenciamento DETRAN-BA: valor fixo por veículo, reajustado todo ano.
+   Referência pesquisada para 2026: R$ 181,13 (editável em state.config).
+   IPVA na Bahia: caminhão de carga paga 1% sobre o valor venal (FIPE).
+   Veículo com 15 anos ou mais de fabricação é ISENTO de IPVA na Bahia
+   (Lei 6.348/91, art. 4º, XI) -- por isso a idade entra na conta.
+   O valor estimado NUNCA substitui o boleto: serve pra projetar caixa. Quando o
+   boleto real chega, o valor digitado manda e o campo fica marcado confirmado. */
+var TAXA_LICENCIAMENTO_BA_2026 = 181.13;
+var IPVA_ALIQUOTA_CARGA_BA = 0.01;
+var IPVA_ISENCAO_ANOS_BA = 15;
+
+function taxaLicenciamentoAtual() {
+  const c = (state.config && Number(state.config.taxaLicenciamento)) || 0;
+  return c > 0 ? c : TAXA_LICENCIAMENTO_BA_2026;
+}
+// Valor venal de referência, só usado quando o real não foi preenchido.
+// Depreciação simples de 6% ao ano sobre uma base por tipo. Número grosseiro de
+// propósito -- projeta caixa, não declara imposto.
+function valorVenalRef(v) {
+  if (Number(v.emplValorVenal) > 0) return Number(v.emplValorVenal);
+  const ano = Number(v.ano) || 0;
+  if (!ano) return 0;
+  const base = (v.tipo === "Toco") ? 240000 : 190000;
+  const idade = Math.max(0, (new Date().getFullYear()) - ano);
+  return Math.max(45000, Math.round(base * Math.pow(0.94, idade)));
+}
+// Conta completa do emplacamento de um veículo.
+function emplacamentoCalc(v) {
+  const lic = taxaLicenciamentoAtual();
+  const ano = Number(v.ano) || 0;
+  const idade = ano ? ((new Date().getFullYear()) - ano) : null;
+  const isento = idade !== null && idade >= IPVA_ISENCAO_ANOS_BA;
+  let ipva = 0, venal = 0;
+  if (!isento) {
+    if (v.emplIpva !== "" && v.emplIpva != null && Number(v.emplIpva) > 0) {
+      ipva = Number(v.emplIpva) || 0;               // IPVA real, digitado do boleto
+    } else {
+      venal = valorVenalRef(v);
+      ipva = Math.round(venal * IPVA_ALIQUOTA_CARGA_BA * 100) / 100;
+    }
+  }
+  const extras = Number(v.emplExtras) || 0;         // multas, vistoria, despachante
+  return {
+    licenciamento: lic, ipva: ipva, venal: venal, extras: extras,
+    isento: isento, idade: idade, semAno: !ano,
+    total: Math.round((lic + ipva + extras) * 100) / 100,
+    confirmado: !!v.emplConfirmado,
+  };
+}
+function chaveEmplacamento(v) {
+  return "empl-" + (v.placa || "sem-placa") + "-" + ((v.emplacamento || "").slice(0, 4) || "????");
+}
+function emplacamentoJaLancado(v) {
+  const ch = chaveEmplacamento(v);
+  return (state.dividas || []).find((d) => d.emplChave === ch) || null;
+}
+/* Lança em Dívidas Fixas o emplacamento que está a menos de X dias de vencer.
+   IDEMPOTENTE: a chave placa+ano do vencimento é gravada na própria dívida, então
+   pode rodar mil vezes que nunca duplica. Se o Renato apagar a dívida à mão, ela
+   volta -- é o comportamento certo, porque o emplacamento continua devido. */
+function gerarContasEmplacamento() {
+  if (!state.veiculos || !state.dividas) return 0;
+  const janela = (state.config && Number(state.config.emplAvisoDias) > 0) ? Number(state.config.emplAvisoDias) : 10;
+  let lancou = 0;
+  state.veiculos.forEach((v) => {
+    if (!v.placa || !v.emplacamento) return;
+    const dias = diasPara(v.emplacamento);
+    if (dias === null || dias > janela || dias < -180) return;
+    if (emplacamentoJaLancado(v)) return;
+    const c = emplacamentoCalc(v);
+    if (!(c.total > 0)) return;
+    state.dividas.push({
+      id: uid(),
+      descricao: "Emplacamento " + v.placa + " (" + (v.emplacamento || "").slice(0, 4) + ")" + (c.confirmado ? "" : " — estimado"),
+      valorMes: c.total,
+      parcelasTotal: "1",
+      mesInicio: (v.emplacamento || "").slice(0, 7),
+      diaVencimento: String(parseInt((v.emplacamento || "").slice(8, 10), 10) || ""),
+      obs: "Lançado automaticamente faltando " + dias + " dia(s). Licenciamento " + fmtR(c.licenciamento)
+        + (c.isento ? " + IPVA isento (veículo com " + c.idade + " anos)" : " + IPVA " + fmtR(c.ipva))
+        + (c.extras ? " + extras " + fmtR(c.extras) : "")
+        + (c.confirmado ? " — valor CONFIRMADO no boleto." : " — valor ESTIMADO, conferir no boleto do DETRAN."),
+      historicoValor: [], historicoCampos: {},
+      emplChave: chaveEmplacamento(v), emplAuto: true, emplEstimado: !c.confirmado,
+    });
+    lancou++;
+  });
+  if (lancou) salvar();
+  return lancou;
+}
+
 // Alertas de veículo p/ o topo: emplacamento vencendo (≤30d) e óleo faltando ≤ aviso (ou vencido).
 function alertasVeiculos() {
   garantirConfig();
@@ -5769,6 +5874,12 @@ function gerarContextoAssistente() {
       partes.push(`${rot} ${data} (${d < 0 ? "VENCIDO há " + Math.abs(d) + " dia(s)" : (d === 0 ? "vence HOJE" : "faltam " + d + " dia(s)")})`);
     };
     add("emplacamento", v.emplacamento);
+    if (v.emplacamento) { // v187
+      const cE = emplacamentoCalc(v);
+      partes.push("custo do emplacamento " + fmtR(cE.total) + (cE.confirmado ? " (CONFIRMADO no boleto)" : " (ESTIMADO: licenciamento + IPVA, não é o boleto real)")
+        + (cE.isento ? ", isento de IPVA por ter " + cE.idade + " anos" : ""));
+      partes.push(emplacamentoJaLancado(v) ? "já lançado em Dívidas Fixas" : "ainda NÃO lançado em contas a pagar");
+    }
     add("seguro", v.venctoSeguro);
     add("cronotacógrafo", v.venctoCronotacografo);
     add("última revisão", v.ultimaRevisao);
@@ -7907,6 +8018,45 @@ function renderTabela() {
             <input type="date" value="${esc(vSel.emplacamento || "")}" onchange="atualizarVeiculo('${vSel.id}','emplacamento',this.value)">
             ${emplBadge}
           </div>
+          ${(function () {
+            const c = emplacamentoCalc(vSel);
+            const janela = (state.config && Number(state.config.emplAvisoDias)) || 10;
+            const lancado = emplacamentoJaLancado(vSel);
+            let situacao;
+            if (lancado) situacao = `<span style="color:#2E7D32;font-weight:700;">✔ Já lançado em Dívidas Fixas</span> <span style="color:#777;">— ${fmtR(Number(lancado.valorMes) || 0)}, mês ${esc(lancado.mesInicio || "")}</span>`;
+            else if (dEmpl === null) situacao = `<span style="color:#777;">Cadastre a data de vencimento pra ativar o lançamento automático.</span>`;
+            else if (!(c.total > 0)) situacao = `<span style="color:#C0392B;font-weight:700;">⚠ Sem valor calculável</span> <span style="color:#777;">— preencha o ano do veículo.</span>`;
+            else if (dEmpl <= janela) situacao = `<span style="color:${GOLD};font-weight:700;">Entra em Dívidas Fixas no próximo carregamento do sistema.</span>`;
+            else situacao = `<span style="color:#999;">Lança sozinho daqui a <b style="color:${GOLD};">${dEmpl - janela} dia(s)</b>.</span>`;
+            return `<div style="flex-basis:100%;height:0;"></div>
+            <div style="flex:1;min-width:320px;border-left:3px solid ${GOLD};padding-left:14px;margin-top:10px;">
+              <div style="font-size:11px;color:${GOLD};text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Custo do emplacamento</div>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+                <div><div style="font-size:10px;color:#999;">Licenciamento (DETRAN-BA)</div>
+                  <div style="font-size:14px;font-weight:700;color:#bbb;padding:6px 0;">${fmtR(c.licenciamento)}</div></div>
+                <div><div style="font-size:10px;color:#999;">Valor venal (FIPE)</div>
+                  <input type="number" min="0" step="100" value="${esc(vSel.emplValorVenal != null && vSel.emplValorVenal !== "" ? vSel.emplValorVenal : "")}" placeholder="${c.venal || 0}" ${c.isento ? "disabled" : ""} onchange="atualizarVeiculo('${vSel.id}','emplValorVenal',this.value)" style="width:120px;"></div>
+                <div><div style="font-size:10px;color:#999;">IPVA (1% carga)</div>
+                  <input type="number" min="0" step="0.01" value="${esc(vSel.emplIpva != null && vSel.emplIpva !== "" ? vSel.emplIpva : "")}" placeholder="${c.isento ? "isento" : c.ipva.toFixed(2)}" ${c.isento ? "disabled" : ""} onchange="atualizarVeiculo('${vSel.id}','emplIpva',this.value)" style="width:110px;" title="Digite o IPVA real do boleto se souber"></div>
+                <div><div style="font-size:10px;color:#999;">Extras (multas, vistoria)</div>
+                  <input type="number" min="0" step="0.01" value="${esc(vSel.emplExtras != null && vSel.emplExtras !== "" ? vSel.emplExtras : "")}" placeholder="0,00" onchange="atualizarVeiculo('${vSel.id}','emplExtras',this.value)" style="width:110px;"></div>
+                <div style="text-align:right;min-width:150px;">
+                  <div style="font-size:10px;color:#999;">Total a pagar</div>
+                  <div style="font-size:20px;font-weight:800;color:${c.confirmado ? "#2E7D32" : GOLD};">${fmtR(c.total)}</div>
+                  <div style="font-size:10px;color:${c.confirmado ? "#2E7D32" : "#8a6d1f"};">${c.confirmado ? "confirmado no boleto" : "estimativa"}</div>
+                </div>
+              </div>
+              <label style="font-size:11px;color:#bbb;display:inline-flex;align-items:center;gap:5px;cursor:pointer;margin-top:8px;">
+                <input type="checkbox" ${vSel.emplConfirmado ? "checked" : ""} onchange="atualizarVeiculo('${vSel.id}','emplConfirmado',this.checked)"> valor confirmado no boleto do DETRAN
+              </label>
+              <div style="font-size:11px;color:#777;margin-top:6px;">
+                ${c.semAno ? `⚠ <b style="color:#C0392B;">Preencha o ano</b> pra eu calcular o IPVA.`
+                  : (c.isento ? `IPVA <b style="color:#2E7D32;">isento</b> — veículo com ${c.idade} anos (na Bahia, 15+ anos não paga IPVA).`
+                    : `IPVA estimado em 1% sobre ${fmtR(c.venal)}. Digite o valor real assim que o boleto chegar.`)}
+              </div>
+              <div style="font-size:11px;margin-top:4px;">${situacao}</div>
+            </div>`;
+          })()}
         </div>
         <div style="font-size:11px;color:#666;margin-top:10px;">O sistema avisa no topo do painel <b>com 1 mês de antecedência</b> (e quando vencido) do emplacamento de cada veículo.</div>
       </div>` : ""}
@@ -8105,6 +8255,10 @@ revalidarSessaoAoAbrir();
       migrarFrotaMes();
       migrarIdsViagens();
       normalizarIdsTudo();
+      // v187: só aqui, DEPOIS da caixa geral carregar de verdade. Rodar antes
+      // criaria dívida em cima de state vazio e subiria lixo pra nuvem --
+      // exatamente o bug de corrida corrigido na v118.
+      try { gerarContasEmplacamento(); } catch (e) { console.error("[emplacamento]", e); }
       promoverReceitaRecorrente();
       migrarTrocasOleoFiltros();
       garantirAcesso();
@@ -8259,7 +8413,11 @@ function rfDocsEnviar(placa, file, statusFn) {
       : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
     return prep.then(function (p) {
       var base = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "arquivo";
-      var path = placa + "/" + Date.now() + "-" + base + "." + p.ext;
+      // v186: passa a gravar em "documentos/<PLACA>/..." em vez de "<PLACA>/..." na raiz.
+      // Todo upload que FUNCIONA no sistema (conferencia/, viagemfim/, abastecimentos/)
+      // usa uma pasta nomeada na raiz -- só os documentos gravavam direto na raiz com
+      // o nome da placa, que é justamente o que uma policy de storage por prefixo barra.
+      var path = "documentos/" + placa + "/" + Date.now() + "-" + base + "." + p.ext;
       return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
         return path;
@@ -8274,19 +8432,32 @@ function rfDocsUpload(input) {
   if (!placa) { if (st) st.textContent = "⚠ Cadastre/selecione um veículo primeiro."; return; }
   var files = Array.prototype.slice.call(input.files || []);
   if (!files.length) return;
-  var i = 0;
+  var i = 0, ok = 0, erros = [];
   function next() {
     if (i >= files.length) {
-      if (st) st.textContent = "✔ " + files.length + " arquivo(s) enviado(s).";
+      // v186: BUG CORRIGIDO — antes esta linha escrevia "✔ N arquivo(s) enviado(s)"
+      // mesmo quando TODOS falhavam, porque rodava depois do catch e apagava a
+      // mensagem de erro da tela. O usuário via "enviado" e lista vazia.
+      // Agora só conta o que realmente subiu e o erro fica visível.
+      if (st) {
+        if (ok && !erros.length) { st.style.color = "#2E7D32"; st.textContent = "✔ " + ok + " arquivo(s) enviado(s)."; }
+        else if (ok && erros.length) { st.style.color = "#D4A017"; st.textContent = "⚠ " + ok + " enviado(s), " + erros.length + " falhou(aram): " + erros.join(" | "); }
+        else { st.style.color = "#C0392B"; st.textContent = "❌ NENHUM arquivo foi enviado. Erro: " + erros.join(" | "); }
+      }
       input.value = "";
       rfDocsRenderLista(placa);
       return;
     }
     var f = files[i];
-    if (st) st.textContent = "Enviando " + (i + 1) + "/" + files.length + ": " + f.name + "...";
+    if (st) { st.style.color = "#D4A017"; st.textContent = "Enviando " + (i + 1) + "/" + files.length + ": " + f.name + "..."; }
     rfDocsEnviar(placa, f, function (m) { if (st) st.textContent = m; })
-      .then(function () { i++; next(); })
-      .catch(function (e) { if (st) st.textContent = "⚠ erro em " + f.name + ": " + (e.message || e); i++; next(); });
+      .then(function () { ok++; i++; next(); })
+      .catch(function (e) {
+        var msg = (e && (e.message || e.error || e.statusCode)) ? (e.message || e.error || e.statusCode) : String(e);
+        erros.push(f.name + ": " + msg);
+        console.error("[docs] falha no upload de", f.name, e);
+        i++; next();
+      });
   }
   next();
 }
@@ -8298,20 +8469,42 @@ function rfDocsRenderLista(placa) {
   cont.innerHTML = '<div style="color:#D4A017;font-size:13px;padding:14px;">⟳ carregando documentos de ' + esc(placa) + '...</div>';
   rfGetClient().then(function (sb) {
     if (!sb) { cont.innerHTML = '<div style="color:#C0392B;font-size:13px;padding:14px;">⚠ Sem conexão com a nuvem. Abra o sistema como arquivo local (file:///...) para usar os documentos.</div>'; return; }
-    sb.storage.from(RF_BUCKET).list(placa, { limit: 200, sortBy: { column: "name", order: "desc" } }).then(function (res) {
-      if (res.error) { cont.innerHTML = '<div style="color:#C0392B;font-size:13px;padding:14px;">⚠ Erro ao listar. Verifique se o bucket "documentos" foi criado no Supabase.</div>'; return; }
-      var arq = (res.data || []).filter(function (f) { return f.name && f.name !== ".emptyFolderPlaceholder"; });
+    // v186: lê as DUAS pastas — a nova ("documentos/<placa>") e a antiga ("<placa>" na
+    // raiz), pra nada que já foi enviado antes sumir da tela.
+    var opts = { limit: 200, sortBy: { column: "name", order: "desc" } };
+    Promise.all([
+      sb.storage.from(RF_BUCKET).list("documentos/" + placa, opts).catch(function (e) { return { error: e }; }),
+      sb.storage.from(RF_BUCKET).list(placa, opts).catch(function (e) { return { error: e }; }),
+    ]).then(function (rs) {
+      var erroReal = null;
+      var arq = [];
+      rs.forEach(function (res, idx) {
+        if (res && res.error) { if (!erroReal) erroReal = res.error; return; }
+        (res && res.data ? res.data : []).forEach(function (f) {
+          if (!f.name || f.name === ".emptyFolderPlaceholder") return;
+          f._prefixo = idx === 0 ? ("documentos/" + placa) : placa;
+          f._legado = idx === 1;
+          arq.push(f);
+        });
+      });
+      if (!arq.length && erroReal) {
+        cont.innerHTML = '<div style="color:#C0392B;font-size:13px;padding:14px;">⚠ Erro ao listar os documentos: <b>'
+          + esc(erroReal.message || erroReal) + '</b><br><span style="color:#999;font-size:12px;">Confirme no Supabase se o bucket "'
+          + RF_BUCKET + '" existe e se a policy de storage permite leitura/escrita nessa pasta.</span></div>';
+        return;
+      }
       if (!arq.length) { cont.innerHTML = '<div style="color:#999;font-size:13px;padding:14px;">Nenhum documento para ' + esc(placa) + ' ainda.</div>'; return; }
+      arq.sort(function (a, b) { return String(b.name).localeCompare(String(a.name)); });
       cont.innerHTML = arq.map(function (f) {
         var size = (f.metadata && f.metadata.size) ? f.metadata.size : 0;
         var sizeStr = size > 1048576 ? (size / 1048576).toFixed(1) + " MB" : Math.round(size / 1024) + " KB";
         var isPdf = /\.pdf$/i.test(f.name);
         var icon = isPdf ? "📄" : "🖼️";
-        var path = placa + "/" + f.name;
+        var path = f._prefixo + "/" + f.name;
         return '<div style="display:flex;align-items:center;gap:10px;background:#161616;border:1px solid #2A2A2A;border-radius:6px;padding:10px 12px;margin-bottom:8px;">'
           + '<span style="font-size:20px;">' + icon + '</span>'
           + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:#EAEAEA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(f.name) + '</div>'
-          + '<div style="font-size:11px;color:#777;">' + sizeStr + '</div></div>'
+          + '<div style="font-size:11px;color:#777;">' + sizeStr + (f._legado ? ' · <span style="color:#8a6d1f;">pasta antiga</span>' : '') + '</div></div>'
           + '<button class="btn-outline" onclick="rfDocsVer(\'' + path + '\')">Ver</button>'
           + '<button class="btn-del" onclick="rfDocsExcluir(\'' + path + '\',\'' + placa + '\')">✕</button>'
           + '</div>';
