@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v184)</title>
+<title>RF Logística — Painel da Frota (v185)</title>
+<!-- v185: retiradas as 2 fotos extras do abastecimento (comprovante de pagamento e
+     Pix do posto) -- os motoristas não se adaptaram. Voltou a exigir só as 3 de
+     sempre: painel/KM, visor da bomba e nota. As fotos de quem já mandou continuam
+     visíveis nos registros antigos; nada foi apagado do banco. -->
 <!-- v184: troca de óleo ganha origem (📦 do almoxarifado x 🛒 comprado fora), igual
      já existia na Manutenção. Peça de estoque dá baixa no almoxarifado e NÃO conta
      como gasto novo (já foi paga no boleto de entrada). Resumo do mês separa
@@ -3031,26 +3035,14 @@ function rfAbastCard(a, souMotorista) {
         ${a.notaValorLido > 0 && Number(a.valor) > 0 && !a.ocrAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Nota confere com o valor da bomba.</div>` : ""}
       </div>
       <div>
-        <div style="font-size:10px;color:${a.fotoComprovante ? "#999" : "#C0392B"};margin-bottom:4px;">💳 Foto do comprovante de pagamento <b>(obrigatória)</b></div>
-        ${a.fotoComprovante
-          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoComprovante}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','comprovante')">✕</button>` : ""}`
-          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','comprovante')"></label>
-              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','comprovante')"></label>
-            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
-        ${a.comprovanteOcrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo valor pago automaticamente...</div>` : ""}
-        ${a.comprovanteValorLido > 0 && Number(a.valor) > 0 && !a.comprovanteAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ Comprovante confere com o valor da bomba.</div>` : ""}
-      </div>
-      <div>
-        <div style="font-size:10px;color:${a.fotoPixPosto ? "#999" : "#C0392B"};margin-bottom:4px;">📱 Foto do Pix do posto <b>(obrigatória)</b></div>
-        ${a.fotoPixPosto
-          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoPixPosto}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','pixposto')">✕</button>` : ""}`
-          : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','pixposto')"></label>
-              <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','pixposto')"></label>
-            </div>` : `<span style="color:#666;font-size:11px;">sem foto</span>`}
-        ${a.pixPostoOcrStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo dados do Pix do posto...</div>` : ""}
-        ${a.pixPostoCnpjLido && a.comprovanteCnpjLido && !a.comprovanteAlerta ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ CNPJ do Pix confere com o destino do comprovante.</div>` : ""}
+        <!-- v185: as fotos de comprovante de pagamento e do Pix do posto foram
+             RETIRADAS da rotina do motorista (não pegou na prática). Os campos
+             continuam no banco e a foto de quem já mandou continua visível aqui,
+             pra não perder histórico -- só não se pede mais nem se exige pra aprovar. -->
+        ${a.fotoComprovante ? `<div style="font-size:10px;color:#999;margin-bottom:4px;">💳 Comprovante de pagamento <span style="color:#666;">(registro antigo)</span></div>
+          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoComprovante}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','comprovante')">✕</button>` : ""}` : ""}
+        ${a.fotoPixPosto ? `<div style="font-size:10px;color:#999;margin:8px 0 4px;">📱 Pix do posto <span style="color:#666;">(registro antigo)</span></div>
+          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoPixPosto}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','pixposto')">✕</button>` : ""}` : ""}
       </div>
     </div>
     ${a.comprovanteAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">
@@ -5309,7 +5301,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
   if (!a.placa) { alert("Este abastecimento não tem um caminhão definido."); return; }
-  if (!a.fotoBomba || !a.fotoNota || !a.fotoComprovante || !a.fotoPixPosto) { alert("Faltam fotos obrigatórias: visor da bomba, nota, comprovante de pagamento e Pix do posto precisam estar anexados antes de aprovar."); return; }
+  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: visor da bomba e nota precisam estar anexados antes de aprovar."); return; } // v185: comprovante e Pix do posto deixaram de ser exigidos
   const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
   const novaViagem = {
     id: uid(), placa: a.placa, cliente: "", data: a.data || hojeISO(), criadoEm: Date.now(),
@@ -5333,7 +5325,7 @@ function vincularAbastecimentoAViagem(id, viagemId) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   const v = state.viagens.find((x) => String(x.id) === String(viagemId));
   if (!a || !v) return;
-  if (!a.fotoBomba || !a.fotoNota || !a.fotoComprovante || !a.fotoPixPosto) { alert("Faltam fotos obrigatórias: visor da bomba, nota, comprovante de pagamento e Pix do posto precisam estar anexados antes de aprovar."); return; }
+  if (!a.fotoBomba || !a.fotoNota) { alert("Faltam fotos obrigatórias: visor da bomba e nota precisam estar anexados antes de aprovar."); return; } // v185: comprovante e Pix do posto deixaram de ser exigidos
   if (!v.combustivelItens) v.combustivelItens = [];
   const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
   v.combustivelItens.push(itemComb);
