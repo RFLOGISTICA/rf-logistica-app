@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v195)</title>
+<title>RF Logística — Painel da Frota (v196)</title>
+<!-- v196: 1) o parser de marca/modelo casava o ROTULO do formulario do CRLV
+     ("POTENCIA/CILINDRADA PESO BRUTO TOTAL") e gravava lixo por cima do modelo
+     correto -- agora so aceita marca conhecida, e so preenche se o campo estiver
+     vazio. 2) recolocado o seletor de UF e o rotulo "Licenciamento (DETRAN-XX)",
+     que se perderam quando o script da v191 abortou no meio. -->
 <!-- v195: leitura do CRLV com dois caminhos automáticos. 1) PDF com camada de
      texto (CRLV-e digital): extração exata pelo pdf.js, de graça. 2) PDF
      escaneado ou FOTO do documento: pdf.js renderiza a página em 2x e manda pro
@@ -2493,7 +2498,7 @@ function gerarContasEmplacamento() {
       parcelasTotal: "1",
       mesInicio: (v.emplacamento || "").slice(0, 7),
       diaVencimento: String(parseInt((v.emplacamento || "").slice(8, 10), 10) || ""),
-      obs: "Lançado automaticamente faltando " + dias + " dia(s). Licenciamento " + fmtR(c.licenciamento)
+      obs: "Lançado automaticamente faltando " + dias + " dia(s). Emplacamento " + c.uf + ". Licenciamento " + fmtR(c.licenciamento)
         + (c.isento ? " + IPVA isento (veículo com " + c.idade + " anos)" : " + IPVA " + fmtR(c.ipva))
         + (c.extras ? " + extras " + fmtR(c.extras) : "")
         + (c.confirmado ? " — valor CONFIRMADO no boleto." : " — valor ESTIMADO, conferir no boleto do DETRAN."),
@@ -8119,7 +8124,12 @@ function renderTabela() {
             <div style="flex:1;min-width:320px;border-left:3px solid ${GOLD};padding-left:14px;margin-top:10px;">
               <div style="font-size:11px;color:${GOLD};text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Custo do emplacamento</div>
               <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
-                <div><div style="font-size:10px;color:#999;">Licenciamento (DETRAN-BA)</div>
+                <div><div style="font-size:10px;color:#999;">Emplacado em (UF)</div>
+                  <select onchange="atualizarVeiculo('${vSel.id}','ufEmplacamento',this.value)" style="width:150px;" title="Sai do CRLV: o documento diz DETRAN-BA ou DETRAN-PA. A placa nao indica o estado.">
+                    <option value="BA" ${c.uf === "BA" ? "selected" : ""}>Bahia (DETRAN-BA)</option>
+                    <option value="PA" ${c.uf === "PA" ? "selected" : ""}>Para (DETRAN-PA)</option>
+                  </select></div>
+                <div><div style="font-size:10px;color:#999;">Licenciamento (DETRAN-${c.uf})</div>
                   <div style="font-size:14px;font-weight:700;color:#bbb;padding:6px 0;">${fmtR(c.licenciamento)}</div></div>
                 <div><div style="font-size:10px;color:#999;">Valor venal (FIPE)</div>
                   <input type="number" min="0" step="100" value="${esc(vSel.emplValorVenal != null && vSel.emplValorVenal !== "" ? vSel.emplValorVenal : "")}" placeholder="${c.venal || 0}" ${c.isento ? "disabled" : ""} onchange="atualizarVeiculo('${vSel.id}','emplValorVenal',this.value)" style="width:120px;"></div>
@@ -8738,7 +8748,11 @@ function rfCrlvParse(txt) {
   m = U.match(/^[ \t]*(19\d{2}|20\d{2})[ \t]+(19\d{2}|20\d{2})[ \t]*$/m);
   if (m) { r.anoFab = m[1]; r.anoModelo = m[2]; }
   if (r.placa) { m = U.match(new RegExp(r.placa + "\\s+(20\\d{2})")); if (m) r.exercicio = m[1]; }
-  m = U.match(/\b([A-Z]{2,}\/[A-Z0-9][A-Z0-9 .\-]{2,30})\s*$/m); if (m) r.marcaModelo = m[1].trim();
+  // v196: antes a regex era generica ([A-Z]+/...) e casava o ROTULO do formulario
+  // "POTENCIA/CILINDRADA PESO BRUTO TOTAL" antes de chegar no valor de verdade,
+  // gravando lixo por cima do modelo correto. Agora so aceita marca conhecida.
+  m = U.match(/\b(VW|VOLKSWAGEN|FORD|M\.?BENZ|MERCEDES[- ]?BENZ|IVECO|SCANIA|VOLVO|AGRALE|HYUNDAI|EFFA|JAC|FIAT|RENAULT|CHEVROLET|GM|TOYOTA|DAF|MAN|INTERNATIONAL|FOTON|SHACMAN|SINOTRUK|CAOA)\/([A-Z0-9][A-Z0-9 .\-]{1,28})/);
+  if (m) r.marcaModelo = (m[1] + "/" + m[2]).replace(/\s+/g, " ").trim();
   m = U.match(/\b(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\b/);          if (m) r.cnpj = m[1];
   m = U.match(/\b(BRANCA|PRATA|PRETA|VERMELHA|AZUL|CINZA|VERDE|AMARELA)\s+(DIESEL|GASOLINA|ALCOOL|FLEX|ELETRICO)\b/);
   if (m) { r.cor = m[1]; r.combustivel = m[2]; }
@@ -8823,7 +8837,9 @@ function rfCrlvAplicarDados(d, origem) {
     mudou.push({ rot: rot, atual: (atual == null || String(atual).trim() === "") ? null : atual, novo: novo, obs: obs || "" });
   }
   aplica("Ano de fabricação", "ano", d.anoFab, "decide isenção de IPVA");
-  aplica("Modelo", "modelo", d.marcaModelo);
+  // v196: o modelo digitado por uma pessoa ("VW Worker 13.190") costuma ser mais
+  // util que o do documento, e sobrescrever nunca compensa. So preenche se vazio.
+  if (!v.modelo || String(v.modelo).trim() === "") aplica("Modelo", "modelo", d.marcaModelo);
   aplica("RENAVAM", "renavam", d.renavam);
   aplica("Chassi", "chassi", d.chassi);
   aplica("UF do emplacamento", "ufEmplacamento", d.uf, "define taxa e alíquota");
