@@ -2,7 +2,24 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v203)</title>
+<title>RF Logística — Painel da Frota (v206)</title>
+<!-- v206: a assistente passa a APONTAR os problemas sem ser perguntada. Quem
+     encontra é o sistema, por regra fixa (rfDiagnosticoSistema): documento em
+     pasta errada, caminhão sem documento, emplacamento vencido, veículo sem ano,
+     troca de óleo vencida, abastecimento parado ou sem foto, viagem sem status
+     do dia, estoque no mínimo, seguro e cronotacógrafo vencidos. A lista entra
+     no contexto como FATO, a bolha ganha selo vermelho com a contagem de
+     urgentes, e ao abrir o chat sem conversa ela já começa pelo resumo. -->
+<!-- v205: resgate dos documentos guardados em pasta com a placa digitada errada
+     (5o caractere: letra virou numero -- QDE8082/QDE8A82, QDH7361/QDH7D61).
+     Painel na aba Documentos mostra cada par origem→destino e move pela operacao
+     OFICIAL storage.move, nunca por UPDATE na tabela do storage. Só sugere
+     destino quando exatamente UMA placa da frota difere em UM caractere. -->
+<!-- v204: o assistente dizia que caminhões estavam SEM CRLV quando o documento
+     existia. Causa: `rfDocsIndexarTudo()` lia só a pasta nova
+     ("documentos/<placa>"), mas os anexos feitos antes da v186 estão em
+     "<placa>" na raiz do bucket -- a aba Documentos já lia as duas, o índice
+     do assistente não. Agora lê as duas também. -->
 <!-- v203: liberação do assistente virou um CHECK na aba Usuários, por pessoa.
      Na v202 eu tinha feito ao contrário (todo user ganhava e desmarcava-se quem
      não devia); agora é liberação explícita, então um login criado amanhã não
@@ -6190,14 +6207,105 @@ O sistema intercepta essas linhas, baixa os arquivos no aparelho da pessoa e som
 não vê essa linha. Use SOMENTE caminhos que aparecem nas listas acima, nunca invente um caminho. No máximo 6 por vez.
 Se a pessoa pedir um arquivo que não está nas listas, diga que não encontrou aquele documento anexado.
 
+⚠️ PROBLEMAS DETECTADOS AGORA (encontrados pelo próprio sistema, por regra fixa — são fatos, não suposições):
+${(function () { try { return rfDiagnosticoTexto(); } catch (e) { return "(não consegui rodar o diagnóstico)"; } })()}
+
+SEJA PROATIVA COM ISSO: quando a pessoa abrir a conversa, cumprimentar, perguntar "como estamos", "tem algo pendente",
+"tudo certo?" ou qualquer coisa genérica, NÃO responda apenas "tudo bem" — traga os problemas da lista acima, começando
+pelos URGENTES, em no máximo 5 linhas, dizendo em qual aba resolver cada um. Se a lista estiver vazia, aí sim diga que
+está tudo em ordem. Nunca invente um problema que não esteja nessa lista, e nunca omita um problema URGENTE.
+
 ABAS QUE ESTE USUÁRIO PODE VER: ${abasDoUsuario || "(nenhuma)"}
 Se ele perguntar sobre algo marcado acima como "(sem permissão pra esta aba)", NÃO invente e NÃO diga que o dado não existe — explique que esse módulo não está liberado no acesso dele e que o Renato pode liberar na aba Usuários.
 Nunca invente número que não esteja neste contexto. Se o dado não estiver aqui, diga que não recebeu essa informação.`;
 }
+/* ===== v206: A ASSISTENTE APONTA OS PROBLEMAS SEM SER PERGUNTADA ===========
+   Quem ENCONTRA os problemas é o sistema, com regra fixa -- não a IA. Isso
+   importa: achado por regra não inventa, não esquece e não muda de uma pergunta
+   pra outra. A IA recebe a lista pronta e faz o que sabe fazer bem, que é
+   explicar em português e priorizar. Cada item traz aonde ir resolver. */
+function rfDiagnosticoSistema() {
+  const p = [];
+  const add = function (nivel, txt) { p.push({ nivel: nivel, txt: txt }); };
+  const vs = (state.veiculos || []).filter(function (v) { return v.placa; });
+
+  // documentos em pasta com a placa digitada errada (v205)
+  const orf = state._docsOrfaos || [];
+  if (orf.length) {
+    const n = orf.reduce(function (a, x) { return a + x.arquivos.length; }, 0);
+    add("alto", n + " documento(s) guardados em pasta com a placa digitada errada (" + orf.map(function (x) { return x.placa || x.pasta; }).join(", ") + ") — ficam invisíveis pro sistema. Aba Documentos tem o botão de mover.");
+  }
+  // caminhões sem nenhum documento anexado
+  const idx = state._docsIndex || {};
+  const semDoc = vs.filter(function (v) { return !idx[v.placa] || !idx[v.placa].length; }).map(function (v) { return v.placa; });
+  if (semDoc.length) add("medio", semDoc.length + " caminhão(ões) sem nenhum documento anexado: " + semDoc.join(", ") + ".");
+  // emplacamento vencido ou perto, e sem ano (que impede calcular IPVA)
+  vs.forEach(function (v) {
+    const d = diasPara(v.emplacamento);
+    if (d !== null && d < 0) add("alto", "Emplacamento do " + v.placa + " VENCIDO há " + Math.abs(d) + " dia(s).");
+    else if (d !== null && d <= 30) add("medio", "Emplacamento do " + v.placa + " vence em " + d + " dia(s)" + (v.emplConfirmado ? "" : " e o valor ainda é estimativa") + ".");
+    if (!Number(v.ano)) add("medio", "Caminhão " + v.placa + " está sem o ANO cadastrado — sem isso não dá pra calcular o IPVA nem saber se é isento.");
+  });
+  // troca de óleo vencida ou no aviso
+  const avisoKm = (state.config && Number(state.config.avisoOleoKm)) || 1000;
+  vs.forEach(function (v) {
+    const ol = oleoStatusV(v);
+    if (!ol) return;
+    if (ol.falta <= 0) add("alto", "Troca de óleo do " + v.placa + " VENCIDA — passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km do ponto.");
+    else if (ol.falta <= avisoKm) add("medio", "Troca de óleo do " + v.placa + " a " + ol.falta.toLocaleString("pt-BR") + " km.");
+  });
+  // abastecimentos parados esperando aprovação
+  const pend = (state.abastecimentos || []).filter(function (a) { return a.status === "pendente"; });
+  if (pend.length) {
+    let maisAntigo = 0;
+    pend.forEach(function (a) { const d = diasPara(a.data); if (d !== null && -d > maisAntigo) maisAntigo = -d; });
+    add(maisAntigo >= 3 ? "alto" : "medio", pend.length + " abastecimento(s) esperando aprovação" + (maisAntigo ? ", o mais antigo há " + maisAntigo + " dia(s)" : "") + ".");
+  }
+  // abastecimento sem foto obrigatória
+  const semFoto = (state.abastecimentos || []).filter(function (a) { return a.status === "pendente" && (!a.fotoBomba || !a.fotoNota); });
+  if (semFoto.length) add("alto", semFoto.length + " abastecimento(s) pendentes SEM foto obrigatória (bomba ou nota) — não dá pra aprovar assim.");
+  // viagem em andamento sem a carteira atualizar
+  const emRota = (state.viagens || []).filter(function (v) { return v.fotoKmSaida && !v.fotoKmChegada; });
+  const semStatus = emRota.filter(function (v) { return !v.statusDiaAtualizadoEm; });
+  if (semStatus.length) add("medio", semStatus.length + " viagem(ns) em andamento que a carteira ainda não atualizou no Status do Dia.");
+  // estoque abaixo do mínimo
+  const baixo = (state.almoxarifado || []).filter(function (it) { try { return almoxBaixo(it); } catch (e) { return false; } });
+  if (baixo.length) add("medio", baixo.length + " item(ns) do almoxarifado abaixo do mínimo: " + baixo.map(function (i) { return i.nome; }).slice(0, 6).join(", ") + ".");
+  // seguro e cronotacógrafo vencidos
+  vs.forEach(function (v) {
+    const ds = diasPara(v.venctoSeguro);
+    if (ds !== null && ds < 0) add("alto", "Seguro do " + v.placa + " VENCIDO há " + Math.abs(ds) + " dia(s).");
+    const dc = diasPara(v.venctoCronotacografo);
+    if (dc !== null && dc < 0) add("alto", "Cronotacógrafo do " + v.placa + " VENCIDO há " + Math.abs(dc) + " dia(s).");
+  });
+  return p;
+}
+function rfDiagnosticoTexto() {
+  const p = rfDiagnosticoSistema();
+  if (!p.length) return "Nenhum problema detectado agora.";
+  const altos = p.filter(function (x) { return x.nivel === "alto"; });
+  const medios = p.filter(function (x) { return x.nivel !== "alto"; });
+  return (altos.length ? "URGENTE:\n" + altos.map(function (x) { return "- " + x.txt; }).join("\n") + "\n" : "")
+    + (medios.length ? "ATENÇÃO:\n" + medios.map(function (x) { return "- " + x.txt; }).join("\n") : "");
+}
 function toggleChatAssistente() {
   state._chatAberto = !state._chatAberto;
-  if (!state._chatAberto) chatPararConversa();
+  if (!state._chatAberto) { chatPararConversa(); render(); return; }
   render();
+  // v206: ao abrir sem conversa em andamento, ela já começa apontando o que
+  // está pendente -- em vez de ficar esperando o Renato adivinhar o que perguntar.
+  if (!state._chatMensagens || !state._chatMensagens.length) {
+    try { chatBriefingAutomatico(); } catch (e) { console.error("[briefing]", e); }
+  }
+}
+function chatBriefingAutomatico() {
+  if (state._chatCarregando) return;
+  if (!rfDiagnosticoSistema().length) return;   // nada pendente, não gasta chamada
+  const input = document.getElementById("chatInput");
+  if (input) input.value = "";
+  state._chatMensagens = state._chatMensagens || [];
+  state._chatBriefing = true;
+  chatEnviarPerguntaTexto("Me dê o resumo do que precisa da minha atenção agora, olhando o bloco PROBLEMAS DETECTADOS. Comece pelo mais urgente, seja breve e diga onde resolver cada um.", true);
 }
 /* v199: separa as linhas "BAIXAR: caminho" da resposta do assistente.
    Mesmo mecanismo que a Edge Function ja usa pra "MEMORIA:" -- por isso nao
@@ -6246,13 +6354,20 @@ function chatEnviarPergunta() {
   const input = document.getElementById("chatInput");
   if (!input) return;
   const pergunta = input.value.trim();
+  if (!pergunta) return;
+  input.value = "";
+  chatEnviarPerguntaTexto(pergunta, false);
+}
+// v206: o envio aceita um texto vindo de fora, pra o briefing automático poder
+// usar o mesmo caminho. `oculta` esconde a pergunta na tela -- o Renato não
+// precisa ver o sistema perguntando a si mesmo, só a resposta.
+function chatEnviarPerguntaTexto(pergunta, oculta) {
   if (!pergunta || state._chatCarregando) return;
   if (!state._chatMensagens) state._chatMensagens = [];
-  state._chatMensagens.push({ role: "user", content: pergunta });
+  if (!oculta) state._chatMensagens.push({ role: "user", content: pergunta });
   state._chatCarregando = true;
-  input.value = "";
   render();
-  const historico = state._chatMensagens.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+  const historico = (oculta ? state._chatMensagens : state._chatMensagens.slice(0, -1)).map((m) => ({ role: m.role, content: m.content }));
   const contexto = gerarContextoAssistente();
   rfGetClient().then(function (sb) {
     if (!sb) { chatErro("Sem conexão com o servidor."); return; }
@@ -6639,7 +6754,14 @@ function assistenteWidgetHTML() {
   if (!aberto) {
     // v197: arrastável. Estava fixo no canto inferior direito e tapava o ✕ de
     // excluir documento. A posição escolhida fica guardada no aparelho.
-    return `<button id="rfChatBolha" onclick="toggleChatAssistente()" title="Assistente virtual — segure e arraste para mover" style="position:fixed; ${rfBolhaPosCSS()} width:56px; height:56px; border-radius:50%; background:${GOLD}; color:#000; border:none; font-size:24px; cursor:grab; box-shadow:0 2px 10px rgba(0,0,0,0.4); z-index:9999; touch-action:none; user-select:none;">💬</button>`;
+    // v206: selo vermelho com a quantidade de problemas — o aviso aparece sem
+    // precisar abrir o chat nem perguntar nada.
+    let qtdProb = 0;
+    try { qtdProb = rfDiagnosticoSistema().filter(function (x) { return x.nivel === "alto"; }).length; } catch (e) {}
+    const selo = qtdProb
+      ? `<span style="position:absolute; top:-4px; right:-4px; min-width:22px; height:22px; border-radius:11px; background:#C0392B; color:#fff; font-size:12px; font-weight:800; line-height:22px; text-align:center; padding:0 5px; box-shadow:0 1px 4px rgba(0,0,0,.5);">${qtdProb}</span>`
+      : "";
+    return `<div style="position:fixed; ${rfBolhaPosCSS()} z-index:9999;"><button id="rfChatBolha" onclick="toggleChatAssistente()" title="${qtdProb ? qtdProb + " ponto(s) urgente(s) — toque pra ver" : "Assistente virtual"} — segure e arraste para mover" style="position:relative; width:56px; height:56px; border-radius:50%; background:${GOLD}; color:#000; border:none; font-size:24px; cursor:grab; box-shadow:0 2px 10px rgba(0,0,0,0.4); touch-action:none; user-select:none;">💬</button>${selo}</div>`;
   }
   return `
     <div style="position:fixed; ${rfPainelPosCSS()} width:340px; max-width:90vw; height:460px; max-height:80vh; background:#111; border:1px solid ${GOLD}; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.6); z-index:9999; display:flex; flex-direction:column; overflow:hidden;">
@@ -8377,6 +8499,7 @@ function renderTabela() {
         </div>
         <div id="docsDiag" style="font-size:12px;color:#bbb;margin-top:8px;line-height:1.7;"></div>
         <div id="docsCrlv"></div>
+        <div id="docsOrfaos"></div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Fotos são compactadas automaticamente (~4MB → ~300KB). PDFs são enviados como estão.</div>
       </div>
       ${vSel ? `
@@ -8647,6 +8770,8 @@ revalidarSessaoAoAbrir();
       try { gerarContasEmplacamento(); } catch (e) { console.error("[emplacamento]", e); }
       // v199: monta o indice de documentos em segundo plano, sem travar a tela
       setTimeout(function () { try { rfDocsIndexarTudo(); } catch (e) {} }, 2000);
+      // v205: procura documentos em pasta com placa errada, em segundo plano
+      setTimeout(function () { try { rfDocsOrfaosCarregar(); } catch (e) {} }, 3500);
       promoverReceitaRecorrente();
       migrarTrocasOleoFiltros();
       garantirAcesso();
@@ -9213,16 +9338,33 @@ function rfDocsIndexarTudo() {
     if (!sb) return null;
     var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
     if (!placas.length) return null;
+    // v204: lê as DUAS pastas, igual a aba Documentos já faz desde a v186 --
+    // a nova ("documentos/<placa>") e a antiga ("<placa>" na raiz do bucket).
+    // O índice lia só a nova, então documento anexado antes da v186 ficava
+    // invisível pro assistente e ele dizia que o caminhão estava sem CRLV,
+    // mesmo com o arquivo aparecendo na tela. Foi o que aconteceu com o
+    // PKK1G22, o PLE6A32 e o PLY0A97.
     return Promise.all(placas.map(function (pl) {
-      return sb.storage.from(RF_BUCKET).list("documentos/" + pl, { limit: 100 })
-        .then(function (r) {
-          var arq = (r && r.data ? r.data : []).filter(function (f) { return f.name && f.name !== ".emptyFolderPlaceholder"; });
-          return { placa: pl, arquivos: arq.map(function (f) {
-            return { nome: f.name.replace(/^\d{10,}-/, ""), caminho: "documentos/" + pl + "/" + f.name,
-                     kb: Math.round(((f.metadata && f.metadata.size) || 0) / 1024) };
-          }) };
-        })
-        .catch(function () { return { placa: pl, arquivos: [] }; });
+      var opts = { limit: 100 };
+      return Promise.all([
+        sb.storage.from(RF_BUCKET).list("documentos/" + pl, opts).catch(function () { return { data: [] }; }),
+        sb.storage.from(RF_BUCKET).list(pl, opts).catch(function () { return { data: [] }; }),
+      ]).then(function (rs) {
+        var arquivos = [];
+        rs.forEach(function (r, idx) {
+          var prefixo = idx === 0 ? ("documentos/" + pl) : pl;
+          ((r && r.data) ? r.data : []).forEach(function (f) {
+            if (!f.name || f.name === ".emptyFolderPlaceholder") return;
+            arquivos.push({
+              nome: f.name.replace(/^\d{10,}-/, ""),
+              caminho: prefixo + "/" + f.name,
+              kb: Math.round(((f.metadata && f.metadata.size) || 0) / 1024),
+              legado: idx === 1,
+            });
+          });
+        });
+        return { placa: pl, arquivos: arquivos };
+      }).catch(function () { return { placa: pl, arquivos: [] }; });
     })).then(function (lista) {
       var idx = {};
       lista.forEach(function (x) { if (x.arquivos.length) idx[x.placa] = x.arquivos; });
@@ -9231,6 +9373,122 @@ function rfDocsIndexarTudo() {
       return idx;
     });
   }).catch(function () { return null; });
+}
+
+/* ===== v205: RESGATE DE DOCUMENTOS EM PASTA COM PLACA ERRADA ==============
+   No bucket existem pastas com a placa digitada errada -- QDE8082 no lugar de
+   QDE8A82, QDH7361 no lugar de QDH7D61, QDO6930 no lugar de QDO6J30. O padrao e
+   sempre o 5o caractere: a LETRA da placa Mercosul foi digitada como numero
+   (A->0, D->3, J->9). Os arquivos ali ficam orfaos: nenhuma placa da frota bate
+   com o nome da pasta, entao nem a tela nem o assistente enxergam.
+   IMPORTANTE: mover e feito pela operacao OFICIAL do Supabase (storage.move),
+   nunca por UPDATE na tabela storage.objects -- alterar o caminho no banco faria
+   o registro apontar pra um lugar e o arquivo continuar em outro, ou seja,
+   sumir. Aqui o arquivo e movido de verdade, com origem e destino conferidos. */
+var RF_PASTAS_SISTEMA = ["documentos", "abast", "abastecimentos", "km", "conferencia", "manutencao", "viagemfim", "romaneios"];
+function rfSugerirPlacaCerta(pasta) {
+  var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
+  var achadas = placas.filter(function (pl) {
+    if (!pl || pl.length !== pasta.length) return false;
+    var dif = 0, pos = -1;
+    for (var i = 0; i < pl.length; i++) { if (pl[i] !== pasta[i]) { dif++; pos = i; } }
+    // exatamente UM caractere diferente, e na 5a posicao (onde fica a letra
+    // que costuma virar numero). Regra apertada de proposito: se houver duvida,
+    // nao sugere nada e o arquivo fica onde esta.
+    return dif === 1 && pos === 4;
+  });
+  return achadas.length === 1 ? achadas[0] : null;
+}
+function rfDocsOrfaosCarregar() {
+  var out = document.getElementById("docsOrfaos");
+  if (out) out.innerHTML = '<span style="color:' + GOLD + ';font-size:12px;">⟳ procurando documentos em pasta errada...</span>';
+  return rfGetClient().then(function (sb) {
+    if (!sb) return;
+    return sb.storage.from(RF_BUCKET).list("", { limit: 200 }).then(function (r) {
+      var placasFrota = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
+      var pastas = ((r && r.data) ? r.data : [])
+        .filter(function (f) { return f && f.name && !f.id; })                 // sem id = pasta
+        .map(function (f) { return f.name; })
+        .filter(function (n) {
+          if (RF_PASTAS_SISTEMA.indexOf(n) !== -1) return false;
+          if (placasFrota.indexOf(n) !== -1) return false;                     // pasta legada com placa CERTA
+          return /^[A-Z0-9]{7}$/.test(n);                                      // parece placa
+        });
+      if (!pastas.length) { state._docsOrfaos = []; rfDocsOrfaosRender(); return; }
+      return Promise.all(pastas.map(function (pasta) {
+        return sb.storage.from(RF_BUCKET).list(pasta, { limit: 100 })
+          .then(function (rr) {
+            var arqs = ((rr && rr.data) ? rr.data : []).filter(function (f) { return f.name && f.name !== ".emptyFolderPlaceholder"; });
+            return { pasta: pasta, destino: rfSugerirPlacaCerta(pasta), arquivos: arqs.map(function (f) { return f.name; }) };
+          })
+          .catch(function () { return { pasta: pasta, destino: null, arquivos: [] }; });
+      })).then(function (lista) {
+        state._docsOrfaos = lista.filter(function (x) { return x.arquivos.length; });
+        rfDocsOrfaosRender();
+      });
+    });
+  }).catch(function () {});
+}
+function rfDocsOrfaosRender() {
+  var out = document.getElementById("docsOrfaos");
+  if (!out) return;
+  var lista = state._docsOrfaos || [];
+  if (!lista.length) { out.innerHTML = ""; return; }
+  var comSugestao = lista.filter(function (x) { return x.destino; });
+  var totalArq = lista.reduce(function (a, x) { return a + x.arquivos.length; }, 0);
+  out.innerHTML = '<div style="margin-top:12px;padding:12px;border:1px solid ' + GOLD + ';border-radius:8px;background:#0E0E0E;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">⚠ ' + totalArq + ' documento(s) em pasta com a placa digitada errada</div>'
+    + '<div style="font-size:11px;color:#777;margin-bottom:10px;">Nenhuma placa da frota bate com o nome dessas pastas, então esses arquivos ficam invisíveis pro sistema e pro assistente. Confira cada par antes de mover — o arquivo é movido de verdade, não copiado.</div>'
+    + lista.map(function (x) {
+        return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:6px 0;border-bottom:1px solid #1c1c1c;font-size:12px;">'
+          + '<span style="min-width:200px;color:#bbb;"><b style="color:#C0392B;">' + esc(x.pasta) + '</b>/' + esc(x.arquivos[0]) + (x.arquivos.length > 1 ? ' <span style="color:#666;">(+' + (x.arquivos.length - 1) + ')</span>' : '') + '</span>'
+          + (x.destino
+            ? '<span style="color:#666;">→</span> <b style="color:#2E7D32;">' + esc(x.destino) + '</b>'
+              + ' <button class="btn-gold" style="font-size:11px;padding:4px 10px;" onclick="rfDocsMoverOrfao(\'' + esc(x.pasta) + '\',\'' + esc(x.destino) + '\')">mover</button>'
+            : '<span style="color:#8a6d1f;">sem placa parecida na frota — mova à mão se souber de qual é</span>')
+          + '</div>';
+      }).join("")
+    + (comSugestao.length > 1
+      ? '<button class="btn-gold" style="margin-top:10px;font-size:12px;padding:6px 14px;" onclick="rfDocsMoverTodosOrfaos()">✔ Mover os ' + comSugestao.length + ' com destino sugerido</button>'
+      : "")
+    + '<div id="docsOrfaosStatus" style="font-size:12px;color:' + GOLD + ';margin-top:8px;"></div>'
+    + '</div>';
+}
+function rfDocsMoverOrfao(pasta, destino) {
+  var item = (state._docsOrfaos || []).find(function (x) { return x.pasta === pasta; });
+  if (!item || !destino) return Promise.resolve(0);
+  var st = document.getElementById("docsOrfaosStatus");
+  if (st) st.textContent = "movendo " + pasta + " → " + destino + "...";
+  return rfGetClient().then(function (sb) {
+    if (!sb) return 0;
+    var movidos = 0, erros = [];
+    return item.arquivos.reduce(function (fila, nome) {
+      return fila.then(function () {
+        return sb.storage.from(RF_BUCKET).move(pasta + "/" + nome, "documentos/" + destino + "/" + nome)
+          .then(function (r) { if (r && r.error) erros.push(nome + ": " + (r.error.message || r.error)); else movidos++; })
+          .catch(function (e) { erros.push(nome + ": " + (e.message || e)); });
+      });
+    }, Promise.resolve()).then(function () {
+      if (st) {
+        st.style.color = erros.length ? "#C0392B" : "#2E7D32";
+        st.textContent = "✔ " + movidos + " movido(s) para " + destino + (erros.length ? " · falhou: " + erros.join(" | ") : "");
+      }
+      return rfDocsIndexarTudo().then(function () {
+        return rfDocsOrfaosCarregar().then(function () {
+          if (state.docPlaca) rfDocsRenderLista(state.docPlaca);
+          return movidos;
+        });
+      });
+    });
+  });
+}
+function rfDocsMoverTodosOrfaos() {
+  var pend = (state._docsOrfaos || []).filter(function (x) { return x.destino; });
+  if (!pend.length) return;
+  if (!confirm("Mover " + pend.length + " pasta(s) de documento para a placa correta? Os arquivos saem da pasta errada e vão para a certa.")) return;
+  pend.reduce(function (fila, x) {
+    return fila.then(function () { return rfDocsMoverOrfao(x.pasta, x.destino); });
+  }, Promise.resolve());
 }
 
 function rfDocsUpload(input) {
