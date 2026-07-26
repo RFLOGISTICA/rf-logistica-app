@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v191)</title>
+<title>RF Logística — Painel da Frota (v192)</title>
+<!-- v192: CAUSA DO "Failed to fetch" ENCONTRADA. O diagnóstico mostrou que enviar
+     texto, JPEG e PDF funciona quando o blob é criado em memória. O arquivo do
+     seletor é um File apoiado em content:// do Android: os primeiros bytes leem
+     (a assinatura era detectada), mas o streaming do corpo inteiro falha no upload.
+     Foto sempre funcionou porque passa pelo canvas e vira Blob novo; só o PDF ia
+     cru. Agora todo arquivo é lido pra memória e remontado como Blob antes de subir. -->
 <!-- v191: emplacamento por UF. A frota tem caminhão na BA e caminhão ainda no PA
      (transferência gradual), então taxa, alíquota e isenção passam a sair da UF
      do emplacamento, gravada no veículo a partir do CRLV. BA: taxa R$181,13 +
@@ -8514,6 +8520,30 @@ function rfDocsSniff(file) {
     } catch (e) { resolve(null); }
   });
 }
+// v192: A CAUSA, enfim. O diagnóstico mostrou que ENVIAR text/plain, image/jpeg e
+// application/pdf funcionam -- mas todos esses blobs são criados na memória pelo
+// próprio código. O arquivo do seletor é um File apoiado num content:// do Android:
+// os primeiros bytes são legíveis (por isso a assinatura foi detectada), mas o
+// streaming do corpo inteiro durante o upload falha, e o navegador reporta isso
+// como "Failed to fetch".
+// Isso explica TUDO: foto sempre funcionou no sistema porque passa pelo canvas em
+// rfComprimirImagem, que devolve um Blob NOVO em memória. Só o PDF ia cru.
+// Solução: ler o arquivo inteiro pra memória e reconstruir como Blob antes de subir.
+function rfDocsMaterializar(file) {
+  return new Promise(function (resolve, reject) {
+    try {
+      var fr = new FileReader();
+      fr.onload = function () {
+        try { resolve(new Blob([fr.result], { type: file.type || "application/octet-stream" })); }
+        catch (e) { reject(new Error("falha ao remontar o arquivo na memória: " + (e.message || e))); }
+      };
+      fr.onerror = function () {
+        reject(new Error("não consegui ler o arquivo do aparelho — copie o arquivo para o armazenamento interno e tente de novo"));
+      };
+      fr.readAsArrayBuffer(file);
+    } catch (e) { reject(e); }
+  });
+}
 // Decide blob, extensão e content-type reais do arquivo antes de subir.
 function rfDocsPreparar(file, statusFn) {
   return rfDocsSniff(file).then(function (s) {
@@ -8523,11 +8553,16 @@ function rfDocsPreparar(file, statusFn) {
       if (statusFn) statusFn("compactando " + file.name + "...");
       return rfComprimirImagem(file)
         .then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
-        .catch(function () { return { blob: file, ext: ext, ct: ct }; });
+        .catch(function () {
+          return rfDocsMaterializar(file).then(function (b) { return { blob: b, ext: ext, ct: ct }; });
+        });
     }
-    if (ct === "application/pdf") return { blob: file, ext: "pdf", ct: "application/pdf" };
-    // Tipo realmente desconhecido: avisa em vez de mandar octet-stream às cegas.
-    return { blob: file, ext: ext || "bin", ct: ct || "application/octet-stream", desconhecido: !s && !file.type };
+    // v192: PDF e demais tipos passam a ser materializados em memória também.
+    if (statusFn) statusFn("preparando " + file.name + "...");
+    return rfDocsMaterializar(file).then(function (b) {
+      if (ct === "application/pdf") return { blob: b, ext: "pdf", ct: "application/pdf" };
+      return { blob: b, ext: ext || "bin", ct: ct || "application/octet-stream", desconhecido: !s && !file.type };
+    });
   });
 }
 function rfDocsEnviar(placa, file, statusFn) {
@@ -8646,9 +8681,8 @@ function rfDocsUpload(input) {
           st.style.color = "#C0392B";
           st.innerHTML = "❌ NENHUM arquivo foi enviado.<br>Erro: " + esc(erros.join(" | "))
             + (houveTransporte
-              ? '<br><span style="color:#999;font-size:11px;">"Failed to fetch" é falha de <b>transporte</b>: a resposta do servidor voltou sem cabeçalho CORS, então o navegador não mostra o erro real. '
-                + 'Com o tamanho já descartado, a causa mais provável é o bucket <b>' + RF_BUCKET + '</b> ter uma <b>lista de MIME types permitidos</b> que não inclui o tipo enviado. '
-                + 'Confira no Supabase: Storage → bucket ' + RF_BUCKET + ' → Configuration → <b>Allowed MIME types</b>. Se houver lista, adicione <b>application/pdf</b> (ou deixe em branco pra aceitar tudo).</span>'
+              ? '<br><span style="color:#999;font-size:11px;">Falha de transporte ao enviar. A partir da v192 o arquivo é lido pra memória antes de subir, o que resolve o caso mais comum (arquivo aberto direto de nuvem/Downloads no Android). '
+                + 'Se ainda assim falhar, copie o arquivo pro armazenamento interno do aparelho e tente de novo, ou use o botão de diagnóstico aqui do lado.</span>'
               : "");
         }
       }
