@@ -2,7 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v196)</title>
+<title>RF Logística — Painel da Frota (v198)</title>
+<!-- v198: botões de BAIXAR que faltavam. Antes só dava pra abrir a foto/documento
+     numa aba nova; pra mandar pro contador ou pro cliente não havia saída. Agora
+     cada foto de abastecimento e cada documento tem um ⬇, mais um "⬇ Baixar
+     fotos" que puxa todas as fotos de um abastecimento de uma vez, com nome já
+     identificado (placa-data-qual-foto). -->
+<!-- v197: a bolha do assistente virou arrastável. Estava fixa no canto inferior
+     direito e cobria o ✕ de excluir documento. Segure e arraste pra qualquer
+     canto; a posição fica guardada NO APARELHO (localStorage), porque cada tela
+     tem um tamanho. Arrastar não abre o chat. A janela aberta ancora no lado
+     onde a bolha estiver. -->
 <!-- v196: 1) o parser de marca/modelo casava o ROTULO do formulario do CRLV
      ("POTENCIA/CILINDRADA PESO BRUTO TOTAL") e gravava lixo por cima do modelo
      correto -- agora so aceita marca conhecida, e so preenche se o campo estiver
@@ -3167,6 +3177,7 @@ function rfAbastCard(a, souMotorista) {
         <span style="font-size:13px; color:${GOLD}; font-weight:700;">${esc(a.placa || "—")}</span>
       </div>
       ${editavel && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">✕ excluir</button>` : ""}
+      <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar todas as fotos deste abastecimento, já com nome identificado" onclick="rfAbastBaixarTodas('${a.id}')">⬇ Baixar fotos</button>
       ${!souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">🗑 Excluir</button>` : ""}
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
@@ -3193,7 +3204,7 @@ function rfAbastCard(a, souMotorista) {
       <div>
         <div style="font-size:10px;color:#999;margin-bottom:4px;">📷 Foto do painel (KM)</div>
         ${a.fotoKm
-          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoKm}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','km')">✕</button>` : ""}`
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoKm}')">ver foto</button> <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar esta foto" onclick="rfBaixarArquivo('${a.fotoKm}','${esc((a.placa||"sem-placa")+"-"+(a.data||"")+"-km-painel")}.jpg')">⬇</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','km')">✕</button>` : ""}`
           : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
               <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','km')"></label>
               <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','km')"></label>
@@ -3205,7 +3216,7 @@ function rfAbastCard(a, souMotorista) {
       <div>
         <div style="font-size:10px;color:${a.fotoBomba ? "#999" : "#C0392B"};margin-bottom:4px;">⛽ Foto do visor da bomba <b>(valor/litros — obrigatória)</b></div>
         ${a.fotoBomba
-          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoBomba}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','bomba')">✕</button>` : ""}`
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoBomba}')">ver foto</button> <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar esta foto" onclick="rfBaixarArquivo('${a.fotoBomba}','${esc((a.placa||"sem-placa")+"-"+(a.data||"")+"-visor-bomba")}.jpg')">⬇</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','bomba')">✕</button>` : ""}`
           : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
               <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','bomba')"></label>
               <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','bomba')"></label>
@@ -3217,7 +3228,7 @@ function rfAbastCard(a, souMotorista) {
       <div>
         <div style="font-size:10px;color:${a.fotoNota ? "#999" : "#C0392B"};margin-bottom:4px;">🧾 Foto da nota/comprovante <b>(obrigatória)</b></div>
         ${a.fotoNota
-          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoNota}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','nota')">✕</button>` : ""}`
+          ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoNota}')">ver foto</button> <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar esta foto" onclick="rfBaixarArquivo('${a.fotoNota}','${esc((a.placa||"sem-placa")+"-"+(a.data||"")+"-nota")}.jpg')">⬇</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','nota')">✕</button>` : ""}`
           : editavel ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
               <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
               <label class="btn-outline" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">🖼 Da galeria<input type="file" accept="image/*" style="display:none" onchange="rfAbastUpload(this,'${a.id}','nota')"></label>
@@ -3230,9 +3241,9 @@ function rfAbastCard(a, souMotorista) {
              continuam no banco e a foto de quem já mandou continua visível aqui,
              pra não perder histórico -- só não se pede mais nem se exige pra aprovar. -->
         ${a.fotoComprovante ? `<div style="font-size:10px;color:#999;margin-bottom:4px;">💳 Comprovante de pagamento <span style="color:#666;">(registro antigo)</span></div>
-          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoComprovante}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','comprovante')">✕</button>` : ""}` : ""}
+          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoComprovante}')">ver foto</button> <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar esta foto" onclick="rfBaixarArquivo('${a.fotoComprovante}','${esc((a.placa||"sem-placa")+"-"+(a.data||"")+"-comprovante")}.jpg')">⬇</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','comprovante')">✕</button>` : ""}` : ""}
         ${a.fotoPixPosto ? `<div style="font-size:10px;color:#999;margin:8px 0 4px;">📱 Pix do posto <span style="color:#666;">(registro antigo)</span></div>
-          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoPixPosto}')">ver foto</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','pixposto')">✕</button>` : ""}` : ""}
+          <button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfAbastVer('${a.fotoPixPosto}')">ver foto</button> <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar esta foto" onclick="rfBaixarArquivo('${a.fotoPixPosto}','${esc((a.placa||"sem-placa")+"-"+(a.data||"")+"-pix-posto")}.jpg')">⬇</button>${editavel ? ` <button class="btn-del" style="font-size:11px;" onclick="rfAbastExcluir('${a.id}','pixposto')">✕</button>` : ""}` : ""}
       </div>
     </div>
     ${a.comprovanteAlerta ? `<div style="margin-top:8px;padding:8px 10px;background:#2A1414;border:1px solid #C0392B;border-radius:6px;font-size:11px;color:#F5A9A9;">
@@ -5718,6 +5729,8 @@ function render() {
   // v122: assistente virtual — Fase 1 (só admin, dentro do painel).
   if (ehAdmin()) {
     root.insertAdjacentHTML("beforeend", assistenteWidgetHTML());
+    // v197: religa o arrasto da bolha depois de cada render (o HTML é recriado)
+    try { rfBolhaArrastavel(); } catch (e) {}
     const chatMsgsEl = document.getElementById("chatMsgs");
     if (chatMsgsEl) chatMsgsEl.scrollTop = chatMsgsEl.scrollHeight;
   }
@@ -6369,14 +6382,89 @@ function chatAlternarVoz() {
   chatResetTimeoutConversa();
   chatIniciarEscuta();
 }
+/* ===== v197: bolha do assistente arrastável ================================
+   Ficava fixa no canto inferior direito e cobria o botão ✕ de excluir documento.
+   Guarda a posição em localStorage (é preferência do APARELHO, não do sistema --
+   cada tela tem um tamanho, então não faz sentido sincronizar na nuvem). */
+function rfBolhaPos() {
+  try {
+    const j = JSON.parse(localStorage.getItem("rf-bolha-pos") || "null");
+    if (j && typeof j.x === "number" && typeof j.y === "number") return j;
+  } catch (e) {}
+  return null;
+}
+function rfBolhaPosCSS() {
+  const p = rfBolhaPos();
+  if (!p) return "bottom:20px; right:20px;";
+  const x = Math.max(4, Math.min(p.x, (window.innerWidth || 800) - 60));
+  const y = Math.max(4, Math.min(p.y, (window.innerHeight || 600) - 60));
+  return "left:" + x + "px; top:" + y + "px;";
+}
+function rfPainelPosCSS() {
+  const p = rfBolhaPos();
+  if (!p) return "bottom:20px; right:20px;";
+  // abre a janela ancorada no lado da tela onde a bolha está, sem sair do visor
+  const larg = Math.min(340, (window.innerWidth || 800) * 0.9);
+  const dir = p.x > (window.innerWidth || 800) / 2;
+  const baixo = p.y > (window.innerHeight || 600) / 2;
+  return (dir ? "right:20px;" : "left:20px;") + (baixo ? " bottom:20px;" : " top:20px;");
+}
+function rfBolhaArrastavel() {
+  const b = document.getElementById("rfChatBolha");
+  if (!b || b._rfArrasto) return;
+  b._rfArrasto = true;
+  let arrastando = false, moveu = false, dx = 0, dy = 0;
+  function inicio(e) {
+    const t = e.touches ? e.touches[0] : e;
+    const r = b.getBoundingClientRect();
+    dx = t.clientX - r.left; dy = t.clientY - r.top;
+    arrastando = true; moveu = false;
+    b.style.cursor = "grabbing";
+  }
+  function mover(e) {
+    if (!arrastando) return;
+    const t = e.touches ? e.touches[0] : e;
+    const x = t.clientX - dx, y = t.clientY - dy;
+    // 4px de folga do canto pra bolha nunca sumir pela borda
+    const mx = Math.max(4, Math.min(x, window.innerWidth - b.offsetWidth - 4));
+    const my = Math.max(4, Math.min(y, window.innerHeight - b.offsetHeight - 4));
+    b.style.left = mx + "px"; b.style.top = my + "px";
+    b.style.right = "auto"; b.style.bottom = "auto";
+    moveu = true;
+    if (e.cancelable) e.preventDefault();
+  }
+  function fim() {
+    if (!arrastando) return;
+    arrastando = false;
+    b.style.cursor = "grab";
+    if (moveu) {
+      const r = b.getBoundingClientRect();
+      try { localStorage.setItem("rf-bolha-pos", JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) })); } catch (e) {}
+      // arrastou = não era clique; segura o onclick pra não abrir o chat sem querer
+      b._rfIgnorarClique = true;
+      setTimeout(function () { b._rfIgnorarClique = false; }, 250);
+    }
+  }
+  b.addEventListener("mousedown", inicio);
+  b.addEventListener("touchstart", inicio, { passive: true });
+  window.addEventListener("mousemove", mover);
+  window.addEventListener("touchmove", mover, { passive: false });
+  window.addEventListener("mouseup", fim);
+  window.addEventListener("touchend", fim);
+  b.addEventListener("click", function (ev) {
+    if (b._rfIgnorarClique) { ev.stopImmediatePropagation(); ev.preventDefault(); }
+  }, true);
+}
 function assistenteWidgetHTML() {
   const aberto = !!state._chatAberto;
   const msgs = state._chatMensagens || [];
   if (!aberto) {
-    return `<button onclick="toggleChatAssistente()" title="Assistente virtual" style="position:fixed; bottom:20px; right:20px; width:56px; height:56px; border-radius:50%; background:${GOLD}; color:#000; border:none; font-size:24px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,0.4); z-index:9999;">💬</button>`;
+    // v197: arrastável. Estava fixo no canto inferior direito e tapava o ✕ de
+    // excluir documento. A posição escolhida fica guardada no aparelho.
+    return `<button id="rfChatBolha" onclick="toggleChatAssistente()" title="Assistente virtual — segure e arraste para mover" style="position:fixed; ${rfBolhaPosCSS()} width:56px; height:56px; border-radius:50%; background:${GOLD}; color:#000; border:none; font-size:24px; cursor:grab; box-shadow:0 2px 10px rgba(0,0,0,0.4); z-index:9999; touch-action:none; user-select:none;">💬</button>`;
   }
   return `
-    <div style="position:fixed; bottom:20px; right:20px; width:340px; max-width:90vw; height:460px; max-height:80vh; background:#111; border:1px solid ${GOLD}; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.6); z-index:9999; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="position:fixed; ${rfPainelPosCSS()} width:340px; max-width:90vw; height:460px; max-height:80vh; background:#111; border:1px solid ${GOLD}; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.6); z-index:9999; display:flex; flex-direction:column; overflow:hidden;">
       <div style="background:${GOLD}; color:#000; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; font-weight:800;">
         <span>💬 Assistente RF</span>
         <div>
@@ -9013,6 +9101,7 @@ function rfDocsRenderLista(placa) {
           + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:#EAEAEA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(f.name) + '</div>'
           + '<div style="font-size:11px;color:#777;">' + sizeStr + (f._legado ? ' · <span style="color:#8a6d1f;">pasta antiga</span>' : '') + '</div></div>'
           + '<button class="btn-outline" onclick="rfDocsVer(\'' + path + '\')">Ver</button>'
+          + '<button class="btn-outline" title="Baixar este documento" onclick="rfBaixarArquivo(\'' + path + '\',\'' + placa + '-' + f.name.replace(/^\d{10,}-/, "") + '\')">⬇</button>'
           + '<button class="btn-del" onclick="rfDocsExcluir(\'' + path + '\',\'' + placa + '\')">✕</button>'
           + '</div>';
       }).join("");
@@ -9348,6 +9437,58 @@ function rfAbastLerNotaAuto(abastId, blob) {
     render();
     rfAbastSalvarCampoMotorista(a);
   });
+}
+/* ===== v198: BAIXAR ARQUIVO ================================================
+   Antes só dava pra ABRIR (window.open com URL assinada). Pra mandar a foto do
+   abastecimento pro contador ou pro cliente, não tinha botão -- só dava pra
+   abrir e printar a tela. Agora a URL assinada é criada com a opção `download`,
+   que faz o servidor mandar o arquivo como anexo com o nome certo. */
+function rfNomeArquivoDe(path, prefixo) {
+  var base = String(path || "").split("/").pop() || "arquivo";
+  var ext = (base.indexOf(".") !== -1) ? base.split(".").pop() : "jpg";
+  base = base.replace(/^\d{10,}-/, "");                 // tira o carimbo de tempo
+  if (prefixo) return prefixo.replace(/[^\w\-]+/g, "_") + "-" + base;
+  return base || ("arquivo." + ext);
+}
+function rfBaixarArquivo(path, nomeSugerido) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem."); return; }
+    var nome = nomeSugerido || rfNomeArquivoDe(path);
+    return sb.storage.from(RF_BUCKET).createSignedUrl(path, 3600, { download: nome }).then(function (res) {
+      if (res.error || !res.data) { alert("Não consegui gerar o arquivo para download."); return; }
+      var a = document.createElement("a");
+      a.href = res.data.signedUrl; a.download = nome;
+      a.style.display = "none"; document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { try { document.body.removeChild(a); } catch (e) {} }, 1500);
+    });
+  });
+}
+/* Baixa TODAS as fotos de um abastecimento, uma atrás da outra. O nome de cada
+   arquivo já sai identificado (placa, data e qual foto é), pra não virar um
+   monte de "imagem1.jpg" na pasta de downloads. */
+function rfAbastBaixarTodas(abastId) {
+  var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
+  if (!a) return;
+  var marca = (a.placa || "sem-placa") + "-" + (a.data || "sem-data");
+  var lista = [
+    { p: a.fotoKm, n: marca + "-km-painel" },
+    { p: a.fotoBomba, n: marca + "-visor-bomba" },
+    { p: a.fotoNota, n: marca + "-nota" },
+    { p: a.fotoComprovante, n: marca + "-comprovante" },
+    { p: a.fotoPixPosto, n: marca + "-pix-posto" },
+  ].filter(function (x) { return !!x.p; });
+  if (!lista.length) { alert("Este abastecimento não tem foto anexada."); return; }
+  var i = 0;
+  (function proxima() {
+    if (i >= lista.length) return;
+    var it = lista[i++];
+    var ext = (String(it.p).split(".").pop() || "jpg").toLowerCase();
+    rfBaixarArquivo(it.p, it.n + "." + ext).then(function () {
+      // o navegador engasga se disparar vários downloads no mesmo instante
+      setTimeout(proxima, 900);
+    });
+  })();
 }
 function rfAbastVer(path) {
   rfGetClient().then(function (sb) {
