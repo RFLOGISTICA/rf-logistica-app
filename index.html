@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v188)</title>
+<title>RF Logística — Painel da Frota (v189)</title>
+<!-- v189: tipo do arquivo detectado pela ASSINATURA (primeiros bytes), não pelo
+     nome. Arquivo sem extensão ia como application/octet-stream e o bucket
+     rejeitava antes do CORS, virando "Failed to fetch". Agora PDF vai como
+     application/pdf e imagem sem extensão é reconhecida e comprimida. -->
 <!-- v188: upload de documentos com diagnóstico real (tamanho e tipo no erro),
      detecção de aparelho offline, uma repetição automática quando a conexão cai
      no meio, e extensão de arquivo detectada de forma confiável (nome com ponto
@@ -8424,20 +8428,58 @@ function rfDocsTamanhoStr(b) {
   b = Number(b) || 0;
   return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
 }
+// v189: o arquivo do Renato chegou como "application/octet-stream" (176 KB) porque
+// o nome não tem extensão reconhecível -- e TODO upload que funciona neste sistema
+// manda "image/jpeg". Bucket com lista de MIME types permitidos rejeita o
+// octet-stream numa camada anterior ao CORS, e o navegador mostra isso como
+// "Failed to fetch" em vez do erro real. Solução: descobrir o tipo VERDADEIRO
+// lendo os primeiros bytes do arquivo (assinatura), sem depender do nome.
+function rfDocsSniff(file) {
+  return new Promise(function (resolve) {
+    try {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var b = new Uint8Array(fr.result || new ArrayBuffer(0));
+        var hex = "";
+        for (var i = 0; i < Math.min(b.length, 16); i++) {
+          var h = b[i].toString(16); hex += (h.length < 2 ? "0" + h : h);
+        }
+        if (hex.indexOf("25504446") === 0) return resolve({ ct: "application/pdf", ext: "pdf" });   // %PDF
+        if (hex.indexOf("ffd8ff") === 0) return resolve({ ct: "image/jpeg", ext: "jpg" });
+        if (hex.indexOf("89504e47") === 0) return resolve({ ct: "image/png", ext: "png" });
+        if (hex.indexOf("47494638") === 0) return resolve({ ct: "image/gif", ext: "gif" });
+        if (hex.indexOf("52494646") === 0 && hex.indexOf("57454250") === 16) return resolve({ ct: "image/webp", ext: "webp" });
+        if (hex.indexOf("49492a00") === 0 || hex.indexOf("4d4d002a") === 0) return resolve({ ct: "image/tiff", ext: "tif" });
+        resolve(null);
+      };
+      fr.onerror = function () { resolve(null); };
+      fr.readAsArrayBuffer(file.slice(0, 16));
+    } catch (e) { resolve(null); }
+  });
+}
+// Decide blob, extensão e content-type reais do arquivo antes de subir.
+function rfDocsPreparar(file, statusFn) {
+  return rfDocsSniff(file).then(function (s) {
+    var ct = s ? s.ct : (file.type || "");
+    var ext = s ? s.ext : rfDocsExtensao(file);
+    if (/^image\//.test(ct)) {
+      if (statusFn) statusFn("compactando " + file.name + "...");
+      return rfComprimirImagem(file)
+        .then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
+        .catch(function () { return { blob: file, ext: ext, ct: ct }; });
+    }
+    if (ct === "application/pdf") return { blob: file, ext: "pdf", ct: "application/pdf" };
+    // Tipo realmente desconhecido: avisa em vez de mandar octet-stream às cegas.
+    return { blob: file, ext: ext || "bin", ct: ct || "application/octet-stream", desconhecido: !s && !file.type };
+  });
+}
 function rfDocsEnviar(placa, file, statusFn) {
   return rfGetClient().then(function (sb) {
     if (!sb) throw new Error("sem conexao");
-    var isImg = /^image\//.test(file.type);
-    var prep = isImg
-      ? (statusFn && statusFn("compactando " + file.name + "..."), rfComprimirImagem(file).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; }))
-      : Promise.resolve({ blob: file, ext: rfDocsExtensao(file), ct: file.type || "application/octet-stream" });
-    return prep.then(function (p) {
+    return rfDocsPreparar(file, statusFn).then(function (p) {
       var base = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "arquivo";
       // v186: pasta nomeada na raiz, igual aos outros uploads que funcionam.
       var path = "documentos/" + placa + "/" + Date.now() + "-" + base + "." + p.ext;
-      // v188: uma tentativa automática de repetição. "Failed to fetch" costuma ser
-      // conexão que caiu no meio do upload -- em 3G do galpão isso é comum, e
-      // repetir resolve sem o usuário precisar fazer nada.
       function tentar(n) {
         return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
           if (res.error) throw res.error;
@@ -8449,8 +8491,9 @@ function rfDocsEnviar(placa, file, statusFn) {
             if (statusFn) statusFn("conexão falhou, tentando de novo: " + file.name + "...");
             return new Promise(function (r) { setTimeout(r, 1200); }).then(function () { return tentar(n + 1); });
           }
-          e.__rfInfo = " [" + rfDocsTamanhoStr(p.blob.size) + ", " + (p.ct || "tipo desconhecido") + "]";
+          e.__rfInfo = " [" + rfDocsTamanhoStr(p.blob.size) + ", enviado como " + p.ct + "]";
           e.__rfTransporte = transporte;
+          e.__rfDesconhecido = !!p.desconhecido;
           throw e;
         });
       }
@@ -8480,9 +8523,9 @@ function rfDocsUpload(input) {
           st.style.color = "#C0392B";
           st.innerHTML = "❌ NENHUM arquivo foi enviado.<br>Erro: " + esc(erros.join(" | "))
             + (houveTransporte
-              ? '<br><span style="color:#999;font-size:11px;">"Failed to fetch" é falha de <b>transporte</b>, não de permissão — a requisição nem chegou ao servidor. '
-                + 'Causas prováveis: arquivo grande demais para o limite do bucket, conexão instável, ou o service worker do PWA interceptando. '
-                + 'Teste primeiro com uma foto pequena: se a foto subir e o PDF não, é tamanho/limite do bucket.</span>'
+              ? '<br><span style="color:#999;font-size:11px;">"Failed to fetch" é falha de <b>transporte</b>: a resposta do servidor voltou sem cabeçalho CORS, então o navegador não mostra o erro real. '
+                + 'Com o tamanho já descartado, a causa mais provável é o bucket <b>' + RF_BUCKET + '</b> ter uma <b>lista de MIME types permitidos</b> que não inclui o tipo enviado. '
+                + 'Confira no Supabase: Storage → bucket ' + RF_BUCKET + ' → Configuration → <b>Allowed MIME types</b>. Se houver lista, adicione <b>application/pdf</b> (ou deixe em branco pra aceitar tudo).</span>'
               : "");
         }
       }
