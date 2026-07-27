@@ -2,7 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v210)</title>
+<title>RF Logística — Painel da Frota (v211)</title>
+<!-- v211: trava do KM lido por IA. O hodômetro nunca anda pra trás, então KM
+     menor que o maior já registrado do caminhão é leitura errada -- quase sempre
+     o parcial no lugar do total. Em vez de preencher, avisa na tela com os dois
+     números e pede conferência. A regra da Edge Function também foi reforçada
+     (v6): entre dois inteiros, vale o MAIOR, e nunca se guiar pelo rótulo "km",
+     que em muitos painéis fica colado no parcial. -->
 <!-- v210: manutenção preventiva por KM generalizada. Correia (60.000 km) e
      pneus (40.000 km) entram como itens configuráveis, e dá pra adicionar
      quantos quiser -- todos usam o mesmo hodômetro automático da troca de óleo.
@@ -3440,6 +3446,7 @@ function rfAbastCard(a, souMotorista) {
         ${a.ocrKmStatus === "lendo" ? `<div style="font-size:11px;color:${GOLD};margin-top:4px;">🔎 Lendo o KM da foto automaticamente...</div>` : ""}
         ${a.ocrKmStatus === "ok" ? `<div style="font-size:11px;color:#2E7D32;margin-top:4px;">✓ KM lido automaticamente — confira antes de salvar.</div>` : ""}
         ${a.ocrKmStatus === "erro" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;">Não consegui ler o KM sozinho. Preencha manualmente.</div>` : ""}
+        ${a.ocrKmStatus === "suspeito" ? `<div style="font-size:11px;color:#C0392B;margin-top:4px;padding:6px 8px;border:1px solid #C0392B;border-radius:6px;background:#1A0E0E;">⚠ ${esc(a.ocrKmAviso || "KM lido parece ser o parcial, não o total.")}</div>` : ""}
       </div>
       <div>
         <div style="font-size:10px;color:${a.fotoBomba ? "#999" : "#C0392B"};margin-bottom:4px;">⛽ Foto do visor da bomba <b>(valor/litros — obrigatória)</b></div>
@@ -10273,11 +10280,35 @@ function rfAbastLerBombaAuto(abastId, blob) {
     rfAbastSalvarCampoMotorista(a);
   });
 }
+/* ===== v211: TRAVA DO KM LIDO ============================================
+   O hodometro NUNCA anda pra tras. Se a IA devolver um KM menor que o maior ja
+   registrado daquele caminhao, ela leu o numero errado -- tipicamente o parcial
+   em vez do total. Caso real: painel com "km 17943" em cima e "84170" embaixo;
+   o rotulo "km" fica colado no parcial e engana.
+   Isso e verificacao de fato, nao de prompt: por melhor que fique a instrucao,
+   a trava aqui e que garante que um KM pra tras nunca entra no sistema. */
+function rfKmSuspeito(placa, kmLido) {
+  const km = Number(kmLido) || 0;
+  if (!km || !placa) return null;
+  const maior = kmMaxRegistrado(placa);
+  if (!maior) return null;                       // sem histórico, nada a comparar
+  if (km >= maior) return null;                  // só cresce, tudo certo
+  return { lido: km, maior: maior, diferenca: maior - km };
+}
 function rfAbastLerKmAuto(abastId, blob) {
   rfLerFotoIA("km", blob, function (j) {
     var a = (state.abastecimentos || []).find(function (x) { return String(x.id) === String(abastId); });
     if (!a || a.status !== "pendente") return;
     var km = (j && Number(j.km)) || 0;
+    // v211: KM menor que o maior já registrado = leitura do parcial, não do total
+    var susp = rfKmSuspeito(a.placa, km);
+    if (susp) {
+      a.ocrKmStatus = "suspeito";
+      a.ocrKmAviso = "A IA leu " + susp.lido.toLocaleString("pt-BR") + " km, mas esse caminhão já tem "
+        + susp.maior.toLocaleString("pt-BR") + " km registrado. Hodômetro não anda pra trás — provavelmente ela leu o KM parcial. Confira no painel e digite o número certo.";
+      render(); rfAbastSalvarCampoMotorista(a); return;
+    }
+    a.ocrKmAviso = "";
     if (km > 0 && !a.kmAtual) a.kmAtual = km;
     a.ocrKmStatus = km > 0 ? "ok" : "erro";
     render();
