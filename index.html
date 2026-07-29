@@ -2,7 +2,12 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v211)</title>
+<title>RF Logística — Painel da Frota (v212)</title>
+<!-- v212: a aba "Despesas de Viagem" passou a se chamar "Viagens", e a viagem
+     ganhou DATA FIM. Com saída e fim preenchidos, o campo Dias deixa de ser
+     digitado e passa a sair da conta (mesmo dia = 1 dia), o que corrige de
+     tabela a alimentação de motorista e ajudante. Assistente recebe as duas
+     datas e os dias. -->
 <!-- v211: trava do KM lido por IA. O hodômetro nunca anda pra trás, então KM
      menor que o maior já registrado do caminhão é leitura errada -- quase sempre
      o parcial no lugar do total. Em vez de preencher, avisa na tela com os dois
@@ -1111,7 +1116,32 @@ function enviarViagemParaMotorista(id, motoristaUid) {
   v.statusMotorista = "aguardando_motorista";
   salvar(); render();
 }
+/* ===== v212: DATA FINAL DA VIAGEM ==========================================
+   A viagem já tinha data de saída e um campo "Dias" digitado à mão. Com a data
+   fim, os dias passam a sair da conta -- e param de divergir do que realmente
+   aconteceu, que é o que alimenta alimentação de motorista e ajudante. */
+function viagemDiasPelasDatas(v) {
+  if (!v || !v.data || !v.dataFim) return null;
+  const ini = new Date(v.data + "T00:00:00");
+  const fim = new Date(v.dataFim + "T00:00:00");
+  if (isNaN(ini) || isNaN(fim)) return null;
+  // conta o dia de saída e o de chegada: sair e voltar no mesmo dia = 1 dia
+  return Math.round((fim - ini) / 86400000) + 1;
+}
+function setViagemDataFim(viagemId, valor) {
+  const v = (state.viagens || []).find((x) => String(x.id) === String(viagemId));
+  if (!v) return;
+  v.dataFim = valor || "";
+  const d = viagemDiasPelasDatas(v);
+  if (d !== null && d >= 1) v.dias = d;    // dias passa a vir das datas
+  salvar(); render();
+}
 function atualizarViagem(id, campo, valor) {
+  // v212: mexeu na data de saída com data fim preenchida -> recalcula os dias
+  if (campo === "data") {
+    const vv = (state.viagens || []).find((x) => String(x.id) === String(id));
+    if (vv) { vv.data = valor; const dd = viagemDiasPelasDatas(vv); if (dd !== null && dd >= 1) vv.dias = dd; }
+  }
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
   if (v.trancada && !ehAdmin()) return; // v136: viagem travada — edição bloqueada de verdade, não só escondida na tela
@@ -2768,7 +2798,7 @@ var ABAS_DEF = [
   { id: "oleo", label: "Óleo & Filtros 🛢️", grupo: "FROTA" },
   { id: "almox", label: "Almoxarifado 📦", grupo: "FROTA" },
   { id: "operacao", label: "🧭 Operação", grupo: "OPERAÇÃO" },
-  { id: "viagem", label: "Despesas de Viagem", grupo: "OPERAÇÃO" },
+  { id: "viagem", label: "Viagens", grupo: "OPERAÇÃO" },   // v212: era "Despesas de Viagem"
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
   { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
@@ -3976,7 +4006,7 @@ function rfRomaneioCriarViagemVinculada(romaneioId) {
   var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
   if (!r) return;
   if (!r.placa) { alert("Direcione o romaneio pra uma placa/motorista antes de criar a viagem."); return; }
-  var cliente = prompt("Nome do cliente dessa viagem (vai aparecer em Despesas de Viagem):");
+  var cliente = prompt("Nome do cliente dessa viagem (vai aparecer na aba Viagens):");
   if (cliente === null || !cliente.trim()) return;
   cliente = cliente.trim();
   var novaViagem = {
@@ -4567,7 +4597,7 @@ function rfConfRomaneioRelogioHTML(rom) {
       Previsão original: ${r.diasPrevistos} dia(s) — terminar em ${rfFmtDataHora(r.previstoFimOriginalMs)}<br>
       ${r.recalculado ? `Pelo ritmo atual (${r.totalFechados}/${r.totalClientes} clientes em ${r.diasDecorridos.toFixed(1)} dia(s)): <b style="color:${corBarra};">previsão recalculada — ${rfFmtDataHora(r.previstoFimRecalcMs)}</b> (~${r.diasRestantesRecalc.toFixed(1)} dia(s) restante(s))${r.atrasado ? " — <b style=\"color:#C0392B;\">tendência de atraso</b>" : r.adiantado ? " — <b style=\"color:#2E7D32;\">tendência de adiantar</b>" : ""}` : "Ainda sem caixas conferidas pra recalcular o ritmo."}
       <br><span style="color:#666;">(estimativa — recalcula sozinho conforme as entregas avançam)</span>
-      ${rom.viagemId ? (() => { const v = (state.viagens || []).find((x) => x.id === rom.viagemId); return v ? `<br><span style="color:#2E7D32;">🔗 viagem "${esc(v.cliente || "")}" vinculada — dias atual: ${v.dias || 1}</span>` : ""; })() : `<br><span style="color:#C0392B;">⚠ nenhuma viagem vinculada ainda — o prazo não atualiza em Despesas de Viagem</span>`}
+      ${rom.viagemId ? (() => { const v = (state.viagens || []).find((x) => x.id === rom.viagemId); return v ? `<br><span style="color:#2E7D32;">🔗 viagem "${esc(v.cliente || "")}" vinculada — dias atual: ${v.dias || 1}</span>` : ""; })() : `<br><span style="color:#C0392B;">⚠ nenhuma viagem vinculada ainda — o prazo não atualiza na aba Viagens</span>`}
     </div>
   </div>`;
 }
@@ -4919,7 +4949,7 @@ function rfConfRomaneioCardAdmin(rom) {
       <span style="font-size:12px;color:#999;">dia(s)</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
-      <span style="font-size:12px;color:#999;">Viagem vinculada (Despesas de Viagem):</span>
+      <span style="font-size:12px;color:#999;">Viagem vinculada (aba Viagens):</span>
       <select onchange="rfRomaneioVincularViagem('${rom.id}', this.value)" style="font-size:12px;min-width:220px;">
         <option value="">— nenhuma —</option>
         ${(state.viagens || []).filter((v) => v.placa === rom.placa).map((v) => `<option value="${v.id}" ${rom.viagemId === v.id ? "selected" : ""}>${esc(v.cliente || "sem cliente")} — ${v.data || "?"} (${v.dias || 1}d)</option>`).join("")}
@@ -5112,7 +5142,7 @@ function atualizarViagemFim(id, campo, valor) {
   }
 }
 function removerViagemFim(id) {
-  if (!confirm("Remover esta viagem? Isso também apaga o registro correspondente em Despesas de Viagem.")) return;
+  if (!confirm("Remover esta viagem? Isso também apaga o registro correspondente na aba Viagens.")) return;
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
   if (a && a.viagemId && a.status === "em_andamento") {
     rfGetClient().then(function (sb) {
@@ -5463,7 +5493,7 @@ function rfViagemFimCard(a, souMotorista) {
         ${a.fotoComprovante ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoComprovante}')">📷 ver comprovante</button>` : ""}
         ${a.fotoKmFim ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoKmFim}')">📷 ver KM final</button>` : `<span style="font-size:11px;color:#C0392B;">⚠ sem foto do KM final</span>`}
       </div>
-      ${a.status === "aprovada" && a.viagemId ? `<div style="margin-top:6px;font-size:11px;color:#2E7D32;">✓ Viagem criada na aba Despesas de Viagem — falta completar valor e km.</div>` : ""}
+      ${a.status === "aprovada" && a.viagemId ? `<div style="margin-top:6px;font-size:11px;color:#2E7D32;">✓ Viagem criada na aba Viagens — falta completar valor e km.</div>` : ""}
       ${a.status === "rejeitada" && a.motivoRejeicao ? `<div style="margin-top:6px;font-size:12px;color:#C0392B;">Motivo: ${esc(a.motivoRejeicao)}</div>` : ""}`}
   </div>`;
 }
@@ -5753,7 +5783,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   state.filtroPlacaViagem = a.placa; state.filtroClienteViagem = "Todos"; state.aba = "viagem";
   salvar(); render();
   rfAbastSalvarLinha(a);
-  alert("Viagem criada com o KM e o combustível do abastecimento. Complete cliente, valor da viagem e KM de saída na aba Despesas de Viagem.");
+  alert("Viagem criada com o KM e o combustível do abastecimento. Complete cliente, valor da viagem e KM de saída na aba Viagens.");
 }
 // Aprovar vinculando a uma viagem JÁ lançada (mesmo caminhão) — soma o combustível
 // e atualiza o KM de chegada se o informado pelo motorista for maior.
@@ -6071,7 +6101,7 @@ function gerarContextoAssistente() {
     const viagemVinc = rom.viagemId ? (state.viagens || []).find((v) => v.id === rom.viagemId) : null;
     const relogio = rfConfRelogioRomaneio(rom);
     let linha = `- ${rom.nomeArquivo || "romaneio"} (Conhecimento ${rom.conhecimento || "?"}) — placa ${rom.placa || "(sem placa direcionada)"}${veic && veic.motorista ? ", motorista " + veic.motorista : ""}: ${totalFechados}/${totalClientes} clientes/entregas concluídos (${totalClientes ? ((totalFechados / totalClientes) * 100).toFixed(0) : 0}%), romaneio anexado em ${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}`;
-    if (viagemVinc) linha += `. Viagem vinculada em Despesas de Viagem: cliente ${viagemVinc.cliente || "?"}, campo "dias" atual: ${viagemVinc.dias || 1} (esse campo é atualizado automaticamente pelo relógio recalculado)`;
+    if (viagemVinc) linha += `. Viagem vinculada na aba Viagens: cliente ${viagemVinc.cliente || "?"}, campo "dias" atual: ${viagemVinc.dias || 1} (esse campo é atualizado automaticamente pelo relógio recalculado)`;
     if (relogio && relogio.pendente) {
       linha += `. Relógio de previsão (${relogio.diasPrevistos} dia(s)) AINDA NÃO COMEÇOU A CONTAR — o motorista ainda não confirmou o início real da viagem no app dele (foto do KM de saída). Não estime prazo de chegada até isso acontecer.`;
     } else if (relogio) {
@@ -6129,7 +6159,7 @@ function gerarContextoAssistente() {
     .sort((a, b) => (a.data || "").localeCompare(b.data || ""))
     .map((v) => {
       const c = calcularViagem(v);
-      return `- ${v.data || "sem data"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.pago ? "paga" : "pendente"}`;
+      return `- ${v.data || "sem data"}${v.dataFim ? " a " + v.dataFim : " (sem data fim)"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.dias || 1} dia(s) | ${v.pago ? "paga" : "pendente"}`;
     }).join("\n");
 
   // v183: ACESSO TOTAL — o assistente passa a receber também as abas que faltavam:
@@ -7155,7 +7185,7 @@ function renderTabela() {
           Login agora é com <b style="color:#fff;">e-mail e senha</b> (conta do Supabase). Para liberar um novo
           funcionário: crie a conta em <b style="color:${GOLD};">Supabase → Authentication → Add user</b> — o perfil
           aparece aqui automaticamente. Depois é só marcar os módulos que ele pode ver.
-          As sensíveis (<b style="color:${GOLD};">Financeiro, Despesas de Viagem, Dívidas, Motoristas</b>) já vêm desmarcadas — libere só pra quem você confia.
+          As sensíveis (<b style="color:${GOLD};">Financeiro, Viagens, Dívidas, Motoristas</b>) já vêm desmarcadas — libere só pra quem você confia.
         </div>
         <button class="btn-outline" style="align-self:flex-start;" onclick="carregarPerfis()">${state._carregandoPerfis ? "Atualizando..." : "↻ Atualizar lista"}</button>
       </div>
@@ -7278,7 +7308,7 @@ function renderTabela() {
         <td><input value="${esc(v.modelo)}" placeholder="Modelo" onchange="atualizarVeiculo('${v.id}','modelo',this.value)"></td>
         <td><select onchange="atualizarVeiculo('${v.id}','bau',this.value)">${STATUS_BAU.map((s) => `<option ${v.bau === s ? "selected" : ""}>${s}</option>`).join("")}</select></td>
         <td><input value="${esc(v.motorista)}" placeholder="Nome do motorista" onchange="atualizarVeiculo('${v.id}','motorista',this.value)"></td>
-        <td><select onchange="atualizarVeiculo('${v.id}','regimeMotorista',this.value)" title="Define se o motorista é pago por viagem (entra em Despesas de Viagem) ou é CLT (salário fixo, tratado em Dívidas Fixas)">
+        <td><select onchange="atualizarVeiculo('${v.id}','regimeMotorista',this.value)" title="Define se o motorista é pago por viagem (entra na aba Viagens) ou é CLT (salário fixo, tratado em Dívidas Fixas)">
           <option value="viagem" ${(v.regimeMotorista || "viagem") === "viagem" ? "selected" : ""}>Por viagem</option>
           <option value="clt" ${v.regimeMotorista === "clt" ? "selected" : ""}>CLT</option>
         </select></td>
@@ -7723,7 +7753,7 @@ function renderTabela() {
       </div>` : ""}
 
       <table style="min-width:2000px;"><thead><tr>
-        <th>Placa</th><th>Motorista</th><th>Cliente</th><th>Data</th><th>Valor Viagem</th><th>💰 Pago?</th><th>KM Saída</th><th>KM Chegada</th><th>KM</th><th>m³</th><th>Dias</th><th>Combustível (abastecimentos)</th>
+        <th>Placa</th><th>Motorista</th><th>Cliente</th><th>Data saída</th><th>Data fim</th><th>Valor Viagem</th><th>💰 Pago?</th><th>KM Saída</th><th>KM Chegada</th><th>KM</th><th>m³</th><th>Dias</th><th>Combustível (abastecimentos)</th>
         <th>Alim. Mot. (auto)</th><th>Tem Ajud.?</th><th>Alim. Ajud. (auto)</th><th>Pag. Mot.</th><th>Pag. Ajud.</th>
         <th>ADM (2,5%)</th><th>Manut. (3%)</th><th>Imposto (${impostoPctNum()}%)</th><th>Pneus (R$0,12/km)</th><th>Outros (despesas extras)</th>
         <th>Total Desp.</th><th>Sobra</th><th>🔒 Trava</th>
@@ -7780,6 +7810,15 @@ function renderTabela() {
               </select>`; })() : ""}
             </td>
             <td><input type="date" value="${v.data}" onchange="atualizarViagem('${v.id}','data',this.value)" style="min-width:120px;"></td>
+            <td><input type="date" value="${esc(v.dataFim || "")}" onchange="setViagemDataFim('${v.id}',this.value)" style="min-width:120px;" title="Quando a viagem terminou. Preenchendo os dois, o campo Dias se calcula sozinho.">
+              ${(function () {
+                const d = viagemDiasPelasDatas(v);
+                if (d === null) return "";
+                if (d < 1) return `<div style="font-size:9px;color:#C0392B;">data fim antes da saída</div>`;
+                const dif = (Number(v.dias) || 0) !== d;
+                return `<div style="font-size:9px;color:${dif ? GOLD : "#2E7D32"};">${d} dia(s)${dif ? " — ajustei o campo Dias" : ""}</div>`;
+              })()}
+            </td>
             <td><input type="number" value="${v.valorViagem || 0}" onchange="setViagemValor('${v.id}',this.value)" style="font-weight:700;">${(() => { if (v.freteKmManual) { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">manual: km × ${fmtR(r)}</div>` : ""; } const m = modoCliente(v.cliente); if (m === "km") { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">auto: km × ${fmtR(r)}</div>` : ""; } if (m === "m3") { const r = freteM3De(v.cliente); return r ? `<div style="font-size:9px;color:${GOLD};">auto: m³ × ${fmtR(r)}</div>` : ""; } if (m === "rota") { const veic = state.veiculos.find((x) => x.placa === v.placa); const r = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : ""); return v.rota ? (r ? `<div style="font-size:9px;color:${GOLD};">auto: tabela da rota</div>` : `<div style="font-size:9px;color:#C0392B;">sem valor cadastrado pra essa rota/veículo</div>`) : `<div style="font-size:9px;color:#C0392B;">selecione a rota acima</div>`; } return ""; })()}</td>
             <td style="text-align:center;min-width:120px;">
               <label style="display:flex; align-items:center; gap:5px; cursor:pointer; justify-content:center; white-space:nowrap;">
@@ -7949,7 +7988,7 @@ function renderTabela() {
           <span>✅ Já pago ao motorista: <b style="color:#2E7D32;">${fmtR(viagensMot.reduce((s, v) => s + (v.pagoMotorista ? (Number(v.vgPagMotorista) || 0) : 0), 0))}</b></span>
           <span>💰 Falta pagar ao motorista: <b style="color:#C0392B;">${fmtR(viagensMot.reduce((s, v) => s + (!v.pagoMotorista ? (Number(v.vgPagMotorista) || 0) : 0), 0))}</b>${(() => { const q = viagensMot.filter((v) => !v.pagoMotorista).length; return q > 0 ? ` <span style="color:#888;">(${q} viagem${q > 1 ? "ns" : ""})</span>` : ""; })()}</span>
         </div>
-        <div style="font-size:10px; color:#666; margin-bottom:8px;">Este pagamento é independente do "Pago?" da aba Despesas de Viagem — aquele é o <b>cliente</b> pagando a RF Logística (15/30/45 dias); este aqui é a <b>RF Logística pagando o motorista</b> (semanal/quinzenal). É esse checkbox que atualiza o "PAGAS" no app do motorista.</div>
+        <div style="font-size:10px; color:#666; margin-bottom:8px;">Este pagamento é independente do "Pago?" da aba Viagens — aquele é o <b>cliente</b> pagando a RF Logística (15/30/45 dias); este aqui é a <b>RF Logística pagando o motorista</b> (semanal/quinzenal). É esse checkbox que atualiza o "PAGAS" no app do motorista.</div>
         <table style="min-width:820px;"><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>Cliente</th><th>Pag. Mot.</th><th>💰 Pago ao motorista?</th></tr></thead><tbody>
           ${viagensMot.map((v) => {
             const nomeMot = motoristaDaViagem(v) || "(sem motorista)";
@@ -8024,7 +8063,7 @@ function renderTabela() {
             <option value="todos" ${state.filtroStatusViagemFim === "todos" ? "selected" : ""}>Todas</option>
           </select>
         </div>
-        <div style="font-size:11px;color:#777;margin-bottom:14px;">Aviso simples do motorista de que terminou uma viagem. Aprovar aqui só confirma que a equipe viu — a viagem em si (com valor, cliente etc.) precisa ser lançada manualmente na aba Despesas de Viagem.</div>
+        <div style="font-size:11px;color:#777;margin-bottom:14px;">Aviso simples do motorista de que terminou uma viagem. Aprovar aqui só confirma que a equipe viu — a viagem em si (com valor, cliente etc.) precisa ser lançada manualmente na aba Viagens.</div>
         ${listaViagemFim.length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;margin-bottom:28px;">Nenhum aviso nesse filtro.</div>` : listaViagemFim.map((a) => rfViagemFimCard(a, false)).join("")}
         <div style="border-top:1px solid #262626;margin:24px 0;"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
