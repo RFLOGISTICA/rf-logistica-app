@@ -2,7 +2,21 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v213)</title>
+<title>RF Logística — Painel da Frota (v214)</title>
+<!-- v214: quem manda no hodometro passou a ser a OPERACAO, nao a digitacao.
+     Na v213 o KM atual ainda era o MAIOR entre o digitado no cadastro e os
+     registros -- e um 136.719 digitado no lugar de 135.719 passou na frente do
+     abastecimento do dia, com o Renato sem entender de onde vinha o numero.
+     Agora, existindo registro de operacao, ele manda e o campo do cadastro vira
+     so ponto de partida (fica editavel apenas em caminhao sem registro nenhum).
+     O digitado nunca e apagado: quando e ignorado, a tela diz.
+     Junto disso, registro FORA DA CURVA passou a ser DESCARTADO do calculo, nao
+     apenas sinalizado -- o que corrige sozinho PKS6I42 (145.982 num caminhao de
+     84 mil), PKO3F40 (150.016 numa viagem que saiu com 105.550) e QDH7D61
+     (238.875 num caminhao de 135 mil). O lancamento errado continua apontado no
+     diagnostico, porque a origem ainda precisa ser corrigida.
+     `kmAtualInfo(v)` e a funcao unica que decide e explica de onde veio o KM.
+     Cache por `window.__rfVerSalvo` porque as contas ficaram encadeadas. -->
 <!-- v213: KM atual x KM da troca de óleo batendo errado (relatado no QDG7J21).
      Eram DOIS problemas somados:
      (1) A trava da v211 só barrava KM pra TRÁS. Um KM absurdo pra FRENTE
@@ -2281,6 +2295,19 @@ function setAvisoBoletoDias(valor) {
 // o MAIOR número já registrado em qualquer lugar do sistema: foto de KM do
 // abastecimento, KM de saída/chegada das viagens e o KM da própria troca de óleo.
 // O campo continua editável (serve de ponto de partida e de correção pra cima).
+/* v214: as contas de KM passaram a ser encadeadas (o KM atual conferindo cada
+   registro contra os outros), e elas são chamadas pra cada caminhão, pra cada
+   item de preventiva e pra montar o contexto do assistente. O cache evita
+   repetir a mesma varredura dezenas de vezes num render. É invalidado por
+   `window.__rfVerSalvo`, o mesmo contador que o salvar() já incrementa -- então
+   qualquer alteração de dado zera o cache sozinha, sem eu ter que lembrar de
+   limpar em cada ponto de escrita. */
+var _kmCacheVer = -1, _kmCacheObj = {};
+function kmCache() {
+  const ver = window.__rfVerSalvo || 0;
+  if (ver !== _kmCacheVer) { _kmCacheVer = ver; _kmCacheObj = {}; }
+  return _kmCacheObj;
+}
 // v213: todo KM que o sistema conhece de um caminhão, COM a data e a origem.
 // A data importa porque a trava do KM (rfKmSuspeito) precisa saber quantos dias
 // se passaram desde o último registro pra julgar se o salto é possível ou não.
@@ -2332,11 +2359,58 @@ function kmMaxRegistrado(placa) {
   const m = kmMaiorRegistro(placa, null);
   return m ? m.km : 0;
 }
-// KM atual efetivo: o digitado ou o lido automaticamente, o que for maior.
+// Só os registros de operação — sem o KM digitado no cadastro (v214).
+function kmRegistrosReais(placa) {
+  return kmRegistrosDoVeiculo(placa).filter(function (r) { return r.origem !== "cadastro"; });
+}
+/* v214: quem manda no hodômetro é a OPERAÇÃO, não a digitação.
+   Até a v213 o KM atual era o maior entre o digitado no cadastro e os registros,
+   então um número digitado a mais (136.719 no lugar de 135.719) passava na frente
+   do abastecimento de hoje e ninguém entendia de onde vinha. Agora:
+     - existindo registro de operação (abastecimento, viagem ou troca), ele manda
+       e o campo do cadastro vira só ponto de partida -- ninguém precisa mais
+       digitar KM em lugar nenhum;
+     - registro FORA DA CURVA (regra da v213) é descartado do cálculo, não só
+       sinalizado. É o que corrige sozinho o PKS6I42 (145.982 num caminhão de 84
+       mil), o PKO3F40 (150.016 numa viagem que saiu com 105.550) e o QDH7D61
+       (238.875 num caminhão de 135 mil);
+     - só quando não sobra nenhum registro válido o campo digitado volta a valer.
+   O digitado nunca é apagado: quando ele é ignorado, a tela diz isso. */
+function kmAtualInfo(v) {
+  if (!v) return { km: 0, origem: "vazio", rotulo: "", ignorados: [], digitado: 0 };
+  const digitado = Number(v.kmAtual) || 0;
+  const cache = kmCache();
+  const chave = "info:" + v.placa;
+  if (cache[chave]) return cache[chave];
+  const fora = kmForaDaCurva(v.placa);
+  const refsFora = {};
+  fora.forEach(function (f) { refsFora[f.ref] = true; });
+  let melhor = null;
+  kmRegistrosReais(v.placa).forEach(function (r) {
+    if (refsFora[r.ref]) return;                 // fora da curva não entra na conta
+    if (!melhor || r.km > melhor.km) melhor = r;
+  });
+  let out;
+  if (melhor) {
+    out = {
+      km: melhor.km, origem: "auto", rotulo: melhor.rotulo, origemCurta: melhor.origem,
+      ignorados: fora, digitado: digitado, digitadoIgnorado: digitado > melhor.km ? digitado : 0,
+    };
+  } else {
+    out = {
+      km: digitado, origem: digitado > 0 ? "cadastro" : "vazio", rotulo: "KM digitado no cadastro",
+      origemCurta: "cadastro", ignorados: fora, digitado: digitado, digitadoIgnorado: 0,
+    };
+  }
+  cache[chave] = out;
+  return out;
+}
 function kmAtualVeiculo(v) {
-  return Math.max(Number(v.kmAtual) || 0, kmMaxRegistrado(v.placa));
+  return kmAtualInfo(v).km;
 }
 // Onde o sistema encontrou o KM automático (só pra mostrar a origem na tela).
+// v214: SEM USO — quem decide e explica a origem agora é kmAtualInfo(). Mantida
+// só porque não custa nada; se for editar origem de KM, é em kmAtualInfo.
 function origemKmAuto(placa) {
   let mx = 0, origem = "";
   (state.abastecimentos || []).forEach(function (a) {
@@ -6311,7 +6385,7 @@ function gerarContextoAssistente() {
     const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)} (dos quais ${fmtR(hist.reduce((s, t) => s + trocaCustoNovo(t), 0))} foi comprado fora e ${fmtR(hist.reduce((s, t) => s + trocaCustoEstoque(t), 0))} saiu do almoxarifado)`;
     // v213: de onde vem cada número, e se tem KM fora da curva poluindo a conta
     const foraC = (function () { try { return kmForaDaCurva(v.placa); } catch (e) { return []; } })();
-    const alertaKm = foraC.length ? ` ⚠ KM SUSPEITO GRAVADO: ${foraC.map((f) => f.km.toLocaleString("pt-BR") + " km (" + f.rotulo + ")").join(", ")} — enquanto não for corrigido, é ele que manda na KM atual e todas as contas por KM deste caminhão saem erradas.` : "";
+    const alertaKm = foraC.length ? ` ⚠ KM SUSPEITO GRAVADO E DESCARTADO da conta: ${foraC.map((f) => f.km.toLocaleString("pt-BR") + " km (" + f.rotulo + ")").join(", ")} — o hodômetro deste caminhão está calculando pelo registro válido mais alto, então as contas por KM estão certas, mas o lançamento errado continua na origem e precisa ser corrigido.` : "";
     if (!ol) return `- ${v.placa}: KM atual ${kmA}, SEM última troca registrada (não dá pra calcular a próxima), ${extra}${alertaKm}`;
     const sit = ol.falta <= 0
       ? `VENCIDA — já passou ${Math.abs(ol.falta).toLocaleString("pt-BR")} km do ponto de troca`
@@ -6324,11 +6398,12 @@ function gerarContextoAssistente() {
 
   // --- v213: como o hodômetro é apurado (pra ela saber explicar divergência de KM) ---
   const blocoRegraKm = !podeOleo ? "" : `COMO O SISTEMA APURA O KM DE CADA CAMINHÃO (regra fixa, não é estimativa):
-- A KM atual de um caminhão é o MAIOR KM já registrado nele, venha de foto de KM do abastecimento, do KM de saída/chegada da viagem ou do KM da própria troca de óleo. O campo do cadastro é só ponto de partida.
-- Por isso um número lido errado pra cima contamina tudo que é calculado por KM (óleo, correia, pneus): ele vira o hodômetro do caminhão.
-- Desde a v213 existe trava nos dois sentidos: KM menor que o já registrado é recusado (hodômetro não anda pra trás, normalmente é o parcial lido no lugar do total) e KM que pule mais que ${kmDiaMax()} km por dia desde o último registro (com folga mínima de ${kmFolgaMin()} km) também é recusado e marcado pra conferência, tanto na leitura por foto quanto na digitação.
-- A ÚLTIMA TROCA DE ÓLEO sai do lançamento de troca quando existe um. O campo digitado no cadastro só vale enquanto o caminhão não tiver nenhuma troca lançada. Se alguém perguntar por que a última troca mudou, é isso: antes os dois números podiam se separar, agora o lançamento manda.
-- Se o KM atual de um caminhão parecer não bater com a viagem dele, a primeira coisa a conferir é a lista de KM suspeito acima — não é erro de conta, é dado de entrada.`;
+- A KM atual sai da OPERAÇÃO: é o maior KM registrado em abastecimento, KM de saída/chegada de viagem ou KM de troca de óleo. Desde a v214 o campo digitado no cadastro NÃO compete mais com isso — ele só vale em caminhão que ainda não tem nenhum registro, como ponto de partida. Ninguém precisa digitar KM.
+- Registro com KM impossível é DESCARTADO da conta, não apenas sinalizado: vale a regra de no máximo ${kmDiaMax()} km por dia desde o registro anterior (folga mínima de ${kmFolgaMin()} km). Então um lançamento errado não contamina mais óleo, correia nem pneus — mas segue errado na origem e aparece na lista de KM suspeito acima, que é o que precisa ser corrigido.
+- A trava vale nos dois sentidos e nas quatro portas de entrada: foto do abastecimento, foto de KM da viagem, KM de viagem digitado e KM de abastecimento digitado. KM menor que o já registrado também é recusado (hodômetro não anda pra trás, costuma ser o parcial lido no lugar do total).
+- Abastecimento REJEITADO pela equipe não alimenta hodômetro nenhum.
+- A ÚLTIMA TROCA DE ÓLEO sai do lançamento de troca quando existe um. O campo digitado no cadastro só vale enquanto o caminhão não tiver nenhuma troca lançada.
+- Se alguém perguntar por que a KM atual não bate com o que ele viu no painel ou na viagem, a resposta está na lista de registros: diga de QUAL lançamento veio o número (a lista de óleo acima informa) e, se houver KM descartado, mencione-o. Não é erro de conta, é dado de entrada.`;
 
   // --- Status do Dia (viagens em andamento agora) ---
   const linhasStatusDia = !podeStatusDia ? "" : state.viagens
@@ -6638,9 +6713,9 @@ function rfDiagnosticoSistema() {
     vs.forEach(function (v) {
       const fora = kmForaDaCurva(v.placa);
       if (!fora.length) return;
-      add("alto", "KM suspeito registrado no " + v.placa + ": "
+      add("medio", "KM suspeito registrado no " + v.placa + ": "
         + fora.map(function (f) { return f.km.toLocaleString("pt-BR") + " km no " + f.rotulo; }).join(", ")
-        + ". Enquanto esse número estiver lá ele é o hodômetro do caminhão, e troca de óleo, correia e pneus calculam em cima dele. "
+        + ". O sistema já DESCARTOU esse número da conta do hodômetro (v214), então óleo, correia e pneus estão calculando certo — mas o lançamento continua errado na origem e precisa ser corrigido. "
         + fora[0].aviso);
     });
   } catch (e) {}
@@ -6651,6 +6726,19 @@ function rfDiagnosticoSistema() {
     if (!ol) return;
     if (ol.falta <= 0) add("alto", "Troca de óleo do " + v.placa + " VENCIDA — passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km do ponto.");
     else if (ol.falta <= avisoKm) add("medio", "Troca de óleo do " + v.placa + " a " + ol.falta.toLocaleString("pt-BR") + " km.");
+  });
+  // v214: última troca acima do hodômetro é impossível. Aparece quando alguém
+  // digitou o campo errado antes de existir lançamento de troca -- e faz o
+  // regressivo mostrar número maior que o próprio intervalo.
+  vs.forEach(function (v) {
+    const u = oleoUltimaKmV(v);
+    if (!u || u.origem !== "digitado") return;
+    const kmA = kmAtualVeiculo(v);
+    if (kmA > 0 && u.km > kmA) {
+      add("medio", "Última troca de óleo do " + v.placa + " está em " + u.km.toLocaleString("pt-BR")
+        + " km, acima do hodômetro atual (" + kmA.toLocaleString("pt-BR")
+        + " km) — número digitado errado, o regressivo desse caminhão não vale nada até corrigir. Lançar a troca real embaixo resolve de vez, porque aí o lançamento passa a mandar.");
+    }
   });
   // v210: preventiva por KM (correia, pneus e o que estiver no plano)
   try {
@@ -8731,7 +8819,7 @@ function renderTabela() {
           <span style="font-size:12px; color:#bbb;">km</span>
         </div>
       </div>
-      <div style="font-size:11px; color:#777; margin-bottom:10px;">A <b>KM atual</b> se atualiza sozinha pelo maior hodômetro já registrado do caminhão — foto de KM do abastecimento, KM das viagens e o KM da própria troca (marcado com <b style="color:${GOLD};">🔄 auto</b>). Você só precisa digitar uma vez, como ponto de partida. A <b>última troca</b> vem do lançamento de troca feito embaixo (<b style="color:${GOLD};">📋</b>) — só fica digitável enquanto o caminhão não tiver nenhuma troca lançada, pra os dois números nunca se separarem. As <b>próximas programadas</b> saem dela + o intervalo (padrão 10.000 km).<br>Desde a v213 o hodômetro tem <b>teto</b>: um KM que pule mais que <b>${kmDiaMax().toLocaleString("pt-BR")} km por dia</b> desde o último registro (com folga mínima de ${kmFolgaMin().toLocaleString("pt-BR")} km) não entra sozinho — é foto lida errada ou dígito a mais na digitação. Registro assim que já esteja gravado aparece marcado em <b style="color:#C0392B;">vermelho</b> na coluna da KM atual.</div>
+      <div style="font-size:11px; color:#777; margin-bottom:10px;">A <b>KM atual</b> sai sozinha da operação — foto de KM do abastecimento, KM das viagens e o KM da própria troca, o registro mais alto de todos (<b style="color:${GOLD};">🔄 auto</b>). <b>Você não precisa digitar KM em lugar nenhum</b>: o campo só fica editável em caminhão que ainda não tem nenhum registro, como ponto de partida. A <b>última troca</b> vem do lançamento de troca feito embaixo (<b style="color:${GOLD};">📋</b>), e as <b>próximas programadas</b> saem dela + o intervalo (padrão 10.000 km).<br>Registro com KM impossível é <b>descartado</b> da conta, não só sinalizado: um KM que pule mais que <b>${kmDiaMax().toLocaleString("pt-BR")} km por dia</b> desde o registro anterior (com folga mínima de ${kmFolgaMin().toLocaleString("pt-BR")} km) sai fora e aparece em <b style="color:#C0392B;">vermelho</b> aqui, pra ser corrigido na origem.</div>
       <table style="min-width:1180px;"><thead><tr>
         <th>Placa</th><th>Tipo</th><th>KM atual</th><th>Últ. troca (km)</th><th>Intervalo (km)</th><th>Próx. troca</th><th>Faltam</th><th>Próximas programadas</th><th>Histórico</th>
       </tr></thead><tbody>
@@ -8742,20 +8830,19 @@ function renderTabela() {
           else if (ol.falta <= 0) { faltaTxt = "🔴 trocar (passou " + Math.abs(ol.falta).toLocaleString("pt-BR") + " km)"; faltaCor = "#C0392B"; }
           else if (ol.falta <= avisoOleo) { faltaTxt = "🟡 " + ol.falta.toLocaleString("pt-BR") + " km"; faltaCor = GOLD; }
           else { faltaTxt = "🟢 " + ol.falta.toLocaleString("pt-BR") + " km"; faltaCor = "#2E7D32"; }
-          // v181: KM automático (maior hodômetro já registrado) x KM digitado
-          const auto = origemKmAuto(v.placa);
-          const digitado = Number(v.kmAtual) || 0;
-          const kmEfetivo = Math.max(digitado, auto.km);
-          const usandoAuto = auto.km > digitado;
-          // v213: de onde vem a última troca (lançamento manda) e se o KM atual
-          // está apoiado num registro fora da curva -- que é o que faz a conta
-          // toda desandar sem ninguém entender por quê.
+          // v214: quem manda é a operação. O campo digitado só aparece editável
+          // enquanto o caminhão não tiver nenhum registro válido.
+          const kmInfo = kmAtualInfo(v);
+          const kmEfetivo = kmInfo.km;
           const ultInfo = oleoUltimaKmV(v);
-          const foraCurva = kmForaDaCurva(v.placa);
-          const hintKm = (usandoAuto
-            ? `<div style="font-size:9px;color:${GOLD};margin-top:2px;" title="Lido automaticamente do maior hodômetro registrado">🔄 auto — ${auto.origem}</div>`
-            : (auto.km ? `<div style="font-size:9px;color:#666;margin-top:2px;">manual</div>` : ""))
-            + (foraCurva.length ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="${esc(foraCurva.map((f) => f.aviso).join(" | "))}">⚠ KM suspeito registrado (${foraCurva[0].km.toLocaleString("pt-BR")}) — ${esc(foraCurva[0].rotulo)}</div>` : "");
+          const foraCurva = kmInfo.ignorados;
+          const celulaKm = kmInfo.origem === "auto"
+            ? `<div style="font-weight:700;">${kmEfetivo.toLocaleString("pt-BR")}</div>`
+              + `<div style="font-size:9px;color:${GOLD};margin-top:2px;" title="${esc(kmInfo.rotulo)}">🔄 auto — ${esc(kmInfo.origemCurta)}</div>`
+              + (kmInfo.digitadoIgnorado ? `<div style="font-size:9px;color:#777;margin-top:2px;" title="O KM digitado no cadastro deixou de valer quando o caminhão passou a ter registro de operação. Ele fica guardado, só não entra na conta.">digitado ${kmInfo.digitadoIgnorado.toLocaleString("pt-BR")} ignorado</div>` : "")
+              + (foraCurva.length ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="${esc(foraCurva.map((f) => f.aviso).join(" | "))}">⚠ ${foraCurva.length} registro(s) descartado(s): ${foraCurva.map((f) => f.km.toLocaleString("pt-BR")).join(", ")}</div>` : "")
+            : `<input type="number" min="0" value="${kmEfetivo || ""}" placeholder="—" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:100px;">`
+              + `<div style="font-size:9px;color:#666;margin-top:2px;">ponto de partida (sem registro ainda)</div>`;
           // v181: próximas trocas programadas a partir da última feita
           const prox = proximasTrocasOleo(v, 3);
           const proxTxt = prox.length
@@ -8793,7 +8880,7 @@ function renderTabela() {
           }
           return `<tr>
             <td>${esc(v.placa) || "—"}</td><td>${v.tipo}</td>
-            <td><input type="number" min="0" value="${kmEfetivo}" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:100px;">${hintKm}</td>
+            <td>${celulaKm}</td>
             <td>${ultInfo && ultInfo.origem === "lancamento"
               ? `<div style="font-weight:700;">${ultInfo.km.toLocaleString("pt-BR")}</div><div style="font-size:9px;color:${GOLD};margin-top:2px;" title="Vem do lançamento de troca — não precisa digitar">📋 do lançamento${ultInfo.data ? " de " + esc(ultInfo.data.split("-").reverse().join("/")) : ""}</div>`
               : `<input type="number" min="0" value="${esc(v.oleoKmUltima != null ? v.oleoKmUltima : "")}" placeholder="—" onchange="atualizarVeiculo('${v.id}','oleoKmUltima',this.value)" style="width:100px;"><div style="font-size:9px;color:#666;margin-top:2px;">digitado</div>`}</td>
@@ -10572,8 +10659,11 @@ function rfKmSuspeito(placa, kmLido, opts) {
    demais sustentam, é ele que está fora da curva. Só dispara com histórico
    (2+ registros), e é regra fixa -- não é a IA achando. */
 function kmForaDaCurva(placa) {
+  const cache = kmCache();
+  const chave = "fora:" + placa;
+  if (cache[chave]) return cache[chave];
   const regs = kmRegistrosDoVeiculo(placa);
-  if (regs.length < 2) return [];
+  if (regs.length < 2) { cache[chave] = []; return cache[chave]; }
   const fora = [];
   regs.forEach(function (r) {
     const s = rfKmSuspeito(placa, r.km, { data: r.data, ignorarRef: r.ref });
@@ -10581,7 +10671,8 @@ function kmForaDaCurva(placa) {
       fora.push({ km: r.km, data: r.data, origem: r.origem, rotulo: r.rotulo, ref: r.ref, aviso: rfKmSuspeitoTexto(s) });
     }
   });
-  return fora.sort(function (a, b) { return b.km - a.km; });
+  cache[chave] = fora.sort(function (a, b) { return b.km - a.km; });
+  return cache[chave];
 }
 // Texto único do aviso, usado na leitura por IA e na digitação manual.
 function rfKmSuspeitoTexto(s) {
