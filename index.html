@@ -2,7 +2,23 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v216)</title>
+<title>RF Logística — Painel da Frota (v217)</title>
+<!-- v217: KM RODADO = MEDIDO PELAS DUAS PONTAS, nao o estimado.
+     Renato lanca KM a mao na saida pra ter estimativa de custo. Quando a viagem
+     tem KM de saida e de chegada (normalmente das fotos), o rodado passa a ser a
+     diferenca entre os dois -- e no cliente que paga por quilometro isso e
+     dinheiro: na viagem do Antonio, estimado 1.308 contra medido 1.527 dava
+     R$ 1.051,20 a menos de faturamento.
+     O lancamento dele nao some: vai pra `kmDigitado` e fica na tela ao lado do
+     medido, com a diferenca, pra auditar. Pra mudar o rodado, corrige o KM de
+     saida ou o de chegada, que sao os numeros conferidos contra a foto.
+     `recalcularKmTodasViagens()` roda depois da nuvem carregar porque o KM de
+     chegada pode ter chegado pela RPC do app do motorista, que grava direto na
+     viagem sem passar pelo recalculo -- foi assim que a viagem do Antonio ficou
+     com 1.308 depois de ja ter medido 1.527.
+     A coluna KM tambem passou a sinalizar ponta com KM fora da curva: a foto
+     lida pelo app do MOTORISTA nao passa por trava nenhuma, porque o celular
+     dele nao baixa os dados da frota e nao tem contra o que comparar. -->
 <!-- v216: duas pecas que faltavam, as duas descobertas conferindo dados reais.
      1) O selo "aguardando revisao" era um beco sem saida. A RPC
         motorista_confirmar_fim marca a viagem como `aguardando_equipe` quando o
@@ -1376,7 +1392,22 @@ function aplicarFreteKm(v, origem) {
 function setViagemKm(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  const medido = viagemKmMedido(v);
+  if (medido !== null) {
+    // v217: com as duas pontas medidas, o digitado não manda mais. Fica gravado
+    // como estimativa e aparece na tela; pra mudar o KM rodado, corrige o KM de
+    // saída ou o de chegada -- que são os números conferidos contra as fotos.
+    v.kmDigitado = Number(valor) || 0;
+    v.km = medido;
+    aplicarFreteKm(v, "km");
+    salvar(); render();
+    alert("Esta viagem já tem KM de saída e de chegada, então o KM rodado é a diferença entre os dois: "
+      + medido.toLocaleString("pt-BR") + " km.\n\nGuardei " + (Number(valor) || 0).toLocaleString("pt-BR")
+      + " km como a sua estimativa, e ela fica visível na linha pra conferência.\n\nSe o número medido estiver errado, corrija o KM de saída ou o de chegada conferindo a foto.");
+    return;
+  }
   v.km = Number(valor) || 0;
+  v.kmDigitado = v.km;                                // estimativa da saída
   aplicarFreteKm(v, "km");                            // cliente por km → preenche o valor
   salvar(); render();
 }
@@ -1413,12 +1444,40 @@ function setViagemKmChegada(id, valor) {
   recalcularKmDaViagem(v);
   salvar(); render();
 }
-function recalcularKmDaViagem(v) {
+/* ===== v217: O KM RODADO É O MEDIDO, NÃO O ESTIMADO =====================
+   Renato lança o KM à mão na saída pra ter estimativa de custo. Quando as duas
+   pontas existem (KM de saída e de chegada, normalmente vindas das fotos), o
+   número real é a diferença entre elas e é ELE que vale -- inclusive pro frete
+   por quilômetro, onde isso é dinheiro: na viagem do Antônio o estimado 1.308
+   contra o medido 1.527 dava R$ 1.051,20 a menos de faturamento.
+   O que ele lançou NÃO é apagado: vai pra `kmDigitado` e continua na tela ao
+   lado do medido, com a diferença, pra dar pra auditar. */
+function viagemKmMedido(v) {
   const saida = Number(v.kmSaida) || 0, chegada = Number(v.kmChegada) || 0;
-  if (saida > 0 && chegada > 0 && chegada >= saida) {
-    v.km = chegada - saida;
+  if (saida > 0 && chegada > 0 && chegada >= saida) return chegada - saida;
+  return null;
+}
+function recalcularKmDaViagem(v) {
+  const medido = viagemKmMedido(v);
+  if (medido === null) return;
+  const atual = Number(v.km) || 0;
+  if (atual !== medido) {
+    if (!v.kmDigitado && atual > 0) v.kmDigitado = atual;   // guarda a estimativa uma vez
+    v.km = medido;
     aplicarFreteKm(v, "km");
   }
+}
+// Passa em todas as viagens. Existe porque o KM de chegada pode chegar pela RPC
+// do app do motorista, que grava direto na viagem sem passar pelo recálculo --
+// foi assim que a viagem do Antônio ficou com 1.308 depois de medir 1.527.
+function recalcularKmTodasViagens() {
+  let mexidas = 0;
+  (state.viagens || []).forEach(function (v) {
+    const antes = Number(v.km) || 0;
+    recalcularKmDaViagem(v);
+    if ((Number(v.km) || 0) !== antes) mexidas++;
+  });
+  return mexidas;
 }
 function setFreteKmManual(id, checked) {          // v72: liga/desliga valor/km manual desta viagem
   const v = state.viagens.find((x) => String(x.id) === String(id));
@@ -8373,7 +8432,26 @@ function renderTabela() {
               </div>
             </td>
             <td>
-              <input type="number" value="${v.km || 0}" onchange="setViagemKm('${v.id}',this.value)" style="width:70px;">
+              <input type="number" value="${v.km || 0}" onchange="setViagemKm('${v.id}',this.value)" style="width:70px;${viagemKmMedido(v) !== null ? "border-color:" + GOLD + ";" : ""}" title="${viagemKmMedido(v) !== null ? "Medido: KM de chegada menos KM de saída. Pra mudar, corrija uma das duas pontas." : "Estimativa da saída — vira medido quando a viagem tiver KM de chegada."}">${(function () {
+                // v217: de onde veio o KM rodado, e o que foi estimado antes
+                const medido = viagemKmMedido(v);
+                if (medido === null) return `<div style="font-size:9px;color:#666;margin-top:2px;">estimado</div>`;
+                const est = Number(v.kmDigitado) || 0;
+                const dif = est ? medido - est : 0;
+                return `<div style="font-size:9px;color:${GOLD};margin-top:2px;" title="${esc((Number(v.kmSaida)||0).toLocaleString("pt-BR"))} → ${esc((Number(v.kmChegada)||0).toLocaleString("pt-BR"))}">📷 medido pelas fotos</div>`
+                  + (est && est !== medido ? `<div style="font-size:9px;color:#888;margin-top:1px;" title="O que foi lançado à mão na saída. Fica guardado só pra conferência.">estimado ${est.toLocaleString("pt-BR")} (${dif > 0 ? "+" : ""}${dif.toLocaleString("pt-BR")})</div>` : "");
+              })()}${(function () {
+                // v217: KM de ponta que destoa do histórico do caminhão (a foto lida errado
+                // pelo app do motorista não passa por trava nenhuma -- o celular dele não
+                // tem os dados da frota pra comparar)
+                const avisos = [];
+                const sS = Number(v.kmSaida) > 0 ? rfKmSuspeito(v.placa, Number(v.kmSaida), { data: v.data, ignorarRef: "viagem-saida:" + v.id }) : null;
+                const sC = Number(v.kmChegada) > 0 ? rfKmSuspeito(v.placa, Number(v.kmChegada), { data: v.dataFim || v.data, ignorarRef: "viagem-chegada:" + v.id }) : null;
+                if (sS && sS.tipo === "salto") avisos.push("saída " + Number(v.kmSaida).toLocaleString("pt-BR"));
+                if (sC && sC.tipo === "salto") avisos.push("chegada " + Number(v.kmChegada).toLocaleString("pt-BR"));
+                if (!avisos.length) return "";
+                return `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="${esc([sS, sC].filter(Boolean).map(rfKmSuspeitoTexto).join(" | "))}">⚠ KM suspeito: ${avisos.join(", ")} — confira a foto</div>`;
+              })()}
               <div style="font-size:9px; color:#999; margin-top:2px; min-width:100px;">
                 <label style="display:flex; align-items:center; gap:3px; cursor:pointer; white-space:nowrap;">
                   <input type="checkbox" ${v.freteKmManual ? "checked" : ""} onchange="setFreteKmManual('${v.id}', this.checked)" style="width:auto; margin:0;">
@@ -9644,6 +9722,13 @@ revalidarSessaoAoAbrir();
       // criaria dívida em cima de state vazio e subiria lixo pra nuvem --
       // exatamente o bug de corrida corrigido na v118.
       try { gerarContasEmplacamento(); } catch (e) { console.error("[emplacamento]", e); }
+      // v217: o KM de chegada pode ter chegado pela RPC do app do motorista, que
+      // grava direto na viagem sem passar pelo recálculo. Aqui o KM rodado volta
+      // a ser a diferença medida entre as duas pontas (e o frete por km junto).
+      try {
+        const nKm = recalcularKmTodasViagens();
+        if (nKm) console.log("[viagens] KM rodado recalculado pelas fotos em " + nKm + " viagem(ns)");
+      } catch (e) { console.error("[viagens km]", e); }
       // v213: realinha "última troca" do cadastro com os lançamentos de troca
       try {
         const nAj = sincronizarOleoUltimaTodas();
