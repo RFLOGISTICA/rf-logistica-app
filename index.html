@@ -2,7 +2,26 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v215)</title>
+<title>RF Logística — Painel da Frota (v216)</title>
+<!-- v216: duas pecas que faltavam, as duas descobertas conferindo dados reais.
+     1) O selo "aguardando revisao" era um beco sem saida. A RPC
+        motorista_confirmar_fim marca a viagem como `aguardando_equipe` quando o
+        motorista fecha pelo celular, mas NENHUM botao do app tirava a viagem
+        desse estado -- as funcoes de aprovar/rejeitar que existiam sao do fluxo
+        antigo (tabela viagens_finalizadas_motorista, hoje vazia), cujo cartao
+        nunca aparece pra essas viagens. Eu tinha dito ao Renato que havia botao;
+        nao havia. Agora, ao lado do selo: ver as duas fotos de KM, "Aprovar"
+        (exige KM de chegada preenchido, que e o numero conferido contra a foto)
+        e "Devolver" com motivo. Devolver volta a viagem pra `em_andamento`,
+        porque e o unico estado em que a RPC aceita nova confirmacao -- marcar
+        "rejeitada" criaria outro beco sem saida.
+     2) O nome do motorista virou SELECAO dos logins. O app do motorista so acha
+        a viagem quando `motoristaNaEpoca` e igual, caractere a caractere, ao
+        profiles.nome do login. Com campo de texto livre, de 22 caminhoes so um
+        batia -- praticamente nenhum motorista via as proprias viagens. O valor
+        antigo nunca e apagado: se nao bate com login, continua na lista marcado.
+     Diagnostico e assistente atualizados junto: viagem esperando revisao (com
+     dias) e nome que nao bate com login. -->
 <!-- v215: CORRIGE A v214, que deixou o painel numa tela preta e sem login.
      Causa: eu coloquei as funcoes da trava de KM (kmDiaMax, kmFolgaMin,
      kmDiasEntre, rfKmSuspeito, rfKmSuspeitoTexto, kmForaDaCurva) no BLOCO 3 de
@@ -1214,6 +1233,111 @@ function atualizarViagem(id, campo, valor) {
 // v131: quem realmente dirigiu essa viagem — usa o "congelado" na época; se a
 // viagem for antiga (de antes dessa correção) e não tiver o snapshot, cai pro
 // motorista atual do caminhão (comportamento de antes, só como último recurso).
+/* ===== v216: REVISÃO DA VIAGEM CONFIRMADA PELO MOTORISTA ==================
+   O fluxo novo (v107) marca a viagem como `aguardando_equipe` quando o motorista
+   confirma o fim pelo celular -- é a RPC motorista_confirmar_fim que grava isso.
+   Só que NENHUM botão do app tirava a viagem desse estado: as funções de aprovar
+   e rejeitar que existiam pertencem ao fluxo ANTIGO (aviso de fim de viagem,
+   tabela viagens_finalizadas_motorista), que hoje está vazia e cujo cartão nunca
+   aparece pra essas viagens. O selo "aguardando revisão" era um beco sem saída.
+   Renato viu isso na prática: eu disse que havia botão e não havia.
+   Aprovar exige KM de chegada preenchido -- é o número que a equipe está
+   conferindo contra a foto; aprovar sem ele não revisa nada.
+   Rejeitar DEVOLVE a viagem pro motorista (volta a `em_andamento`), porque a RPC
+   só aceita nova confirmação nesse estado. Se marcasse "rejeitada" o motorista
+   ficaria sem poder reenviar -- seria criar outro beco sem saída. */
+function viagemAguardandoRevisao(v) {
+  return v && v.statusMotorista === "aguardando_equipe";
+}
+function aprovarViagemMotorista(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (!viagemAguardandoRevisao(v)) { render(); return; }
+  if (!(Number(v.kmChegada) > 0)) {
+    alert("Falta o KM de chegada desta viagem.\n\nAbra a foto do KM final (botão 📷 ver na coluna KM chegada), digite o número e aprove depois — é justamente esse número que a revisão confere.");
+    return;
+  }
+  v.statusMotorista = "aprovada";
+  v.revisadoEm = Date.now();
+  v.revisadoPor = (state.sessao && (state.sessao.nome || state.sessao.email)) || "";
+  v.motivoDevolucaoMotorista = "";
+  salvar(); render();
+}
+function rejeitarViagemMotorista(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (!viagemAguardandoRevisao(v)) { render(); return; }
+  const motivo = window.prompt("Por que está devolvendo pro motorista? (ex: foto do KM ilegível, KM não bate com o painel)", "");
+  if (motivo === null) return;
+  v.statusMotorista = "em_andamento";     // é o único estado em que ele pode reenviar
+  v.motivoDevolucaoMotorista = (motivo || "").trim() || "sem motivo informado";
+  v.devolvidoEm = Date.now();
+  v.revisadoPor = (state.sessao && (state.sessao.nome || state.sessao.email)) || "";
+  salvar(); render();
+  alert("Viagem devolvida — o motorista pode reenviar a foto do KM final.\n\nO motivo fica registrado aqui na viagem, mas o app dele ainda não mostra esse texto: avise por mensagem.");
+}
+/* ===== v216: NOME DO MOTORISTA TEM QUE SER O DO LOGIN =====================
+   O app do motorista só encontra a viagem quando `motoristaNaEpoca` é IGUAL,
+   caractere a caractere, ao `profiles.nome` do login dele -- é assim que a RPC
+   motorista_resumo_viagens casa. Como o campo era texto livre, a frota inteira
+   estava desalinhada: de 22 caminhões, só um tinha nome que batia, e por isso
+   praticamente nenhum motorista via as próprias viagens. Caso que destravou
+   isso: o Antônio, gravado como "Antoni José" e "Antonio jose", enquanto o
+   login dele é "Antonio.Jose".
+   Digitar nome à mão sempre vai desalinhar de novo, então o campo virou
+   seleção dos logins existentes. O valor que já estava lá nunca é apagado: se
+   não bater com nenhum login, continua na lista marcado como fora de padrão. */
+function loginsMotoristas() {
+  return (state._perfis || [])
+    .filter(function (p) { return p.papel === "motorista" && p.ativo !== false && (p.nome || "").trim(); })
+    .map(function (p) { return String(p.nome).trim(); })
+    .sort(function (a, b) { return a.localeCompare(b, "pt-BR"); });
+}
+function motoristaBateComLogin(nome) {
+  const n = String(nome || "").trim();
+  if (!n) return true;                        // vazio não é desalinhamento
+  return loginsMotoristas().indexOf(n) !== -1;
+}
+// Logins de motorista amarrados a uma placa. Serve pra não dar alarme falso:
+// "LEAO TRANSPORTE" e "RF LOGISTICA" ocupam o campo motorista de caminhão que
+// não tem motorista com login -- ali não há nada pra alinhar. A cobrança só faz
+// sentido quando existe alguém com login naquele caminhão.
+function loginsDaPlaca(placa) {
+  if (!placa) return [];
+  return (state._perfis || [])
+    .filter(function (p) { return p.papel === "motorista" && p.ativo !== false && p.placa_motorista === placa && (p.nome || "").trim(); })
+    .map(function (p) { return String(p.nome).trim(); });
+}
+// O caminhão tem motorista com login, mas o nome gravado não é o do login?
+function veiculoDesalinhadoDoLogin(v) {
+  if (!v || !v.motorista) return false;
+  if (!(state._perfis || []).length) return false;    // sem os logins carregados, não acusa nada
+  if (!loginsDaPlaca(v.placa).length) return false;   // ninguém com login nesse caminhão
+  return !motoristaBateComLogin(v.motorista);
+}
+// Monta o seletor de motorista de um veículo. Sem logins carregados ainda,
+// devolve o campo de texto de sempre -- nunca deixa a célula vazia.
+function seletorMotoristaVeiculo(v) {
+  const atual = String(v.motorista || "").trim();
+  const logins = loginsMotoristas();
+  if (!logins.length) {
+    return `<input value="${esc(atual)}" placeholder="Nome do motorista" onchange="atualizarVeiculo('${v.id}','motorista',this.value)">`
+      + `<div style="font-size:9px;color:#666;margin-top:2px;">logins ainda carregando…</div>`;
+  }
+  const bate = motoristaBateComLogin(atual);
+  const opcoes = [`<option value="" ${!atual ? "selected" : ""}>— sem motorista —</option>`]
+    .concat(logins.map(function (n) {
+      return `<option value="${esc(n)}" ${n === atual ? "selected" : ""}>${esc(n)}</option>`;
+    }));
+  if (atual && !bate) {
+    opcoes.push(`<option value="${esc(atual)}" selected>${esc(atual)} — não bate com login</option>`);
+  }
+  const cobra = veiculoDesalinhadoDoLogin(v);   // v216: só cobra se há login nessa placa
+  const sugestao = loginsDaPlaca(v.placa);
+  return `<select onchange="atualizarVeiculo('${v.id}','motorista',this.value)" style="max-width:170px;" title="A viagem nasce com este nome, e o app do motorista só encontra a viagem se o nome for igual ao do login dele.">${opcoes.join("")}</select>`
+    + (cobra ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="Enquanto estiver assim, este motorista não vê as viagens dele no aplicativo.">⚠ não bate com o login${sugestao.length ? " — é " + esc(sugestao.join(" ou ")) + "?" : ""}</div>`
+      : (atual && !bate ? `<div style="font-size:9px;color:#666;margin-top:2px;">sem login de motorista nesta placa</div>` : ""));
+}
 function motoristaDaViagem(v) {
   if (v.motoristaNaEpoca) return v.motoristaNaEpoca;
   const vc = state.veiculos.find((x) => x.placa === v.placa);
@@ -6228,6 +6352,15 @@ function render() {
     </div>
 
     ${state.aba === "frota" ? bannerBoletos() : ""}
+    ${state.aba === "frota" ? (function () {
+      // v216: o seletor de motorista da Frota precisa dos logins. Carrega uma vez,
+      // fora do caminho de desenho (o carregarPerfis é assíncrono e chama render
+      // de novo quando termina) -- sem isso a célula cairia sempre no texto livre.
+      if (!Array.isArray(state._perfis) || !state._perfis.length) {
+        if (!state._perfisPedidos) { state._perfisPedidos = true; try { carregarPerfis(); } catch (e) {} }
+      }
+      return "";
+    })() : ""}
     ${state.aba === "frota" ? bannerVeiculos() : ""}
 
     <div style="padding:16px 24px 0;">
@@ -6468,7 +6601,20 @@ function gerarContextoAssistente() {
     .sort((a, b) => (a.data || "").localeCompare(b.data || ""))
     .map((v) => {
       const c = calcularViagem(v);
-      return `- ${v.data || "sem data"}${v.dataFim ? " a " + v.dataFim : " (sem data fim)"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.dias || 1} dia(s) | ${v.pago ? "paga" : "pendente"}`;
+      // v216: em que ponto do fluxo com o motorista a viagem está, e se o nome
+      // dela casa com algum login (sem isso o motorista não vê a viagem no app)
+      const smTxt = {
+        aguardando_motorista: "enviada ao motorista, ele ainda não confirmou a saída",
+        em_andamento: "em viagem" + (v.motivoDevolucaoMotorista ? " (DEVOLVIDA pela equipe: " + v.motivoDevolucaoMotorista + ")" : ""),
+        aguardando_equipe: "AGUARDANDO REVISÃO DA EQUIPE — o motorista já fechou, falta aprovar ou devolver na aba Viagens",
+        aprovada: "revisada e aprovada" + (v.revisadoPor ? " por " + v.revisadoPor : ""),
+        rejeitada: "rejeitada",
+      }[v.statusMotorista] || "sem envio pro motorista (lançada pela equipe)";
+      const nomeMot = motoristaDaViagem(v);
+      const alerta = (nomeMot && !motoristaBateComLogin(nomeMot) && (state._perfis || []).length && loginsDaPlaca(v.placa).length)
+        ? ` ⚠ o nome "${nomeMot}" não bate com nenhum login, então esse motorista NÃO vê esta viagem no app dele`
+        : "";
+      return `- ${v.data || "sem data"}${v.dataFim ? " a " + v.dataFim : " (sem data fim)"} | ${v.placa || "?"} | ${v.cliente || "(sem cliente)"} | motorista ${nomeMot || "(sem)"} | valor ${fmtR(c.valorViagem)} | km ${v.km || 0} | ${v.dias || 1} dia(s) | ${v.pago ? "paga" : "pendente"} | ${smTxt}${alerta}`;
     }).join("\n");
 
   // v183: ACESSO TOTAL — o assistente passa a receber também as abas que faltavam:
@@ -6668,7 +6814,7 @@ ${linhasPlacaMes || "(nenhum)"}
 Total por veículo/placa (histórico completo, todos os meses):
 ${linhasPlacaTudo || "(nenhum)"}
 
-Lista de TODAS as viagens, uma por uma, com data (ordem cronológica):
+Lista de TODAS as viagens, uma por uma, com data (ordem cronológica). O último campo de cada linha é o ponto do fluxo com o motorista: "AGUARDANDO REVISÃO DA EQUIPE" quer dizer que ele já fechou a viagem pelo celular e alguém precisa aprovar ou devolver na aba Viagens (botões ✓ Aprovar / ✕ Devolver, ao lado do selo). Aprovar exige o KM de chegada preenchido, porque é o número que se confere contra a foto. Devolver manda a viagem de volta pro motorista reenviar a foto do KM final. Se aparecer o aviso de que o nome não bate com nenhum login, esse motorista não está vendo essa viagem no app dele — o nome da viagem tem que ser idêntico ao nome do login:
 ${listaViagens || "(nenhuma viagem cadastrada)"}
 
 Dívidas vencendo nos próximos 15 dias:
@@ -6814,6 +6960,27 @@ function rfDiagnosticoSistema() {
     else if (d !== null && d <= 30) add("medio", "Emplacamento do " + v.placa + " vence em " + d + " dia(s)" + (v.emplConfirmado ? "" : " e o valor ainda é estimativa") + ".");
     if (!Number(v.ano)) add("medio", "Caminhão " + v.placa + " está sem o ANO cadastrado — sem isso não dá pra calcular o IPVA nem saber se é isento.");
   });
+  // v216: viagem que o motorista fechou e ninguém revisou
+  try {
+    const revisar = (state.viagens || []).filter(viagemAguardandoRevisao);
+    if (revisar.length) {
+      let maisAntiga = 0;
+      revisar.forEach(function (v) { const d = diasPara(v.dataFim || v.data); if (d !== null && -d > maisAntiga) maisAntiga = -d; });
+      add(maisAntiga >= 3 ? "alto" : "medio", revisar.length + " viagem(ns) fechada(s) pelo motorista esperando revisão"
+        + (maisAntiga ? ", a mais antiga há " + maisAntiga + " dia(s)" : "")
+        + ": " + revisar.map(function (v) { return v.placa + " (" + (v.data || "sem data") + ")"; }).join(", ")
+        + ". Aba Viagens, botões ✓ Aprovar / ✕ Devolver ao lado do selo.");
+    }
+  } catch (e) {}
+  // v216: motorista cujo nome não bate com nenhum login -- ele não vê as viagens dele
+  try {
+    const desalinhados = vs.filter(veiculoDesalinhadoDoLogin);
+    if (desalinhados.length) {
+      add("medio", desalinhados.length + " caminhão(ões) com nome de motorista que NÃO bate com nenhum login: "
+        + desalinhados.map(function (v) { return v.placa + " (" + v.motorista + ")"; }).join(", ")
+        + ". Enquanto estiver assim esses motoristas não veem as próprias viagens no aplicativo — o nome tem que ser idêntico ao do login. Aba Frota, coluna Motorista.");
+    }
+  } catch (e) {}
   // v213: KM fora da curva já gravado. Isso vem ANTES da troca de óleo de
   // propósito: enquanto um KM inflado estiver no sistema, ele é o hodômetro do
   // caminhão, e óleo, correia e pneus calculam todos em cima do número errado.
@@ -7658,7 +7825,7 @@ function renderTabela() {
         <td><input type="number" step="0.1" min="0" value="${v.kmPorLitro != null ? v.kmPorLitro : 3.5}" title="km/L médio deste veículo" onchange="atualizarVeiculo('${v.id}','kmPorLitro',this.value)" style="width:56px;"></td>
         <td><input value="${esc(v.modelo)}" placeholder="Modelo" onchange="atualizarVeiculo('${v.id}','modelo',this.value)"></td>
         <td><select onchange="atualizarVeiculo('${v.id}','bau',this.value)">${STATUS_BAU.map((s) => `<option ${v.bau === s ? "selected" : ""}>${s}</option>`).join("")}</select></td>
-        <td><input value="${esc(v.motorista)}" placeholder="Nome do motorista" onchange="atualizarVeiculo('${v.id}','motorista',this.value)"></td>
+        <td>${seletorMotoristaVeiculo(v)}</td>
         <td><select onchange="atualizarVeiculo('${v.id}','regimeMotorista',this.value)" title="Define se o motorista é pago por viagem (entra na aba Viagens) ou é CLT (salário fixo, tratado em Dívidas Fixas)">
           <option value="viagem" ${(v.regimeMotorista || "viagem") === "viagem" ? "selected" : ""}>Por viagem</option>
           <option value="clt" ${v.regimeMotorista === "clt" ? "selected" : ""}>CLT</option>
@@ -8145,7 +8312,18 @@ function renderTabela() {
                   rejeitada: { cor: "#C0392B", txt: "✕ rejeitada" },
                 };
                 const b = bmap[sm] || bmap.aguardando_motorista;
-                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}</div>`;
+                // v216: o selo "aguardando revisão" agora tem o que fazer.
+                const revisao = sm === "aguardando_equipe" ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+                  ${v.fotoKmSaida ? `<button class="btn-outline" style="font-size:9px;padding:2px 5px;" onclick="rfKmVer('${v.fotoKmSaida}')" title="Foto do KM de saída enviada pelo motorista">📷 saída</button>` : ""}
+                  ${v.fotoKmChegada ? `<button class="btn-outline" style="font-size:9px;padding:2px 5px;" onclick="rfKmVer('${v.fotoKmChegada}')" title="Foto do KM de chegada enviada pelo motorista">📷 chegada</button>` : `<span style="font-size:9px;color:#C0392B;">sem foto de chegada</span>`}
+                  <button class="btn-outline" style="font-size:9px;padding:2px 5px;color:#2E7D32;border-color:#2E7D32;" onclick="aprovarViagemMotorista('${v.id}')" title="Confere o KM com a foto e aprova">✓ Aprovar</button>
+                  <button class="btn-outline" style="font-size:9px;padding:2px 5px;color:#C0392B;border-color:#C0392B;" onclick="rejeitarViagemMotorista('${v.id}')" title="Devolve pro motorista reenviar a foto do KM final">✕ Devolver</button>
+                </div>` : "";
+                const devolvida = (sm === "em_andamento" && v.motivoDevolucaoMotorista)
+                  ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="Devolvida pela equipe — esperando o motorista reenviar">↩ devolvida: ${esc(v.motivoDevolucaoMotorista)}</div>` : "";
+                const revisadoPor = (sm === "aprovada" && v.revisadoPor)
+                  ? `<div style="font-size:9px;color:#666;margin-top:2px;">revisada por ${esc(v.revisadoPor)}</div>` : "";
+                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}${revisao}${devolvida}${revisadoPor}</div>`;
               })()}
             </td>
             <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); const nome = motoristaDaViagem(v); if (!nome) return "—"; const clt = vc && vc.regimeMotorista === "clt"; return esc(nome) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
