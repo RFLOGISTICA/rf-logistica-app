@@ -2,7 +2,48 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v217)</title>
+<title>RF Logística — Painel da Frota (v220)</title>
+<!-- v220: troca de oleo -- valor nao editava e marca/valor nao vinham do estoque.
+     Tres coisas separadas, todas reais:
+     1) O campo Valor do filtro era `disabled` quando a origem era o almoxarifado.
+        Nao tinha como corrigir nota que veio diferente. Agora edita: digitar por
+        cima marca como "ajustado a mao" e para o recalculo, com link pra voltar
+        ao automatico. Mesma coisa no valor do oleo.
+     2) A MARCA nunca vinha. `definirAlmoxFiltroTroca` so preenchia o `nome`, e
+        so quando estava vazio -- na pratica nunca, porque quem lanca ja digitou
+        o nome antes de escolher o item. A coluna "Modelo / marca" nao era tocada
+        por nada. Agora vem a marca do item; sem marca cadastrada, usa o nome
+        dele, que e onde a marca esta escrita hoje ("... Parker Racor REL-815").
+        O item do almoxarifado ganhou campo Marca proprio pra isso.
+     3) O VALOR saia R$ 0,00 quando o item do estoque esta com custo unitario
+        zerado -- e ninguem era avisado. Agora avisa na hora e mostra em vermelho
+        "item sem custo cadastrado" embaixo do campo.
+     Assistente recebe junto: marca do oleo e dos filtros da ultima troca, e o
+     aviso de gasto subestimado por item sem custo. -->
+<!-- v219: romaneio de rota encerrada sai da frente do motorista.
+     O romaneio ficava pra sempre na tela dele. Terminada a viagem, continuava
+     ali junto com o novo -- e como ele escolhe o cliente ANTES de fotografar a
+     caixa, dois romaneios abertos ao mesmo tempo e convite pra conferir caixa no
+     romaneio errado.
+     Encerra quando a equipe arquiva na mao, ou sozinho quando a viagem vinculada
+     e fechada pelo motorista (aguardando revisao / aprovada).
+     DECISAO DE ARQUITETURA: quem decide isso e o lado da EQUIPE, que grava
+     `arquivado_em` no banco (`rfRomaneiosAutoArquivar`, depois da nuvem
+     carregar). O celular do motorista nao baixa a caixa geral, entao la nao da
+     pra olhar status de viagem -- ele so obedece a coluna. Mesma licao da trava
+     de KM: validacao que depende de dado que o aparelho nao tem, nao roda.
+     Nada e apagado: a equipe ve os encerrados num bloco proprio e pode reabrir.
+     Coluna nova no banco: conferencia_romaneios.arquivado_em (bigint). -->
+<!-- v218: o seletor "Enviar p/ motorista" nao aparecia na aba Viagens.
+     Nao era o botao que sumiu: ele depende de `state._perfis` (os logins), que
+     so era carregado por quem abrisse a aba Usuarios. Numa sessao nova a lista
+     vinha vazia e o codigo fazia `if (!motoristas.length) return ""` -- escondia
+     o seletor inteiro, sem dizer nada. Agora `garantirPerfisCarregados()` pede
+     os logins de qualquer tela que precise (uma vez por sessao, com guarda) e,
+     enquanto nao chegam, a tela mostra "carregando motoristas..." em vez de
+     nada. Se realmente nao houver login de motorista, ela diz isso tambem.
+     LICAO: tela que esconde o controle quando o dado nao chegou vira "sumiu o
+     botao" pra quem usa. Estado vazio tem que se explicar. -->
 <!-- v217: KM RODADO = MEDIDO PELAS DUAS PONTAS, nao o estimado.
      Renato lanca KM a mao na saida pra ter estimativa de custo. Quando a viagem
      tem KM de saida e de chegada (normalmente das fotos), o rodado passa a ser a
@@ -1303,7 +1344,22 @@ function rejeitarViagemMotorista(id) {
    Digitar nome à mão sempre vai desalinhar de novo, então o campo virou
    seleção dos logins existentes. O valor que já estava lá nunca é apagado: se
    não bater com nenhum login, continua na lista marcado como fora de padrão. */
+/* v218: o seletor "Enviar p/ motorista" sumia da aba Viagens.
+   Ele depende de `state._perfis`, que só era carregado por quem abrisse a aba
+   Usuários. Numa sessão nova ninguém carregava, a lista vinha vazia e o código
+   escondia o seletor inteiro -- parecia que o botão tinha sumido. Agora qualquer
+   tela que precise dos logins pede o carregamento uma vez, e enquanto não chega
+   a tela DIZ que está carregando em vez de não mostrar nada. */
+function garantirPerfisCarregados() {
+  if (Array.isArray(state._perfis) && state._perfis.length) return true;
+  if (!state._perfisPedidos && typeof carregarPerfis === "function" && typeof ehAdmin === "function" && ehAdmin()) {
+    state._perfisPedidos = true;
+    try { carregarPerfis(); } catch (e) { state._perfisPedidos = false; }
+  }
+  return false;
+}
 function loginsMotoristas() {
+  garantirPerfisCarregados();
   return (state._perfis || [])
     .filter(function (p) { return p.papel === "motorista" && p.ativo !== false && (p.nome || "").trim(); })
     .map(function (p) { return String(p.nome).trim(); })
@@ -2218,7 +2274,8 @@ function almoxBaixo(item) {
 }
 function adicionarItemAlmox() {
   if (!state.almoxarifado) state.almoxarifado = [];
-  state.almoxarifado.unshift({ id: uid(), nome: "", qtdMin: 0, custoUnit: 0, entradas: [], saidas: [] });
+  // v220: marca separada do nome -- é ela que a troca de óleo puxa pro campo "Modelo / marca"
+  state.almoxarifado.unshift({ id: uid(), nome: "", marca: "", qtdMin: 0, custoUnit: 0, entradas: [], saidas: [] });
   salvar(); render();
 }
 function atualizarItemAlmox(id, campo, valor) {
@@ -2823,6 +2880,13 @@ function atualizarTrocaOleo(id, campo, valor) {
   const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(id));
   if (!t) return;
   const placaAntes = t.placa;
+  if (campo === "valorOleo") {
+    // v220: digitou o valor por cima -- vira ajuste manual e para de ser recalculado
+    t.valorOleo = Number(String(valor).replace(",", ".")) || 0;
+    if (t.origemOleo === "almox") t.oleoValorManual = true;
+    salvar(); render();
+    return;
+  }
   t[campo] = valor;
   if (campo === "litros" || campo === "precoLitro") recalcValorOleo(t);
   if (campo === "km" || campo === "placa" || campo === "data") {
@@ -2861,6 +2925,12 @@ function atualizarFiltroTroca(trocaId, filtroId, campo, valor) {
   if (!t || !Array.isArray(t.filtros)) return;
   const f = t.filtros.find((x) => String(x.id) === String(filtroId));
   if (!f) return;
+  if (campo === "valor") {
+    f.valor = Number(String(valor).replace(",", ".")) || 0;
+    if (f.origem === "almox") f.valorManual = true;   // v220: digitou por cima
+    salvar(); render();
+    return;
+  }
   f[campo] = valor;
   salvar(); render();
 }
@@ -2916,9 +2986,19 @@ function definirAlmoxOleoTroca(trocaId, almoxId) {
   t.oleoAlmoxId = almoxId;
   const ai = almoxItemPorId(almoxId);
   t.oleoCustoUnitSnap = ai ? (Number(ai.custoUnit) || 0) : 0; // congela o custo do momento
-  if (ai && (!t.tipoOleo || t.tipoOleo.trim() === "")) t.tipoOleo = ai.nome || "";
+  if (ai) {
+    // v220: puxa nome E marca do estoque. Antes só o nome vinha, e só se o campo
+    // estivesse vazio -- na prática nunca vinha nada, porque o tipo do óleo já
+    // costuma estar digitado quando se escolhe o item.
+    if (!t.tipoOleo || !t.tipoOleo.trim()) t.tipoOleo = ai.nome || "";
+    if (!t.marcaOleo || !t.marcaOleo.trim()) t.marcaOleo = ai.marca || "";
+    t.oleoValorManual = false;                 // voltou a ser automático
+  }
   recalcOleoAlmox(t);
   salvar(); render();
+  if (ai && !(Number(ai.custoUnit) > 0)) {
+    alert("O item \"" + (ai.nome || "sem nome") + "\" está com custo unitário ZERO no almoxarifado, então o valor da troca vai sair R$ 0,00.\n\nPreencha o custo unitário dele na aba Almoxarifado, ou digite o valor à mão aqui.");
+  }
 }
 function definirQtdOleoTroca(trocaId, qtd) {
   const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
@@ -2927,9 +3007,22 @@ function definirQtdOleoTroca(trocaId, qtd) {
   recalcOleoAlmox(t);
   salvar(); render();
 }
+/* v220: o valor vindo do estoque (quantidade × custo) é o padrão, mas deixou de
+   ser uma prisão. Se a nota veio diferente, ou o custo do almoxarifado está
+   desatualizado, dá pra digitar por cima -- e aí o campo passa a mostrar
+   "ajustado à mão", com botão pra voltar ao automático. Antes o campo do filtro
+   era `disabled`: não tinha como corrigir nada. */
 function recalcOleoAlmox(t) {
   if (t.origemOleo !== "almox") return;
+  if (t.oleoValorManual) return;               // respeitando o ajuste da pessoa
   t.valorOleo = Math.round((Number(t.oleoQtdAlmox) || 0) * (Number(t.oleoCustoUnitSnap) || 0) * 100) / 100;
+}
+function oleoValorAutomatico(trocaId) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t) return;
+  t.oleoValorManual = false;
+  recalcOleoAlmox(t);
+  salvar(); render();
 }
 function definirOrigemFiltroTroca(trocaId, filtroId, origem) {
   const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
@@ -2951,9 +3044,19 @@ function definirAlmoxFiltroTroca(trocaId, filtroId, almoxId) {
   f.almoxId = almoxId;
   const ai = almoxItemPorId(almoxId);
   f.custoUnitSnap = ai ? (Number(ai.custoUnit) || 0) : 0;
-  if (ai && (!f.nome || f.nome.trim() === "")) f.nome = ai.nome || "";
+  if (ai) {
+    if (!f.nome || !f.nome.trim()) f.nome = ai.nome || "";
+    // v220: a coluna "Modelo / marca" nunca era preenchida pelo estoque. Agora
+    // vem a marca do item; sem marca cadastrada, usa o nome dele, que na prática
+    // é onde a marca está escrita hoje ("Filtro Lubrificante - Parker Racor").
+    if (!f.modelo || !f.modelo.trim()) f.modelo = ai.marca || ai.nome || "";
+    f.valorManual = false;
+  }
   recalcFiltroAlmox(f);
   salvar(); render();
+  if (ai && !(Number(ai.custoUnit) > 0)) {
+    alert("O item \"" + (ai.nome || "sem nome") + "\" está com custo unitário ZERO no almoxarifado, então o filtro vai entrar por R$ 0,00.\n\nPreencha o custo unitário dele na aba Almoxarifado, ou digite o valor à mão aqui.");
+  }
 }
 function definirQtdFiltroTroca(trocaId, filtroId, qtd) {
   const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
@@ -2966,7 +3069,17 @@ function definirQtdFiltroTroca(trocaId, filtroId, qtd) {
 }
 function recalcFiltroAlmox(f) {
   if (f.origem !== "almox") return;
+  if (f.valorManual) return;                   // v220: valor digitado por cima manda
   f.valor = Math.round((Number(f.qtd) || 0) * (Number(f.custoUnitSnap) || 0) * 100) / 100;
+}
+function filtroValorAutomatico(trocaId, filtroId) {
+  const t = (state.oleoTrocas || []).find((x) => String(x.id) === String(trocaId));
+  if (!t || !Array.isArray(t.filtros)) return;
+  const f = t.filtros.find((x) => String(x.id) === String(filtroId));
+  if (!f) return;
+  f.valorManual = false;
+  recalcFiltroAlmox(f);
+  salvar(); render();
 }
 // Migração v51: filtros de string única -> lista de itens {nome, modelo, valor}
 function migrarTrocasOleoFiltros() {
@@ -4354,6 +4467,7 @@ function rfRomaneioParaJS(r) {
     rota: Array.isArray(r.rota) ? r.rota : [],
     criadoPor: r.criado_por || "",
     criadoEm: Number(r.criado_em) || 0,
+    arquivadoEm: Number(r.arquivado_em) || 0,   // v219
   };
 }
 function rfRomaneioParaDB(r) {
@@ -4369,6 +4483,7 @@ function rfRomaneioParaDB(r) {
     rota: r.rota || [],
     criado_por: r.criadoPor || null,
     criado_em: r.criadoEm || Date.now(),
+    arquivado_em: r.arquivadoEm ? Number(r.arquivadoEm) : null,   // v219
   };
 }
 function rfCaixaParaJS(r) {
@@ -5223,11 +5338,78 @@ function rfConfProgressoRomaneio(romaneioId) {
   return porCliente;
 }
 
+/* ===== v219: ROMANEIO ENCERRADO SAI DA FRENTE ============================
+   O romaneio ficava pra sempre na tela do motorista. Terminada a viagem, ele
+   continuava lá junto com o novo -- e o motorista tem que escolher o cliente
+   antes de fotografar a caixa, então dois romaneios abertos ao mesmo tempo é
+   convite pra conferir caixa no romaneio errado.
+   Um romaneio é considerado ENCERRADO quando:
+     - a equipe arquivou na mão (arquivadoEm), ou
+     - a viagem vinculada a ele já foi fechada pelo motorista (aguardando
+       revisão, aprovada) -- aí a rota acabou, mesmo que ninguém tenha arquivado.
+   Encerrado some do app do motorista e vai pro "encerrados" do lado da equipe,
+   que continua vendo tudo. Nada é apagado: dá pra reabrir a qualquer momento. */
+function rfRomaneioViagemFechada(r) {
+  if (!r || !r.viagemId) return false;
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(r.viagemId); });
+  if (!v) return false;
+  return v.statusMotorista === "aguardando_equipe" || v.statusMotorista === "aprovada";
+}
+/* O celular do motorista NÃO baixa a caixa geral, então lá não dá pra olhar o
+   status da viagem: a única coisa que ele enxerga é a coluna `arquivado_em` do
+   próprio romaneio, que vem do banco. Por isso quem decide é o lado da equipe --
+   `rfRomaneiosAutoArquivar()` grava o arquivamento quando a viagem fecha, e o
+   app do motorista só precisa obedecer ao que está gravado. Mesma lição da
+   trava de KM: validação que depende de dado que o aparelho não tem, não roda. */
+function rfRomaneioEncerrado(r) {
+  return !!r && Number(r.arquivadoEm) > 0;
+}
+// Roda só do lado da equipe, depois que a caixa geral carregou de verdade.
+function rfRomaneiosAutoArquivar() {
+  if (typeof ehMotorista === "function" && ehMotorista()) return 0;
+  if (!window.__rfDadosCarregados) return 0;          // mesma trava da v167
+  var n = 0;
+  (state.romaneios || []).forEach(function (r) {
+    if (Number(r.arquivadoEm) > 0) return;
+    if (!rfRomaneioViagemFechada(r)) return;
+    r.arquivadoEm = Date.now();
+    r.arquivadoAuto = true;
+    rfRomaneioSalvar(r);
+    n++;
+  });
+  if (n) render();
+  return n;
+}
+function rfRomaneioMotivoEncerrado(r) {
+  if (!(Number(r.arquivadoEm) > 0)) return "";
+  return rfRomaneioViagemFechada(r) ? "a viagem vinculada foi fechada pelo motorista" : "arquivado pela equipe";
+}
+function rfRomaneioArquivar(romaneioId) {
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  r.arquivadoEm = Date.now();
+  render();
+  rfRomaneioSalvar(r);
+}
+function rfRomaneioReabrir(romaneioId) {
+  var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
+  if (!r) return;
+  if (rfRomaneioViagemFechada(r)) {
+    if (!confirm("A viagem vinculada a este romaneio já foi fechada pelo motorista.\n\nSe reabrir, ele volta a aparecer no app do motorista — mas ao carregar de novo o sistema vai arquivar sozinho outra vez, porque a viagem continua fechada.\n\nPra manter aberto, desvincule a viagem ou devolva a viagem ao motorista na aba Viagens.\n\nReabrir mesmo assim?")) return;
+  }
+  r.arquivadoEm = 0;
+  r.arquivadoAuto = false;
+  render();
+  rfRomaneioSalvar(r);
+}
 // v158: motorista só vê o romaneio que a equipe direcionou pra placa dele.
+// v219: e só enquanto ele estiver aberto -- romaneio de rota terminada some.
 function rfConfRomaneiosDoMotorista() {
   var placa = (state.sessao && state.sessao.placa_motorista) || "";
   if (!placa) return [];
-  return (state.romaneios || []).filter(function (r) { return r.placa === placa; });
+  return (state.romaneios || []).filter(function (r) {
+    return r.placa === placa && !rfRomaneioEncerrado(r);
+  });
 }
 // Card de um romaneio na visão do motorista: botão de foto + progresso + caixas recentes dele.
 // v158: guarda qual cliente cada motorista escolheu, por romaneio.
@@ -5423,6 +5605,10 @@ function rfConfRomaneioCardAdmin(rom) {
         <div style="font-weight:700;color:${GOLD};">📄 ${esc(rom.nomeArquivo || "romaneio.pdf")}</div>
         <div style="font-size:11px;color:#777;">${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}${rom.conhecimento ? ` · Conhecimento ${esc(rom.conhecimento)}` : ""} · ${totalFechados}/${totalClientes} clientes conferidos (${pct}%)</div>
       </div>
+      ${rfRomaneioEncerrado(rom)
+        ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfRomaneioReabrir('${rom.id}')" title="Volta a aparecer no app do motorista">↩ Reabrir</button>
+           <span style="font-size:11px;color:#888;">📦 encerrado — ${esc(rfRomaneioMotivoEncerrado(rom))}</span>`
+        : `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfRomaneioArquivar('${rom.id}')" title="Tira do app do motorista sem apagar nada — a conferência continua aqui">📦 Encerrar romaneio</button>`}
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
     </div>
     ${rfConfRotaGoogleMapsUrl(rom) ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;margin-bottom:8px;" onclick="rfConfVerRotaMaps('${rom.id}')">🗺️ Ver rota no Google Maps${rom.rota && rom.rota.length ? ` (${rom.rota.length} cidades da rota do romaneio)` : ` (${(function(){var s=new Set();(rom.clientes||[]).forEach(function(c){if(c.cidade)s.add(c.cidade);});return s.size;})()} cidades dos clientes)`}</button>` : ""}
@@ -6415,9 +6601,7 @@ function render() {
       // v216: o seletor de motorista da Frota precisa dos logins. Carrega uma vez,
       // fora do caminho de desenho (o carregarPerfis é assíncrono e chama render
       // de novo quando termina) -- sem isso a célula cairia sempre no texto livre.
-      if (!Array.isArray(state._perfis) || !state._perfis.length) {
-        if (!state._perfisPedidos) { state._perfisPedidos = true; try { carregarPerfis(); } catch (e) {} }
-      }
+      garantirPerfisCarregados();
       return "";
     })() : ""}
     ${state.aba === "frota" ? bannerVeiculos() : ""}
@@ -6695,7 +6879,17 @@ function gerarContextoAssistente() {
     const hist = trocasDoVeiculo(v.placa);
     const gastoTot = hist.reduce((s, t) => s + totalTroca(t), 0);
     const kmA = kmAtualVeiculo(v).toLocaleString("pt-BR");
-    const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)} (dos quais ${fmtR(hist.reduce((s, t) => s + trocaCustoNovo(t), 0))} foi comprado fora e ${fmtR(hist.reduce((s, t) => s + trocaCustoEstoque(t), 0))} saiu do almoxarifado)`;
+    // v220: marca do óleo e de cada filtro entram no contexto, e o aviso de item
+    // de estoque sem custo cadastrado -- que faz a troca entrar por R$ 0,00.
+    const ultTroca = hist[0];
+    const detalheUlt = ultTroca ? ` Última troca lançada: ${ultTroca.data || "sem data"}, óleo ${ultTroca.tipoOleo || "não informado"}${ultTroca.marcaOleo ? " marca " + ultTroca.marcaOleo : ""}${(ultTroca.filtros || []).length ? ", filtros: " + (ultTroca.filtros || []).map((f) => (f.nome || "filtro") + (f.modelo ? " (" + f.modelo + ")" : "") + " " + fmtR(Number(f.valor) || 0) + (f.origem === "almox" ? " [do estoque]" : "")).join("; ") : ", sem filtro lançado"}.` : "";
+    const semCusto = [];
+    hist.forEach((t) => {
+      if (t.origemOleo === "almox" && !(Number(t.oleoCustoUnitSnap) > 0)) semCusto.push("óleo da troca de " + (t.data || "sem data"));
+      (t.filtros || []).forEach((f) => { if (f.origem === "almox" && !(Number(f.custoUnitSnap) > 0)) semCusto.push((f.nome || "filtro") + " da troca de " + (t.data || "sem data")); });
+    });
+    const avisoCusto = semCusto.length ? ` ⚠ ENTROU POR R$ 0,00 porque o item do almoxarifado está sem custo unitário cadastrado: ${semCusto.join(", ")} — o gasto real deste caminhão está subestimado até alguém preencher o custo na aba Almoxarifado ou digitar o valor à mão na troca.` : "";
+    const extra = `${hist.length} troca(s) registrada(s), gasto acumulado em óleo/filtros ${fmtR(gastoTot)} (dos quais ${fmtR(hist.reduce((s, t) => s + trocaCustoNovo(t), 0))} foi comprado fora e ${fmtR(hist.reduce((s, t) => s + trocaCustoEstoque(t), 0))} saiu do almoxarifado).${detalheUlt}${avisoCusto}`;
     // v213: de onde vem cada número, e se tem KM fora da curva poluindo a conta
     const foraC = (function () { try { return kmForaDaCurva(v.placa); } catch (e) { return []; } })();
     const alertaKm = foraC.length ? ` ⚠ KM SUSPEITO GRAVADO E DESCARTADO da conta: ${foraC.map((f) => f.km.toLocaleString("pt-BR") + " km (" + f.rotulo + ")").join(", ")} — o hodômetro deste caminhão está calculando pelo registro válido mais alto, então as contas por KM estão certas, mas o lançamento errado continua na origem e precisa ser corrigido.` : "";
@@ -8356,8 +8550,11 @@ function renderTabela() {
               ${(() => {
                 const sm = v.statusMotorista;
                 if (!sm) {
-                  const motoristas = (state._perfis || []).filter((p) => p.papel === "motorista");
-                  if (!motoristas.length) return "";
+                  garantirPerfisCarregados();     // v218: sem isso a lista vinha vazia numa sessão nova
+                  const motoristas = (state._perfis || []).filter((p) => p.papel === "motorista" && p.ativo !== false);
+                  if (!motoristas.length) {
+                    return `<div style="font-size:9px;color:#888;margin-top:3px;" title="A lista vem dos logins de motorista cadastrados na aba Usuários.">${state._carregandoPerfis ? "⏳ carregando motoristas…" : "sem login de motorista cadastrado"}</div>`;
+                  }
                   return `<select onchange="if(this.value) enviarViagemParaMotorista('${v.id}', this.value)" style="font-size:9px;margin-top:3px;max-width:150px;">
                     <option value="">📤 Enviar p/ motorista...</option>
                     ${motoristas.map((m) => `<option value="${m.id}">${esc(m.nome || m.email || "sem nome")}</option>`).join("")}
@@ -8707,7 +8904,24 @@ function renderTabela() {
         <label class="btn-gold" style="cursor:pointer;">📎 Anexar romaneio (PDF ou foto)<input type="file" accept="application/pdf,image/*" multiple style="display:none" onchange="rfConfRomaneioUploadValida(this)"></label>
         ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
       </div>
-      ${(state.romaneios || []).length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>` : (state.romaneios || []).map((r) => rfConfRomaneioCardAdmin(r)).join("")}
+      ${(function () {
+        // v219: encerrado sai da frente, mas continua acessível num bloco próprio
+        const todos = state.romaneios || [];
+        if (!todos.length) return `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>`;
+        const abertos = todos.filter((r) => !rfRomaneioEncerrado(r));
+        const encerrados = todos.filter((r) => rfRomaneioEncerrado(r));
+        const verEncerrados = !!state._verRomaneiosEncerrados;
+        return (abertos.length ? abertos.map((r) => rfConfRomaneioCardAdmin(r)).join("")
+          : `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio em andamento.</div>`)
+          + (encerrados.length ? `
+            <div style="margin-top:22px;padding-top:14px;border-top:1px solid #2A2A2A;">
+              <button class="btn-outline" style="font-size:11px;" onclick="state._verRomaneiosEncerrados=!state._verRomaneiosEncerrados;render();">
+                ${verEncerrados ? "▾" : "▸"} Encerrados (${encerrados.length})
+              </button>
+              <div style="font-size:10px;color:#666;margin-top:4px;">Não aparecem mais no app do motorista. Nada foi apagado — a conferência de cada um continua inteira aqui.</div>
+              ${verEncerrados ? `<div style="margin-top:12px;">${encerrados.map((r) => rfConfRomaneioCardAdmin(r)).join("")}</div>` : ""}
+            </div>` : "");
+      })()}
     `;
   }
 
@@ -9118,6 +9332,7 @@ function renderTabela() {
       return `<div style="background:#0E0E0E;border:1px solid ${baixo ? "#C0392B" : "#2A2A2A"};border-radius:10px;padding:14px;margin-bottom:12px;">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <input value="${esc(it.nome)}" onchange="atualizarItemAlmox('${it.id}','nome',this.value)" placeholder="Nome da peça / item" style="flex:1;min-width:160px;font-size:14px;font-weight:700;">
+          <input value="${esc(it.marca || "")}" onchange="atualizarItemAlmox('${it.id}','marca',this.value)" placeholder="Marca / modelo" style="width:150px;font-size:12px;" title="v220: puxado automaticamente pra troca de óleo quando este item é usado.">
           <div style="text-align:center;">
             <div style="font-size:10px;color:#999;">Saldo</div>
             <div style="font-size:22px;font-weight:800;color:${corSaldo};">${saldo}</div>
@@ -9278,6 +9493,7 @@ function renderTabela() {
             <div><div style="${lblStyle}">Placa</div><select onchange="atualizarTrocaOleo('${t.id}','placa',this.value)" style="width:130px;">${optPlacas(t.placa)}</select></div>
             <div><div style="${lblStyle}">KM</div><input type="number" min="0" value="${esc(t.km != null ? t.km : "")}" placeholder="km" onchange="atualizarTrocaOleo('${t.id}','km',this.value)" style="width:100px;"></div>
             <div><div style="${lblStyle}">Tipo de óleo</div><input value="${esc(t.tipoOleo || "")}" placeholder="Ex: 15W40 mineral" onchange="atualizarTrocaOleo('${t.id}','tipoOleo',this.value)" style="width:160px;"></div>
+            <div><div style="${lblStyle}">Marca</div><input value="${esc(t.marcaOleo || "")}" placeholder="puxa do estoque" onchange="atualizarTrocaOleo('${t.id}','marcaOleo',this.value)" style="width:150px;" title="v220: preenchida sozinha com a marca do item quando o óleo sai do almoxarifado."></div>
             <div><div style="${lblStyle}">Litros</div><input type="number" min="0" step="0.1" value="${esc(t.litros != null ? t.litros : "")}" placeholder="ex: 18" onchange="atualizarTrocaOleo('${t.id}','litros',this.value)" style="width:90px;"></div>
             <div style="border-left:2px solid ${t.origemOleo === "almox" ? "#2E7D32" : GOLD};padding-left:10px;">
               <div style="${lblStyle}">Origem do óleo</div>
@@ -9295,7 +9511,11 @@ function renderTabela() {
               </div>` : ""}
             </div>
             <div><div style="${lblStyle}">Preço/litro (R$)</div><input type="number" min="0" step="0.01" value="${esc(t.precoLitro != null ? t.precoLitro : "")}" placeholder="ex: 32,00" onchange="atualizarTrocaOleo('${t.id}','precoLitro',this.value)" style="width:120px;"></div>
-            <div><div style="${lblStyle}">Valor do óleo (R$)</div><input type="number" min="0" step="0.01" value="${esc(t.valorOleo != null ? t.valorOleo : 0)}" onchange="atualizarTrocaOleo('${t.id}','valorOleo',this.value)" style="width:120px;" title="Calculado por litros × preço/litro. Pode ajustar à mão."><div style="font-size:9px;color:#666;margin-top:2px;">${(t.litros!==""&&t.litros!=null&&t.precoLitro!==""&&t.precoLitro!=null)?"auto (litros × preço)":"manual"}</div></div>
+            <div><div style="${lblStyle}">Valor do óleo (R$)</div><input type="number" min="0" step="0.01" value="${esc(t.valorOleo != null ? t.valorOleo : 0)}" onchange="atualizarTrocaOleo('${t.id}','valorOleo',this.value)" style="width:120px;" title="Calculado por litros × preço/litro. Pode ajustar à mão."><div style="font-size:9px;color:#666;margin-top:2px;">${t.origemOleo === "almox"
+              ? (t.oleoValorManual
+                  ? `<span style="color:${GOLD};">ajustado à mão</span> · <a href="#" onclick="event.preventDefault();oleoValorAutomatico('${t.id}')" style="color:#888;">voltar ao automático</a>`
+                  : `estoque: ${esc(String(t.oleoQtdAlmox || 0))} × ${fmtR(Number(t.oleoCustoUnitSnap) || 0)}${!(Number(t.oleoCustoUnitSnap) > 0) ? ` <span style="color:#C0392B;">— item sem custo cadastrado</span>` : ""}`)
+              : ((t.litros!==""&&t.litros!=null&&t.precoLitro!==""&&t.precoLitro!=null)?"auto (litros × preço)":"manual")}</div></div>
             <button class="btn-del" onclick="removerTrocaOleo('${t.id}')" style="margin-left:auto;">✕ remover troca</button>
           </div>
           <div style="margin-top:12px; border-top:1px solid #222; padding-top:10px;">
@@ -9317,7 +9537,11 @@ function renderTabela() {
                     <input type="number" min="0" step="1" value="${esc(f.qtd != null ? f.qtd : 1)}" title="Quantidade" onchange="definirQtdFiltroTroca('${t.id}','${f.id}',this.value)" style="width:55px;">
                   </div>` : ""}
                 </td>
-                <td><input type="number" min="0" step="0.01" value="${esc(f.valor != null ? f.valor : 0)}" ${f.origem === "almox" ? "disabled title='Calculado pelo estoque: quantidade × custo unitário'" : ""} onchange="atualizarFiltroTroca('${t.id}','${f.id}','valor',this.value)" style="width:110px;"></td>
+                <td><input type="number" min="0" step="0.01" value="${esc(f.valor != null ? f.valor : 0)}" onchange="atualizarFiltroTroca('${t.id}','${f.id}','valor',this.value)" style="width:110px;" title="${f.origem === "almox" ? "Vem do estoque (quantidade × custo unitário), mas pode ser corrigido à mão." : "Valor pago por fora."}">
+                  ${f.origem === "almox" ? (f.valorManual
+                    ? `<div style="font-size:9px;color:${GOLD};margin-top:2px;">ajustado à mão · <a href="#" onclick="event.preventDefault();filtroValorAutomatico('${t.id}','${f.id}')" style="color:#888;">voltar ao automático</a></div>`
+                    : `<div style="font-size:9px;color:#666;margin-top:2px;">estoque: ${esc(String(f.qtd || 0))} × ${fmtR(Number(f.custoUnitSnap) || 0)}${!(Number(f.custoUnitSnap) > 0) ? ` <span style="color:#C0392B;">— item sem custo cadastrado</span>` : ""}</div>`) : ""}
+                </td>
                 <td><button class="btn-del" onclick="removerFiltroTroca('${t.id}','${f.id}')">✕</button></td>
               </tr>`).join("") : `<tr><td colspan="5" style="color:#777;font-size:12px;padding:8px;">Nenhum filtro. Clique em "+ Adicionar filtro".</td></tr>`}
             </tbody></table>
@@ -9722,6 +9946,11 @@ revalidarSessaoAoAbrir();
       // criaria dívida em cima de state vazio e subiria lixo pra nuvem --
       // exatamente o bug de corrida corrigido na v118.
       try { gerarContasEmplacamento(); } catch (e) { console.error("[emplacamento]", e); }
+      // v219: romaneio de viagem já fechada sai da tela do motorista
+      try {
+        const nRom = rfRomaneiosAutoArquivar();
+        if (nRom) console.log("[romaneios] " + nRom + " arquivado(s) por viagem fechada");
+      } catch (e) { console.error("[romaneios auto]", e); }
       // v217: o KM de chegada pode ter chegado pela RPC do app do motorista, que
       // grava direto na viagem sem passar pelo recálculo. Aqui o KM rodado volta
       // a ser a diferença medida entre as duas pontas (e o frete por km junto).
