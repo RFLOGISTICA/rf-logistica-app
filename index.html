@@ -2,7 +2,23 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v220)</title>
+<title>RF Logística — Painel da Frota (v221)</title>
+<!-- v221: opcao FATURADO na manutencao.
+     Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
+     fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
+     "comprada no local" e "do almoxarifado" -- entao tudo que era faturado caia
+     como gasto novo e virava divida em duplicidade.
+     Agora o seletor de origem tem "Peca faturada" logo abaixo de "Comprada no
+     local", com campo pro fornecedor da fatura, e a mao de obra ganhou um
+     "faturada" proprio (oficina que fatura o mes). Faturado entra no custo do
+     caminhao -- pra saber quanto ele consome de verdade -- mas NAO como gasto
+     novo, mesma regra que ja valia pra peca do almoxarifado.
+     Balde novo em calcularManutencao(): {real, investimento, jaEmDivida,
+     estoqueAlmox, faturado}. Alinhei tambem os graficos e o saldo por caminhao,
+     que somavam a mao de obra crua e passariam a divergir do Financeiro.
+     Exportacao ganhou colunas de faturado e fornecedor. Assistente recebe o
+     bloco explicando os baldes, pra nao confundir custo do caminhao com gasto
+     do mes. -->
 <!-- v220: troca de oleo -- valor nao editava e marca/valor nao vinham do estoque.
      Tres coisas separadas, todas reais:
      1) O campo Valor do filtro era `disabled` quando a origem era o almoxarifado.
@@ -1981,6 +1997,7 @@ function atualizarManutencao(id, campo, valor) {
   }
   if (campo === "investimento") valor = (valor === true || valor === "true");
   if (campo === "jaEmDividaFixa") valor = (valor === true || valor === "true");
+  if (campo === "maoObraFaturada") valor = (valor === true || valor === "true");   // v221
   m[campo] = valor;
   salvar(); render();
 }
@@ -2013,11 +2030,27 @@ function mtSomaPecas(m) {
 // v87: peça que veio do almoxarifado já foi paga (cartão/boleto/dívida fixa) na hora da
 // ENTRADA no estoque — contar de novo aqui na manutenção seria dobrar o gasto. Só a peça
 // "comprada no local" (fora do estoque) e a mão de obra são gasto novo deste lançamento.
+/* v221: origem "faturado" -- peça ou serviço pego na conta de um fornecedor que
+   fatura o mês inteiro. Essa fatura JÁ está lançada em Dívidas Fixas, então
+   contar de novo aqui dobraria o gasto, do mesmo jeito que a peça do
+   almoxarifado. Antes só existiam "comprada no local" e "do almoxarifado": todo
+   serviço faturado caía como gasto novo e virava dívida em duplicidade.
+   Vale pro item (peça/serviço) e também pra mão de obra. */
 function mtSomaPecasReal(m) {
-  return mtItens(m).reduce((s, it) => s + (it.origem === "almox" ? 0 : (Number(it.valor) || 0)), 0);
+  return mtItens(m).reduce((s, it) => s + ((it.origem === "almox" || it.origem === "faturado") ? 0 : (Number(it.valor) || 0)), 0);
 }
 function mtSomaPecasAlmox(m) {
   return mtItens(m).reduce((s, it) => s + (it.origem === "almox" ? (Number(it.valor) || 0) : 0), 0);
+}
+function mtSomaPecasFaturado(m) {
+  return mtItens(m).reduce((s, it) => s + (it.origem === "faturado" ? (Number(it.valor) || 0) : 0), 0);
+}
+// Mão de obra faturada também não é gasto novo (marcada no próprio lançamento).
+function mtMaoObraReal(m) {
+  return m.maoObraFaturada === true ? 0 : (Number(m.maoObra) || 0);
+}
+function mtMaoObraFaturada(m) {
+  return m.maoObraFaturada === true ? (Number(m.maoObra) || 0) : 0;
 }
 function addItemManut(id) {
   const m = state.manutencoes.find((x) => x.id === id);
@@ -2046,6 +2079,7 @@ function definirOrigemItem(mId, itemId, origem) {
     recalcItemAlmox(it); // valor passa a ser qtd × custo do estoque
   } else {
     it.almoxId = ""; it.custoUnitSnap = 0; // volta a digitar o valor manualmente
+    if (origem !== "faturado") it.fornecedorFat = "";   // v221
   }
   salvar(); render();
 }
@@ -2116,7 +2150,7 @@ function alertaManutencao(m) {
 }
 
 function exportarCustosManutExcel() {
-  const cab = ["Data","Placa","Categoria","Servicos","Pecas","Oficina","Pecas R$","Pecas Estoque R$ (nao conta 2x)","Mao de obra R$","Total R$","Total Financeiro R$ (sem estoque)","Pagamento","KM servico","Intervalo KM","Garantia (meses)","Investimento","Ja em Divida Fixa","Status alerta"];
+  const cab = ["Data","Placa","Categoria","Servicos","Pecas","Oficina","Pecas R$","Pecas Estoque R$ (nao conta 2x)","Pecas Faturadas R$ (nao conta 2x)","Fornecedor da fatura","Mao de obra R$","Mao de obra faturada","Total R$","Total Financeiro R$ (gasto novo)","Pagamento","KM servico","Intervalo KM","Garantia (meses)","Investimento","Ja em Divida Fixa","Status alerta"];
   const linhas = (state.manutencoes || []).map((m) => {
     const itens = mtItens(m);
     const servicos = itens.map((it) => it.servico).filter(Boolean).join("; ");
@@ -2124,9 +2158,12 @@ function exportarCustosManutExcel() {
     const somaPecas = mtSomaPecas(m);
     const somaPecasAlmox = mtSomaPecasAlmox(m);
     const mao = Number(m.maoObra) || 0;
+    const somaFat = mtSomaPecasFaturado(m);                       // v221
+    const fornFat = mtItens(m).filter((it) => it.origem === "faturado" && it.fornecedorFat).map((it) => it.fornecedorFat).join("; ");
     return [
     m.data, m.placa, m.categoria, servicos, pecas, m.oficina,
-    somaPecas.toFixed(2), somaPecasAlmox.toFixed(2), mao.toFixed(2), (somaPecas + mao).toFixed(2), (somaPecas + mao - somaPecasAlmox).toFixed(2),
+    somaPecas.toFixed(2), somaPecasAlmox.toFixed(2), somaFat.toFixed(2), fornFat, mao.toFixed(2), m.maoObraFaturada ? "Sim" : "Nao",
+    (somaPecas + mao).toFixed(2), (mtSomaPecasReal(m) + mtMaoObraReal(m)).toFixed(2),
     m.pagamento, m.km || 0,
     m.categoria === "Pneus" ? MT_PNEU_KM : (m.intervalKm || ""),
     m.categoria === "Garantia" ? (m.garantiaMeses || "") : "",
@@ -2143,15 +2180,19 @@ function calcularManutencao() {
   // v87: peça do almoxarifado NUNCA entra no "real" — já foi paga na entrada do estoque
   // (cartão/boleto/dívida fixa). Só mão de obra + peça comprada no local são gasto novo.
   const CAT_REAL = ["Preventiva", "Corretiva", "Pneus", "Garantia", "Outros"];
-  let real = 0, investimento = 0, jaEmDivida = 0, estoqueAlmox = 0;
+  let real = 0, investimento = 0, jaEmDivida = 0, estoqueAlmox = 0, faturado = 0;
   const porCategoria = {};
   const porPlaca = {};
   (state.manutencoes || []).forEach((m) => {
     if (!m.data || m.data.slice(0, 7) !== state.mesAtivo) return;  // só o mês ativo (v33)
     const vAlmox = mtSomaPecasAlmox(m);
-    const vReal = mtSomaPecasReal(m) + (Number(m.maoObra) || 0); // peça local + mão de obra (sem peça de estoque)
-    const vTotal = vReal + vAlmox;
+    // v221: faturado sai do gasto novo pelo mesmo motivo do estoque -- a fatura
+    // do fornecedor já está em Dívidas Fixas. Vale pra peça e pra mão de obra.
+    const vFat = mtSomaPecasFaturado(m) + mtMaoObraFaturada(m);
+    const vReal = mtSomaPecasReal(m) + mtMaoObraReal(m); // peça local + mão de obra própria
+    const vTotal = vReal + vAlmox + vFat;
     estoqueAlmox += vAlmox;
+    faturado += vFat;
     const ehDivida = m.jaEmDividaFixa === true;
     const ehInv = m.investimento === true || m.categoria === "Estrutural";
     if (ehDivida) jaEmDivida += vReal;
@@ -2161,7 +2202,7 @@ function calcularManutencao() {
     if (!porPlaca[m.placa]) porPlaca[m.placa] = { real: 0, inv: 0 };
     if (!ehDivida) { if (ehInv) porPlaca[m.placa].inv += vReal; else porPlaca[m.placa].real += vReal; }
   });
-  return { real, investimento, jaEmDivida, estoqueAlmox, porCategoria, porPlaca };
+  return { real, investimento, jaEmDivida, estoqueAlmox, faturado, porCategoria, porPlaca };
 }
 
 /* ===================== GRÁFICOS — VISÃO GERAL DA FROTA (v89) =====================
@@ -2199,7 +2240,7 @@ function graficosDadosFrota(periodo) {
     p.qtdManut += 1;
     if (m.jaEmDividaFixa === true) return; // já contado nas dívidas fixas, não soma de novo
     const ehInv = m.investimento === true || m.categoria === "Estrutural";
-    if (!ehInv) p.manutencaoReal += mtSomaPecasReal(m) + (Number(m.maoObra) || 0);
+    if (!ehInv) p.manutencaoReal += mtSomaPecasReal(m) + mtMaoObraReal(m);
   });
   (state.abastecimentos || []).forEach((a) => {
     if (a.status !== "aprovado") return;
@@ -2230,7 +2271,7 @@ function graficosEvolucaoMensal() {
       if (!m.data || m.data.slice(0, 7) !== mes) return;
       if (m.jaEmDividaFixa === true) return;
       const ehInv = m.investimento === true || m.categoria === "Estrutural";
-      if (!ehInv) manutencaoReal += mtSomaPecasReal(m) + (Number(m.maoObra) || 0);
+      if (!ehInv) manutencaoReal += mtSomaPecasReal(m) + mtMaoObraReal(m);
     });
     return { mes, custoTotal: custoViagens + manutencaoReal, custoViagens, manutencaoReal, receita };
   });
@@ -3918,7 +3959,7 @@ function calcularCaixaMeses() {
     (state.manutencoes || []).forEach((m) => {
       if (!m.data || m.data.slice(0, 7) !== mes) return;
       if (m.investimento === true || m.categoria === "Estrutural" || m.jaEmDividaFixa === true) return;
-      manutencaoReal += mtSomaPecasReal(m) + (Number(m.maoObra) || 0); // peça do almoxarifado já foi paga na entrada — não conta de novo
+      manutencaoReal += mtSomaPecasReal(m) + mtMaoObraReal(m); // peça do almoxarifado já foi paga na entrada — não conta de novo
     });
 
     // Despesa de viagem SEM o imposto — o imposto é abatido à parte no Financeiro (visível, auditável)
@@ -6725,6 +6766,15 @@ function gerarContextoAssistente() {
     const d = mt.porPlaca[p];
     return `- ${p}: manutenção real ${fmtR(d.real)}, investimento ${fmtR(d.inv)}`;
   }).join("\n");
+  /* v221: a manutenção tem baldes diferentes e confundir eles é errar o lucro.
+     Só o "real" desce no resultado do mês. */
+  const blocoManutBaldes = `COMO A MANUTENÇÃO É SEPARADA (só o primeiro balde desce no lucro):
+- REAL (gasto novo do mês): ${fmtR(mt.real)} — peça comprada no local + mão de obra própria. É o único que entra no resultado.
+- INVESTIMENTO / benfeitoria: ${fmtR(mt.investimento)} — fica à parte, não é custo do mês.
+- JÁ EM DÍVIDA FIXA (lançamento inteiro marcado): ${fmtR(mt.jaEmDivida)} — está sendo pago parcelado em Dívidas Fixas.
+- 📦 PEÇA DO ESTOQUE: ${fmtR(mt.estoqueAlmox)} — já foi paga quando entrou no almoxarifado.
+- 🧾 FATURADO: ${fmtR(mt.faturado)} — peça ou serviço pego na conta de fornecedor que fatura o mês; essa fatura já está lançada em Dívidas Fixas.
+Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome de verdade) mas NUNCA como gasto novo — contar de novo dobraria a despesa. Se perguntarem por que a manutenção do mês parece menor que a soma dos lançamentos, é isso.`;
   const viagensMes = state.viagens.filter((v) => v.data && v.data.slice(0, 7) === state.mesAtivo);
   const porCliente = {};
   viagensMes.forEach((v) => {
@@ -7051,6 +7101,8 @@ ${dividasTudo || "(nenhuma)"}
 
 Manutenção do mês ativo por veículo:
 ${manutPorVeiculo || "(nenhuma manutenção lançada no mês ativo)"}
+
+${blocoManutBaldes}
 
 Viagens do mês ativo por cliente:
 ${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
@@ -9196,6 +9248,7 @@ function renderTabela() {
         ${statCard("Investimento/benfeitoria", fmtR(mt.investimento), GOLD)}
         ${statCard("Já em Dívida Fixa", fmtR(mt.jaEmDivida), "#888")}
         ${statCard("📦 Peça do estoque (não conta 2x)", fmtR(mt.estoqueAlmox), "#888")}
+        ${statCard("🧾 Faturado (não conta 2x)", fmtR(mt.faturado), "#888")}
         ${statCard("Preventiva", fmtR(mt.porCategoria["Preventiva"]||0), "#999")}
         ${statCard("Corretiva", fmtR(mt.porCategoria["Corretiva"]||0), "#999")}
         ${statCard("Pneus", fmtR(mt.porCategoria["Pneus"]||0), "#999")}
@@ -9252,6 +9305,10 @@ function renderTabela() {
                   + `<input type="number" value="${it.qtd}" onchange="definirQtdAlmoxItem('${m.id}','${it.id}',this.value)" style="width:52px;font-size:12px;" title="Quantidade usada" placeholder="qtd">`
                   + `<span style="font-size:12px;color:#bbb;font-weight:700;" title="quantidade × custo unitário do estoque">= ${fmtR(Number(it.valor) || 0)}</span>`
                   + (ai ? `<span style="font-size:10px;color:${faltou ? "#C0392B" : "#777"};">${faltou ? "⚠ saldo só " + saldoDisp : "saldo " + saldoDisp}</span>` : `<span style="font-size:10px;color:#777;">escolha o item</span>`);
+              } else if (it.origem === "faturado") {
+                linhaValor = `<input type="number" value="${it.valor}" onchange="atualizarItemManut('${m.id}','${it.id}','valor',this.value)" placeholder="R$ peça" style="width:90px;font-size:12px;" title="Valor da peça/serviço faturado. Entra no custo do caminhão, mas NÃO como gasto novo — a fatura já está em Dívidas Fixas.">`
+                  + `<input value="${esc(it.fornecedorFat || "")}" onchange="atualizarItemManut('${m.id}','${it.id}','fornecedorFat',this.value)" placeholder="fornecedor da fatura" style="width:130px;font-size:11px;" title="Quem fatura — ajuda a conferir contra a dívida fixa desse fornecedor.">`
+                  + `<span style="font-size:10px;color:#888;" title="Não desce de novo no lucro: a fatura mensal desse fornecedor já está lançada em Dívidas Fixas.">🧾 já em dívida fixa</span>`;
               } else {
                 linhaValor = `<input type="number" value="${it.valor}" onchange="atualizarItemManut('${m.id}','${it.id}','valor',this.value)" placeholder="R$ peça" style="width:90px;font-size:12px;" title="Valor desta peça (comprada no local)">`;
               }
@@ -9263,7 +9320,8 @@ function renderTabela() {
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                   <select onchange="definirOrigemItem('${m.id}','${it.id}',this.value)" style="font-size:11px;width:135px;" title="De onde veio a peça">
-                    <option value="local" ${!ehAlmox ? "selected" : ""}>🛒 Comprada no local</option>
+                    <option value="local" ${it.origem !== "almox" && it.origem !== "faturado" ? "selected" : ""}>🛒 Comprada no local</option>
+                    <option value="faturado" ${it.origem === "faturado" ? "selected" : ""}>🧾 Peça faturada</option>
                     <option value="almox" ${ehAlmox ? "selected" : ""}>📦 Do almoxarifado</option>
                   </select>
                   ${linhaValor}
@@ -9272,14 +9330,17 @@ function renderTabela() {
             }).join("")
           + `</div>`
           + `<button class="btn-outline" style="font-size:10px;padding:2px 8px;margin-top:5px;" onclick="addItemManut('${m.id}')">+ peça / serviço</button>`
-          + `<div style="font-size:10px;color:#777;margin-top:2px;">Soma das peças: <b style="color:#bbb;">${fmtR(somaPecas)}</b>${somaPecasAlmox > 0 ? ` <span style="color:#888;">(📦 ${fmtR(somaPecasAlmox)} do estoque — já paga, não conta 2x)</span>` : ""}</div>`;
+          + `<div style="font-size:10px;color:#777;margin-top:2px;">Soma das peças: <b style="color:#bbb;">${fmtR(somaPecas)}</b>${somaPecasAlmox > 0 ? ` <span style="color:#888;">(📦 ${fmtR(somaPecasAlmox)} do estoque — já paga, não conta 2x)</span>` : ""}${mtSomaPecasFaturado(m) > 0 ? ` <span style="color:#888;">(🧾 ${fmtR(mtSomaPecasFaturado(m))} faturado — já em dívida fixa, não conta 2x)</span>` : ""}</div>`;
         return `<tr>
           <td><input type="date" value="${m.data}" onchange="atualizarManutencao('${m.id}','data',this.value)"></td>
           <td><select onchange="atualizarManutencao('${m.id}','placa',this.value)">${optsPlaca(m.placa,false)}</select></td>
           <td><select onchange="atualizarManutencao('${m.id}','categoria',this.value)">${optsCat(m.categoria)}</select></td>
           <td style="min-width:330px;">${celItens}</td>
           <td><input value="${esc(m.oficina)}" onchange="atualizarManutencao('${m.id}','oficina',this.value)" placeholder="—" style="min-width:110px;"></td>
-          <td><input type="number" value="${m.maoObra||0}" onchange="atualizarManutencao('${m.id}','maoObra',this.value)" style="width:90px;" title="Valor único cobrado pelo mecânico/técnico"></td>
+          <td><input type="number" value="${m.maoObra||0}" onchange="atualizarManutencao('${m.id}','maoObra',this.value)" style="width:90px;" title="Valor único cobrado pelo mecânico/técnico">
+            <label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#888;margin-top:3px;cursor:pointer;" title="Marque quando a oficina fatura o mês — a fatura já está em Dívidas Fixas, então não conta como gasto novo.">
+              <input type="checkbox" ${m.maoObraFaturada ? "checked" : ""} onchange="atualizarManutencao('${m.id}','maoObraFaturada',this.checked)" style="width:auto;"> 🧾 faturada
+            </label></td>
           <td style="font-weight:700;color:#fff;white-space:nowrap;" title="Total do serviço (peças + mão de obra). Peça do estoque já foi paga na entrada — só a parte local + mão de obra desce no Financeiro.">${fmtR(totalLinha)}${somaPecasAlmox > 0 ? `<div style="font-size:9px;color:#888;font-weight:400;">financeiro: ${fmtR(totalLinha - somaPecasAlmox)}</div>` : ""}</td>
           <td><input value="${esc(m.pagamento)}" onchange="atualizarManutencao('${m.id}','pagamento',this.value)" placeholder="—" style="width:90px;"></td>
           <td><input type="number" value="${m.km}" onchange="atualizarManutencao('${m.id}','km',this.value)" style="width:90px;"></td>
@@ -9294,7 +9355,7 @@ function renderTabela() {
       </tbody>
       <tfoot><tr>
         <td colspan="5" style="font-weight:800;color:#fff;">TOTAL</td>
-        <td colspan="10" style="font-size:12px;color:#bbb;">Real (desce no lucro): <b style="color:#C0392B;">${fmtR(mt.real)}</b> &nbsp;·&nbsp; Investimento (à parte): <b style="color:${GOLD};">${fmtR(mt.investimento)}</b> &nbsp;·&nbsp; Já em Dívida Fixa (à parte): <b style="color:#888;">${fmtR(mt.jaEmDivida)}</b></td>
+        <td colspan="10" style="font-size:12px;color:#bbb;">Real (desce no lucro): <b style="color:#C0392B;">${fmtR(mt.real)}</b> &nbsp;·&nbsp; Investimento (à parte): <b style="color:${GOLD};">${fmtR(mt.investimento)}</b> &nbsp;·&nbsp; Já em Dívida Fixa (à parte): <b style="color:#888;">${fmtR(mt.jaEmDivida)}</b> &nbsp;·&nbsp; 🧾 Faturado (à parte): <b style="color:#888;">${fmtR(mt.faturado)}</b></td>
       </tr></tfoot>
       </table>
       <div style="font-size:11px;color:#666;margin-top:8px;">
