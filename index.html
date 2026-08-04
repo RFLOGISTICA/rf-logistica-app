@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v223)</title>
+<title>RF Logística — Painel da Frota (v224)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4128,7 +4128,9 @@ function rfAbastCard(a, souMotorista) {
         <input type="date" value="${a.data || ""}" ${editavel ? "" : "disabled"} onchange="atualizarAbastecimento('${a.id}','data',this.value)"></div>
       <div><div style="font-size:10px;color:#999;margin-bottom:3px;">Caminhão</div>
         ${souMotorista
-          ? `<input value="${esc(a.placa || "")}" placeholder="Placa" ${editavel ? "" : "disabled"} oninput="this.value=this.value.toUpperCase()" onchange="atualizarAbastecimento('${a.id}','placa',this.value)" style="width:120px;text-transform:uppercase;">`
+          ? ((state.veiculos || []).some((v) => v.placa)
+              ? `<select ${editavel ? "" : "disabled"} onchange="atualizarAbastecimento('${a.id}','placa',this.value)" style="min-width:120px;">${rfOptionsPlaca(a.placa)}</select>`
+              : `<input value="${esc(a.placa || "")}" placeholder="Placa" ${editavel ? "" : "disabled"} oninput="this.value=this.value.toUpperCase()" onchange="atualizarAbastecimento('${a.id}','placa',this.value)" style="width:120px;text-transform:uppercase;">`)
           : `<select ${editavel ? "" : "disabled"} onchange="atualizarAbastecimento('${a.id}','veiculoId',this.value)" style="min-width:120px;">
           ${state.veiculos.filter((v) => v.placa).map((v) => `<option value="${v.id}" ${a.placa === v.placa ? "selected" : ""}>${esc(v.placa)}</option>`).join("")}
         </select>`}
@@ -5328,6 +5330,18 @@ function rfConfClienteTotal(cli) {
    abrir direto no Google Maps mais pra frente, sem precisar "ficar rodando"
    pra achar de novo. */
 var RF_CLIENTES_LOCAIS_TABELA = "conferencia_clientes_locais";
+// v224: gerador ÚNICO de <option> com as placas da frota, pra todo campo de
+// placa virar SELEÇÃO em vez de digitação (menos a criação/edição na aba Frota).
+// Mantém o valor atual mesmo que não esteja na frota (não some nada digitado
+// antes) e traz uma opção em branco.
+function rfOptionsPlaca(sel) {
+  var atual = sel || "";
+  var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
+  placas = placas.slice().sort(function (a, b) { return String(a).localeCompare(String(b)); });
+  if (atual && placas.indexOf(atual) === -1) placas.unshift(atual);
+  var branco = '<option value=""' + (atual ? "" : " selected") + '>(escolha a placa)</option>';
+  return branco + placas.map(function (p) { return '<option value="' + esc(p) + '"' + (p === atual ? " selected" : "") + '>' + esc(p) + '</option>'; }).join("");
+}
 // v222: chave do banco de clientes/geolocalização. Normaliza nome+cidade tirando
 // acento, colapsando espaços internos e passando pra maiúscula -- assim "SÃO
 // DOMINGOS" e "SAO DOMINGOS", ou nome com espaço duplo, casam como o MESMO
@@ -8105,7 +8119,7 @@ function renderTabela() {
               <option value="admin">Admin</option>
             </select>
           </div>
-          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Placa (obrigatório p/ motorista)</div><input id="nuPlaca" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;" oninput="criarUsuarioCampo('placa',this.value)"></div>
+          <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Placa (obrigatório p/ motorista)</div><select id="nuPlaca" style="width:150px;" onchange="criarUsuarioCampo('placa',this.value)">${rfOptionsPlaca((state._novoUsuario || {}).placa || "")}</select></div>
           <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Cliente vinculado (obrigatório p/ papel Cliente)</div>
             <select id="nuClienteNome" onchange="criarUsuarioCampo('clienteNome',this.value)" style="width:160px;">
               <option value="">(selecione)</option>
