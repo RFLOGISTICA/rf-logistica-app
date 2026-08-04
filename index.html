@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v222)</title>
+<title>RF Logística — Painel da Frota (v223)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1254,6 +1254,42 @@ function enviarViagemParaMotorista(id, motoristaUid) {
   v.motoristaDesignadoUid = motoristaUid;
   v.motoristaDesignadoNome = m.nome || m.email || "";
   v.statusMotorista = "aguardando_motorista";
+  salvar(); render();
+}
+// v223: trocar o motorista de uma viagem enviada ao ERRADO. Só funciona enquanto
+// ela ainda está "aguardando_motorista" (o motorista não confirmou início nem
+// mandou foto do KM de saída) -- assim não há nada do motorista errado pra limpar.
+// Se ele já tiver começado, o botão nem aparece na tela.
+function reatribuirViagemMotorista(id, novoUid) {
+  if (!novoUid) return;
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (v.statusMotorista !== "aguardando_motorista") {
+    alert("Essa viagem já foi iniciada pelo motorista — não dá pra trocar por aqui. Use 'Devolver' na revisão se precisar corrigir.");
+    render(); return;
+  }
+  if (String(novoUid) === String(v.motoristaDesignadoUid)) { render(); return; }
+  const m = (state._perfis || []).find((p) => String(p.id) === String(novoUid));
+  if (!m) { alert("Motorista não encontrado."); return; }
+  const nomeAntigo = v.motoristaDesignadoNome || "o motorista anterior";
+  const nomeNovo = m.nome || m.email || "esse motorista";
+  if (!confirm("Trocar o motorista desta viagem?\n\nDe: " + nomeAntigo + "\nPara: " + nomeNovo + "\n\nA viagem some do app de " + nomeAntigo + " e vai pro app de " + nomeNovo + ".")) { render(); return; }
+  enviarViagemParaMotorista(id, novoUid);
+}
+// v223: cancelar o envio -- tira a viagem do app do motorista e volta ela pro
+// estado "não enviada" (o seletor "Enviar p/ motorista" reaparece). Só enquanto
+// aguardando_motorista, pela mesma razão da troca.
+function cancelarEnvioViagem(id) {
+  const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  if (v.statusMotorista !== "aguardando_motorista") {
+    alert("Essa viagem já foi iniciada pelo motorista — não dá pra cancelar o envio por aqui.");
+    render(); return;
+  }
+  if (!confirm("Cancelar o envio desta viagem?\n\nEla sai do app de " + (v.motoristaDesignadoNome || "o motorista") + " e volta a ficar sem motorista, pronta pra reenviar.")) return;
+  v.motoristaDesignadoUid = "";
+  v.motoristaDesignadoNome = "";
+  v.statusMotorista = "";
   salvar(); render();
 }
 /* ===== v212: DATA FINAL DA VIAGEM ==========================================
@@ -6936,7 +6972,7 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
       // v216: em que ponto do fluxo com o motorista a viagem está, e se o nome
       // dela casa com algum login (sem isso o motorista não vê a viagem no app)
       const smTxt = {
-        aguardando_motorista: "enviada ao motorista, ele ainda não confirmou a saída",
+        aguardando_motorista: "enviada ao motorista, ele ainda não confirmou a saída (enquanto está assim, a equipe pode TROCAR o motorista ou CANCELAR o envio na aba Viagens, no selo de status da viagem — some do app do motorista errado)",
         em_andamento: "em viagem" + (v.motivoDevolucaoMotorista ? " (DEVOLVIDA pela equipe: " + v.motivoDevolucaoMotorista + ")" : ""),
         aguardando_equipe: "AGUARDANDO REVISÃO DA EQUIPE — o motorista já fechou, falta aprovar ou devolver na aba Viagens",
         aprovada: "revisada e aprovada" + (v.revisadoPor ? " por " + v.revisadoPor : ""),
@@ -8670,7 +8706,21 @@ function renderTabela() {
                   ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;" title="Devolvida pela equipe — esperando o motorista reenviar">↩ devolvida: ${esc(v.motivoDevolucaoMotorista)}</div>` : "";
                 const revisadoPor = (sm === "aprovada" && v.revisadoPor)
                   ? `<div style="font-size:9px;color:#666;margin-top:2px;">revisada por ${esc(v.revisadoPor)}</div>` : "";
-                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}${revisao}${devolvida}${revisadoPor}</div>`;
+                // v223: enquanto o motorista não iniciou, a equipe pode trocar quem
+                // recebeu a viagem (foi enviada pro errado) ou cancelar o envio.
+                let trocaMotorista = "";
+                if (sm === "aguardando_motorista") {
+                  garantirPerfisCarregados();
+                  const outros = (state._perfis || []).filter((p) => p.papel === "motorista" && p.ativo !== false && String(p.id) !== String(v.motoristaDesignadoUid));
+                  trocaMotorista = `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+                    ${outros.length ? `<select onchange="if(this.value){reatribuirViagemMotorista('${v.id}', this.value); this.value='';}" style="font-size:9px;max-width:150px;" title="Trocar o motorista desta viagem (só enquanto ele não iniciou)">
+                      <option value="">🔄 Trocar motorista…</option>
+                      ${outros.map((m) => `<option value="${m.id}">${esc(m.nome || m.email || "sem nome")}</option>`).join("")}
+                    </select>` : ""}
+                    <button class="btn-outline" style="font-size:9px;padding:2px 5px;color:#C0392B;border-color:#C0392B;" onclick="cancelarEnvioViagem('${v.id}')" title="Tira a viagem do app do motorista e volta a ficar sem motorista">✕ Cancelar envio</button>
+                  </div>`;
+                }
+                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}${revisao}${devolvida}${revisadoPor}${trocaMotorista}</div>`;
               })()}
             </td>
             <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); const nome = motoristaDaViagem(v); if (!nome) return "—"; const clt = vc && vc.regimeMotorista === "clt"; return esc(nome) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
