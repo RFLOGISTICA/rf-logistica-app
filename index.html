@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v221)</title>
+<title>RF Logística — Painel da Frota (v222)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4705,21 +4705,48 @@ function rfRomaneiosSincronizarViagens() {
 function rfRomaneioSalvar(r) {
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem. Verifique a internet e tente de novo."); return; }
-    sb.from(RF_ROMANEIOS_TABELA).upsert(rfRomaneioParaDB(r)).then(function (res) {
-      if (res.error) {
-        // v157: código 23505 = unique_violation -- esse Conhecimento+Carregamentos já
-        // existe (alguém mais rápido salvou entre a checagem local e o envio). Desfaz
-        // a inserção otimista local e recarrega a lista real da nuvem.
-        if (res.error.code === "23505") {
-          state.romaneios = state.romaneios.filter(function (x) { return x.id !== r.id; });
-          render();
-          alert("Esse romaneio (Conhecimento " + (r.conhecimento || "?") + ") já tinha sido anexado por outra pessoa nesse instante. Atualizando a lista.");
-          rfRomaneiosCarregar();
+    // v222: antes de gravar, confere se o login ainda está válido. Se o app ficou
+    // parado/minimizado, o token pode ter vencido -- aí a nuvem recusa a gravação
+    // com o erro técnico de segurança ("row-level security") e o romaneio NÃO
+    // encerra. Mesma trava do v160 (fluxo de OCR): tenta renovar a sessão sozinho
+    // 1 vez; se não der, avisa em português claro em vez do erro cru.
+    function gravar(jaTentouRenovar) {
+      sb.auth.getSession().then(function (resSess) {
+        var token = resSess.data && resSess.data.session && resSess.data.session.access_token;
+        if (!token) {
+          if (jaTentouRenovar) { alert("Sua sessão expirou. Saia e entre novamente para salvar/encerrar o romaneio."); return; }
+          sb.auth.refreshSession().then(function () { gravar(true); });
           return;
         }
-        alert("Não consegui salvar o romaneio na nuvem: " + res.error.message);
-      }
-    });
+        sb.from(RF_ROMANEIOS_TABELA).upsert(rfRomaneioParaDB(r)).then(function (res) {
+          if (res.error) {
+            // v157: código 23505 = unique_violation -- esse Conhecimento+Carregamentos já
+            // existe (alguém mais rápido salvou entre a checagem local e o envio). Desfaz
+            // a inserção otimista local e recarrega a lista real da nuvem.
+            if (res.error.code === "23505") {
+              state.romaneios = state.romaneios.filter(function (x) { return x.id !== r.id; });
+              render();
+              alert("Esse romaneio (Conhecimento " + (r.conhecimento || "?") + ") já tinha sido anexado por outra pessoa nesse instante. Atualizando a lista.");
+              rfRomaneiosCarregar();
+              return;
+            }
+            // v222: erro de segurança/sessão na hora de gravar = o token não chegou
+            // válido. Renova 1 vez e refaz; se persistir, mensagem clara (não o erro cru).
+            var msg = res.error.message || "";
+            if (!jaTentouRenovar && /row-level security|JWT|token|sess/i.test(msg)) {
+              sb.auth.refreshSession().then(function () { gravar(true); });
+              return;
+            }
+            if (/row-level security|JWT|token/i.test(msg)) {
+              alert("Sua sessão expirou. Saia e entre novamente para salvar/encerrar o romaneio.");
+              return;
+            }
+            alert("Não consegui salvar o romaneio na nuvem: " + msg);
+          }
+        });
+      });
+    }
+    gravar(false);
   });
 }
 function rfRomaneioExcluir(id) {
@@ -5265,11 +5292,23 @@ function rfConfClienteTotal(cli) {
    abrir direto no Google Maps mais pra frente, sem precisar "ficar rodando"
    pra achar de novo. */
 var RF_CLIENTES_LOCAIS_TABELA = "conferencia_clientes_locais";
+// v222: chave do banco de clientes/geolocalização. Normaliza nome+cidade tirando
+// acento, colapsando espaços internos e passando pra maiúscula -- assim "SÃO
+// DOMINGOS" e "SAO DOMINGOS", ou nome com espaço duplo, casam como o MESMO
+// cliente. Objetivo: à medida que o banco cresce, nunca duplicar cliente nem
+// deixar de achar o local já salvo, mesmo em rota/motorista diferentes.
+function rfNormalizarTexto(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim().replace(/\s+/g, " ").toUpperCase();
+}
 function rfClienteChave(nome, cidade) {
-  return (String(nome || "").trim().toUpperCase()) + "|" + (String(cidade || "").trim().toUpperCase());
+  return rfNormalizarTexto(nome) + "|" + rfNormalizarTexto(cidade);
 }
 function rfClienteLocalParaJS(r) {
-  return { chave: r.chave, clienteNome: r.cliente_nome || "", cidade: r.cidade || "",
+  // v222: a chave em memória é SEMPRE recomputada com a normalização atual (não a
+  // gravada no banco), pra que registros antigos (salvos com acento) casem com as
+  // buscas novas sem acento -- e o guard de captura não crie duplicata.
+  return { chave: rfClienteChave(r.cliente_nome, r.cidade), clienteNome: r.cliente_nome || "", cidade: r.cidade || "",
     latitude: r.latitude, longitude: r.longitude, precisaoM: r.precisao_m, fotoFachada: r.foto_fachada || "",
     atualizadoPor: r.atualizado_por || "", atualizadoEm: Number(r.atualizado_em) || 0 };
 }
