@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v229)</title>
+<title>RF Logística — Painel da Frota (v230)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3031,6 +3031,101 @@ function szLerEspelhoTexto(txt) {
   };
 }
 
+/* ---- Placa e motorista SEMPRE do cadastro ---------------------------------
+   v230: Renato pediu que os dois viessem do banco, não digitados. Digitar placa
+   e nome é onde nasce o desalinhamento que já custou caro (v216: de 22 caminhões
+   só 1 tinha o nome batendo com o login, e por isso quase nenhum motorista via
+   as próprias viagens no app).
+   Aqui pesa ainda mais: o CT-e sai com o NOME e o CPF do motorista. Nome errado
+   no CT-e é documento fiscal errado, e nessa operação a Suzano não homologa nada
+   — o erro é todo da RF.
+   O que o ESPELHO declara é guardado à parte (placaEspelho/motoristaEspelho) e
+   conferido contra o cadastro: quando diverge, a tela avisa em vez de escolher
+   sozinha. Foi assim que apareceu o caso real do espelho de 07/08, que traz
+   JEFSON DE ALMEIDA MARTINS na PKO3F40 enquanto o cadastro tem Ivo.Souza. */
+function szPlacasFrota() {
+  return (state.veiculos || [])
+    .map(function (v) { return String(v.placa || "").trim(); })
+    .filter(function (p) { return p; })
+    .sort(function (a, b) { return a.localeCompare(b, "pt-BR"); });
+}
+function szSeletorPlaca(c) {
+  var placas = szPlacasFrota(), atual = String(c.placa || "");
+  var opts = '<option value="">— escolha a placa —</option>';
+  if (atual && placas.indexOf(atual) === -1) opts += '<option value="' + esc(atual) + '" selected>' + esc(atual) + ' (fora do cadastro)</option>';
+  placas.forEach(function (p) { opts += '<option value="' + esc(p) + '"' + (p === atual ? " selected" : "") + '>' + esc(p) + '</option>'; });
+  return '<select onchange="szSetCampo(\'' + c.id + '\',\'placa\',this.value);render();" style="width:130px;font-weight:700;">' + opts + '</select>';
+}
+/* Lista de motoristas para escolher. Duas fontes, unidas:
+   - os LOGINS de motorista (state._perfis), que é a fonte boa;
+   - o campo motorista do cadastro da Frota, que desde a v216 já é seleção de
+     login e por isso está alinhado.
+   A segunda fonte existe porque `garantirPerfisCarregados()` só busca os perfis
+   para ADMIN — sem ela, o conferente da doca (login compras@, papel "user")
+   veria um seletor vazio e não teria como tocar a carga. */
+function szMotoristasDisponiveis() {
+  var vistos = {}, out = [];
+  var junta = function (n) {
+    n = String(n || "").trim();
+    if (!n) return;
+    if (/^(RF LOGISTICA|LEAO TRANSPORTE)$/i.test(n)) return;   // não são motoristas
+    var k = n.toUpperCase();
+    if (vistos[k]) return;
+    vistos[k] = true; out.push(n);
+  };
+  try { loginsMotoristas().forEach(junta); } catch (e) {}
+  (state.veiculos || []).forEach(function (v) { junta(v.motorista); });
+  return out.sort(function (a, b) { return a.localeCompare(b, "pt-BR"); });
+}
+function szMotoristaDaPlaca(placa) {
+  if (!placa) return "";
+  try { var l = loginsDaPlaca(placa); if (l.length) return l[0]; } catch (e) {}
+  var v = (state.veiculos || []).find(function (x) { return x.placa === placa; });
+  return v ? String(v.motorista || "").trim() : "";
+}
+function szSeletorMotorista(c) {
+  var lista = szMotoristasDisponiveis(), atual = String(c.motorista || "");
+  if (!lista.length) return '<span style="font-size:11px;color:#888;">nenhum motorista cadastrado — cadastre na aba Frota</span>';
+  var sugerido = szMotoristaDaPlaca(c.placa);
+  var opts = '<option value="">— escolha o motorista —</option>';
+  if (atual && lista.indexOf(atual) === -1) opts += '<option value="' + esc(atual) + '" selected>' + esc(atual) + ' (fora do cadastro)</option>';
+  lista.forEach(function (n) {
+    var marca = (sugerido && n === sugerido) ? " ★" : "";
+    opts += '<option value="' + esc(n) + '"' + (n === atual ? " selected" : "") + '>' + esc(n) + marca + '</option>';
+  });
+  return '<select onchange="szSetCampo(\'' + c.id + '\',\'motorista\',this.value);render();" style="width:190px;font-weight:700;">' + opts + '</select>'
+    + (sugerido ? '<span style="font-size:10px;color:#888;margin-left:4px;">★ = cadastrado nesta placa</span>' : "");
+}
+/* Divergências entre o que o espelho declara e o que está no cadastro da RF.
+   Devolve lista de textos; vazia quando está tudo alinhado. */
+function szDivergenciasCadastro(c) {
+  var d = [];
+  (c.espelhos || []).forEach(function (e) {
+    if (e.placaEspelho && c.placa && String(e.placaEspelho).toUpperCase() !== String(c.placa).toUpperCase()) {
+      d.push("A NF " + (e.nfe || "?") + " veio no espelho com a placa " + e.placaEspelho + ", mas esta carga está na " + c.placa + ".");
+    }
+    if (e.motoristaEspelho && c.motorista && !szMesmoMotorista(e.motoristaEspelho, c.motorista)) {
+      d.push("O espelho da NF " + (e.nfe || "?") + " traz o motorista " + e.motoristaEspelho
+        + (e.cpfMotoristaEspelho ? " (CPF " + e.cpfMotoristaEspelho + ")" : "")
+        + ", mas nesta carga está " + c.motorista + ". O CT-e sai com o nome e o CPF do espelho — confira antes de emitir.");
+    }
+  });
+  return d;
+}
+/* "JEFSON DE ALMEIDA MARTINS" x login "Jefson.Martins": compara pelo primeiro e
+   pelo último nome, sem acento e sem caixa. Não tenta adivinhar mais que isso —
+   na dúvida acusa divergência, que é o lado seguro. */
+function szMesmoMotorista(a, b) {
+  var limpa = function (s) {
+    return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase().replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+  };
+  var A = limpa(a).split(" ").filter(Boolean), B = limpa(b).split(" ").filter(Boolean);
+  if (!A.length || !B.length) return true;
+  if (A.join(" ") === B.join(" ")) return true;
+  return A[0] === B[0] && A[A.length - 1] === B[B.length - 1];
+}
+
 /* ---- Estado ---------------------------------------------------------------
    Fica em state.suzanoCargas e sobe pela mesma caixa geral do resto do sistema. */
 function szCargas() {
@@ -3069,6 +3164,10 @@ function szEspelhoEntregue(e) { return szEspelhoVol(e, "entregueEm") === (Number
 function szMotivoBloqueio(carga) {
   var t = szTotais(carga);
   if (!t.espelhos) return "Nenhum espelho lançado nesta carga.";
+  /* v230: placa e motorista saem no CT-e. Liberar sem eles é emitir documento
+     fiscal incompleto, então entram na mesma trava da contagem. */
+  if (!carga.placa) return "Escolha a placa do caminhão — ela sai no CT-e.";
+  if (!carga.motorista) return "Escolha o motorista — o nome dele sai no CT-e.";
   var semEntrada = (carga.espelhos || []).filter(function (e) { return !e.entrada || e.entrada.contado == null; });
   if (semEntrada.length) return semEntrada.length + " nota(s) ainda sem conferência de entrada — conte na doca antes de carregar.";
   if (t.carregado !== t.esperado) {
@@ -3290,16 +3389,23 @@ function szColarEspelho(cargaId) {
   if (!d.chave && !d.nfe) { alert("Não reconheci esse texto como um espelho da Suzano. Confira se copiou o documento inteiro."); return; }
   if (d.chave && !szChaveValida(d.chave)) { alert("A chave de acesso lida não passou no dígito verificador. Confira o documento."); return; }
   if ((c.espelhos || []).some(function (e) { return e.chave && e.chave === d.chave; })) { alert("Essa NF-e já está nesta carga."); return; }
-  if (!c.placa && d.placa) c.placa = d.placa;
-  if (!c.motorista && d.motorista) c.motorista = d.motorista;
+  /* v230: o espelho NÃO manda mais na placa nem no motorista da carga. Ele diz o
+     que a Suzano emitiu; o cadastro da RF diz a verdade operacional. Só adota a
+     placa quando ela existe na frota, e o motorista nunca — ele é escolhido no
+     seletor. O que o espelho declara fica guardado pra conferência. */
+  if (!c.placa && d.placa && szPlacasFrota().indexOf(d.placa) !== -1) c.placa = d.placa;
   c.espelhos = c.espelhos || [];
   c.espelhos.push({
     id: uid(), numDoc: d.numDoc, cFrete: d.cFrete, nfe: d.nfe, chave: d.chave,
     cliente: d.cliente, cnpjCliente: d.cnpjCliente, endereco: d.endereco, cidade: d.cidade,
     produto: d.produto, qtdVolumes: d.qtdVolumes, peso: d.peso,
     valorMercadoria: d.valorMercadoria, valorFrete: d.valorFrete,
+    placaEspelho: d.placa, motoristaEspelho: d.motorista, cpfMotoristaEspelho: d.cpfMotorista,
     etiquetas: [], entrada: null,
   });
+  if (d.placa && szPlacasFrota().indexOf(d.placa) === -1) {
+    alert("A placa " + d.placa + " do espelho não está cadastrada na Frota.\n\nEscolha a placa certa no seletor da carga — o sistema não adivinha placa fora do cadastro.");
+  }
   salvar(); render();
 }
 function szSetEspelho(cargaId, eid, campo, valor) {
@@ -3424,12 +3530,19 @@ function szTelaEquipe() {
       + '</div>';
     if (aberta) {
       h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        + 'placa <input value="' + esc(c.placa || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'placa\',this.value.toUpperCase())" style="width:100px;text-transform:uppercase;">'
-        + 'data <input type="date" value="' + esc(c.data || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'data\',this.value)">'
-        + 'motorista <input value="' + esc(c.motorista || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'motorista\',this.value)" style="width:170px;">'
+        + 'placa ' + szSeletorPlaca(c)
+        + ' data <input type="date" value="' + esc(c.data || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'data\',this.value)">'
+        + ' motorista ' + szSeletorMotorista(c)
         + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-weight:800;">+ Colar espelho da Suzano</button>'
         + '<button onclick="szExcluirCarga(\'' + c.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ excluir carga</button>'
         + '</div>';
+      var divs = szDivergenciasCadastro(c);
+      if (divs.length) {
+        h += '<div style="margin-top:8px;padding:9px 11px;border-radius:8px;background:rgba(192,57,43,.14);border:1px solid #C0392B;">'
+          + '<div style="font-size:12px;font-weight:900;color:#C0392B;margin-bottom:3px;">⚠ O espelho não bate com o cadastro</div>'
+          + divs.map(function (x) { return '<div style="font-size:12px;color:#ddd;">• ' + esc(x) + '</div>'; }).join("")
+          + '</div>';
+      }
       // bipagem do carregamento (uma só pra carga inteira: o sistema descobre o dono pelo código)
       if (c.status !== "em_rota" && t.esperado > 0) {
         h += '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#141414;border:1px solid #2A2A2A;">'
