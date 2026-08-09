@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v236)</title>
+<title>RF Logística — Painel da Frota (v237)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3819,12 +3819,159 @@ function szCardEspelho(c, e) {
       : "")
     + '</div>';
 }
+/* ===== v237: PLANEJAMENTO — TONELADA → VEÍCULOS =============================
+   Renato: "a Suzano passa a tonelada; pra nós a quantidade não muda, o que muda
+   é a quantidade de veículos". Então a pergunta que este bloco responde é uma
+   só: com essa tonelada, quantos caminhões de cada tipo eu preciso ter rodando?
+
+   A conta é a mesma do modelo de custo do BID, e é fechada — não é estimativa
+   da IA:
+     viagens necessárias no mês = tonelada da região ÷ capacidade útil do veículo
+     viagens que UM caminhão faz no mês = dias úteis ÷ dias por viagem
+     caminhões necessários = viagens necessárias ÷ viagens por caminhão
+   Tudo arredondado pra cima, porque meio caminhão não existe.
+
+   Os números que entram são do Renato, não meus: capacidade útil, dias por
+   viagem e o percentual que vai de TOCO são editáveis. O que eu preencho é só
+   o que veio do anexo oficial do BID (Salvador e RM 2.837,3 t/mês e interior
+   4.484,6 t/mês, de um total de 7.321,9), e a quebra do interior por regional
+   ele completa porque esse detalhe não está no que eu tenho.
+   A comparação final é contra a FROTA REAL cadastrada, contando por tipo. */
+function szPlano() {
+  if (!state.suzanoPlano || typeof state.suzanoPlano !== "object") state.suzanoPlano = {};
+  var p = state.suzanoPlano;
+  if (!(Number(p.capToco) > 0)) p.capToco = 8;
+  if (!(Number(p.cap34) > 0)) p.cap34 = 4;
+  if (!(Number(p.diasUteis) > 0)) p.diasUteis = 22;
+  if (!Array.isArray(p.regioes) || !p.regioes.length) {
+    p.regioes = [
+      { id: uid(), nome: "Salvador e Região Metropolitana", ton: 2837.3, dias: 1, pctToco: 80 },
+      { id: uid(), nome: "Interior (quebrar por regional)", ton: 4484.6, dias: 5, pctToco: 80 },
+    ];
+  }
+  return p;
+}
+function szPlanoSet(campo, valor) {
+  var p = szPlano();
+  p[campo] = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
+  salvar(); render();
+}
+function szPlanoSetRegiao(id, campo, valor) {
+  var p = szPlano(), r = p.regioes.find(function (x) { return String(x.id) === String(id); });
+  if (!r) return;
+  if (campo === "nome") r.nome = String(valor);
+  else r[campo] = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
+  salvar(); render();
+}
+function szPlanoAddRegiao() {
+  szPlano().regioes.push({ id: uid(), nome: "", ton: 0, dias: 5, pctToco: 80 });
+  salvar(); render();
+}
+function szPlanoDelRegiao(id) {
+  var p = szPlano();
+  p.regioes = p.regioes.filter(function (x) { return String(x.id) !== String(id); });
+  salvar(); render();
+}
+/* Conta a frota cadastrada por tipo. Só o que está apto a rodar — caminhão
+   "Fora de operação" não entra, senão o plano fecha no papel e falta na rua. */
+function szFrotaPorTipo() {
+  var f = { toco: 0, tres4: 0, forinha: 0 };
+  (state.veiculos || []).forEach(function (v) {
+    if (!v.placa) return;
+    if (String(v.statusOp || "") === "Fora de operação") { f.forinha++; return; }
+    if (v.tipo === "Toco") f.toco++;
+    else if (v.tipo === "3/4") f.tres4++;
+  });
+  return f;
+}
+function szPlanoCalcular() {
+  var p = szPlano();
+  var diasUteis = Number(p.diasUteis) || 22;
+  var capT = Number(p.capToco) || 8, cap3 = Number(p.cap34) || 4;
+  var linhas = [], tot = { ton: 0, viagensT: 0, viagens3: 0, camT: 0, cam3: 0 };
+  (p.regioes || []).forEach(function (r) {
+    var ton = Number(r.ton) || 0;
+    var dias = Number(r.dias) || 1;
+    var pct = Math.min(100, Math.max(0, Number(r.pctToco) || 0));
+    var tonT = ton * pct / 100, ton3 = ton - tonT;
+    var viagensPorCam = dias > 0 ? Math.floor(diasUteis / dias) : 0;
+    var viagensT = capT > 0 ? Math.ceil(tonT / capT) : 0;
+    var viagens3 = cap3 > 0 ? Math.ceil(ton3 / cap3) : 0;
+    var camT = viagensPorCam > 0 ? Math.ceil(viagensT / viagensPorCam) : 0;
+    var cam3 = viagensPorCam > 0 ? Math.ceil(viagens3 / viagensPorCam) : 0;
+    linhas.push({ r: r, ton: ton, tonT: tonT, ton3: ton3, dias: dias,
+      viagensPorCam: viagensPorCam, viagensT: viagensT, viagens3: viagens3, camT: camT, cam3: cam3 });
+    tot.ton += ton; tot.viagensT += viagensT; tot.viagens3 += viagens3; tot.camT += camT; tot.cam3 += cam3;
+  });
+  return { linhas: linhas, tot: tot, diasUteis: diasUteis, capT: capT, cap3: cap3, frota: szFrotaPorTipo() };
+}
+function szTelaPlano() {
+  var p = szPlano(), calc = szPlanoCalcular(), t = calc.tot, fr = calc.frota;
+  var faltaT = t.camT - fr.toco, falta3 = t.cam3 - fr.tres4;
+  var aberto = !!state.szPlanoAberto;
+  var n = function (x, casas) { return Number(x || 0).toLocaleString("pt-BR", { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 }); };
+  var h = '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:12px 14px;margin-bottom:14px;background:#0B0B0B;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;" onclick="state.szPlanoAberto=!state.szPlanoAberto;render();">'
+    + '<div><span style="font-size:16px;font-weight:900;color:' + GOLD + ';">📊 Planejamento: tonelada → veículos</span>'
+    + '<div style="font-size:12px;color:#bbb;">' + n(t.ton, 1) + ' t/mês · precisa de <b>' + t.camT + ' TOCO</b> e <b>' + t.cam3 + ' 3/4</b>'
+    + ' · frota apta hoje: ' + fr.toco + ' TOCO e ' + fr.tres4 + ' 3/4</div></div>'
+    + '<div style="font-size:13px;font-weight:900;color:' + ((faltaT > 0 || falta3 > 0) ? "#C0392B" : "#2E7D32") + ';">'
+    + ((faltaT > 0 || falta3 > 0)
+      ? "faltam " + (faltaT > 0 ? faltaT + " TOCO" : "") + (faltaT > 0 && falta3 > 0 ? " e " : "") + (falta3 > 0 ? falta3 + " 3/4" : "")
+      : "frota suficiente") + '</div>'
+    + '<span style="color:#888;">' + (aberto ? "▾" : "▸") + '</span></div>';
+  if (!aberto) return h + '</div>';
+  h += '<div style="margin-top:10px;font-size:12px;color:#999;">A tonelada quem passa é a Suzano — ela não muda. O que muda é quantos caminhões precisam rodar pra dar conta. '
+    + 'Ajuste capacidade e dias por viagem com o que vocês praticam; o resto é conta fechada.</div>'
+    + '<div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;">'
+    + 'capacidade útil TOCO <input type="number" step="0.1" min="0" value="' + p.capToco + '" onchange="szPlanoSet(\'capToco\',this.value)" style="width:70px;text-align:right;font-weight:700;"> t'
+    + ' · 3/4 <input type="number" step="0.1" min="0" value="' + p.cap34 + '" onchange="szPlanoSet(\'cap34\',this.value)" style="width:70px;text-align:right;font-weight:700;"> t'
+    + ' · dias úteis no mês <input type="number" min="1" value="' + p.diasUteis + '" onchange="szPlanoSet(\'diasUteis\',this.value)" style="width:60px;text-align:right;font-weight:700;">'
+    + '</div>'
+    + '<div style="overflow-x:auto;margin-top:10px;"><table style="min-width:820px;width:100%;"><thead><tr>'
+    + '<th style="text-align:left;">Região</th><th>Ton/mês</th><th>Dias por viagem</th><th>% TOCO</th>'
+    + '<th>Viagens TOCO</th><th>Viagens 3/4</th><th>TOCO necessários</th><th>3/4 necessários</th><th></th>'
+    + '</tr></thead><tbody>';
+  calc.linhas.forEach(function (l) {
+    h += '<tr>'
+      + '<td><input value="' + esc(l.r.nome || "") + '" placeholder="nome da regional" onchange="szPlanoSetRegiao(\'' + l.r.id + '\',\'nome\',this.value)" style="width:100%;min-width:170px;"></td>'
+      + '<td><input type="number" step="0.1" min="0" value="' + l.ton + '" onchange="szPlanoSetRegiao(\'' + l.r.id + '\',\'ton\',this.value)" style="width:90px;text-align:right;"></td>'
+      + '<td><input type="number" min="1" value="' + l.dias + '" onchange="szPlanoSetRegiao(\'' + l.r.id + '\',\'dias\',this.value)" style="width:60px;text-align:right;" title="ida, entregas e volta"></td>'
+      + '<td><input type="number" min="0" max="100" value="' + (Number(l.r.pctToco) || 0) + '" onchange="szPlanoSetRegiao(\'' + l.r.id + '\',\'pctToco\',this.value)" style="width:60px;text-align:right;"></td>'
+      + '<td style="text-align:right;">' + n(l.viagensT) + '</td>'
+      + '<td style="text-align:right;">' + n(l.viagens3) + '</td>'
+      + '<td style="text-align:right;font-weight:800;">' + l.camT + '</td>'
+      + '<td style="text-align:right;font-weight:800;">' + l.cam3 + '</td>'
+      + '<td><button onclick="szPlanoDelRegiao(\'' + l.r.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕</button></td>'
+      + '</tr>'
+      + '<tr><td colspan="9" style="font-size:10px;color:#666;padding-bottom:8px;">'
+      + 'cada caminhão faz ' + l.viagensPorCam + ' viagem(ns)/mês nesta região (' + calc.diasUteis + ' dias úteis ÷ ' + l.dias + ' dias por viagem)'
+      + ' · ' + n(l.tonT, 1) + ' t de TOCO e ' + n(l.ton3, 1) + ' t de 3/4</td></tr>';
+  });
+  h += '</tbody><tfoot><tr style="border-top:1px solid #333;font-weight:900;">'
+    + '<td>TOTAL</td><td style="text-align:right;">' + n(t.ton, 1) + '</td><td></td><td></td>'
+    + '<td style="text-align:right;">' + n(t.viagensT) + '</td><td style="text-align:right;">' + n(t.viagens3) + '</td>'
+    + '<td style="text-align:right;">' + t.camT + '</td><td style="text-align:right;">' + t.cam3 + '</td><td></td>'
+    + '</tr></tfoot></table></div>'
+    + '<button onclick="szPlanoAddRegiao()" style="margin-top:8px;font-size:12px;">+ regional</button>'
+    + '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:' + ((faltaT > 0 || falta3 > 0) ? "rgba(192,57,43,.12)" : "rgba(46,125,50,.12)") + ';border:1px solid ' + ((faltaT > 0 || falta3 > 0) ? "#C0392B" : "#2E7D32") + ';">'
+    + '<div style="font-size:13px;font-weight:900;color:' + ((faltaT > 0 || falta3 > 0) ? "#C0392B" : "#2E7D32") + ';">'
+    + 'Precisa: ' + t.camT + ' TOCO e ' + t.cam3 + ' 3/4 &nbsp;·&nbsp; Tem apto: ' + fr.toco + ' TOCO e ' + fr.tres4 + ' 3/4'
+    + (fr.forinha ? ' &nbsp;·&nbsp; ' + fr.forinha + ' fora de operação (não contados)' : "") + '</div>'
+    + '<div style="font-size:12px;color:#ddd;margin-top:4px;">'
+    + (faltaT > 0 || falta3 > 0
+      ? 'Faltam ' + (faltaT > 0 ? faltaT + " TOCO" : "") + (faltaT > 0 && falta3 > 0 ? " e " : "") + (falta3 > 0 ? falta3 + " 3/4" : "") + ' para atender essa tonelada com os dias de viagem informados.'
+      : 'A frota apta cobre a tonelada com os dias de viagem informados.')
+    + ' A conta não considera pico nem quebra: para folga, some 1 ou 2 por tipo.</div></div>';
+  return h + '</div>';
+}
 function szTelaEquipe() {
   var cargas = szCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
     + '<div style="font-size:12px;color:#999;max-width:760px;">Operação Suzano: eles não emitem CT-e e não homologam, então a conferência é toda da RF. '
     + 'Um espelho = uma NF = um cliente. O caminhão só é liberado quando a soma dos volumes bipados bate com a soma das notas.</div>'
-    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>';
+    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>'
+    + szTelaPlano();
   if (!cargas.length) return h + '<div style="color:#888;padding:20px;">Nenhum carregamento lançado ainda.</div>';
   cargas.forEach(function (c) {
     var t = szTotais(c), aberta = String(state.szCargaAberta) === String(c.id);
@@ -8333,6 +8480,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
 - O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
 - Sem placa e sem motorista o caminhão não é liberado.
+- A aba tem também o bloco "📊 Planejamento: tonelada → veículos". A Suzano passa a TONELADA, que não muda; o que a RF decide é quantos caminhões põe pra rodar. A conta é fechada, não é estimativa: viagens necessárias = tonelada ÷ capacidade útil do veículo; viagens que um caminhão faz no mês = dias úteis ÷ dias por viagem; caminhões necessários = viagens ÷ viagens por caminhão, sempre arredondando pra cima. Capacidade útil, dias por viagem e o percentual que vai de TOCO são informados pelo Renato, e o resultado é comparado com a frota REAL cadastrada, contando por tipo e ignorando quem está "Fora de operação". O que mais mexe no número de caminhões não é a tonelada, são os DIAS POR VIAGEM: dobrar os dias praticamente dobra a frota necessária.
 - VALOR do frete e valor da mercadoria são informação RESTRITA nesta operação: só aparecem na tela de quem tem a permissão "💰 Ver valores (frete e mercadoria)". Motorista e cliente nunca veem. Se alguém perguntar quanto a RF recebe por uma carga da Suzano e não tiver essa permissão, não informe valores — diga que é informação restrita e que o Renato libera o acesso na aba Usuários.
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
