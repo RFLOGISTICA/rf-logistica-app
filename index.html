@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v231)</title>
+<title>RF Logística — Painel da Frota (v232)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3404,18 +3404,18 @@ function szExcluirCarga(cargaId) {
   state.suzanoCargas = szCargas().filter(function (x) { return String(x.id) !== String(cargaId); });
   salvar(); render();
 }
-function szColarEspelho(cargaId) {
-  var c = szCarga(cargaId); if (!c) return;
-  var txt = window.prompt("Cole aqui o texto do Espelho para Emissão do Conhecimento de Frete (Ctrl+V).\n\nO sistema lê os campos pelos rótulos do documento — o que não reconhecer fica em branco pra você completar.", "");
-  if (txt === null || !String(txt).trim()) return;
-  var d = szLerEspelhoTexto(txt);
-  if (!d.chave && !d.nfe) { alert("Não reconheci esse texto como um espelho da Suzano. Confira se copiou o documento inteiro."); return; }
-  if (d.chave && !szChaveValida(d.chave)) { alert("A chave de acesso lida não passou no dígito verificador. Confira o documento."); return; }
-  if ((c.espelhos || []).some(function (e) { return e.chave && e.chave === d.chave; })) { alert("Essa NF-e já está nesta carga."); return; }
-  /* v230: o espelho NÃO manda mais na placa nem no motorista da carga. Ele diz o
-     que a Suzano emitiu; o cadastro da RF diz a verdade operacional. Só adota a
-     placa quando ela existe na frota, e o motorista nunca — ele é escolhido no
-     seletor. O que o espelho declara fica guardado pra conferência. */
+/* Aplica na carga o que foi lido de um espelho, venha de onde vier (PDF, foto
+   ou texto colado). Uma função só, pra as três portas terem exatamente as
+   mesmas recusas: sem chave/NF não entra, chave com DV errado não entra, NF
+   repetida não entra. */
+function szAplicarEspelho(cargaId, d, origem) {
+  var c = szCarga(cargaId);
+  if (!c) return false;
+  if (!d || (!d.chave && !d.nfe)) { alert("Não reconheci um espelho da Suzano" + (origem ? " (" + origem + ")" : "") + ". Confira se o documento é o Espelho para Emissão do Conhecimento de Frete."); return false; }
+  if (d.chave && !szChaveValida(d.chave)) { alert("A chave de acesso lida não passou no dígito verificador. Não vou gravar um número que pode estar errado — confira o documento."); return false; }
+  if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { alert("Essa NF-e já está nesta carga."); return false; }
+  /* v230: o espelho NÃO manda na placa nem no motorista da carga. Ele diz o que
+     a Suzano emitiu; o cadastro da RF diz a verdade operacional. */
   if (!c.placa && d.placa && szPlacasFrota().indexOf(d.placa) !== -1) c.placa = d.placa;
   c.espelhos = c.espelhos || [];
   c.espelhos.push({
@@ -3424,12 +3424,75 @@ function szColarEspelho(cargaId) {
     produto: d.produto, qtdVolumes: d.qtdVolumes, peso: d.peso,
     valorMercadoria: d.valorMercadoria, valorFrete: d.valorFrete,
     placaEspelho: d.placa, motoristaEspelho: d.motorista, cpfMotoristaEspelho: d.cpfMotorista,
+    origemLeitura: origem || "", lidoEm: Date.now(),
     etiquetas: [], entrada: null,
   });
+  salvar(); render();
+  var faltando = [];
+  if (!d.cliente) faltando.push("cliente");
+  if (!d.qtdVolumes) faltando.push("quantidade de volumes");
+  if (faltando.length) alert("Espelho lançado, mas não reconheci: " + faltando.join(" e ") + ". Complete na tela antes de gerar etiquetas.");
   if (d.placa && szPlacasFrota().indexOf(d.placa) === -1) {
     alert("A placa " + d.placa + " do espelho não está cadastrada na Frota.\n\nEscolha a placa certa no seletor da carga — o sistema não adivinha placa fora do cadastro.");
   }
-  salvar(); render();
+  return true;
+}
+/* Anexar o espelho como arquivo: PDF ou foto da galeria/câmera.
+   PDF é lido pela camada de texto (exato, sem IA e sem custo) — o espelho da
+   Suzano é gerado pelo sistema deles, então tem texto de verdade. Só cai na IA
+   quando é FOTO, que é o caso de quem recebeu o documento impresso. */
+function szAnexarEspelho(cargaId, input) {
+  var f = input && input.files && input.files[0];
+  if (!f) return;
+  var nome = String(f.name || "").toLowerCase();
+  var ehPdf = /\.pdf$/.test(nome) || f.type === "application/pdf";
+  var aviso = document.getElementById("szanexo-" + cargaId);
+  var diz = function (txt, cor) { if (aviso) { aviso.textContent = txt; aviso.style.color = cor || "#bbb"; } };
+  input.value = "";
+  if (ehPdf) {
+    diz("lendo o PDF…");
+    if (typeof rfCrlvExtrairTexto !== "function") { diz("leitor de PDF indisponível — use o texto colado.", "#C0392B"); return; }
+    rfCrlvExtrairTexto(f).then(function (txt) {
+      var d = szLerEspelhoTexto(txt);
+      if (szAplicarEspelho(cargaId, d, "PDF")) diz("✓ espelho lido do PDF (exato, sem IA)", "#2E7D32");
+      else diz("");
+    }).catch(function (e) {
+      diz("Não consegui ler o PDF (" + (e && e.message ? e.message : "erro") + "). Se for PDF escaneado, tire uma foto dele — a foto vai pra leitura por IA.", "#C0392B");
+    });
+    return;
+  }
+  if (!/^image\//.test(f.type || "")) { diz("Envie o espelho em PDF ou em foto.", "#C0392B"); return; }
+  diz("lendo a foto com a IA…");
+  var enviar = function (blob) {
+    if (typeof rfLerFotoIA !== "function") { diz("leitura por foto indisponível nesta tela.", "#C0392B"); return; }
+    rfLerFotoIA("espelho", blob, function (j) {
+      if (!j || j.erro || (!j.chave && !j.nfe)) {
+        diz("Não consegui ler a foto. Tente uma foto mais nítida, com o documento inteiro no quadro — ou anexe o PDF, que é exato.", "#C0392B");
+        return;
+      }
+      var d = {
+        numDoc: j.numDoc || "", cFrete: j.cFrete || "", nfe: j.nfe || "", chave: String(j.chave || "").replace(/\D/g, ""),
+        cliente: j.cliente || "", cnpjCliente: String(j.cnpjCliente || "").replace(/\D/g, ""),
+        endereco: j.endereco || "", cidade: j.cidade || "", produto: j.produto || "",
+        qtdVolumes: Math.round(Number(j.qtdVolumes) || 0), peso: Number(j.peso) || 0,
+        valorMercadoria: Number(j.valorMercadoria) || 0, valorFrete: Number(j.valorFrete) || 0,
+        placa: String(j.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+        motorista: j.motorista || "", cpfMotorista: j.cpfMotorista || "",
+      };
+      if (szAplicarEspelho(cargaId, d, "foto (IA)")) {
+        diz("✓ espelho lido da foto — CONFIRA os números na tela antes de gerar etiquetas", "#8E7A1F");
+      } else diz("");
+    });
+  };
+  if (typeof rfComprimirImagem === "function") {
+    rfComprimirImagem(f).then(enviar).catch(function () { enviar(f); });
+  } else enviar(f);
+}
+function szColarEspelho(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  var txt = window.prompt("Cole aqui o texto do Espelho para Emissão do Conhecimento de Frete (Ctrl+V).\n\nO sistema lê os campos pelos rótulos do documento — o que não reconhecer fica em branco pra você completar.", "");
+  if (txt === null || !String(txt).trim()) return;
+  szAplicarEspelho(cargaId, szLerEspelhoTexto(txt), "texto colado");
 }
 function szSetEspelho(cargaId, eid, campo, valor) {
   var c = szCarga(cargaId), e = szEspelho(c, eid); if (!e) return;
@@ -3559,9 +3622,14 @@ function szTelaEquipe() {
         + ' data <input type="date" value="' + esc(c.data || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'data\',this.value)">'
         + '<span title="A carga é averbada no nome de quem efetivamente sai. Pode ser trocado a qualquer momento, inclusive depois de liberada.">'
         + 'motorista que entrega ' + szSeletorMotorista(c) + '</span>'
-        + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-weight:800;">+ Colar espelho da Suzano</button>'
+        + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:6px 12px;border-radius:7px;cursor:pointer;">'
+        + '📎 Anexar espelho (PDF ou foto)'
+        + '<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="szAnexarEspelho(\'' + c.id + '\',this)">'
+        + '</label>'
+        + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-size:11px;">ou colar o texto</button>'
         + '<button onclick="szExcluirCarga(\'' + c.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ excluir carga</button>'
         + '</div>'
+        + '<div id="szanexo-' + c.id + '" style="font-size:12px;font-weight:700;margin-top:4px;"></div>'
         + (c.motorista ? '<div style="font-size:11px;color:#888;margin-top:3px;">Averbação no nome de <b style="color:#ddd;">' + esc(c.motorista) + '</b>.</div>' : "")
         + ((c.motoristaHist || []).length
           ? '<div style="font-size:11px;color:#888;margin-top:2px;">Trocas de motorista: '
