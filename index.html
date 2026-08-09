@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v235)</title>
+<title>RF Logística — Painel da Frota (v236)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3767,7 +3767,10 @@ function szCardEspelho(c, e) {
     + '</div>'
     + '<div style="text-align:right;"><div style="font-size:22px;font-weight:900;">' + esperado + '</div><div style="font-size:10px;color:#888;">volumes</div>'
     + (e.peso ? '<div style="font-size:10px;color:#888;">' + Number(e.peso).toLocaleString("pt-BR") + ' kg</div>' : "")
-    + (e.valorFrete ? '<div style="font-size:10px;color:#888;">frete ' + fmtR(e.valorFrete) + '</div>' : "")
+    /* v236: peso pode aparecer pra todo mundo (o conferente precisa dele).
+       Valor do frete e da mercadoria só pra quem tem a permissão. */
+    + (podeVerValoresFrete() && e.valorMercadoria ? '<div style="font-size:10px;color:#888;">' + fmtR(e.valorMercadoria) + ' em mercadoria</div>' : "")
+    + (podeVerValoresFrete() && e.valorFrete ? '<div style="font-size:10px;color:#888;">frete ' + fmtR(e.valorFrete) + '</div>' : "")
     + '</div></div>'
     + (emRota ? "" : '<div style="margin-top:8px;font-size:12px;">volumes: <input type="number" min="0" value="' + esperado + '" onchange="szSetEspelho(\'' + c.id + '\',\'' + e.id + '\',\'qtdVolumes\',this.value)" style="width:70px;text-align:right;font-weight:700;"> '
       + '<button onclick="szExcluirEspelho(\'' + c.id + '\',\'' + e.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ remover nota</button></div>')
@@ -4670,6 +4673,11 @@ function usuarioLogado() { return state.sessao; }
 // aba fantasma na barra superior.
 var PERMISSOES_EXTRA = [
   { id: "assistente", label: "🤖 Assistente de IA", ajuda: "Libera a bolha do assistente pra este usuário. Os dados que ele recebe continuam limitados às abas marcadas acima." },
+  /* v236: valor do frete e valor da mercadoria são informação sensível. Motorista
+     e conferente NÃO devem ver quanto a RF recebe por carga — é dado comercial, e
+     valor de mercadoria ainda aumenta risco se vazar. Fica oculto por padrão e só
+     aparece pra quem o Renato liberar, um a um. Admin sempre vê. */
+  { id: "valoresfrete", label: "💰 Ver valores (frete e mercadoria)", ajuda: "Mostra o valor do frete e o valor da mercadoria nas cargas da Suzano. Sem isto, a pessoa vê a nota, o cliente, o peso e os volumes, mas nenhum valor em dinheiro. Motorista e cliente nunca veem, mesmo marcado." },
 ];
 // v202: quem pode usar o assistente. A Edge Function `assistente-chat` sempre
 // aceitou papel "admin" OU "user" -- mas o widget na tela estava travado em
@@ -4686,6 +4694,23 @@ function podeUsarAssistente() {
   // quem recebe, inclusive um login que só vai existir amanhã.
   var mods = state.sessao.modulos || [];
   return Array.isArray(mods) && mods.indexOf("assistente") !== -1;
+}
+/* v236: quem pode ver valor de frete e de mercadoria.
+   Mesma regra da permissão do assistente (v203): liberação EXPLÍCITA, um a um.
+   Admin sempre; motorista e cliente NUNCA, mesmo que alguém marque por engano;
+   papel "user" só com o módulo `valoresfrete` marcado na aba Usuários.
+   IMPORTANTE, e o Renato precisa saber: isto esconde na TELA. O dado continua
+   viajando no aparelho de quem abre a aba. Para valor que não pode nem trafegar,
+   a filtragem teria que ser no banco, o que é outro trabalho. Para o risco real
+   aqui — motorista ou conferente enxergando quanto a RF recebe — esconder na
+   tela resolve. */
+function podeVerValoresFrete() {
+  if (!state.sessao) return false;
+  if (ehMotorista() || ehCliente()) return false;
+  if (ehAdmin()) return true;
+  if (state.sessao.papel !== "user") return false;
+  var mods = state.sessao.modulos || [];
+  return Array.isArray(mods) && mods.indexOf("valoresfrete") !== -1;
 }
 function sessaoValida() { return !!(state.sessao && state.sessao.uid && state.sessao.papel); }
 function podeVerAba(id) {
@@ -8308,6 +8333,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
 - O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
 - Sem placa e sem motorista o caminhão não é liberado.
+- VALOR do frete e valor da mercadoria são informação RESTRITA nesta operação: só aparecem na tela de quem tem a permissão "💰 Ver valores (frete e mercadoria)". Motorista e cliente nunca veem. Se alguém perguntar quanto a RF recebe por uma carga da Suzano e não tiver essa permissão, não informe valores — diga que é informação restrita e que o Renato libera o acesso na aba Usuários.
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".`;
