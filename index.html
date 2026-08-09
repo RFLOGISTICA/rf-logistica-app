@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v227)</title>
+<title>RF Logística — Painel da Frota (v228)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2859,6 +2859,627 @@ function rfKmEscolher(placa, j, opts) {
     + rfKmSuspeitoTexto(pior.s) + " Não preenchi nada — confira no painel e digite o número certo.";
   return res;
 }
+/* ===== v228: CARREGAMENTO SUZANO ==========================================
+   Operação Suzano: a Suzano NÃO emite CT-e e NÃO homologa — o processo inteiro
+   é da RF, então a contagem tem que fechar dos dois lados. O que não pode é
+   carregar quantidade errada, entregar a mais ou entregar a menos.
+
+   O documento que a Suzano manda é o "Espelho para Emissão do Conhecimento de
+   Frete": traz transportadora, placa, motorista com CPF, destinatário com CNPJ,
+   a NF-e da mercadoria com a CHAVE DE ACESSO de 44 dígitos, a quantidade de
+   volumes, o peso e o valor do frete. Um espelho = uma NF = um cliente.
+   Um carregamento junta vários espelhos (média 4 clientes, máximo 6).
+
+   Por que a etiqueta da RF é obrigatória: o volume é um pacote de resmas
+   embrulhado em papel kraft com a estampa genérica da Suzano. Todos IDÊNTICOS
+   por fora. O código de barras que existe fica no PALLET, não no pacote, e não
+   dá pra contar com ele. Sem etiqueta o motorista não tem como saber de quem é
+   cada pacote — e o erro de entregar o pacote do cliente D para o cliente A é
+   invisível: A recebe a mais, D fica faltando, e ninguém percebe até o fim.
+
+   Quatro travas, uma para cada lugar onde o erro nasce:
+     1. RETIRADA  - contagem CEGA na doca da Suzano (conta primeiro, o esperado
+                    só aparece depois). Divergência fica registrada ANTES de
+                    carregar, com foto, para a RF não pagar por volume que nunca
+                    existiu.
+     2. CARREGAMENTO - bipa o que sobe. A nota só fecha quando bate.
+     3. ENTREGA   - bipa na entrega; etiqueta de outro cliente é RECUSADA.
+     4. SAÍDA     - fechamento aritmético: soma dos espelhos = total bipado,
+                    senão o caminhão não é liberado.
+
+   O sistema BLOQUEIA, não avisa. Aviso a pessoa clica por cima. É o mesmo
+   princípio da trava de KM (v211/v226): onde existe regra determinística, é a
+   regra que decide.
+   ATENÇÃO DE BLOCO (lição da v215): render() alcança estas funções, então elas
+   TÊM que ficar no BLOCO 1 de <script>. */
+
+var SZ_CHAVE_TAM = 44;
+
+/* ---- Code128 (B e C, com troca automática) --------------------------------
+   Escrito à mão de propósito: sem dependência de CDN, funciona offline na doca
+   e o resultado é determinístico (dá pra testar). C é usado em trechos de 4+
+   dígitos pares porque comprime 2 dígitos por símbolo — importante na chave de
+   acesso, que tem 44 dígitos e não caberia legível numa etiqueta em B. */
+var SZ_C128 = ["11011001100","11001101100","11001100110","10010011000","10010001100","10001001100","10011001000","10011000100","10001100100","11001001000","11001000100","11000100100","10110011100","10011011100","10011001110","10111001100","10011101100","10011100110","11001110010","11001011100","11001001110","11011100100","11001110100","11101101110","11101001100","11100101100","11100100110","11101100100","11100110100","11100110010","11011011000","11011000110","11000110110","10100011000","10001011000","10001000110","10110001000","10001101000","10001100010","11010001000","11000101000","11000100010","10110111000","10110001110","10001101110","10111011000","10111000110","10001110110","11101110110","11010001110","11000101110","11011101000","11011100010","11011101110","11101011000","11101000110","11100010110","11101101000","11101100010","11100011010","11101111010","11001000010","11110001010","10100110000","10100001100","10010110000","10010000110","10000101100","10000100110","10110010000","10110000100","10011010000","10011000010","10000110100","10000110010","11000010010","11001010000","11110111010","11000010100","10001111010","10100111100","10010111100","10010011110","10111100100","10011110100","10011110010","11110100100","11110010100","11110010010","11011011110","11011110110","11110110110","10101111000","10100011110","10001011110","10111101000","10111100010","11110101000","11110100010","10111011110","10111101110","11101011110","11110101110","11010000100","11010010000","11010011100","11000111010"];
+var SZ_C128_STOP = "1100011101011";
+/* Devolve a string de barras (1=barra preta, 0=espaço) ou "" se não codificar. */
+function szCode128Bits(txt) {
+  txt = String(txt || "");
+  if (!txt) return "";
+  var vals = [], i = 0, modo = "";
+  var digitosAPartirDe = function (p) { var n = 0; while (p + n < txt.length && txt[p + n] >= "0" && txt[p + n] <= "9") n++; return n; };
+  // start: C se começa com 4+ dígitos, senão B
+  if (digitosAPartirDe(0) >= 4) { vals.push(105); modo = "C"; } else { vals.push(104); modo = "B"; }
+  while (i < txt.length) {
+    var nd = digitosAPartirDe(i);
+    if (modo === "C") {
+      if (nd >= 2) { vals.push(parseInt(txt.substr(i, 2), 10)); i += 2; continue; }
+      vals.push(100); modo = "B"; continue;                       // Code B
+    }
+    // modo B
+    if (nd >= 4 && nd % 2 === 0) { vals.push(99); modo = "C"; continue; }  // Code C
+    var c = txt.charCodeAt(i);
+    if (c < 32 || c > 126) return "";                              // fora do alcance
+    vals.push(c - 32); i++;
+  }
+  var soma = vals[0];
+  for (var k = 1; k < vals.length; k++) soma += vals[k] * k;
+  vals.push(soma % 103);
+  var bits = "";
+  for (var v = 0; v < vals.length; v++) bits += SZ_C128[vals[v]];
+  return bits + SZ_C128_STOP;
+}
+/* SVG do código de barras, pronto pra colar no HTML de impressão. */
+function szCode128Svg(txt, alturaPx, larguraModulo) {
+  var bits = szCode128Bits(txt);
+  if (!bits) return "";
+  var m = larguraModulo || 2, h = alturaPx || 60, x = 0, r = "";
+  for (var i = 0; i < bits.length; i++) {
+    if (bits[i] === "1") r += '<rect x="' + (x) + '" y="0" width="' + m + '" height="' + h + '" fill="#000"/>';
+    x += m;
+  }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + x + '" height="' + h + '" viewBox="0 0 ' + x + ' ' + h + '">' + r + '</svg>';
+}
+
+/* ---- Validação da chave de acesso da NF-e ---------------------------------
+   A chave já É um código de barras: todo DANFE imprime ela em CODE-128. Bipar o
+   DANFE identifica a nota sem inventar código nenhum. O DV módulo 11 deixa a
+   leitura à prova de erro: chave lida errada é RECUSADA, não corrigida. */
+function szChaveValida(ch) {
+  ch = String(ch || "").replace(/\D/g, "");
+  if (ch.length !== SZ_CHAVE_TAM) return false;
+  var pesos = [2, 3, 4, 5, 6, 7, 8, 9], s = 0, base = ch.slice(0, 43);
+  for (var i = 0; i < base.length; i++) s += parseInt(base[base.length - 1 - i], 10) * pesos[i % 8];
+  var r = s % 11, dv = (r === 0 || r === 1) ? 0 : 11 - r;
+  return String(dv) === ch[43];
+}
+function szChavePartes(ch) {
+  ch = String(ch || "").replace(/\D/g, "");
+  if (ch.length !== SZ_CHAVE_TAM) return null;
+  return {
+    uf: ch.slice(0, 2), aamm: ch.slice(2, 6), cnpj: ch.slice(6, 20),
+    modelo: ch.slice(20, 22), serie: ch.slice(22, 25), numero: ch.slice(25, 34),
+    valida: szChaveValida(ch),
+  };
+}
+function szCnpjFmt(c) {
+  c = String(c || "").replace(/\D/g, "");
+  if (c.length !== 14) return c;
+  return c.slice(0, 2) + "." + c.slice(2, 5) + "." + c.slice(5, 8) + "/" + c.slice(8, 12) + "-" + c.slice(12);
+}
+
+/* ---- Leitura do espelho colado --------------------------------------------
+   Determinística, por rótulo — não é IA. O espelho é gerado pelo sistema da
+   Suzano, então o layout é estável e os rótulos não mudam de um dia pro outro.
+   Onde o texto é previsível, regra ganha de modelo: não custa nada, não erra e
+   funciona sem internet. Devolve os campos que reconheceu; o que não achar fica
+   em branco pra pessoa completar — nunca inventa. */
+function szLerEspelhoTexto(txt) {
+  txt = String(txt || "");
+  var pega = function (re) { var m = txt.match(re); return m ? String(m[1]).trim() : ""; };
+  var num = function (s) {
+    s = String(s || "").trim();
+    if (!s) return 0;
+    if (s.indexOf(",") !== -1) s = s.replace(/\./g, "").replace(",", ".");
+    var n = parseFloat(s.replace(/[^\d.]/g, ""));
+    return isNaN(n) ? 0 : n;
+  };
+  var chave = (txt.match(/\b(\d{44})\b/) || [])[1] || "";
+  var linhaNF = txt.match(/(\d{6,9})\s+(\d{1,3})\s+([A-Za-zÀ-ÿ ]{3,30}?)\s+([\d.,]+)\s+([\d.,]+)\s+([A-Z]{2})\s+([\d.,]+)/);
+  return {
+    numDoc: pega(/N[°º]?\s*(\d{5,10})\s*\(Documento Transporte\)/i) || pega(/N[°º]?\s*de\s*Transporte\s*:?\s*(\d+)/i),
+    cFrete: pega(/N[rº°]*\s*C\.?\s*Frete\s*:?\s*(\d+)/i),
+    dataEmissao: pega(/Data Emiss[ãa]o\s*:?\s*([\d.\/-]+)/i),
+    placa: pega(/Placa\s*:?\s*([A-Z]{3}\s*\d[A-Z\d]\d{2})/i).replace(/\s/g, ""),
+    motorista: pega(/Motorista\s*:?\s*([A-ZÀ-Ÿ][A-ZÀ-Ÿ .]{4,60})/),
+    cpfMotorista: pega(/CPF\s*:?\s*([\d.\-]{11,14})/),
+    itinerario: pega(/Itiner[áa]rio\s*:?\s*([^\n]{3,60})/i),
+    cliente: pega(/Destinat[áa]rio\s*:?\s*([^\n]{3,60})/i),
+    cnpjCliente: (function () {
+      /* O espelho traz vários CNPJ na mesma região do texto (remetente,
+         expedidor, tomador e destinatário), e num texto colado eles perdem a
+         posição das colunas — pegar "o CNPJ depois de Destinatário" traz o da
+         Suzano. Regra determinística que não depende do layout: a CHAVE DE
+         ACESSO já carrega o CNPJ do EMITENTE (posições 7 a 20), e o cabeçalho
+         traz o da transportadora. Descartando esses dois, o que sobrar com mais
+         ocorrências é o destinatário. Sem chave, cai no 2º CNPJ após
+         "Destinatário", que é onde ele fica no layout normal. */
+      var todos = (txt.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g) || []).map(function (x) { return x.replace(/\D/g, ""); });
+      var emitente = szChavePartes(chave) ? szChavePartes(chave).cnpj : "";
+      var transp = (txt.match(/Transportadora[\s\S]{0,120}?CNPJ\/CPF\s*:?\s*([\d./-]{14,18})/i) || [])[1];
+      transp = transp ? transp.replace(/\D/g, "") : "";
+      var cont = {};
+      todos.forEach(function (c) {
+        if (c.length !== 14 || c === emitente || c === transp) return;
+        cont[c] = (cont[c] || 0) + 1;
+      });
+      var melhor = "", n = 0;
+      Object.keys(cont).forEach(function (c) { if (cont[c] > n) { n = cont[c]; melhor = c; } });
+      if (melhor) return melhor;
+      var m2 = txt.match(/Destinat[áa]rio[\s\S]{0,400}?CNPJ\/CPF\s*:?\s*[\d./-]{14,18}[\s\S]{0,120}?CNPJ\/CPF\s*:?\s*([\d./-]{14,18})/i);
+      return m2 ? m2[1].replace(/\D/g, "") : "";
+    })(),
+    endereco: (function () { var m = txt.match(/Destinat[áa]rio[\s\S]{0,200}?Endere[çc]o\s*:?\s*([^\n]{3,60})/i); return m ? m[1].trim() : ""; })(),
+    cidade: (function () { var m = txt.match(/Destinat[áa]rio[\s\S]{0,300}?Munic[íi]pio\s*:?\s*([^\n]{2,40})/i); return m ? m[1].trim() : ""; })(),
+    chave: chave,
+    nfe: linhaNF ? linhaNF[1] : (szChavePartes(chave) ? String(parseInt(szChavePartes(chave).numero, 10)) : ""),
+    produto: linhaNF ? linhaNF[3].trim() : "",
+    qtdVolumes: linhaNF ? Math.round(num(linhaNF[4])) : 0,
+    peso: linhaNF ? num(linhaNF[5]) : 0,
+    valorMercadoria: linhaNF ? num(linhaNF[7]) : 0,
+    valorFrete: num(pega(/Frete Valor Total\s*:?\s*([\d.,]+)/i)),
+  };
+}
+
+/* ---- Estado ---------------------------------------------------------------
+   Fica em state.suzanoCargas e sobe pela mesma caixa geral do resto do sistema. */
+function szCargas() {
+  if (!Array.isArray(state.suzanoCargas)) state.suzanoCargas = [];
+  return state.suzanoCargas;
+}
+function szCarga(id) { return szCargas().find(function (c) { return String(c.id) === String(id); }) || null; }
+function szEspelho(carga, eid) { return ((carga || {}).espelhos || []).find(function (e) { return String(e.id) === String(eid); }) || null; }
+
+/* Volumes esperados / conferidos na entrada / bipados no carregamento / entregues. */
+function szTotais(carga) {
+  var t = { esperado: 0, contado: 0, carregado: 0, entregue: 0, espelhos: 0, fechados: 0 };
+  ((carga || {}).espelhos || []).forEach(function (e) {
+    var esp = Number(e.qtdVolumes) || 0;
+    t.espelhos++; t.esperado += esp;
+    t.contado += (e.entrada && e.entrada.contado != null) ? Number(e.entrada.contado) : 0;
+    var et = e.etiquetas || [];
+    et.forEach(function (x) {
+      if (x.carregadoEm) t.carregado += Number(x.qtd) || 1;
+      if (x.entregueEm) t.entregue += Number(x.qtd) || 1;
+    });
+    if (esp > 0 && szEspelhoFechado(e)) t.fechados++;
+  });
+  return t;
+}
+function szEspelhoVol(e, campo) {
+  var n = 0;
+  (e.etiquetas || []).forEach(function (x) { if (x[campo]) n += Number(x.qtd) || 1; });
+  return n;
+}
+function szEspelhoFechado(e) { return szEspelhoVol(e, "carregadoEm") === (Number(e.qtdVolumes) || 0); }
+function szEspelhoEntregue(e) { return szEspelhoVol(e, "entregueEm") === (Number(e.qtdVolumes) || 0); }
+
+/* A trava de saída: o caminhão só é liberado quando a aritmética fecha.
+   Devolve null quando pode liberar, senão o motivo. */
+function szMotivoBloqueio(carga) {
+  var t = szTotais(carga);
+  if (!t.espelhos) return "Nenhum espelho lançado nesta carga.";
+  var semEntrada = (carga.espelhos || []).filter(function (e) { return !e.entrada || e.entrada.contado == null; });
+  if (semEntrada.length) return semEntrada.length + " nota(s) ainda sem conferência de entrada — conte na doca antes de carregar.";
+  if (t.carregado !== t.esperado) {
+    return "A conta não fecha: " + t.carregado.toLocaleString("pt-BR") + " volume(s) bipado(s) contra "
+      + t.esperado.toLocaleString("pt-BR") + " da soma das notas. Falta" + (t.esperado - t.carregado > 1 ? "m " : " ")
+      + Math.abs(t.esperado - t.carregado) + (t.carregado > t.esperado ? " a mais." : " a bipar.");
+  }
+  return null;
+}
+
+/* ---- Conferência de entrada: CONTAGEM CEGA --------------------------------
+   Se a tela mostra "esperado: 150", o conferente confirma 150 sem contar. Aqui o
+   número esperado só aparece DEPOIS que ele digita o que contou. É a diferença
+   entre conferir e carimbar, e não custa nada. */
+function szConferirEntrada(cargaId, eid) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid);
+  if (!c || !e) return;
+  var v = window.prompt("Contagem CEGA — NF " + (e.nfe || "?") + " / " + (e.cliente || "cliente")
+    + "\n\nConte os volumes na doca e digite quantos você contou.\n(o número esperado só aparece depois)", "");
+  if (v === null) return;
+  var contado = parseInt(String(v).replace(/\D/g, ""), 10);
+  if (isNaN(contado)) { alert("Digite só o número de volumes contados."); return; }
+  var esperado = Number(e.qtdVolumes) || 0;
+  e.entrada = { contado: contado, esperado: esperado, em: Date.now(), por: (state.sessao && state.sessao.nome) || "" };
+  if (contado !== esperado) {
+    var dif = contado - esperado;
+    var obs = window.prompt("⚠ DIVERGÊNCIA na retirada\n\nVocê contou " + contado + ", a nota diz " + esperado
+      + " (" + (dif > 0 ? "+" : "") + dif + ").\n\nNÃO carregue antes de resolver com a Suzano."
+      + "\nDescreva o que foi combinado (fica registrado com data e hora):", "");
+    e.entrada.divergencia = dif;
+    e.entrada.obs = obs === null ? "" : String(obs).trim();
+  } else {
+    e.entrada.divergencia = 0;
+    alert("✓ Bateu: " + contado + " volumes, igual à nota.");
+  }
+  salvar(); render();
+}
+
+/* ---- Etiquetas ------------------------------------------------------------
+   A etiqueta acompanha a UNIDADE DE MANUSEIO, não obrigatoriamente o volume:
+   pacote solto ganha etiqueta própria; pilha que sempre é carregada e entregue
+   junta ganha uma etiqueta que vale por N. Com 4 clientes por carga o risco não
+   é achar o pacote certo entre centenas, é a contagem por cliente — então
+   agrupar é seguro e evita colar 150 adesivos à mão.
+   O código carrega carga+nota+sequência, e o texto grande traz cliente e cidade
+   pra o motorista achar de olho, igual à etiqueta da Mateus que já funciona. */
+function szGerarEtiquetas(cargaId, eid) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid);
+  if (!c || !e) return;
+  var esperado = Number(e.qtdVolumes) || 0;
+  if (!esperado) { alert("Esta nota está sem quantidade de volumes."); return; }
+  if ((e.etiquetas || []).some(function (x) { return x.carregadoEm; })) {
+    if (!confirm("Já existem volumes bipados nesta nota. Gerar etiquetas de novo apaga o que foi bipado. Continuar?")) return;
+  }
+  var p = window.prompt("Etiquetas da NF " + (e.nfe || "?") + " — " + (e.cliente || "")
+    + "\n\nQuantos volumes por etiqueta?\n  1 = uma etiqueta por volume (detecta 1 pacote faltando)\n  N = uma etiqueta por pilha de N (mais rápido na doca)"
+    + "\n\nTotal de volumes: " + esperado, "1");
+  if (p === null) return;
+  var porEtiq = Math.max(1, parseInt(String(p).replace(/\D/g, ""), 10) || 1);
+  var lista = [], restante = esperado, seq = 1;
+  while (restante > 0) {
+    var q = Math.min(porEtiq, restante);
+    lista.push({
+      id: uid(), seq: seq, qtd: q,
+      codigo: "RF" + String(c.id).toUpperCase().slice(0, 4) + String(e.nfe || "0").slice(-6) + String(seq).padStart(3, "0"),
+      carregadoEm: 0, entregueEm: 0,
+    });
+    restante -= q; seq++;
+  }
+  e.etiquetas = lista;
+  e.etiquetasEm = Date.now();
+  salvar(); render();
+  alert("✓ " + lista.length + " etiqueta(s) geradas para " + esperado + " volume(s). Use \"Imprimir\" e cole antes de carregar.");
+}
+
+/* Abre a folha de etiquetas pronta pra impressora térmica. */
+function szImprimirEtiquetas(cargaId, eid) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid);
+  if (!c || !e || !(e.etiquetas || []).length) { alert("Gere as etiquetas primeiro."); return; }
+  var w = window.open("", "_blank");
+  if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
+  var tot = e.etiquetas.length;
+  var itens = e.etiquetas.map(function (x) {
+    return '<div class="et">'
+      + '<div class="cli">' + esc(String(e.cliente || "").slice(0, 28)) + '</div>'
+      + '<div class="cid">' + esc(String(e.cidade || "")) + '</div>'
+      + '<div class="qtd">' + x.seq + ' / ' + tot + (x.qtd > 1 ? '  <b>(' + x.qtd + ' volumes)</b>' : '') + '</div>'
+      + '<div class="bc">' + szCode128Svg(x.codigo, 52, 2) + '</div>'
+      + '<div class="cod">' + esc(x.codigo) + '</div>'
+      + '<div class="nf">NF ' + esc(String(e.nfe || "")) + ' · placa ' + esc(String(c.placa || "")) + '</div>'
+      + '</div>';
+  }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas NF ' + esc(String(e.nfe || "")) + '</title>'
+    + '<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:6mm;}'
+    + '.et{width:95mm;border:1px solid #000;padding:4mm;margin:0 0 4mm 0;page-break-inside:avoid;}'
+    + '.cli{font-size:19px;font-weight:900;letter-spacing:-.3px;}'
+    + '.cid{font-size:15px;font-weight:700;margin-bottom:2mm;}'
+    + '.qtd{font-size:26px;font-weight:900;margin-bottom:2mm;}'
+    + '.bc{margin:1mm 0;} .cod{font-size:12px;font-family:monospace;letter-spacing:1px;}'
+    + '.nf{font-size:11px;color:#333;margin-top:1mm;}'
+    + '@media print{@page{margin:4mm;}}</style></head><body>' + itens + '</body></html>');
+  w.document.close();
+  setTimeout(function () { try { w.print(); } catch (err) {} }, 400);
+}
+
+/* ---- Bipagem --------------------------------------------------------------
+   Uma função só para as duas pontas (carregamento e entrega), porque a regra é a
+   mesma: o código tem que existir NESTA carga e pertencer a ESTE cliente. Código
+   de outro cliente é RECUSADO — é essa recusa que impede o erro invisível de dar
+   o pacote do cliente D para o cliente A. */
+function szBipar(cargaId, campo, codigoDigitado, eidEsperado) {
+  var c = szCarga(cargaId);
+  if (!c) return { ok: false, msg: "Carga não encontrada." };
+  var cod = String(codigoDigitado || "").trim().toUpperCase();
+  if (!cod) return { ok: false, msg: "Código vazio." };
+  // chave de acesso bipada do DANFE: identifica a NOTA, não o volume
+  var soDigitos = cod.replace(/\D/g, "");
+  if (soDigitos.length === SZ_CHAVE_TAM) {
+    if (!szChaveValida(soDigitos)) return { ok: false, msg: "Chave de acesso inválida (dígito verificador não confere). Bipe de novo." };
+    var eChave = (c.espelhos || []).find(function (e) { return String(e.chave || "").replace(/\D/g, "") === soDigitos; });
+    if (!eChave) return { ok: false, msg: "Essa NF-e não faz parte desta carga." };
+    return { ok: false, msg: "Chave da NF " + (eChave.nfe || "") + " (" + (eChave.cliente || "") + ") — bipe a etiqueta do volume, não o DANFE.", espelho: eChave };
+  }
+  var achou = null, dono = null;
+  (c.espelhos || []).forEach(function (e) {
+    (e.etiquetas || []).forEach(function (x) { if (String(x.codigo).toUpperCase() === cod) { achou = x; dono = e; } });
+  });
+  if (!achou) return { ok: false, msg: "Código não pertence a esta carga." };
+  if (eidEsperado && String(dono.id) !== String(eidEsperado)) {
+    return { ok: false, msg: "⚠ PARE. Este volume é de " + (dono.cliente || "outro cliente") + " (" + (dono.cidade || "") + "), NF " + (dono.nfe || "") + ". Não entregue aqui.", espelho: dono };
+  }
+  if (achou[campo]) return { ok: false, msg: "Este volume já foi bipado" + (campo === "entregueEm" ? " na entrega." : " no carregamento."), espelho: dono };
+  if (campo === "entregueEm" && !achou.carregadoEm) {
+    return { ok: false, msg: "Este volume não consta como carregado. Confira antes de entregar.", espelho: dono };
+  }
+  achou[campo] = Date.now();
+  achou[campo === "entregueEm" ? "entreguePor" : "carregadoPor"] = (state.sessao && state.sessao.nome) || "";
+  salvar();
+  return { ok: true, msg: "✓ " + (achou.qtd > 1 ? achou.qtd + " volumes" : "1 volume") + " — " + (dono.cliente || ""), espelho: dono, etiqueta: achou };
+}
+function szBiparCampo(cargaId, campo, inputId, eid) {
+  var el = document.getElementById(inputId);
+  if (!el) return;
+  var r = szBipar(cargaId, campo, el.value, eid);
+  el.value = "";
+  var av = document.getElementById(inputId + "-msg");
+  if (av) {
+    av.textContent = r.msg;
+    av.style.color = r.ok ? "#2E7D32" : "#C0392B";
+    av.style.fontWeight = "800";
+  }
+  if (!r.ok && /PARE/.test(r.msg)) alert(r.msg);
+  render();
+  var el2 = document.getElementById(inputId);
+  if (el2) el2.focus();
+}
+
+/* Leitor pela câmera. Usa o BarcodeDetector nativo do navegador quando existe
+   (Chrome no Android da doca) e cai na digitação quando não existe — sem CDN,
+   sem depender de internet no galpão. */
+function szTemCamera() { return typeof window.BarcodeDetector === "function"; }
+function szLerCamera(cargaId, campo, inputId, eid) {
+  if (!szTemCamera()) { alert("Este aparelho não tem leitor de código nativo. Digite o código da etiqueta no campo."); return; }
+  var v = document.createElement("video");
+  v.setAttribute("playsinline", "true");
+  var box = document.createElement("div");
+  box.style.cssText = "position:fixed;inset:0;background:#000;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;";
+  var fechar = document.createElement("button");
+  fechar.textContent = "✕ fechar";
+  fechar.style.cssText = "position:absolute;top:14px;right:14px;font-size:16px;padding:8px 14px;z-index:2;";
+  v.style.cssText = "max-width:100%;max-height:80%;";
+  box.appendChild(v); box.appendChild(fechar); document.body.appendChild(box);
+  var parar = function () { try { (v.srcObject || {getTracks:function(){return [];}}).getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} box.remove(); };
+  fechar.onclick = parar;
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (s) {
+    v.srcObject = s; v.play();
+    var det = new window.BarcodeDetector({ formats: ["code_128", "qr_code", "ean_13"] });
+    var laco = function () {
+      if (!document.body.contains(box)) return;
+      det.detect(v).then(function (cods) {
+        if (cods && cods.length) {
+          var el = document.getElementById(inputId);
+          if (el) el.value = cods[0].rawValue;
+          parar();
+          szBiparCampo(cargaId, campo, inputId, eid);
+          return;
+        }
+        setTimeout(laco, 220);
+      }).catch(function () { setTimeout(laco, 400); });
+    };
+    laco();
+  }).catch(function () { parar(); alert("Não consegui abrir a câmera. Digite o código da etiqueta."); });
+}
+
+/* ---- Criar carga e lançar espelho ---------------------------------------- */
+function szNovaCarga() {
+  var c = { id: uid(), criadoEm: Date.now(), data: hojeISO(), placa: "", motorista: "", espelhos: [], status: "montando" };
+  szCargas().push(c);
+  state.szCargaAberta = c.id;
+  salvar(); render();
+}
+function szSetCampo(cargaId, campo, valor) {
+  var c = szCarga(cargaId); if (!c) return;
+  c[campo] = valor; salvar();
+}
+function szAbrir(cargaId) { state.szCargaAberta = (String(state.szCargaAberta) === String(cargaId)) ? "" : cargaId; render(); }
+function szExcluirCarga(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  if (szTotais(c).carregado > 0) { alert("Esta carga já tem volumes bipados e não pode ser excluída."); return; }
+  if (!confirm("Excluir esta carga?")) return;
+  state.suzanoCargas = szCargas().filter(function (x) { return String(x.id) !== String(cargaId); });
+  salvar(); render();
+}
+function szColarEspelho(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  var txt = window.prompt("Cole aqui o texto do Espelho para Emissão do Conhecimento de Frete (Ctrl+V).\n\nO sistema lê os campos pelos rótulos do documento — o que não reconhecer fica em branco pra você completar.", "");
+  if (txt === null || !String(txt).trim()) return;
+  var d = szLerEspelhoTexto(txt);
+  if (!d.chave && !d.nfe) { alert("Não reconheci esse texto como um espelho da Suzano. Confira se copiou o documento inteiro."); return; }
+  if (d.chave && !szChaveValida(d.chave)) { alert("A chave de acesso lida não passou no dígito verificador. Confira o documento."); return; }
+  if ((c.espelhos || []).some(function (e) { return e.chave && e.chave === d.chave; })) { alert("Essa NF-e já está nesta carga."); return; }
+  if (!c.placa && d.placa) c.placa = d.placa;
+  if (!c.motorista && d.motorista) c.motorista = d.motorista;
+  c.espelhos = c.espelhos || [];
+  c.espelhos.push({
+    id: uid(), numDoc: d.numDoc, cFrete: d.cFrete, nfe: d.nfe, chave: d.chave,
+    cliente: d.cliente, cnpjCliente: d.cnpjCliente, endereco: d.endereco, cidade: d.cidade,
+    produto: d.produto, qtdVolumes: d.qtdVolumes, peso: d.peso,
+    valorMercadoria: d.valorMercadoria, valorFrete: d.valorFrete,
+    etiquetas: [], entrada: null,
+  });
+  salvar(); render();
+}
+function szSetEspelho(cargaId, eid, campo, valor) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid); if (!e) return;
+  if (campo === "qtdVolumes") {
+    var n = parseInt(String(valor).replace(/\D/g, ""), 10) || 0;
+    if ((e.etiquetas || []).length && n !== Number(e.qtdVolumes)) {
+      if (!confirm("Mudar a quantidade apaga as etiquetas já geradas desta nota. Continuar?")) { render(); return; }
+      e.etiquetas = [];
+    }
+    e.qtdVolumes = n;
+  } else e[campo] = valor;
+  salvar(); render();
+}
+function szExcluirEspelho(cargaId, eid) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid); if (!c || !e) return;
+  if (szEspelhoVol(e, "carregadoEm") > 0) { alert("Esta nota já tem volume bipado e não pode ser removida."); return; }
+  if (!confirm("Remover a NF " + (e.nfe || "") + " desta carga?")) return;
+  c.espelhos = c.espelhos.filter(function (x) { return String(x.id) !== String(eid); });
+  salvar(); render();
+}
+function szLiberar(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  var m = szMotivoBloqueio(c);
+  if (m) { alert("⛔ Caminhão NÃO liberado.\n\n" + m); return; }
+  c.status = "em_rota"; c.liberadoEm = Date.now(); c.liberadoPor = (state.sessao && state.sessao.nome) || "";
+  salvar(); render();
+  alert("✓ Carga conferida e liberada. A partir de agora a Suzano acompanha as entregas em tempo real.");
+}
+function szReabrir(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  if (!confirm("Reabrir esta carga para corrigir o carregamento?")) return;
+  c.status = "montando"; salvar(); render();
+}
+
+/* ---- Telas ---------------------------------------------------------------- */
+function szBarra(feito, total, cor) {
+  var pct = total > 0 ? Math.round((feito / total) * 100) : 0;
+  return '<div style="background:#222;border-radius:6px;height:14px;overflow:hidden;border:1px solid #333;">'
+    + '<div style="width:' + pct + '%;height:100%;background:' + (cor || "#2E7D32") + ';"></div></div>'
+    + '<div style="font-size:11px;color:#aaa;margin-top:3px;">' + feito + ' de ' + total + ' volumes (' + pct + '%)</div>';
+}
+function szCardEspelho(c, e) {
+  var esperado = Number(e.qtdVolumes) || 0;
+  var carregado = szEspelhoVol(e, "carregadoEm"), entregue = szEspelhoVol(e, "entregueEm");
+  var fechado = szEspelhoFechado(e), emRota = c.status === "em_rota";
+  var ent = e.entrada;
+  var corBorda = fechado ? "#2E7D32" : (ent && ent.divergencia ? "#C0392B" : "#333");
+  var partes = szChavePartes(e.chave);
+  return '<div style="border:1px solid ' + corBorda + ';border-left:5px solid ' + corBorda + ';border-radius:10px;padding:12px 14px;margin-bottom:12px;background:#0E0E0E;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
+    + '<div><div style="font-size:16px;font-weight:900;color:' + GOLD + ';">' + esc(e.cliente || "(sem cliente)") + '</div>'
+    + '<div style="font-size:12px;color:#bbb;">' + esc(e.cidade || "") + (e.endereco ? " · " + esc(e.endereco) : "") + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px;">NF-e ' + esc(String(e.nfe || "?")) + (e.cnpjCliente ? " · CNPJ " + esc(szCnpjFmt(e.cnpjCliente)) : "")
+    + (e.numDoc ? " · doc. transporte " + esc(e.numDoc) : "") + '</div>'
+    + (e.chave ? '<div style="font-size:10px;color:' + (partes && partes.valida ? "#2E7D32" : "#C0392B") + ';font-family:monospace;margin-top:2px;">chave ' + esc(e.chave) + (partes && partes.valida ? " ✓" : " ⚠ DV não confere") + '</div>' : "")
+    + '</div>'
+    + '<div style="text-align:right;"><div style="font-size:22px;font-weight:900;">' + esperado + '</div><div style="font-size:10px;color:#888;">volumes</div>'
+    + (e.peso ? '<div style="font-size:10px;color:#888;">' + Number(e.peso).toLocaleString("pt-BR") + ' kg</div>' : "")
+    + (e.valorFrete ? '<div style="font-size:10px;color:#888;">frete ' + fmtR(e.valorFrete) + '</div>' : "")
+    + '</div></div>'
+    + (emRota ? "" : '<div style="margin-top:8px;font-size:12px;">volumes: <input type="number" min="0" value="' + esperado + '" onchange="szSetEspelho(\'' + c.id + '\',\'' + e.id + '\',\'qtdVolumes\',this.value)" style="width:70px;text-align:right;font-weight:700;"> '
+      + '<button onclick="szExcluirEspelho(\'' + c.id + '\',\'' + e.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ remover nota</button></div>')
+    // 1. entrada
+    + '<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#141414;">'
+    + '<div style="font-size:11px;font-weight:800;color:#bbb;margin-bottom:4px;">1 · RETIRADA na Suzano</div>'
+    + (!ent
+      ? '<button onclick="szConferirEntrada(\'' + c.id + '\',\'' + e.id + '\')" style="font-weight:800;">Conferir entrada (contagem cega)</button>'
+      : (ent.divergencia
+        ? '<div style="color:#C0392B;font-weight:800;font-size:12px;">⚠ divergência de ' + (ent.divergencia > 0 ? "+" : "") + ent.divergencia + ' — contou ' + ent.contado + ', a nota diz ' + ent.esperado + '</div>'
+          + (ent.obs ? '<div style="font-size:11px;color:#ddd;margin-top:3px;">' + esc(ent.obs) + '</div>' : "")
+        : '<div style="color:#2E7D32;font-weight:800;font-size:12px;">✓ conferido: ' + ent.contado + ' volumes, bateu com a nota</div>'))
+    + '</div>'
+    // 2. etiquetas + carregamento
+    + '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#141414;">'
+    + '<div style="font-size:11px;font-weight:800;color:#bbb;margin-bottom:4px;">2 · ETIQUETA e CARREGAMENTO</div>'
+    + (!(e.etiquetas || []).length
+      ? (emRota ? '<div style="font-size:12px;color:#888;">sem etiquetas</div>'
+        : '<button onclick="szGerarEtiquetas(\'' + c.id + '\',\'' + e.id + '\')" style="font-weight:800;">Gerar etiquetas</button>')
+      : '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">'
+        + '<span style="font-size:12px;color:#ddd;">' + e.etiquetas.length + ' etiqueta(s)</span>'
+        + '<button onclick="szImprimirEtiquetas(\'' + c.id + '\',\'' + e.id + '\')">🖨 Imprimir</button>'
+        + (emRota ? "" : '<button onclick="szGerarEtiquetas(\'' + c.id + '\',\'' + e.id + '\')" style="font-size:11px;">gerar de novo</button>')
+        + '</div>'
+        + szBarra(carregado, esperado, fechado ? "#2E7D32" : GOLD))
+    + '</div>'
+    // 3. entrega
+    + (emRota
+      ? '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#141414;">'
+        + '<div style="font-size:11px;font-weight:800;color:#bbb;margin-bottom:4px;">3 · ENTREGA</div>'
+        + szBarra(entregue, esperado, szEspelhoEntregue(e) ? "#2E7D32" : "#8E7A1F")
+        + (szEspelhoEntregue(e) ? '<div style="color:#2E7D32;font-weight:800;font-size:12px;margin-top:4px;">✓ cliente concluído</div>'
+          : '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">'
+            + '<input id="szbip-e-' + e.id + '" placeholder="bipe ou digite o código" style="flex:1;min-width:150px;" onkeydown="if(event.key===\'Enter\')szBiparCampo(\'' + c.id + '\',\'entregueEm\',\'szbip-e-' + e.id + '\',\'' + e.id + '\')">'
+            + (szTemCamera() ? '<button onclick="szLerCamera(\'' + c.id + '\',\'entregueEm\',\'szbip-e-' + e.id + '\',\'' + e.id + '\')">📷</button>' : "")
+            + '<button onclick="szBiparCampo(\'' + c.id + '\',\'entregueEm\',\'szbip-e-' + e.id + '\',\'' + e.id + '\')" style="font-weight:800;">Bipar entrega</button>'
+            + '</div><div id="szbip-e-' + e.id + '-msg" style="font-size:12px;margin-top:4px;"></div>')
+        + '</div>'
+      : "")
+    + '</div>';
+}
+function szTelaEquipe() {
+  var cargas = szCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
+    + '<div style="font-size:12px;color:#999;max-width:760px;">Operação Suzano: eles não emitem CT-e e não homologam, então a conferência é toda da RF. '
+    + 'Um espelho = uma NF = um cliente. O caminhão só é liberado quando a soma dos volumes bipados bate com a soma das notas.</div>'
+    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>';
+  if (!cargas.length) return h + '<div style="color:#888;padding:20px;">Nenhum carregamento lançado ainda.</div>';
+  cargas.forEach(function (c) {
+    var t = szTotais(c), aberta = String(state.szCargaAberta) === String(c.id);
+    var bloq = szMotivoBloqueio(c);
+    var selo = c.status === "em_rota"
+      ? '<span style="background:#2E7D32;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">EM ROTA</span>'
+      : (bloq ? '<span style="background:#C0392B;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">MONTANDO</span>'
+        : '<span style="background:' + GOLD + ';color:#000;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">PRONTA</span>');
+    h += '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#0B0B0B;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;" onclick="szAbrir(\'' + c.id + '\')">'
+      + '<div><span style="font-size:16px;font-weight:900;">' + esc(c.placa || "sem placa") + '</span> ' + selo
+      + '<div style="font-size:12px;color:#bbb;">' + esc(c.data || "") + (c.motorista ? " · " + esc(c.motorista) : "")
+      + ' · ' + t.espelhos + ' cliente(s) · ' + t.esperado + ' volumes</div></div>'
+      + '<div style="min-width:190px;">' + szBarra(c.status === "em_rota" ? t.entregue : t.carregado, t.esperado, c.status === "em_rota" ? "#8E7A1F" : (bloq ? GOLD : "#2E7D32")) + '</div>'
+      + '</div>';
+    if (aberta) {
+      h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        + 'placa <input value="' + esc(c.placa || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'placa\',this.value.toUpperCase())" style="width:100px;text-transform:uppercase;">'
+        + 'data <input type="date" value="' + esc(c.data || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'data\',this.value)">'
+        + 'motorista <input value="' + esc(c.motorista || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'motorista\',this.value)" style="width:170px;">'
+        + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-weight:800;">+ Colar espelho da Suzano</button>'
+        + '<button onclick="szExcluirCarga(\'' + c.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ excluir carga</button>'
+        + '</div>';
+      // bipagem do carregamento (uma só pra carga inteira: o sistema descobre o dono pelo código)
+      if (c.status !== "em_rota" && t.esperado > 0) {
+        h += '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:#141414;border:1px solid #2A2A2A;">'
+          + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">Bipar o que sobe no caminhão</div>'
+          + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+          + '<input id="szbip-c-' + c.id + '" placeholder="bipe ou digite o código da etiqueta" style="flex:1;min-width:200px;" onkeydown="if(event.key===\'Enter\')szBiparCampo(\'' + c.id + '\',\'carregadoEm\',\'szbip-c-' + c.id + '\',\'\')">'
+          + (szTemCamera() ? '<button onclick="szLerCamera(\'' + c.id + '\',\'carregadoEm\',\'szbip-c-' + c.id + '\',\'\')">📷 câmera</button>' : "")
+          + '<button onclick="szBiparCampo(\'' + c.id + '\',\'carregadoEm\',\'szbip-c-' + c.id + '\',\'\')" style="font-weight:800;">Bipar</button>'
+          + '</div><div id="szbip-c-' + c.id + '-msg" style="font-size:12px;margin-top:5px;"></div></div>';
+      }
+      h += '<div style="margin-top:12px;">' + (c.espelhos || []).map(function (e) { return szCardEspelho(c, e); }).join("") + '</div>';
+      // fechamento
+      h += '<div style="margin-top:6px;padding:10px 12px;border-radius:10px;background:' + (bloq ? "rgba(192,57,43,.12)" : "rgba(46,125,50,.12)") + ';border:1px solid ' + (bloq ? "#C0392B" : "#2E7D32") + ';">'
+        + '<div style="font-size:13px;font-weight:900;color:' + (bloq ? "#C0392B" : "#2E7D32") + ';">'
+        + (bloq ? "⛔ " + esc(bloq) : "✓ A conta fecha: " + t.carregado + " volumes bipados = " + t.esperado + " da soma das notas") + '</div>'
+        + (c.status === "em_rota"
+          ? '<div style="margin-top:6px;font-size:12px;color:#ddd;">Liberada em ' + new Date(c.liberadoEm || 0).toLocaleString("pt-BR") + (c.liberadoPor ? " por " + esc(c.liberadoPor) : "")
+            + ' · entregues ' + t.entregue + ' de ' + t.esperado + '</div>'
+            + '<button onclick="szReabrir(\'' + c.id + '\')" style="margin-top:6px;font-size:11px;">reabrir para corrigir</button>'
+          : '<button onclick="szLiberar(\'' + c.id + '\')" style="margin-top:8px;font-weight:900;' + (bloq ? "opacity:.5;" : "") + '">Liberar caminhão</button>')
+        + '</div>';
+    }
+    h += '</div>';
+  });
+  return h;
+}
+/* Visão que a Suzano vê: só leitura, só o andamento das cargas deles. */
+function szTelaSuzano() {
+  var cargas = szCargas().filter(function (c) { return (c.espelhos || []).length; })
+    .sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
+  var h = '<div style="font-size:13px;color:#bbb;margin-bottom:12px;">Acompanhamento em tempo real das cargas da RF Logística. Atualiza sozinho conforme o motorista bipa cada volume na entrega.</div>';
+  if (!cargas.length) return h + '<div style="color:#888;">Nenhuma carga em andamento.</div>';
+  cargas.forEach(function (c) {
+    var t = szTotais(c);
+    h += '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#0B0B0B;">'
+      + '<div style="font-size:15px;font-weight:900;">' + esc(c.placa || "") + ' · ' + esc(c.data || "") + '</div>'
+      + '<div style="font-size:12px;color:#bbb;margin-bottom:8px;">' + t.espelhos + ' cliente(s) · ' + t.esperado + ' volumes · '
+      + (c.status === "em_rota" ? "em rota" : "em carregamento") + '</div>'
+      + szBarra(t.entregue, t.esperado, "#2E7D32")
+      + '<div style="margin-top:8px;">'
+      + (c.espelhos || []).map(function (e) {
+        var ent = szEspelhoVol(e, "entregueEm"), esp = Number(e.qtdVolumes) || 0, ok = ent === esp && esp > 0;
+        return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #1c1c1c;font-size:12px;">'
+          + '<span>' + (ok ? "✓ " : "") + esc(e.cliente || "") + ' <span style="color:#888;">' + esc(e.cidade || "") + ' · NF ' + esc(String(e.nfe || "")) + '</span></span>'
+          + '<span style="font-weight:800;color:' + (ok ? "#2E7D32" : "#bbb") + ';">' + ent + '/' + esp + '</span></div>';
+      }).join("") + '</div></div>';
+  });
+  return h;
+}
+
 /* v214: quem manda no hodômetro é a OPERAÇÃO, não a digitação.
    Até a v213 o KM atual era o maior entre o digitado no cadastro e os registros,
    então um número digitado a mais (136.719 no lugar de 135.719) passava na frente
@@ -3551,6 +4172,7 @@ var ABAS_DEF = [
   { id: "viagem", label: "🛣️ Viagens", grupo: "OPERAÇÃO" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
+  { id: "carregasuzano", label: "🏭 Carregamento Suzano", grupo: "OPERAÇÃO" },   // v228
   { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
   { id: "motoristas", label: "Motoristas 💰", grupo: "OPERAÇÃO" },
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
@@ -3570,6 +4192,7 @@ var TAB_DESCRICOES = {
   viagem: "Lançamento das despesas de cada viagem",
   abastecimento: "Abastecimentos lançados pelos motoristas (fotos de KM e da bomba) — aguardando confirmação",
   conferencia: "Conferência de carga por foto: motorista fotografa cada caixa, o sistema confere pedido a pedido até fechar o cliente",
+  carregasuzano: "Operação Suzano: conferência de entrada por contagem cega, etiqueta e bipagem de cada volume que sobe no caminhão, e acompanhamento das entregas em tempo real",
   statusdia: "Status diário das viagens em andamento: entregas feitas, situação e observações — atualizado pela carteira e pelo motorista",
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
@@ -7209,7 +7832,33 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
     return `- ${v.placa}: KM atual ${kmA}, última troca em ${ol.ultima.toLocaleString("pt-BR")} km (${fonteUlt}), intervalo ${ol.intervalo.toLocaleString("pt-BR")} km, próxima em ${ol.proximo.toLocaleString("pt-BR")} km → ${sit}. ${extra}${alertaKm}`;
   }).join("\n");
 
-  // --- v213: como o hodômetro é apurado (pra ela saber explicar divergência de KM) ---
+  // --- v228: operação Suzano (carregamento conferido volume a volume) ---
+  const blocoSuzano = !podeVerAba("carregasuzano") ? "" : (function () {
+    const cargas = (state.suzanoCargas || []);
+    if (!cargas.length) return `OPERAÇÃO SUZANO (CARREGAMENTO): a aba existe mas ainda não tem nenhuma carga lançada.`;
+    const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 12).map((c) => {
+      const t = szTotais(c);
+      const bloq = szMotivoBloqueio(c);
+      const div = (c.espelhos || []).filter((e) => e.entrada && e.entrada.divergencia);
+      return `- ${c.placa || "sem placa"} (${c.data || "sem data"}${c.motorista ? ", " + c.motorista : ""}): ${t.espelhos} cliente(s), ${t.esperado} volumes; `
+        + `conferidos na retirada ${t.contado}, bipados no carregamento ${t.carregado}, entregues ${t.entregue}. `
+        + `Situação: ${c.status === "em_rota" ? "EM ROTA (liberada)" : (bloq ? "MONTANDO — " + bloq : "PRONTA para liberar")}.`
+        + (div.length ? ` ⚠ DIVERGÊNCIA NA RETIRADA em ${div.length} nota(s): ` + div.map((e) => `${e.cliente || e.nfe} contou ${e.entrada.contado} contra ${e.entrada.esperado} da nota${e.entrada.obs ? " (" + e.entrada.obs + ")" : ""}`).join("; ") + "." : "")
+        + ` Clientes: ` + (c.espelhos || []).map((e) => `${e.cliente || "?"} (${e.cidade || "?"}, NF ${e.nfe || "?"}, ${szEspelhoVol(e, "entregueEm")}/${Number(e.qtdVolumes) || 0} entregues)`).join("; ");
+    }).join("\n");
+    return `OPERAÇÃO SUZANO — CARREGAMENTO (aba "Carregamento Suzano"):
+${linhas}
+
+COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
+- A Suzano NÃO emite CT-e e NÃO homologa o processo: a conferência inteira é responsabilidade da RF, e a prova em caso de divergência é toda nossa. Por isso a contagem é travada nos dois extremos.
+- O documento que a Suzano manda é o "Espelho para Emissão do Conhecimento de Frete". Um espelho = uma NF-e = um cliente. Um carregamento junta vários espelhos (média 4 clientes, no máximo 6). O espelho traz placa, motorista com CPF, destinatário com CNPJ, a chave de acesso da NF-e e a quantidade de volumes.
+- A chave de acesso de 44 dígitos é conferida pelo dígito verificador antes de ser aceita, e ela já vem impressa como código de barras no DANFE — por isso não inventamos código para a nota.
+- A mercadoria (pacote de resmas em papel kraft) NÃO tem código de barras individual e todos os pacotes são idênticos por fora. A RF imprime a própria etiqueta por unidade de manuseio: é ela que diz de quem é cada volume.
+- Quatro travas, e o sistema BLOQUEIA em vez de avisar: (1) contagem CEGA na retirada — o conferente digita quanto contou e só depois vê o esperado, e divergência fica registrada com observação antes de carregar; (2) bipagem do que sobe no caminhão; (3) na entrega, etiqueta de outro cliente é RECUSADA e o sistema diz de quem é o volume — é isso que impede o erro invisível de entregar o pacote de um cliente para outro; (4) fechamento aritmético: a soma dos volumes bipados tem que ser igual à soma das notas, senão o caminhão não é liberado.
+- Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou ou nota sem conferência de entrada, nunca "o sistema travou".`;
+  })();
+
+
   const blocoRegraKm = !podeOleo ? "" : `COMO O SISTEMA APURA O KM DE CADA CAMINHÃO (regra fixa, não é estimativa):
 - A KM atual sai da OPERAÇÃO: é o maior KM registrado em abastecimento, KM de saída/chegada de viagem ou KM de troca de óleo. Desde a v214 o campo digitado no cadastro NÃO compete mais com isso — ele só vale em caminhão que ainda não tem nenhum registro, como ponto de partida. Ninguém precisa digitar KM.
 - Registro com KM impossível é DESCARTADO da conta, não apenas sinalizado: vale a regra de no máximo ${kmDiaMax()} km por dia desde o registro anterior (folga mínima de ${kmFolgaMin()} km). Então um lançamento errado não contamina mais óleo, correia nem pneus — mas segue errado na origem e aparece na lista de KM suspeito acima, que é o que precisa ser corrigido.
@@ -7400,6 +8049,8 @@ ${podeStatusDia ? (linhasStatusDia || "(nenhuma viagem em andamento agora)") : "
 ATENÇÃO ao responder sobre custo de óleo: estes valores NÃO entram no Financeiro nem na Manutenção real — a troca é feita no galpão próprio e o óleo/filtro que sai do almoxarifado já foi pago no boleto de entrada do estoque. Só o que foi "comprado fora" é dinheiro novo. Nunca some esse gasto ao resultado do mês:
 ${podeOleo ? (linhasOleo || "(nenhum veículo cadastrado)") : "(sem permissão pra esta aba)"}
 ${blocoRegraKm}
+
+${blocoSuzano}
 
 Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
 ${podeMot ? (linhasMotoristas || "(nenhum motorista por viagem cadastrado)") : "(sem permissão pra esta aba)"}
@@ -9270,6 +9921,15 @@ function renderTabela() {
               ${verEncerrados ? `<div style="margin-top:12px;">${encerrados.map((r) => rfConfRomaneioCardAdmin(r)).join("")}</div>` : ""}
             </div>` : "");
       })()}
+    `;
+  }
+
+  if (state.aba === "carregasuzano") {
+    return `
+      <div style="padding:16px 22px;">
+        <h2 style="margin:0 0 4px 0;">🏭 Carregamento Suzano</h2>
+        ${szTelaEquipe()}
+      </div>
     `;
   }
 
