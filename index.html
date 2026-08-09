@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v228)</title>
+<title>RF Logística — Painel da Frota (v229)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9925,12 +9925,16 @@ function renderTabela() {
   }
 
   if (state.aba === "carregasuzano") {
-    return `
-      <div style="padding:16px 22px;">
-        <h2 style="margin:0 0 4px 0;">🏭 Carregamento Suzano</h2>
-        ${szTelaEquipe()}
+    /* v228.1: renderTabela() ESCREVE em wrap.innerHTML — não devolve HTML.
+       Na v228 eu usei `return` aqui, então a tela era montada e descartada:
+       a aba abria em branco. Mesmo padrão das outras abas. */
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
       </div>
+      ${szTelaEquipe()}
     `;
+    return;
   }
 
   if (state.aba === "statusdia") {
