@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v243)</title>
+<title>RF Logística — Painel da Frota (v244)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4107,8 +4107,12 @@ function szFrotaEscalavel() {
   }).sort(function (a, b) { return szCargaUtil(b) - szCargaUtil(a); });
 }
 function szSemCargaUtil() {
+  /* v244: conta TODOS os caminhões sem peso, inclusive os fora de operação,
+     porque a grade agora lista todos — o número tem que bater com o que a
+     pessoa vê na tela. Quem decide a ESCALA continua sendo szFrotaEscalavel,
+     que ignora os fora de operação. */
   return (state.veiculos || []).filter(function (v) {
-    return v.placa && String(v.statusOp || "") !== "Fora de operação" && szCargaUtil(v) <= 0;
+    return v.placa && szCargaUtil(v) <= 0;
   });
 }
 /* Escolhe as placas para uma tonelada. Devolve a escala e o que sobrou. */
@@ -4196,14 +4200,21 @@ function szTelaEscala() {
     + 'Os documentos já estão anexados, então é só mandar reler — ou digitar aqui, que vale igual.</div>'
     + '<button onclick="state.aba=\'documentos\';render();setTimeout(rfCrlvReprocessarTodos,600);" '
     + 'style="font-size:11px;font-weight:700;margin-bottom:7px;">🔎 Ler os CRLVs já anexados e preencher os pesos</button>'
-    + '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
-  (state.veiculos || []).filter(function (v) { return v.placa && String(v.statusOp || "") !== "Fora de operação"; })
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;max-width:100%;">';
+  /* v244: a grade lista TODOS os caminhões com placa, inclusive os fora de
+     operação. Antes eu filtrava os fora, e o Renato reparou que faltava
+     caminhão. Peso é dado do veículo, não do status: quando ele voltar a rodar
+     o número já está lá. Fora de operação continua sem entrar na ESCALA — só
+     não some da grade de cadastro. */
+  (state.veiculos || []).filter(function (v) { return v.placa; })
     .sort(function (a2, b2) { return String(a2.placa).localeCompare(String(b2.placa), "pt-BR"); })
     .forEach(function (v) {
       var c = szCargaUtil(v);
+      var fora = String(v.statusOp || "") === "Fora de operação";
       var doCrlv = c > 0 && Number(v.pbtT) > 0 && Number(v.taraT) > 0;
       h += '<div style="border:1px solid ' + (c > 0 ? (doCrlv ? "#2E7D32" : "#2A2A2A") : "#C0392B") + ';border-radius:8px;padding:5px 8px;background:#0E0E0E;">'
         + '<div style="font-size:11px;font-weight:800;">' + esc(v.placa) + ' <span style="color:#777;font-weight:400;">' + esc(v.tipo || "") + '</span></div>'
+        + (fora ? '<div style="font-size:9px;color:#8a6d1f;">fora de operação</div>' : "")
         + '<input type="number" step="0.1" min="0" value="' + (c || "") + '" placeholder="t" onchange="szSetCargaUtil(\'' + v.id + '\',this.value)" style="width:72px;text-align:right;font-weight:700;">'
         + (doCrlv
           ? '<div style="font-size:9px;color:#2E7D32;">CRLV: ' + Number(v.pbtT).toLocaleString("pt-BR") + ' − ' + Number(v.taraT).toLocaleString("pt-BR") + ' t</div>'
