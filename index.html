@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v230)</title>
+<title>RF Logística — Painel da Frota (v231)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3056,6 +3056,24 @@ function szSeletorPlaca(c) {
   placas.forEach(function (p) { opts += '<option value="' + esc(p) + '"' + (p === atual ? " selected" : "") + '>' + esc(p) + '</option>'; });
   return '<select onchange="szSetCampo(\'' + c.id + '\',\'placa\',this.value);render();" style="width:130px;font-weight:700;">' + opts + '</select>';
 }
+/* v231: o motorista que interessa é o que VAI SAIR com a carga — é no nome dele
+   que a carga é averbada. Renato: troca de motorista não atrapalha, porque a
+   averbação é feita no nome de quem sai. Por isso este campo continua editável
+   depois da liberação, e cada troca fica registrada com data e hora: se a carga
+   trocar de mão no meio da rota, dá pra provar em que nome ela estava a cada
+   momento — que é o que o seguro pede se houver sinistro. */
+function szSetMotorista(cargaId, nome) {
+  var c = szCarga(cargaId); if (!c) return;
+  nome = String(nome || "").trim();
+  var anterior = String(c.motorista || "").trim();
+  if (nome === anterior) return;
+  if (anterior) {
+    c.motoristaHist = c.motoristaHist || [];
+    c.motoristaHist.push({ de: anterior, para: nome, em: Date.now(), por: (state.sessao && state.sessao.nome) || "" });
+  }
+  c.motorista = nome;
+  salvar(); render();
+}
 /* Lista de motoristas para escolher. Duas fontes, unidas:
    - os LOGINS de motorista (state._perfis), que é a fonte boa;
    - o campo motorista do cadastro da Frota, que desde a v216 já é seleção de
@@ -3093,24 +3111,29 @@ function szSeletorMotorista(c) {
     var marca = (sugerido && n === sugerido) ? " ★" : "";
     opts += '<option value="' + esc(n) + '"' + (n === atual ? " selected" : "") + '>' + esc(n) + marca + '</option>';
   });
-  return '<select onchange="szSetCampo(\'' + c.id + '\',\'motorista\',this.value);render();" style="width:190px;font-weight:700;">' + opts + '</select>'
+  return '<select onchange="szSetMotorista(\'' + c.id + '\',this.value);" style="width:190px;font-weight:700;">' + opts + '</select>'
     + (sugerido ? '<span style="font-size:10px;color:#888;margin-left:4px;">★ = cadastrado nesta placa</span>' : "");
 }
 /* Divergências entre o que o espelho declara e o que está no cadastro da RF.
-   Devolve lista de textos; vazia quando está tudo alinhado. */
+   v231: motorista e placa mudaram de peso. Renato esclareceu que trocar de
+   motorista NÃO é problema, porque a averbação da carga é feita no nome de quem
+   efetivamente sai — então o nome do espelho é informação, não erro. Já a placa
+   continua alerta: é o veículo que está segurado e que vai no documento.
+   Devolve { avisos, notas }: avisos pedem ação, notas são só pra conferência. */
 function szDivergenciasCadastro(c) {
-  var d = [];
+  var avisos = [], notas = [];
   (c.espelhos || []).forEach(function (e) {
     if (e.placaEspelho && c.placa && String(e.placaEspelho).toUpperCase() !== String(c.placa).toUpperCase()) {
-      d.push("A NF " + (e.nfe || "?") + " veio no espelho com a placa " + e.placaEspelho + ", mas esta carga está na " + c.placa + ".");
+      avisos.push("A NF " + (e.nfe || "?") + " veio no espelho com a placa " + e.placaEspelho
+        + ", mas esta carga está na " + c.placa + ". Confira antes de emitir o CT-e — o veículo segurado é o que sai.");
     }
     if (e.motoristaEspelho && c.motorista && !szMesmoMotorista(e.motoristaEspelho, c.motorista)) {
-      d.push("O espelho da NF " + (e.nfe || "?") + " traz o motorista " + e.motoristaEspelho
+      notas.push("O espelho da NF " + (e.nfe || "?") + " foi emitido no nome de " + e.motoristaEspelho
         + (e.cpfMotoristaEspelho ? " (CPF " + e.cpfMotoristaEspelho + ")" : "")
-        + ", mas nesta carga está " + c.motorista + ". O CT-e sai com o nome e o CPF do espelho — confira antes de emitir.");
+        + " — quem sai com a carga é " + c.motorista + ", e é nesse nome que ela é averbada.");
     }
   });
-  return d;
+  return { avisos: avisos, notas: notas };
 }
 /* "JEFSON DE ALMEIDA MARTINS" x login "Jefson.Martins": compara pelo primeiro e
    pelo último nome, sem acento e sem caixa. Não tenta adivinhar mais que isso —
@@ -3167,7 +3190,7 @@ function szMotivoBloqueio(carga) {
   /* v230: placa e motorista saem no CT-e. Liberar sem eles é emitir documento
      fiscal incompleto, então entram na mesma trava da contagem. */
   if (!carga.placa) return "Escolha a placa do caminhão — ela sai no CT-e.";
-  if (!carga.motorista) return "Escolha o motorista — o nome dele sai no CT-e.";
+  if (!carga.motorista) return "Escolha o motorista que vai entregar a carga — é no nome dele que a carga é averbada.";
   var semEntrada = (carga.espelhos || []).filter(function (e) { return !e.entrada || e.entrada.contado == null; });
   if (semEntrada.length) return semEntrada.length + " nota(s) ainda sem conferência de entrada — conte na doca antes de carregar.";
   if (t.carregado !== t.esperado) {
@@ -3530,17 +3553,30 @@ function szTelaEquipe() {
       + '</div>';
     if (aberta) {
       h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        + 'placa ' + szSeletorPlaca(c)
+        + 'placa ' + (c.status === "em_rota"
+          ? '<b>' + esc(c.placa || "") + '</b> <span style="font-size:10px;color:#888;">(carga liberada)</span>'
+          : szSeletorPlaca(c))
         + ' data <input type="date" value="' + esc(c.data || "") + '" onchange="szSetCampo(\'' + c.id + '\',\'data\',this.value)">'
-        + ' motorista ' + szSeletorMotorista(c)
+        + '<span title="A carga é averbada no nome de quem efetivamente sai. Pode ser trocado a qualquer momento, inclusive depois de liberada.">'
+        + 'motorista que entrega ' + szSeletorMotorista(c) + '</span>'
         + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-weight:800;">+ Colar espelho da Suzano</button>'
         + '<button onclick="szExcluirCarga(\'' + c.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ excluir carga</button>'
-        + '</div>';
-      var divs = szDivergenciasCadastro(c);
-      if (divs.length) {
+        + '</div>'
+        + (c.motorista ? '<div style="font-size:11px;color:#888;margin-top:3px;">Averbação no nome de <b style="color:#ddd;">' + esc(c.motorista) + '</b>.</div>' : "")
+        + ((c.motoristaHist || []).length
+          ? '<div style="font-size:11px;color:#888;margin-top:2px;">Trocas de motorista: '
+            + c.motoristaHist.map(function (x) { return esc(x.de) + " → " + esc(x.para || "(vazio)") + " em " + new Date(x.em).toLocaleString("pt-BR"); }).join(" · ")
+            + '</div>' : "");
+      var dv = szDivergenciasCadastro(c);
+      if (dv.avisos.length) {
         h += '<div style="margin-top:8px;padding:9px 11px;border-radius:8px;background:rgba(192,57,43,.14);border:1px solid #C0392B;">'
-          + '<div style="font-size:12px;font-weight:900;color:#C0392B;margin-bottom:3px;">⚠ O espelho não bate com o cadastro</div>'
-          + divs.map(function (x) { return '<div style="font-size:12px;color:#ddd;">• ' + esc(x) + '</div>'; }).join("")
+          + '<div style="font-size:12px;font-weight:900;color:#C0392B;margin-bottom:3px;">⚠ Confira antes de emitir</div>'
+          + dv.avisos.map(function (x) { return '<div style="font-size:12px;color:#ddd;">• ' + esc(x) + '</div>'; }).join("")
+          + '</div>';
+      }
+      if (dv.notas.length) {
+        h += '<div style="margin-top:8px;padding:8px 11px;border-radius:8px;background:#141414;border:1px solid #2A2A2A;">'
+          + dv.notas.map(function (x) { return '<div style="font-size:11px;color:#aaa;">ℹ ' + esc(x) + '</div>'; }).join("")
           + '</div>';
       }
       // bipagem do carregamento (uma só pra carga inteira: o sistema descobre o dono pelo código)
@@ -7953,10 +7989,11 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
       const t = szTotais(c);
       const bloq = szMotivoBloqueio(c);
       const div = (c.espelhos || []).filter((e) => e.entrada && e.entrada.divergencia);
-      return `- ${c.placa || "sem placa"} (${c.data || "sem data"}${c.motorista ? ", " + c.motorista : ""}): ${t.espelhos} cliente(s), ${t.esperado} volumes; `
+      return `- ${c.placa || "sem placa"} (${c.data || "sem data"}${c.motorista ? ", entrega com " + c.motorista : ", sem motorista definido"}): ${t.espelhos} cliente(s), ${t.esperado} volumes; `
         + `conferidos na retirada ${t.contado}, bipados no carregamento ${t.carregado}, entregues ${t.entregue}. `
         + `Situação: ${c.status === "em_rota" ? "EM ROTA (liberada)" : (bloq ? "MONTANDO — " + bloq : "PRONTA para liberar")}.`
         + (div.length ? ` ⚠ DIVERGÊNCIA NA RETIRADA em ${div.length} nota(s): ` + div.map((e) => `${e.cliente || e.nfe} contou ${e.entrada.contado} contra ${e.entrada.esperado} da nota${e.entrada.obs ? " (" + e.entrada.obs + ")" : ""}`).join("; ") + "." : "")
+        + ((c.motoristaHist || []).length ? ` Trocou de motorista ${c.motoristaHist.length}x: ` + c.motoristaHist.map((x) => `${x.de} → ${x.para || "(vazio)"}`).join(", ") + "." : "")
         + ` Clientes: ` + (c.espelhos || []).map((e) => `${e.cliente || "?"} (${e.cidade || "?"}, NF ${e.nfe || "?"}, ${szEspelhoVol(e, "entregueEm")}/${Number(e.qtdVolumes) || 0} entregues)`).join("; ");
     }).join("\n");
     return `OPERAÇÃO SUZANO — CARREGAMENTO (aba "Carregamento Suzano"):
@@ -7968,7 +8005,11 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - A chave de acesso de 44 dígitos é conferida pelo dígito verificador antes de ser aceita, e ela já vem impressa como código de barras no DANFE — por isso não inventamos código para a nota.
 - A mercadoria (pacote de resmas em papel kraft) NÃO tem código de barras individual e todos os pacotes são idênticos por fora. A RF imprime a própria etiqueta por unidade de manuseio: é ela que diz de quem é cada volume.
 - Quatro travas, e o sistema BLOQUEIA em vez de avisar: (1) contagem CEGA na retirada — o conferente digita quanto contou e só depois vê o esperado, e divergência fica registrada com observação antes de carregar; (2) bipagem do que sobe no caminhão; (3) na entrega, etiqueta de outro cliente é RECUSADA e o sistema diz de quem é o volume — é isso que impede o erro invisível de entregar o pacote de um cliente para outro; (4) fechamento aritmético: a soma dos volumes bipados tem que ser igual à soma das notas, senão o caminhão não é liberado.
-- Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou ou nota sem conferência de entrada, nunca "o sistema travou".`;
+- Placa e motorista NÃO são digitados: a placa vem do cadastro da Frota e o motorista vem dos logins (ou do campo motorista do caminhão). Digitar era onde nascia o desalinhamento de nome que já cegou o app do motorista antes.
+- O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
+- O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
+- Sem placa e sem motorista o caminhão não é liberado.
+- Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".`;
   })();
 
 
