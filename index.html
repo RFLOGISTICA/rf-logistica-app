@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v242)</title>
+<title>RF Logística — Painel da Frota (v243)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -12312,7 +12312,22 @@ function rfCrlvExtrairTexto(blob, maxPaginas) {
 function rfCrlvParse(txt) {
   var T = String(txt || "").replace(/\u00a0/g, " ");
   var U = T.toUpperCase();
-  var r = { ehCrlv: /CERTIFICADO DE REGISTRO E LICENCIAMENTO/.test(U) }, m;
+  /* v243: a detecção antes era /CERTIFICADO DE REGISTRO E LICENCIAMENTO/ com
+     ESPAÇOS SIMPLES literais. O pdf.js entrega o cabeçalho quebrado em linhas e
+     com espaçamento variável ("CERTIFICADO DE\nREGISTRO E LICENCIAMENTO"), e aí
+     nenhum CRLV era reconhecido — todos os 20 documentos do Renato voltaram como
+     "não é um CRLV". Agora o espaço é \s+ e aceito as variações de cabeçalho,
+     mais um reconhecimento por conteúdo (RENAVAM + chassi de 17), que é
+     assinatura de CRLV mesmo quando o título não sai no texto. */
+  var U2 = U.replace(/\s+/g, " ");
+  var temTitulo = /CERTIFICADO\s+DE\s+REGISTRO\s+E\s+LICEN/.test(U2)
+    || /\bCRLV\b/.test(U2)
+    || /LICENCIAMENTO\s+DE\s+VE[ÍI]CULO/.test(U2)
+    || /REGISTRO\s+E\s+LICENCIAMENTO/.test(U2);
+  var temRenavam = /\bRENAVAM\b/.test(U2) || (U.match(/\b\d{11}\b/) !== null);
+  var temChassi = /\b[A-HJ-NPR-Z0-9]{17}\b/.test(U);
+  var r = { ehCrlv: temTitulo || (temRenavam && temChassi) }, m;
+  r.textoLen = U.length;
   m = U.match(/DETRAN[\s\-]*([A-Z]{2})\b/);            if (m) r.uf = m[1];
   m = U.match(/\b([A-Z]{3}\d[A-Z]\d{2})\b/) || U.match(/\b([A-Z]{3}\d{4})\b/); if (m) r.placa = m[1];
   m = U.match(/\b([A-HJ-NPR-Z0-9]{17})\b/);            if (m) r.chassi = m[1];
@@ -12733,7 +12748,15 @@ function rfCrlvReprocessarTodos() {
         if (r.error || !r.data) { resultados.push({ placa: t.placa, erro: "não consegui baixar" }); passo(); return; }
         return rfCrlvExtrairTexto(r.data).then(function (txt) {
           const d = rfCrlvParse(txt);
-          if (!d.ehCrlv) { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "não é um CRLV" }); passo(); return; }
+          if (!d.ehCrlv) {
+            /* v243: em vez de só dizer "não é um CRLV", mostra o que saiu do
+               arquivo. Sem isso não dá pra saber se o PDF é outro documento, se
+               veio escaneado (texto vazio) ou se o cabeçalho está diferente. */
+            var amostra = String(txt || "").replace(/\s+/g, " ").trim().slice(0, 90);
+            resultados.push({ placa: t.placa, arquivo: t.nome,
+              erro: (d.textoLen ? "não parece CRLV (" + d.textoLen + " car.): \"" + amostra + "…\"" : "PDF sem texto (escaneado)") });
+            passo(); return;
+          }
           if (d.placa && d.placa !== t.placa) { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "documento é do " + d.placa }); passo(); return; }
           // grava o que veio do documento -- carroceria é o que interessa agora
           const v = (state.veiculos || []).find(function (x) { return x.placa === t.placa; });
@@ -12777,7 +12800,9 @@ function rfCrlvRelatorioRender(res) {
       ? '<table style="min-width:640px;"><thead><tr><th>Placa</th><th>Carroceria no CRLV</th><th>Status no sistema</th><th>Exercício</th><th>Ação</th></tr></thead><tbody>'
         + precisa.map(linha).join("") + okDoc.map(linha).join("") + '</tbody></table>'
       : '<div style="font-size:12px;color:#777;">Nenhum documento trouxe o campo carroceria.</div>')
-    + (falhas.length ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Não deu pra ler ' + falhas.length + ': ' + falhas.map(function (f) { return esc(f.placa) + " (" + esc(f.erro) + ")"; }).join(", ") + '</div>' : "")
+    + (falhas.length ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;"><b>Não deu pra ler ' + falhas.length + ' arquivo(s):</b>'
+        + falhas.map(function (f) { return '<div style="margin-top:3px;">• <b>' + esc(f.placa) + '</b> — ' + esc(f.erro) + '</div>'; }).join("")
+        + '<div style="margin-top:4px;color:#777;">Se o texto acima for de outro documento (seguro, ANTT), está certo — só CRLV traz peso. Se vier vazio, o PDF é escaneado e precisa ser digitado.</div></div>' : "")
     /* v242: resumo dos pesos. É o que alimenta a escala do dia da operação
        Suzano — sem carga útil o caminhão fica fora da escala. */
     + (function () {
