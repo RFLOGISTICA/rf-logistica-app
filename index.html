@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v226)</title>
+<title>RF Logística — Painel da Frota (v227)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6187,6 +6187,7 @@ function motoristaCarregarViagensAtivas() {
         };
       });
       render();
+      motoristaAvisarFimPendente(); // v227
     });
   });
 }
@@ -6271,6 +6272,77 @@ function motoristaVerFotoKm(path) {
     });
   });
 }
+/* ===== v227: LEMBRETE DE FOTO DO KM FINAL ================================
+   Problema real: viagem fica parada em "em_andamento" porque o motorista
+   esqueceu de tirar a foto do painel no fim. Sem ela não há KM de chegada,
+   então não há rodado medido, não há frete por km conferido e a viagem não
+   chega pra revisão da equipe. Antes disso a única cobrança era uma linha
+   pequena em vermelho dentro do cartão, fácil de passar batido.
+   Agora o lembrete cresce com o tempo e vira faixa no topo da tela dele.
+   DIAS_AVISO_FIM_VIAGEM é o ponto em que vira urgente. Sinal mais forte que
+   existe: o próprio motorista marcou "Finalizado hoje" no status do dia --
+   ele disse que acabou e mesmo assim não mandou a foto. */
+var DIAS_AVISO_FIM_VIAGEM = 5;
+function motoristaDiasEmViagem(vg) {
+  if (!vg || !vg.data) return null;
+  const d = new Date(vg.data + "T12:00:00");
+  if (isNaN(d)) return null;
+  return Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+}
+// Devolve null quando não há o que cobrar; senão { nivel, cor, titulo, texto }.
+function motoristaLembreteFim(vg) {
+  if (!vg || vg.status !== "em_andamento") return null;
+  const dias = motoristaDiasEmViagem(vg);
+  const acabouHoje = vg.statusDia === "finalizado_hoje";
+  const muitoTempo = dias !== null && dias >= DIAS_AVISO_FIM_VIAGEM;
+  const quanto = dias === null ? "" : (dias === 0 ? "hoje" : "há " + dias + " dia" + (dias > 1 ? "s" : ""));
+  if (acabouHoje) {
+    return {
+      nivel: "urgente", cor: "#C0392B", titulo: "⚠ Falta a foto do KM final",
+      texto: "Você marcou que terminou as entregas, mas a viagem ainda não foi encerrada. Tire a foto do painel agora — sem ela a viagem não vai pra equipe e o pagamento não entra na conta.",
+    };
+  }
+  if (muitoTempo) {
+    return {
+      nivel: "urgente", cor: "#C0392B", titulo: "⚠ Viagem aberta " + quanto,
+      texto: "Se você já chegou, tire a foto do KM final pra encerrar. Se ainda está na rota, atualize o status do dia aqui embaixo pra equipe saber.",
+    };
+  }
+  if (dias !== null && dias >= 2) {
+    return {
+      nivel: "aviso", cor: GOLD, titulo: "Lembrete: foto do KM final",
+      texto: "Viagem em andamento " + quanto + ". Quando chegar, é a foto do painel que encerra a viagem.",
+    };
+  }
+  return null;
+}
+// Todas as viagens do motorista que estão cobrando a foto final agora.
+function motoristaViagensCobrandoFim() {
+  return (state._minhasViagensAtivas || []).filter(function (vg) {
+    const l = motoristaLembreteFim(vg);
+    return l && l.nivel === "urgente";
+  });
+}
+/* Aviso na cara, uma vez por dia por viagem. Uma vez por DIA de propósito:
+   avisar a cada carregamento de tela vira ruído e o motorista aprende a
+   fechar sem ler. A marca fica no próprio aparelho dele. */
+function motoristaAvisarFimPendente() {
+  if (!ehMotorista()) return;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const cobrando = motoristaViagensCobrandoFim();
+  if (!cobrando.length) return;
+  const vg = cobrando[0];
+  const chave = "rf_lembrete_fim_" + vg.id;
+  let visto = "";
+  try { visto = localStorage.getItem(chave) || ""; } catch (e) { visto = ""; }
+  if (visto === hoje) return;
+  try { localStorage.setItem(chave, hoje); } catch (e) {}
+  const l = motoristaLembreteFim(vg);
+  setTimeout(function () {
+    alert("⚠ " + (vg.cliente || "Sua viagem") + "\n\n" + l.texto);
+  }, 900);
+}
+
 function motoristaViagemCard(vg) {
   const mapa = {
     aguardando_motorista: { cor: "#3498DB", txt: "Aguardando você iniciar" },
@@ -6278,7 +6350,12 @@ function motoristaViagemCard(vg) {
     aguardando_equipe: { cor: "#2E7D32", txt: "Aguardando revisão da equipe" },
   };
   const info = mapa[vg.status] || mapa.aguardando_motorista;
-  return `<div style="background:#0E0E0E; border:1px solid #2A2A2A; border-left:4px solid ${info.cor}; border-radius:10px; padding:14px 16px; margin-bottom:12px;">
+  const lemb = motoristaLembreteFim(vg);
+  return `<div style="background:#0E0E0E; border:1px solid #2A2A2A; border-left:4px solid ${lemb ? lemb.cor : info.cor}; border-radius:10px; padding:14px 16px; margin-bottom:12px;">
+    ${lemb ? `<div style="background:${lemb.nivel === "urgente" ? "rgba(192,57,43,.15)" : "rgba(212,175,55,.12)"}; border:1px solid ${lemb.cor}; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
+      <div style="font-size:13px; font-weight:800; color:${lemb.cor}; margin-bottom:4px;">${lemb.titulo}</div>
+      <div style="font-size:12px; color:#ddd; line-height:1.45;">${esc(lemb.texto)}</div>
+    </div>` : ""}
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
       <span style="font-size:12px; font-weight:800; color:${info.cor}; border:1px solid ${info.cor}; border-radius:6px; padding:2px 8px;">${info.txt}</span>
       <span style="font-size:13px; color:#ccc;">${vg.cliente ? esc(vg.cliente) : "(sem cliente definido)"}</span>
@@ -6519,6 +6596,14 @@ function painelMotoristaHTML() {
 
     <div style="padding:20px 24px 0;">
       <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">🚚 Minhas viagens</div>
+      ${(function () {
+        const cobrando = motoristaViagensCobrandoFim();
+        if (!cobrando.length) return "";
+        return `<div style="background:rgba(192,57,43,.18); border:1px solid #C0392B; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:14px; font-weight:800; color:#C0392B; margin-bottom:4px;">⚠ ${cobrando.length === 1 ? "Você tem 1 viagem em aberto" : "Você tem " + cobrando.length + " viagens em aberto"}</div>
+          <div style="font-size:12px; color:#ddd; line-height:1.45;">Falta a <b>foto do KM final</b> pra encerrar${cobrando.length === 1 ? "" : " cada uma"}. Sem essa foto a viagem não chega na equipe e o acerto não é fechado. É a foto do painel do caminhão, mostrando o hodômetro.</div>
+        </div>`;
+      })()}
       <div style="font-size:12px;color:#999;margin-bottom:16px;">A equipe cadastra a viagem e envia pra você. Quando for sair, anexe a foto do <b>KM inicial</b> pra confirmar o início. Quando terminar, anexe a foto do <b>KM final</b> pra concluir. As duas fotos são obrigatórias.</div>
       ${(state._minhasViagensAtivas || []).length === 0 ? `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhuma viagem enviada pela equipe no momento.</div>` : (state._minhasViagensAtivas || []).map((vg) => motoristaViagemCard(vg)).join("")}
     </div>
@@ -6638,10 +6723,9 @@ function rfMesclarViagemAbastSolto(idOrigem, idDestino) {
   if (!confirm(`Mover o combustível da viagem solta pra "${destino.cliente || "sem cliente"} — ${destino.data || "sem data"}" e apagar a viagem solta?`)) return;
   if (!destino.combustivelItens) destino.combustivelItens = [];
   (origem.combustivelItens || []).forEach((item) => destino.combustivelItens.push(item));
-  if ((Number(origem.kmChegada) || 0) > (Number(destino.kmChegada) || 0)) {
-    destino.kmChegada = Number(origem.kmChegada) || 0;
-    recalcularKmDaViagem(destino);
-  }
+  // v227: a viagem solta nasce de um abastecimento, então o kmChegada dela (quando
+  // existe, vindo de versão anterior) é KM de meio de rota. Não passa mais pro
+  // destino: o KM de chegada só entra pela foto final do motorista.
   (state.abastecimentos || []).forEach((a) => { if (String(a.viagemId) === String(origem.id)) a.viagemId = destino.id; });
   state.viagens = state.viagens.filter((x) => String(x.id) !== String(origem.id));
   salvar(); render();
@@ -6656,7 +6740,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   const novaViagem = {
     id: uid(), placa: a.placa, cliente: "", data: a.data || hojeISO(), criadoEm: Date.now(),
     valorViagem: 0, km: 0, dias: 1,
-    kmSaida: 0, kmChegada: Number(a.kmAtual) || 0, fotoKmSaida: "", fotoKmChegada: "",
+    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [itemComb],
     vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     motoristaNaEpoca: (state.veiculos.find((x) => x.placa === a.placa) || {}).motorista || "",
@@ -6667,7 +6751,7 @@ function aprovarAbastecimentoNovaViagem(id) {
   state.filtroPlacaViagem = a.placa; state.filtroClienteViagem = "Todos"; state.aba = "viagem";
   salvar(); render();
   rfAbastSalvarLinha(a);
-  alert("Viagem criada com o KM e o combustível do abastecimento. Complete cliente, valor da viagem e KM de saída na aba Viagens.");
+  alert("Viagem criada com o combustível do abastecimento. Complete cliente, valor e KM de saída na aba Viagens — o KM de chegada vem da foto final do motorista.");
 }
 // Aprovar vinculando a uma viagem JÁ lançada (mesmo caminhão) — soma o combustível
 // e atualiza o KM de chegada se o informado pelo motorista for maior.
@@ -6679,7 +6763,14 @@ function vincularAbastecimentoAViagem(id, viagemId) {
   if (!v.combustivelItens) v.combustivelItens = [];
   const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
   v.combustivelItens.push(itemComb);
-  if ((Number(a.kmAtual) || 0) > (Number(v.kmChegada) || 0)) { v.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(v); }
+  // v227: NÃO usar mais o KM do abastecimento como KM de CHEGADA da viagem.
+  // O abastecimento acontece NO MEIO da rota -- é um ponto do caminho, não o
+  // fim dela. Gravar esse número como chegada encurtava o rodado medido
+  // (chegada − saída), e o rodado é o que alimenta o frete por km e o custo.
+  // Quem fecha o KM da viagem é o MOTORISTA, com a foto do painel no fim.
+  // O KM do abastecimento continua contando como registro de hodômetro do
+  // caminhão (kmRegistrosDoVeiculo lê os abastecimentos), então a KM atual
+  // não perde nada -- só deixa de se passar pelo fim da viagem.
   // v113: NAO usar mais a foto do abastecimento como foto de chegada da viagem --
   // sao coisas diferentes e a foto de KM final da viagem e critica, nao pode
   // ficar confundida com o comprovante de abastecimento. A foto do abastecimento
@@ -6710,7 +6801,7 @@ function rfAbastVincularManual(abastId, novoViagemId) {
   if (!destino.combustivelItens) destino.combustivelItens = [];
   const itemComb = { id: uid(), valor: Number(a.valor) || 0, litros: Number(a.litros) || 0, desc: "Abastecimento lançado por " + (a.motoristaNome || "motorista") };
   destino.combustivelItens.push(itemComb);
-  if ((Number(a.kmAtual) || 0) > (Number(destino.kmChegada) || 0)) { destino.kmChegada = Number(a.kmAtual) || 0; recalcularKmDaViagem(destino); }
+  // v227: não escreve mais kmChegada — ver comentário em vincularAbastecimentoAViagem
   a.viagemId = destino.id; a.combustivelItemId = itemComb.id; a.status = "aprovado";
   salvar(); render();
   rfAbastSalvarLinha(a);
@@ -7124,6 +7215,8 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
 - Registro com KM impossível é DESCARTADO da conta, não apenas sinalizado: vale a regra de no máximo ${kmDiaMax()} km por dia desde o registro anterior (folga mínima de ${kmFolgaMin()} km). Então um lançamento errado não contamina mais óleo, correia nem pneus — mas segue errado na origem e aparece na lista de KM suspeito acima, que é o que precisa ser corrigido.
 - A trava vale nos dois sentidos e nas quatro portas de entrada: foto do abastecimento, foto de KM da viagem, KM de viagem digitado e KM de abastecimento digitado. KM menor que o já registrado também é recusado (hodômetro não anda pra trás, costuma ser o parcial lido no lugar do total).
 - Desde a v226 a IA NÃO ESCOLHE MAIS qual número do painel é o hodômetro: ela devolve TODOS os números que enxergou e o sistema escolhe pela regra — descarta o que tem casa decimal (isso é sempre o parcial/trip) e, entre os que sobram, fica com o único que cabe no que o caminhão poderia ter rodado desde o último registro. Se nenhum couber, não preenche nada e mostra na tela todos os números lidos, pedindo conferência. Motivo: em painel embaçado ou empoeirado o ponto decimal some na foto e o parcial chega parecendo total — instrução de prompt não resolve isso, regra determinística resolve. Se perguntarem por que um abastecimento ficou sem KM, é isso: a foto não deu número que fechasse, e é melhor ficar vazio do que gravar hodômetro errado.
+- Desde a v227 o KM DE CHEGADA da viagem NÃO vem mais do abastecimento. O abastecimento acontece no MEIO da rota — é um ponto do caminho, não o fim dela — e usar esse número como chegada encurtava o rodado medido, que é o que alimenta o frete por km e o custo. Quem fecha o KM da viagem é o MOTORISTA, com a foto do painel no fim. O KM do abastecimento continua valendo como registro de hodômetro do caminhão, então a KM atual não perdeu nada. Consequência prática: viagem sem foto de KM final fica sem rodado medido e o valor dela segue na estimativa digitada.
+- Também na v227, o motorista passou a ser cobrado pela foto final dentro do app dele: faixa vermelha no topo da tela, aviso no cartão da viagem e um alerta uma vez por dia. Fica urgente quando ele mesmo marcou "Finalizado hoje" no status do dia (disse que acabou e não mandou a foto) ou quando a viagem está aberta há 5 dias ou mais. A lista de quem está devendo essa foto aparece nos PROBLEMAS DETECTADOS acima, com placa e nome — use esses nomes quando perguntarem quem cobrar.
 - Abastecimento REJEITADO pela equipe não alimenta hodômetro nenhum.
 - A ÚLTIMA TROCA DE ÓLEO sai do lançamento de troca quando existe um. O campo digitado no cadastro só vale enquanto o caminhão não tiver nenhuma troca lançada.
 - Se alguém perguntar por que a KM atual não bate com o que ele viu no painel ou na viagem, a resposta está na lista de registros: diga de QUAL lançamento veio o número (a lista de óleo acima informa) e, se houver KM descartado, mencione-o. Não é erro de conta, é dado de entrada.`;
@@ -7533,6 +7626,24 @@ function rfDiagnosticoSistema() {
   const emRota = (state.viagens || []).filter(function (v) { return v.fotoKmSaida && !v.fotoKmChegada; });
   const semStatus = emRota.filter(function (v) { return !v.statusDiaAtualizadoEm; });
   if (semStatus.length) add("medio", semStatus.length + " viagem(ns) em andamento que a carteira ainda não atualizou no Status do Dia.");
+  /* v227: viagem presa por falta da FOTO DO KM FINAL. É o outro lado do lembrete
+     que o motorista recebe no app dele: aqui a equipe vê quem cobrar pelo nome.
+     Sem essa foto não há KM de chegada, sem KM de chegada não há rodado medido,
+     e sem rodado medido o frete por km e o custo da viagem ficam na estimativa. */
+  const semFotoFim = emRota.map(function (v) {
+    const base = v.dataFim || v.data || "";
+    const d = base ? Math.max(0, Math.round((Date.now() - new Date(base + "T12:00:00").getTime()) / 86400000)) : null;
+    return { v: v, dias: d, acabou: v.statusDia === "finalizado_hoje" };
+  }).filter(function (x) { return x.acabou || (x.dias !== null && x.dias >= 2); });
+  if (semFotoFim.length) {
+    const piores = semFotoFim.slice().sort(function (a, b) { return (b.dias || 0) - (a.dias || 0); });
+    const urgente = semFotoFim.some(function (x) { return x.acabou || (x.dias || 0) >= 5; });
+    add(urgente ? "alto" : "medio", semFotoFim.length + " viagem(ns) sem a foto do KM final, então não fecham: "
+      + piores.slice(0, 5).map(function (x) {
+        return (x.v.placa || "sem placa") + " com " + (x.v.motoristaDesignadoNome || x.v.motoristaNaEpoca || "motorista não identificado")
+          + (x.acabou ? " (marcou que terminou as entregas)" : " (aberta há " + x.dias + " dia(s))");
+      }).join("; ") + ". O motorista já é avisado no app dele; cobre pelo nome se passar disso.");
+  }
   // estoque abaixo do mínimo
   const baixo = (state.almoxarifado || []).filter(function (it) { try { return almoxBaixo(it); } catch (e) { return false; } });
   if (baixo.length) add("medio", baixo.length + " item(ns) do almoxarifado abaixo do mínimo: " + baixo.map(function (i) { return i.nome; }).slice(0, 6).join(", ") + ".");
