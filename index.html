@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v224)</title>
+<title>RF Logística — Painel da Frota (v225)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -539,6 +539,13 @@ function removerRotaCliente(cliente, rota) {
 function toggleRotasAbertas(cliente) {
   if (!state._rotasAbertas) state._rotasAbertas = {};
   state._rotasAbertas[cliente] = !state._rotasAbertas[cliente];
+  render();
+}
+
+// v225: recolher/expandir seções da aba Viagens (clientes, calculadoras por cliente)
+function toggleSecaoViagem(nome) {
+  if (!state._secoesViagem) state._secoesViagem = {};
+  state._secoesViagem[nome] = !state._secoesViagem[nome];
   render();
 }
 
@@ -3477,7 +3484,7 @@ var ABAS_DEF = [
   { id: "oleo", label: "Óleo & Filtros 🛢️", grupo: "FROTA" },
   { id: "almox", label: "Almoxarifado 📦", grupo: "FROTA" },
   { id: "operacao", label: "🧭 Operação", grupo: "OPERAÇÃO" },
-  { id: "viagem", label: "Viagens", grupo: "OPERAÇÃO" },   // v212: era "Despesas de Viagem"
+  { id: "viagem", label: "🛣️ Viagens", grupo: "OPERAÇÃO" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
   { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
@@ -8513,7 +8520,8 @@ function renderTabela() {
         </div>
       </div>
       <div style="margin-bottom:16px; padding:12px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
-        <div style="font-size:11px; color:#999; text-transform:uppercase; margin-bottom:10px;">Clientes & forma de cobrança</div>
+        <div onclick="toggleSecaoViagem('clientes')" style="font-size:11px; color:#999; text-transform:uppercase; margin-bottom:10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;"><span>Clientes & forma de cobrança</span><span style="color:${GOLD};">${(state._secoesViagem||{}).clientes ? "▲ ocultar" : "▼ mostrar"}</span></div>
+        <div style="display:${(state._secoesViagem||{}).clientes ? "block" : "none"};">
         <div style="font-size:10px; color:#666; margin-bottom:10px;">Defina como cada cliente paga. <b style="color:${GOLD};">Por km</b>, <b style="color:${GOLD};">por m³</b> ou <b style="color:${GOLD};">por rota</b> preenchem o valor da viagem sozinhos. <b>Por viagem</b> = valor manual.</div>
         ${state.clientes.map((c) => {
           const cEsc = esc(c).replace(/'/g, "\\'");
@@ -8568,8 +8576,14 @@ function renderTabela() {
           </div>`;
         }).join("")}
         <button class="btn-outline" style="font-size:11px; margin-top:10px;" onclick="adicionarClienteGlobal()">+ Novo cliente</button>
+        </div>
+      </div>
+      <div onclick="toggleSecaoViagem('calcYamaha')" style="margin-bottom:${(state._secoesViagem||{}).calcYamaha ? "0" : "18px"}; padding:14px 16px; background:#0E0E0E; border:1px solid ${GOLD}; ${(state._secoesViagem||{}).calcYamaha ? "border-bottom:none; border-radius:8px 8px 0 0;" : "border-radius:8px;"} cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:13px; color:${GOLD}; font-weight:800; text-transform:uppercase; letter-spacing:0.6px;">⚡ Calculadora de Frete · Yamaha</span>
+        <span style="color:${GOLD}; font-size:12px;">${(state._secoesViagem||{}).calcYamaha ? "▲ ocultar" : "▼ abrir"}</span>
       </div>
       ${(() => {
+        if (!(state._secoesViagem||{}).calcYamaha) return "";
         const cy = calcAjuste();
         const rc = calcResultado();
         const reg = YAMAHA_REGIOES[cy.regiao];
@@ -8584,10 +8598,8 @@ function renderTabela() {
         const estPct = rc.frete > 0 ? (estSobra / rc.frete * 100) : 0;
         const corPct = estPct >= 20 ? "#2E7D32" : estPct > 0 ? "#D4A017" : "#C0392B";
         return `
-      <div style="margin-bottom:18px; padding:16px; background:#0E0E0E; border:1px solid ${GOLD}; border-radius:8px;">
-        <div style="font-size:13px; color:${GOLD}; font-weight:800; text-transform:uppercase; letter-spacing:0.6px; margin-bottom:12px;">
-          ⚡ Calculadora de Frete · Yamaha (motos + náutica)
-        </div>
+      <div style="margin-bottom:18px; padding:16px; background:#0E0E0E; border:1px solid ${GOLD}; border-top:none; border-radius:0 0 8px 8px;">
+        <div style="font-size:10px; color:#888; margin-bottom:12px;">Motos (MTC) e náutica (NTC) — selecione a região e as quantidades.</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
           ${Object.keys(YAMAHA_REGIOES).map((rk) => {
             const on = cy.regiao === rk;
