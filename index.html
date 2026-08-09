@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v240)</title>
+<title>RF Logística — Painel da Frota (v242)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4190,16 +4190,24 @@ function szTelaEscala() {
       + '</div></div>';
   }
   // cadastro do peso por placa
-  h += '<div style="margin-top:12px;"><div style="font-size:12px;font-weight:800;color:#bbb;margin-bottom:5px;">Carga útil de cada caminhão (t)'
+  h += '<div style="margin-top:12px;"><div style="font-size:12px;font-weight:800;color:#bbb;margin-bottom:3px;">Carga útil de cada caminhão (t)'
     + (semPeso.length ? ' <span style="color:#C0392B;">— ' + semPeso.length + ' sem peso cadastrado, ficam fora da escala</span>' : "") + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-bottom:5px;">Sai do próprio CRLV: carga útil = peso bruto total − tara. '
+    + 'Os documentos já estão anexados, então é só mandar reler — ou digitar aqui, que vale igual.</div>'
+    + '<button onclick="state.aba=\'documentos\';render();setTimeout(rfCrlvReprocessarTodos,600);" '
+    + 'style="font-size:11px;font-weight:700;margin-bottom:7px;">🔎 Ler os CRLVs já anexados e preencher os pesos</button>'
     + '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
   (state.veiculos || []).filter(function (v) { return v.placa && String(v.statusOp || "") !== "Fora de operação"; })
     .sort(function (a2, b2) { return String(a2.placa).localeCompare(String(b2.placa), "pt-BR"); })
     .forEach(function (v) {
       var c = szCargaUtil(v);
-      h += '<div style="border:1px solid ' + (c > 0 ? "#2A2A2A" : "#C0392B") + ';border-radius:8px;padding:5px 8px;background:#0E0E0E;">'
+      var doCrlv = c > 0 && Number(v.pbtT) > 0 && Number(v.taraT) > 0;
+      h += '<div style="border:1px solid ' + (c > 0 ? (doCrlv ? "#2E7D32" : "#2A2A2A") : "#C0392B") + ';border-radius:8px;padding:5px 8px;background:#0E0E0E;">'
         + '<div style="font-size:11px;font-weight:800;">' + esc(v.placa) + ' <span style="color:#777;font-weight:400;">' + esc(v.tipo || "") + '</span></div>'
         + '<input type="number" step="0.1" min="0" value="' + (c || "") + '" placeholder="t" onchange="szSetCargaUtil(\'' + v.id + '\',this.value)" style="width:72px;text-align:right;font-weight:700;">'
+        + (doCrlv
+          ? '<div style="font-size:9px;color:#2E7D32;">CRLV: ' + Number(v.pbtT).toLocaleString("pt-BR") + ' − ' + Number(v.taraT).toLocaleString("pt-BR") + ' t</div>'
+          : (c > 0 ? '<div style="font-size:9px;color:#777;">digitado</div>' : '<div style="font-size:9px;color:#C0392B;">falta</div>'))
         + '</div>';
     });
   h += '</div></div></div>';
@@ -11627,7 +11635,7 @@ function renderTabela() {
         <div id="docsCrlv"></div>
         <div id="docsOrfaos"></div>
         <div style="margin-top:10px;">
-          <button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="rfCrlvReprocessarTodos()">🔎 Ler todos os CRLVs anexados (carroceria registrada)</button>
+          <button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="rfCrlvReprocessarTodos()">🔎 Ler todos os CRLVs anexados (carroceria + carga útil)</button>
         </div>
         <div id="docsRelatorioCrlv"></div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Fotos são compactadas automaticamente (~4MB → ~300KB). PDFs são enviados como estão.</div>
@@ -12336,6 +12344,34 @@ function rfCrlvParse(txt) {
     var re = new RegExp("^\\s*" + alvo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "m");
     if (re.test(U)) { r.carroceria = alvo; break; }
   }
+  /* v241: PESO BRUTO TOTAL e TARA. A carga útil NÃO é um campo impresso no
+     CRLV, é uma subtração: carga útil = PBT - TARA. Fazer a conta aqui é melhor
+     que pedir o número a alguém, porque os dois valores são oficiais e a
+     subtração não erra.
+     A unidade varia entre layouts: uns imprimem tonelada com vírgula (08,00),
+     outros quilo inteiro (8000). Normalizo os dois para tonelada pela ordem de
+     grandeza -- nenhum caminhão da RF tem 8.000 t nem 8 kg de tara. Se um dos
+     dois não aparecer, não invento: fica sem carga útil. */
+  var pesoT = function (s) {
+    if (!s) return 0;
+    var n = parseFloat(String(s).replace(/\./g, "").replace(",", "."));
+    if (isNaN(n) || n <= 0) return 0;
+    return n > 200 ? n / 1000 : n;          // acima de 200 só pode estar em kg
+  };
+  m = U.match(/PESO\s*BRUTO\s*TOTAL[^\d]{0,40}([\d.,]+)/);
+  if (!m) m = U.match(/\bPBT\b[^\d]{0,20}([\d.,]+)/);
+  if (m) r.pbtT = pesoT(m[1]);
+  m = U.match(/\bTARA\b[^\d]{0,40}([\d.,]+)/);
+  if (m) r.taraT = pesoT(m[1]);
+  m = U.match(/CAP[.\s]*M[\u00c1A]X[.\s]*TRA[\u00c7C][\u00c3A]O[^\d]{0,40}([\d.,]+)/);
+  if (m) r.cmtT = pesoT(m[1]);
+  if (r.pbtT > 0 && r.taraT > 0 && r.pbtT > r.taraT) {
+    var util = r.pbtT - r.taraT;
+    /* Sanidade: 3/4 e TOCO da RF ficam entre 1 e 20 t. Fora disso é leitura
+       errada (rótulo lido como valor, coluna trocada), e peso errado aqui vira
+       excesso de peso na estrada e multa. Melhor deixar em branco. */
+    if (util >= 1 && util <= 20) r.cargaUtilT = Math.round(util * 100) / 100;
+  }
   return r;
 }
 /* v195: CAMINHO 2 -- documento sem camada de texto (CRLV escaneado ou foto).
@@ -12421,6 +12457,14 @@ function rfCrlvAplicarDados(d, origem) {
   aplica("Chassi", "chassi", d.chassi);
   aplica("UF do emplacamento", "ufEmplacamento", d.uf, "define taxa e alíquota");
   aplica("Carroceria (pelo CRLV)", "carroceriaCrlv", d.carroceria, "é o que vale numa fiscalização");
+  /* v241: carga útil (PBT − TARA). É o peso que a escala do dia usa pra decidir
+     quais placas saem. Só grava se o CRLV trouxe os dois valores e a conta deu
+     um número plausível — ver a checagem em rfCrlvParse. */
+  if (d.cargaUtilT > 0) {
+    aplica("Carga útil (PBT − TARA)", "cargaUtilT", d.cargaUtilT, "usada na escala do dia");
+    if (d.pbtT) aplica("Peso bruto total", "pbtT", d.pbtT);
+    if (d.taraT) aplica("Tara", "taraT", d.taraT);
+  }
   if (d.emitidoEm && (!v.emplacamento || String(v.emplacamento).trim() === "")) {
     var pp = String(d.emitidoEm).split("/");
     if (pp.length === 3 && pp[2].length === 4) {
@@ -12695,7 +12739,12 @@ function rfCrlvReprocessarTodos() {
           const v = (state.veiculos || []).find(function (x) { return x.placa === t.placa; });
           if (v && d.carroceria) v.carroceriaCrlv = d.carroceria;
           if (v && d.exercicio) v.crlvExercicio = d.exercicio;
-          resultados.push({ placa: t.placa, arquivo: t.nome, carroceria: d.carroceria || null, exercicio: d.exercicio || null, bau: v ? v.bau : null });
+          /* v242: a carga útil (PBT − TARA) também é gravada aqui. Os CRLVs já
+             estão todos anexados; não faz sentido pedir pro Renato reanexar 20
+             documentos só porque a v241 passou a ler dois campos a mais. */
+          if (v && d.cargaUtilT > 0) { v.cargaUtilT = d.cargaUtilT; v.pbtT = d.pbtT; v.taraT = d.taraT; }
+          resultados.push({ placa: t.placa, arquivo: t.nome, carroceria: d.carroceria || null, exercicio: d.exercicio || null, bau: v ? v.bau : null,
+            cargaUtilT: d.cargaUtilT || null, pbtT: d.pbtT || null, taraT: d.taraT || null });
           passo();
         }).catch(function () { resultados.push({ placa: t.placa, arquivo: t.nome, erro: "PDF sem texto (escaneado)" }); passo(); });
       }).catch(function () { resultados.push({ placa: t.placa, erro: "falha ao baixar" }); passo(); });
@@ -12729,6 +12778,21 @@ function rfCrlvRelatorioRender(res) {
         + precisa.map(linha).join("") + okDoc.map(linha).join("") + '</tbody></table>'
       : '<div style="font-size:12px;color:#777;">Nenhum documento trouxe o campo carroceria.</div>')
     + (falhas.length ? '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Não deu pra ler ' + falhas.length + ': ' + falhas.map(function (f) { return esc(f.placa) + " (" + esc(f.erro) + ")"; }).join(", ") + '</div>' : "")
+    /* v242: resumo dos pesos. É o que alimenta a escala do dia da operação
+       Suzano — sem carga útil o caminhão fica fora da escala. */
+    + (function () {
+        var comPeso = res.filter(function (r) { return r.cargaUtilT; });
+        if (!comPeso.length) {
+          return '<div style="font-size:11px;color:#8a6d1f;margin-top:8px;">Nenhum documento trouxe peso bruto e tara — a carga útil continua tendo que ser digitada na aba Carregamento Suzano.</div>';
+        }
+        return '<div style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(46,125,50,.12);border:1px solid #2E7D32;">'
+          + '<div style="font-size:12px;font-weight:800;color:#2E7D32;">⚖ Carga útil preenchida em ' + comPeso.length + ' caminhão(ões), calculada do próprio CRLV (peso bruto total − tara)</div>'
+          + '<div style="font-size:11px;color:#ddd;margin-top:4px;">'
+          + comPeso.map(function (r) {
+              return esc(r.placa) + ": <b>" + Number(r.cargaUtilT).toLocaleString("pt-BR") + " t</b> <span style=\"color:#888;\">(" + Number(r.pbtT).toLocaleString("pt-BR") + " − " + Number(r.taraT).toLocaleString("pt-BR") + ")</span>";
+            }).join(" · ")
+          + '</div><div style="font-size:10px;color:#888;margin-top:4px;">Confira um ou dois contra o que você sabe do caminhão antes de confiar na escala.</div></div>';
+      })()
     + '<div style="font-size:11px;color:#777;margin-top:8px;">Lido do próprio documento anexado. O campo Status Baú da aba Frota não foi alterado — ele continua sendo o que você informa sobre o caminhão; esta coluna é o que o DETRAN tem registrado.</div>'
     + '<button class="btn-outline" style="margin-top:10px;font-size:11px;padding:5px 12px;" onclick="exportarRegularizacaoCrlvExcel()">⬇ Exportar lista pra regularização</button>'
     + '</div>';
