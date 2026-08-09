@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v233)</title>
+<title>RF Logística — Painel da Frota (v235)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3206,6 +3206,134 @@ function szMesmoMotorista(a, b) {
   return A[0] === B[0] && A[A.length - 1] === B[B.length - 1];
 }
 
+/* ---- Chegar até o cliente ------------------------------------------------
+   v234: o espelho traz endereço e cidade do destinatário, e o motorista já usa o
+   Google Maps na mão pra achar o cliente. Então o botão abre o Maps direto, sem
+   ele redigitar nada — redigitar endereço no celular na porta do cliente é onde
+   se perde tempo e se erra rua.
+   DUAS FONTES, nessa ordem:
+   1. A LOCALIZAÇÃO REAL salva de entregas anteriores (`conferencia_clientes_locais`,
+      a base que a Conferência de Carga vem montando desde a v161, casada por
+      nome+cidade). Coordenada de onde o caminhão de fato parou vale mais que
+      endereço escrito: pega portão de fundos, entrada de carga, rua sem número.
+   2. Se o cliente ainda não tem ponto salvo, monta a busca com o endereço do
+      espelho + cidade + BA.
+   A localização é capturada sozinha na PRIMEIRA entrega bipada de cada cliente,
+   então a base melhora sozinha a cada viagem — do mesmo jeito que já acontece na
+   Conferência de Carga. */
+function szLinkMapa(e) {
+  if (!e) return "";
+  var loc = null;
+  try { loc = rfClienteLocalObter(e.cliente, e.cidade); } catch (err) { loc = null; }
+  if (loc && loc.latitude && loc.longitude) {
+    return "https://www.google.com/maps/dir/?api=1&destination=" + loc.latitude + "," + loc.longitude + "&travelmode=driving";
+  }
+  var partes = [];
+  if (e.endereco) partes.push(e.endereco);
+  if (e.cidade) partes.push(e.cidade);
+  partes.push("BA, Brasil");
+  var alvo = partes.join(", ");
+  if (!e.endereco && !e.cidade) return "";
+  return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(alvo) + "&travelmode=driving";
+}
+function szTemLocalSalvo(e) {
+  try { var l = rfClienteLocalObter(e.cliente, e.cidade); return !!(l && l.latitude); } catch (err) { return false; }
+}
+/* Rota com todas as paradas da carga, na ordem em que os espelhos entraram.
+   Usa a coordenada real de quem já tem, e o endereço de quem ainda não tem. */
+function szLinkRotaCarga(c) {
+  var paradas = [];
+  ((c || {}).espelhos || []).forEach(function (e) {
+    if (szEspelhoEntregue(e)) return;                 // já entregue não entra na rota
+    var loc = null;
+    try { loc = rfClienteLocalObter(e.cliente, e.cidade); } catch (err) {}
+    if (loc && loc.latitude && loc.longitude) paradas.push(loc.latitude + "," + loc.longitude);
+    else if (e.endereco || e.cidade) paradas.push([e.endereco, e.cidade, "BA, Brasil"].filter(Boolean).join(", "));
+  });
+  if (!paradas.length) return "";
+  var destino = paradas[paradas.length - 1];
+  var meio = paradas.slice(0, -1);
+  return "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent("Feira de Santana, BA, Brasil")
+    + "&destination=" + encodeURIComponent(destino)
+    + (meio.length ? "&waypoints=" + meio.map(encodeURIComponent).join("|") : "")
+    + "&travelmode=driving";
+}
+
+/* ---- Atualizar o ponto do cliente ----------------------------------------
+   v235: Renato pediu opção de ATUALIZAR o endereço/ponto, com o mesmo princípio
+   da captura: ao bipar ou fotografar a mercadoria, o sistema já pega e atualiza
+   a coordenada.
+   Três caminhos, e a diferença entre eles é de propósito:
+   1. PRIMEIRA entrega de um cliente novo → grava o ponto (v234).
+   2. Entregas seguintes → só REFINA: substitui o ponto salvo quando a leitura
+      nova é mais precisa que a guardada. Sobrescrever cego a cada bipagem seria
+      pior que não mexer, porque o motorista pode bipar dentro da cabine a 200 m
+      do portão, com GPS ruim, e estragar um ponto bom que custou várias viagens.
+      Comparar a precisão faz o ponto só melhorar.
+   3. BOTÃO manual "atualizar ponto daqui" → sobrescreve sempre, com confirmação.
+      É pra quando o cliente MUDOU de endereço, que é o caso em que a regra
+      automática nunca acertaria sozinha: o ponto velho pode estar mais preciso e
+      ainda assim errado. Aí quem decide é a pessoa que está lá.
+   O endereço escrito também virou editável no cartão, porque o espelho às vezes
+   traz o endereço de cobrança e não o de entrega. */
+function szGravarPontoCliente(nome, cidade, pos, aoTerminar) {
+  var chave = rfClienteChave(nome, cidade);
+  var registro = {
+    chave: chave, cliente_nome: nome, cidade: cidade || "",
+    latitude: pos.coords.latitude, longitude: pos.coords.longitude,
+    precisao_m: pos.coords.accuracy || null,
+    atualizado_por: (state.sessao && state.sessao.uid) || null, atualizado_em: Date.now(),
+  };
+  rfGetClient().then(function (sb) {
+    if (!sb) { if (aoTerminar) aoTerminar(false, "sem conexão com a nuvem"); return; }
+    sb.from(RF_CLIENTES_LOCAIS_TABELA).upsert(registro).then(function (res) {
+      if (res.error) { if (aoTerminar) aoTerminar(false, res.error.message); return; }
+      var novo = rfClienteLocalParaJS(registro);
+      var i = (state.clientesLocais || []).findIndex(function (x) { return x.chave === chave; });
+      if (i >= 0) state.clientesLocais[i] = novo; else state.clientesLocais.push(novo);
+      render();
+      if (aoTerminar) aoTerminar(true, "");
+    });
+  });
+}
+/* Chamado a cada entrega bipada. Grava se não existe, refina se ficou melhor. */
+function szAtualizarPontoAoBipar(nome, cidade) {
+  if (!nome || !navigator.geolocation) return;
+  var atual = null;
+  try { atual = rfClienteLocalObter(nome, cidade); } catch (e) { atual = null; }
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var novaPrec = Number(pos.coords.accuracy) || 99999;
+    if (atual && atual.latitude) {
+      var precSalva = Number(atual.precisaoM) || 99999;
+      if (novaPrec >= precSalva) return;              // não melhora: não mexe
+    }
+    szGravarPontoCliente(nome, cidade, pos, null);
+  }, function () { /* sem permissão ou GPS indisponível — ignora em silêncio */ },
+  { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
+/* Botão manual: sobrescreve o ponto pelo lugar onde a pessoa está agora. */
+function szAtualizarPontoAgora(cargaId, eid) {
+  var c = szCarga(cargaId), e = szEspelho(c, eid);
+  if (!e || !e.cliente) return;
+  if (!navigator.geolocation) { alert("Este aparelho não tem GPS disponível."); return; }
+  var atual = null;
+  try { atual = rfClienteLocalObter(e.cliente, e.cidade); } catch (err) {}
+  var msg = "Salvar a SUA posição de agora como o ponto de entrega de " + e.cliente + "?";
+  if (atual && atual.latitude) {
+    msg += "\n\nJá existe um ponto salvo" + (atual.precisaoM ? " (precisão de " + Math.round(atual.precisaoM) + " m)" : "")
+      + ". Ele será substituído.\n\nUse isto quando o cliente MUDOU de endereço ou quando o ponto salvo está errado.";
+  }
+  if (!confirm(msg)) return;
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    szGravarPontoCliente(e.cliente, e.cidade, pos, function (ok, erro) {
+      if (ok) alert("✓ Ponto de " + e.cliente + " atualizado (precisão de " + Math.round(pos.coords.accuracy || 0) + " m).");
+      else alert("Não consegui salvar: " + (erro || "erro desconhecido"));
+    });
+  }, function () {
+    alert("Não consegui pegar sua localização. Confira se o GPS está ligado e se o navegador tem permissão.");
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
+
 /* ---- Estado ---------------------------------------------------------------
    Fica em state.suzanoCargas e sobe pela mesma caixa geral do resto do sistema. */
 function szCargas() {
@@ -3385,6 +3513,12 @@ function szBipar(cargaId, campo, codigoDigitado, eidEsperado) {
   }
   achou[campo] = Date.now();
   achou[campo === "entregueEm" ? "entreguePor" : "carregadoPor"] = (state.sessao && state.sessao.nome) || "";
+  /* v234/v235: a cada entrega bipada, o ponto do cliente é gravado (se novo) ou
+     REFINADO (se a leitura de agora for mais precisa que a salva). Silencioso:
+     a bipagem já foi gravada antes disso, nada trava se o GPS falhar. */
+  if (campo === "entregueEm" && dono && dono.cliente) {
+    try { szAtualizarPontoAoBipar(dono.cliente, dono.cidade); } catch (err) {}
+  }
   salvar();
   return { ok: true, msg: "✓ " + (achou.qtd > 1 ? achou.qtd + " volumes" : "1 volume") + " — " + (dono.cliente || ""), espelho: dono, etiqueta: achou };
 }
@@ -3602,6 +3736,31 @@ function szCardEspelho(c, e) {
     + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
     + '<div><div style="font-size:16px;font-weight:900;color:' + GOLD + ';">' + esc(e.cliente || "(sem cliente)") + '</div>'
     + '<div style="font-size:12px;color:#bbb;">' + esc(e.cidade || "") + (e.endereco ? " · " + esc(e.endereco) : "") + '</div>'
+    + (function () {
+        var link = szLinkMapa(e);
+        var loc = null;
+        try { loc = rfClienteLocalObter(e.cliente, e.cidade); } catch (err) {}
+        var temPonto = !!(loc && loc.latitude);
+        var h2 = "";
+        if (link) {
+          h2 += '<a href="' + link + '" target="_blank" rel="noopener" '
+            + 'style="display:inline-block;margin-top:5px;background:#1A73E8;color:#fff;font-size:12px;font-weight:800;padding:5px 11px;border-radius:7px;text-decoration:none;">'
+            + '🗺️ Como chegar</a>';
+        }
+        if (e.cliente) {
+          h2 += '<button onclick="szAtualizarPontoAgora(\'' + c.id + '\',\'' + e.id + '\')" '
+            + 'style="margin-left:6px;margin-top:5px;font-size:11px;font-weight:700;" '
+            + 'title="Salva a sua posição de agora como o ponto de entrega deste cliente. Use quando o cliente mudou de endereço ou o ponto salvo está errado.">'
+            + '📍 ' + (temPonto ? "atualizar ponto daqui" : "salvar ponto daqui") + '</button>';
+        }
+        h2 += '<div style="font-size:10px;color:' + (temPonto ? "#2E7D32" : "#888") + ';margin-top:3px;">'
+          + (temPonto
+            ? "ponto salvo de entrega anterior" + (loc.precisaoM ? " · precisão de " + Math.round(loc.precisaoM) + " m" : "")
+              + (loc.atualizadoEm ? " · " + new Date(loc.atualizadoEm).toLocaleDateString("pt-BR") : "")
+            : (link ? "sem ponto salvo — navegando pelo endereço do espelho" : "sem endereço e sem ponto salvo"))
+          + '</div>';
+        return h2;
+      })()
     + '<div style="font-size:11px;color:#888;margin-top:2px;">NF-e ' + esc(String(e.nfe || "?")) + (e.cnpjCliente ? " · CNPJ " + esc(szCnpjFmt(e.cnpjCliente)) : "")
     + (e.numDoc ? " · doc. transporte " + esc(e.numDoc) : "") + '</div>'
     + (e.chave ? '<div style="font-size:10px;color:' + (partes && partes.valida ? "#2E7D32" : "#C0392B") + ';font-family:monospace;margin-top:2px;">chave ' + esc(e.chave) + (partes && partes.valida ? " ✓" : " ⚠ DV não confere") + '</div>' : "")
@@ -3612,6 +3771,13 @@ function szCardEspelho(c, e) {
     + '</div></div>'
     + (emRota ? "" : '<div style="margin-top:8px;font-size:12px;">volumes: <input type="number" min="0" value="' + esperado + '" onchange="szSetEspelho(\'' + c.id + '\',\'' + e.id + '\',\'qtdVolumes\',this.value)" style="width:70px;text-align:right;font-weight:700;"> '
       + '<button onclick="szExcluirEspelho(\'' + c.id + '\',\'' + e.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ remover nota</button></div>')
+    /* v235: endereço e cidade editáveis. O espelho às vezes traz o endereço de
+       cobrança do cliente, não o de entrega — e quem descobre isso é o motorista
+       na rua. Corrigir aqui melhora a navegação de todas as próximas cargas. */
+    + '<div style="margin-top:6px;font-size:11px;color:#999;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    + 'endereço de entrega <input value="' + esc(e.endereco || "") + '" placeholder="rua e número" onchange="szSetEspelho(\'' + c.id + '\',\'' + e.id + '\',\'endereco\',this.value)" style="flex:1;min-width:170px;font-size:12px;">'
+    + 'cidade <input value="' + esc(e.cidade || "") + '" onchange="szSetEspelho(\'' + c.id + '\',\'' + e.id + '\',\'cidade\',this.value)" style="width:130px;font-size:12px;">'
+    + '</div>'
     // 1. entrada
     + '<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#141414;">'
     + '<div style="font-size:11px;font-weight:800;color:#bbb;margin-bottom:4px;">1 · RETIRADA na Suzano</div>'
@@ -3693,6 +3859,14 @@ function szTelaEquipe() {
             + c.motoristaHist.map(function (x) { return esc(x.de) + " → " + esc(x.para || "(vazio)") + " em " + new Date(x.em).toLocaleString("pt-BR"); }).join(" · ")
             + '</div>' : "");
       var dv = szDivergenciasCadastro(c);
+      var rota = c.status === "em_rota" ? szLinkRotaCarga(c) : "";
+      if (rota) {
+        h += '<div style="margin-top:8px;">'
+          + '<a href="' + rota + '" target="_blank" rel="noopener" '
+          + 'style="display:inline-block;background:#1A73E8;color:#fff;font-weight:800;padding:7px 14px;border-radius:8px;text-decoration:none;">'
+          + '🗺️ Rota de todas as paradas que faltam</a>'
+          + '<span style="font-size:11px;color:#888;margin-left:8px;">sai de Feira de Santana e passa por quem ainda não recebeu</span></div>';
+      }
       if (dv.avisos.length) {
         h += '<div style="margin-top:8px;padding:9px 11px;border-radius:8px;background:rgba(192,57,43,.14);border:1px solid #C0392B;">'
           + '<div style="font-size:12px;font-weight:900;color:#C0392B;margin-bottom:3px;">⚠ Confira antes de emitir</div>'
@@ -8134,6 +8308,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
 - O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
 - Sem placa e sem motorista o caminhão não é liberado.
+- Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
+- Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".`;
   })();
 
