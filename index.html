@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v238)</title>
+<title>RF Logística — Painel da Frota (v239)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3599,12 +3599,15 @@ function szExcluirCarga(cargaId) {
    ou texto colado). Uma função só, pra as três portas terem exatamente as
    mesmas recusas: sem chave/NF não entra, chave com DV errado não entra, NF
    repetida não entra. */
-function szAplicarEspelho(cargaId, d, origem) {
+function szAplicarEspelho(cargaId, d, origem, silencioso) {
+  /* v239: `silencioso` — quando vem de um lote, quem avisa é o resumo no fim,
+     senão o Renato levaria um alert por nota num PDF com 6 espelhos. */
   var c = szCarga(cargaId);
+  var avisa = function (t) { if (!silencioso) alert(t); };
   if (!c) return false;
-  if (!d || (!d.chave && !d.nfe)) { alert("Não reconheci um espelho da Suzano" + (origem ? " (" + origem + ")" : "") + ". Confira se o documento é o Espelho para Emissão do Conhecimento de Frete."); return false; }
-  if (d.chave && !szChaveValida(d.chave)) { alert("A chave de acesso lida não passou no dígito verificador. Não vou gravar um número que pode estar errado — confira o documento."); return false; }
-  if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { alert("Essa NF-e já está nesta carga."); return false; }
+  if (!d || (!d.chave && !d.nfe)) { avisa("Não reconheci um espelho da Suzano" + (origem ? " (" + origem + ")" : "") + ". Confira se o documento é o Espelho para Emissão do Conhecimento de Frete."); return false; }
+  if (d.chave && !szChaveValida(d.chave)) { avisa("A chave de acesso lida não passou no dígito verificador. Não vou gravar um número que pode estar errado — confira o documento."); return false; }
+  if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { avisa("Essa NF-e já está nesta carga."); return false; }
   /* v230: o espelho NÃO manda na placa nem no motorista da carga. Ele diz o que
      a Suzano emitiu; o cadastro da RF diz a verdade operacional. */
   if (!c.placa && d.placa && szPlacasFrota().indexOf(d.placa) !== -1) c.placa = d.placa;
@@ -3618,16 +3621,77 @@ function szAplicarEspelho(cargaId, d, origem) {
     origemLeitura: origem || "", lidoEm: Date.now(),
     etiquetas: [], entrada: null,
   });
-  salvar(); render();
+  if (!silencioso) { salvar(); render(); }
   var faltando = [];
   if (!d.cliente) faltando.push("cliente");
   if (!d.qtdVolumes) faltando.push("quantidade de volumes");
-  if (faltando.length) alert("Espelho lançado, mas não reconheci: " + faltando.join(" e ") + ". Complete na tela antes de gerar etiquetas.");
+  if (faltando.length) avisa("Espelho lançado, mas não reconheci: " + faltando.join(" e ") + ". Complete na tela antes de gerar etiquetas.");
   if (d.placa && szPlacasFrota().indexOf(d.placa) === -1) {
-    alert("A placa " + d.placa + " do espelho não está cadastrada na Frota.\n\nEscolha a placa certa no seletor da carga — o sistema não adivinha placa fora do cadastro.");
+    avisa("A placa " + d.placa + " do espelho não está cadastrada na Frota.\n\nEscolha a placa certa no seletor da carga — o sistema não adivinha placa fora do cadastro.");
   }
   return true;
 }
+/* ---- Vários espelhos no mesmo arquivo -------------------------------------
+   v239: Renato: "todos os espelhos podem ser lidos de uma vez só? Anexo um PDF
+   com todos e ele já preenche a carga inteira."
+   A Suzano manda um PDF com uma nota por página. Cada página começa com o
+   cabeçalho "Espelho para Emissão" e termina com a chave de acesso da NF-e
+   daquela nota. Dividir pelo CABEÇALHO é o que funciona, e não pela chave: uma
+   nota que ocupa duas páginas tem um cabeçalho só e duas quebras de página — se
+   a divisão fosse por página, ela viraria duas notas pela metade.
+   Quando não acha cabeçalho nenhum mas existe mais de uma chave, cai na divisão
+   por chave, que é melhor que devolver tudo grudado.
+   Devolve sempre pelo menos um bloco. */
+function szDividirEspelhos(txt) {
+  txt = String(txt || "");
+  if (!txt.trim()) return [];
+  var pos = [], re = /Espelho\s+para\s+Emiss[ãa]o/gi, m;
+  while ((m = re.exec(txt)) !== null) pos.push(m.index);
+  if (pos.length >= 2) {
+    return pos.map(function (p, i) {
+      return txt.slice(p, i + 1 < pos.length ? pos[i + 1] : txt.length);
+    });
+  }
+  var chaves = txt.match(/\b\d{44}\b/g) || [];
+  var unicas = chaves.filter(function (c, i) { return chaves.indexOf(c) === i; });
+  if (unicas.length >= 2) {
+    var cortes = [], re2 = /\b\d{44}\b/g, m2, ini = 0, saida = [];
+    while ((m2 = re2.exec(txt)) !== null) cortes.push(m2.index + m2[0].length);
+    cortes.forEach(function (c) { saida.push(txt.slice(ini, c)); ini = c; });
+    if (ini < txt.length && txt.slice(ini).trim()) saida.push(txt.slice(ini));
+    return saida;
+  }
+  return [txt];
+}
+/* Aplica um arquivo inteiro: divide, lê cada bloco e devolve o resumo do que
+   entrou, do que já estava e do que foi recusado — sem parar no primeiro erro. */
+function szAplicarArquivo(cargaId, txt, origem) {
+  var blocos = szDividirEspelhos(txt);
+  var r = { total: blocos.length, entraram: 0, repetidas: 0, recusadas: 0, nfs: [], motivos: [] };
+  var c = szCarga(cargaId);
+  if (!c) return r;
+  blocos.forEach(function (b) {
+    var d = szLerEspelhoTexto(b);
+    if (!d || (!d.chave && !d.nfe)) { r.recusadas++; r.motivos.push("um trecho não parecia um espelho"); return; }
+    if (d.chave && !szChaveValida(d.chave)) { r.recusadas++; r.motivos.push("NF " + (d.nfe || "?") + ": chave não passou no dígito verificador"); return; }
+    if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { r.repetidas++; return; }
+    if (szAplicarEspelho(cargaId, d, origem, true)) { r.entraram++; r.nfs.push(d.nfe || "?"); }
+    else r.recusadas++;
+  });
+  salvar(); render();
+  return r;
+}
+function szResumoLote(r, origem) {
+  var partes = [];
+  if (r.entraram) partes.push("✓ " + r.entraram + " nota(s) lançada(s)");
+  if (r.repetidas) partes.push(r.repetidas + " já estava(m) na carga");
+  if (r.recusadas) partes.push("⚠ " + r.recusadas + " recusada(s)");
+  if (!partes.length) partes.push("nada foi lançado");
+  var txt = partes.join(" · ");
+  if (origem) txt += " (" + origem + ")";
+  return txt;
+}
+
 /* Anexar o espelho como arquivo: PDF ou foto da galeria/câmera.
    PDF é lido pela camada de texto (exato, sem IA e sem custo) — o espelho da
    Suzano é gerado pelo sistema deles, então tem texto de verdade. Só cai na IA
@@ -3643,10 +3707,12 @@ function szAnexarEspelho(cargaId, input) {
   if (ehPdf) {
     diz("lendo o PDF…");
     if (typeof rfCrlvExtrairTexto !== "function") { diz("leitor de PDF indisponível — use o texto colado.", "#C0392B"); return; }
-    rfCrlvExtrairTexto(f).then(function (txt) {
-      var d = szLerEspelhoTexto(txt);
-      if (szAplicarEspelho(cargaId, d, "PDF")) diz("✓ espelho lido do PDF (exato, sem IA)", "#2E7D32");
-      else diz("");
+    rfCrlvExtrairTexto(f, 60).then(function (txt) {
+      /* v239: 60 páginas — um PDF da Suzano traz uma nota por página e o limite
+         de 3 (herdado do CRLV) descartava as demais sem avisar. */
+      var r = szAplicarArquivo(cargaId, txt, "PDF");
+      diz(szResumoLote(r, "PDF, leitura exata sem IA"), r.recusadas ? "#C0392B" : "#2E7D32");
+      if (r.recusadas && r.motivos.length) alert("Não consegui lançar tudo:\n\n• " + r.motivos.join("\n• "));
     }).catch(function (e) {
       diz("Não consegui ler o PDF (" + (e && e.message ? e.message : "erro") + "). Se for PDF escaneado, tire uma foto dele — a foto vai pra leitura por IA.", "#C0392B");
     });
@@ -3905,6 +3971,106 @@ function szPlanoCalcular() {
   });
   return { linhas: linhas, tot: tot, diasUteis: diasUteis, capT: capT, cap3: cap3, frota: szFrotaPorTipo() };
 }
+/* ===== v239: LEAD TIME, PREVISÃO DE VOLTA E PLACA COMPROMETIDA ==============
+   Renato: "temos que respeitar o lead time, porém a quantidade de dias nós é que
+   vamos colocar; sendo assim você saberá o dia que o caminhão estará de volta, e
+   o motorista dará a foto final da viagem."
+
+   São DUAS grandezas diferentes e o sistema trata cada uma no seu papel:
+   - LEAD TIME é o prazo da Suzano, o SLA. É teto contratual, não se negocia
+     aqui: 1 dia em Centro Norte e Salvador RM, 5 dias nas demais regionais.
+   - DIAS DE VIAGEM é quanto a RF leva de fato (ida, entregas e volta). Quem põe
+     é o Renato, por experiência. Se os dias de viagem passarem do lead time, a
+     regional não cumpre o SLA e a tela avisa — é a única checagem que o sistema
+     faz sozinha entre as duas.
+
+   Com a data de saída mais os dias da regional, sai a PREVISÃO de volta, e a
+   placa fica comprometida até lá — não aparece na escala de amanhã.
+   Previsão é previsão. O que ENCERRA de verdade é a foto final do motorista:
+   ela grava a volta real e libera a placa na hora. Se a data prevista passar sem
+   a foto, o sistema não solta a placa sozinho: marca ATRASADO, porque caminhão
+   que não voltou não pode ser escalado por causa de uma conta de calendário. */
+function szRegiaoDaCarga(c) {
+  var p = szPlano();
+  return (p.regioes || []).find(function (r) { return String(r.id) === String((c || {}).regiaoId); }) || null;
+}
+function szDiasSomar(dataISO, dias) {
+  if (!dataISO) return "";
+  var d = new Date(dataISO + "T12:00:00");
+  if (isNaN(d)) return "";
+  d.setDate(d.getDate() + (Number(dias) || 0));
+  return d.toISOString().slice(0, 10);
+}
+function szDataBR(iso) {
+  if (!iso) return "";
+  var d = new Date(iso + "T12:00:00");
+  return isNaN(d) ? "" : d.toLocaleDateString("pt-BR");
+}
+function szDiasAte(iso) {
+  if (!iso) return null;
+  var d = new Date(iso + "T12:00:00"), h = new Date(hojeISO() + "T12:00:00");
+  if (isNaN(d)) return null;
+  return Math.round((d - h) / 86400000);
+}
+/* Previsão de volta da carga: saída + dias de viagem da regional escolhida. */
+function szPrevisaoVolta(c) {
+  if (!c || !c.saidaEm) return "";
+  var r = szRegiaoDaCarga(c);
+  var dias = r ? (Number(r.dias) || 0) : 0;
+  if (!dias) return "";
+  return szDiasSomar(c.saidaEm, dias);
+}
+/* A regional cumpre o SLA com os dias que a RF pratica? */
+function szEstouraLead(r) {
+  var lead = Number((r || {}).lead) || 0, dias = Number((r || {}).dias) || 0;
+  return lead > 0 && dias > lead;
+}
+/* Cargas que ainda seguram um caminhão: liberadas e sem volta registrada. */
+function szCompromissoDaPlaca(placa) {
+  if (!placa) return null;
+  var achou = null;
+  szCargas().forEach(function (c) {
+    if (c.status !== "em_rota" || c.voltaEm) return;
+    if (String(c.placa || "").toUpperCase() !== String(placa).toUpperCase()) return;
+    achou = c;
+  });
+  if (!achou) return null;
+  var prev = szPrevisaoVolta(achou);
+  var faltam = prev ? szDiasAte(prev) : null;
+  return { carga: achou, previsao: prev, faltam: faltam, atrasado: (faltam !== null && faltam < 0) };
+}
+/* Registrar a volta pela foto do KM final — o mesmo caminho do resto do sistema:
+   a foto passa pela trava de KM (v226), então não entra hodômetro impossível. */
+function szRegistrarVolta(cargaId, input) {
+  var c = szCarga(cargaId);
+  if (!c) return;
+  var f = input && input.files && input.files[0];
+  input.value = "";
+  var fechar = function (km) {
+    c.voltaEm = Date.now();
+    c.dataVolta = hojeISO();
+    if (km > 0) c.kmVolta = km;
+    c.voltaPor = (state.sessao && state.sessao.nome) || "";
+    salvar(); render();
+    var prev = szPrevisaoVolta(c);
+    var atraso = prev ? -(szDiasAte(prev)) : null;
+    alert("✓ Volta registrada" + (km > 0 ? " com KM " + km.toLocaleString("pt-BR") : "") + "."
+      + (atraso !== null && atraso > 0 ? "\n\nVoltou " + atraso + " dia(s) depois do previsto." : "")
+      + "\n\n" + (c.placa || "O caminhão") + " está livre para a próxima escala.");
+  };
+  if (!f) { if (confirm("Registrar a volta de " + (c.placa || "") + " SEM a foto do KM final?")) fechar(0); return; }
+  if (typeof rfLerFotoIA !== "function") { fechar(0); return; }
+  rfComprimirImagem(f).then(function (blob) {
+    rfLerFotoIA("km", blob, function (j) {
+      var esc2 = null;
+      try { esc2 = rfKmEscolher(c.placa, j, { data: hojeISO() }); } catch (e) { esc2 = null; }
+      if (esc2 && esc2.km) { fechar(esc2.km); return; }
+      alert((esc2 && esc2.aviso) ? esc2.aviso : "Não consegui ler o KM na foto.");
+      fechar(0);
+    });
+  }).catch(function () { fechar(0); });
+}
+
 /* ===== v238: CARGA ÚTIL POR PLACA → QUAIS PLACAS SAEM =======================
    Renato: "cada caminhão tem seu PBT próprio — tenho 3/4 de 2,5 t útil e outro
    de 4,1 t, e TOCO de 6,9 t a 11 t. O sistema tem que ter onde cadastrar o peso
@@ -12095,7 +12261,12 @@ function rfDocsDiagnostico() {
    exercício 2025, e o da BA, exercício 2026) e acertou todos os campos críticos.
    NADA é gravado sozinho: o resultado aparece na tela pra conferência e só entra
    no cadastro quando o Renato clica em aplicar. */
-function rfCrlvExtrairTexto(blob) {
+function rfCrlvExtrairTexto(blob, maxPaginas) {
+  /* v239: `maxPaginas` acrescentado. O padrão continua 3, que é o que o CRLV
+     precisa — nada muda para quem já chamava com um argumento só. O espelho da
+     Suzano vem com VÁRIAS notas no mesmo PDF, uma por página, e com o limite de
+     3 as notas da 4ª página em diante sumiam sem avisar. */
+  var limite = Math.max(1, Number(maxPaginas) || 3);
   return new Promise(function (resolve, reject) {
     if (!window.pdfjsLib) { reject(new Error("leitor de PDF não carregou (verifique a internet)")); return; }
     try {
@@ -12104,7 +12275,7 @@ function rfCrlvExtrairTexto(blob) {
       fr.onload = function () {
         pdfjsLib.getDocument({ data: new Uint8Array(fr.result) }).promise.then(function (doc) {
           var paginas = [];
-          for (var i = 1; i <= Math.min(doc.numPages, 3); i++) paginas.push(i);
+          for (var i = 1; i <= Math.min(doc.numPages, limite); i++) paginas.push(i);
           return Promise.all(paginas.map(function (n) {
             return doc.getPage(n).then(function (pg) {
               return pg.getTextContent().then(function (tc) {
