@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v237)</title>
+<title>RF Logística — Painel da Frota (v238)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3905,6 +3905,140 @@ function szPlanoCalcular() {
   });
   return { linhas: linhas, tot: tot, diasUteis: diasUteis, capT: capT, cap3: cap3, frota: szFrotaPorTipo() };
 }
+/* ===== v238: CARGA ÚTIL POR PLACA → QUAIS PLACAS SAEM =======================
+   Renato: "cada caminhão tem seu PBT próprio — tenho 3/4 de 2,5 t útil e outro
+   de 4,1 t, e TOCO de 6,9 t a 11 t. O sistema tem que ter onde cadastrar o peso
+   que cada caminhão leva, e aí dizer quais placas farão as viagens diárias."
+
+   Isso muda a natureza da conta. Planejar por MÉDIA do tipo ("todo TOCO leva
+   8 t") erra nos dois sentidos: manda um TOCO de 6,9 t com 8 t, o que é excesso
+   de peso e multa, e deixa o de 11 t saindo com folga. Com a carga útil de cada
+   placa, a conta deixa de ser quantos caminhões e passa a ser QUAIS caminhões.
+
+   Regra da escolha (gulosa, e de propósito nessa ordem):
+   1. Se existe UM caminhão que sozinho dá conta do que falta, usa o MENOR que
+      dá conta. Não faz sentido mandar o de 11 t levar 3 t se tem um de 4,1 t
+      parado — o de 11 t fica livre pra outra carga.
+   2. Se nenhum sozinho dá conta, usa o MAIOR disponível e recalcula o resto.
+      Assim gasta o mínimo de veículos.
+   Não é o ótimo matemático de todos os casos possíveis, mas é a regra que um
+   bom encarregado usa, é explicável em uma frase e roda instantâneo. */
+function szCargaUtil(v) {
+  return Math.max(0, Number((v || {}).cargaUtilT) || 0);
+}
+function szSetCargaUtil(veicId, valor) {
+  var v = (state.veiculos || []).find(function (x) { return String(x.id) === String(veicId); });
+  if (!v) return;
+  v.cargaUtilT = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
+  salvar(); render();
+}
+/* Frota que pode ser escalada: tem placa, não está fora de operação e TEM carga
+   útil cadastrada. Sem o peso cadastrado o caminhão fica de fora e a tela diz —
+   melhor faltar da lista do que entrar com um número inventado. */
+function szFrotaEscalavel() {
+  return (state.veiculos || []).filter(function (v) {
+    return v.placa && String(v.statusOp || "") !== "Fora de operação" && szCargaUtil(v) > 0;
+  }).sort(function (a, b) { return szCargaUtil(b) - szCargaUtil(a); });
+}
+function szSemCargaUtil() {
+  return (state.veiculos || []).filter(function (v) {
+    return v.placa && String(v.statusOp || "") !== "Fora de operação" && szCargaUtil(v) <= 0;
+  });
+}
+/* Escolhe as placas para uma tonelada. Devolve a escala e o que sobrou. */
+function szAlocarPlacas(tonelada, soDisponiveis) {
+  var ton = Math.max(0, Number(tonelada) || 0);
+  var frota = szFrotaEscalavel().filter(function (v) {
+    return soDisponiveis ? String(v.statusOp || "") !== "Em viagem" : true;
+  });
+  var escala = [], restante = ton, usadas = {};
+  var guard = 0;
+  while (restante > 0.0001 && guard++ < 500) {
+    var livres = frota.filter(function (v) { return !usadas[v.id]; });
+    if (!livres.length) break;
+    // 1. o MENOR que sozinho fecha o que falta
+    var cobrem = livres.filter(function (v) { return szCargaUtil(v) >= restante; });
+    var escolhido;
+    if (cobrem.length) escolhido = cobrem[cobrem.length - 1];   // livres vem ordenado desc
+    else escolhido = livres[0];                                  // 2. o maior disponível
+    var leva = Math.min(szCargaUtil(escolhido), restante);
+    usadas[escolhido.id] = true;
+    escala.push({ v: escolhido, leva: leva, capacidade: szCargaUtil(escolhido),
+      ocupacao: szCargaUtil(escolhido) > 0 ? (leva / szCargaUtil(escolhido) * 100) : 0 });
+    restante -= leva;
+  }
+  var capTotal = escala.reduce(function (s, x) { return s + x.capacidade; }, 0);
+  return {
+    ton: ton, escala: escala, naoAtendido: Math.max(0, restante),
+    capTotal: capTotal, ocupacaoMedia: capTotal > 0 ? ((ton - Math.max(0, restante)) / capTotal * 100) : 0,
+    frotaConsiderada: frota.length,
+  };
+}
+function szSetTonDia(valor) {
+  var p = szPlano();
+  p.tonDia = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
+  salvar(); render();
+}
+function szTelaEscala() {
+  var p = szPlano();
+  var ton = Number(p.tonDia) || 0;
+  var soDisp = !!p.soDisponiveis;
+  var a = szAlocarPlacas(ton, soDisp);
+  var semPeso = szSemCargaUtil();
+  var n = function (x, c) { return Number(x || 0).toLocaleString("pt-BR", { minimumFractionDigits: c || 0, maximumFractionDigits: c || 0 }); };
+  var h = '<div style="margin-top:14px;padding-top:12px;border-top:1px solid #2A2A2A;">'
+    + '<div style="font-size:14px;font-weight:900;color:' + GOLD + ';">🚚 Escala do dia — quais placas saem</div>'
+    + '<div style="font-size:12px;color:#999;margin:4px 0 8px;">Cada caminhão leva o que o PBT dele permite. Informe a tonelada que a Suzano passou e o sistema escolhe as placas: usa o menor caminhão que resolve, e só chama o maior quando precisa.</div>'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:10px;">'
+    + 'tonelada do dia <input type="number" step="0.1" min="0" value="' + ton + '" onchange="szSetTonDia(this.value)" style="width:90px;text-align:right;font-weight:800;font-size:15px;"> t'
+    + ' <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:#bbb;">'
+    + '<input type="checkbox" ' + (soDisp ? "checked" : "") + ' onchange="szPlano().soDisponiveis=this.checked;salvar();render();"> só quem não está em viagem</label>'
+    + '<span style="color:#666;">' + a.frotaConsiderada + ' caminhão(ões) com peso cadastrado</span></div>';
+  if (!ton) {
+    h += '<div style="color:#888;font-size:12px;">Informe a tonelada do dia para o sistema montar a escala.</div>';
+  } else if (!a.escala.length) {
+    h += '<div style="color:#C0392B;font-size:13px;font-weight:800;">Nenhum caminhão com carga útil cadastrada. Preencha o peso na lista abaixo.</div>';
+  } else {
+    h += '<div style="overflow-x:auto;"><table style="min-width:560px;width:100%;"><thead><tr>'
+      + '<th style="text-align:left;">Placa</th><th style="text-align:left;">Tipo</th><th>Carga útil</th><th>Leva</th><th>Ocupação</th><th style="text-align:left;">Motorista</th>'
+      + '</tr></thead><tbody>';
+    a.escala.forEach(function (x) {
+      var cheio = x.ocupacao >= 99.5;
+      h += '<tr>'
+        + '<td style="font-weight:900;">' + esc(x.v.placa) + '</td>'
+        + '<td style="color:#bbb;">' + esc(x.v.tipo || "") + (String(x.v.statusOp || "") === "Em viagem" ? ' <span style="font-size:10px;color:#8E7A1F;">(em viagem)</span>' : "") + '</td>'
+        + '<td style="text-align:right;">' + n(x.capacidade, 1) + ' t</td>'
+        + '<td style="text-align:right;font-weight:800;">' + n(x.leva, 1) + ' t</td>'
+        + '<td style="text-align:right;color:' + (cheio ? "#2E7D32" : "#bbb") + ';">' + n(x.ocupacao) + '%</td>'
+        + '<td style="color:#bbb;">' + esc(x.v.motorista || "") + '</td>'
+        + '</tr>';
+    });
+    h += '</tbody></table></div>'
+      + '<div style="margin-top:8px;padding:9px 11px;border-radius:9px;background:' + (a.naoAtendido > 0 ? "rgba(192,57,43,.12)" : "rgba(46,125,50,.12)")
+      + ';border:1px solid ' + (a.naoAtendido > 0 ? "#C0392B" : "#2E7D32") + ';font-size:12px;">'
+      + '<b style="color:' + (a.naoAtendido > 0 ? "#C0392B" : "#2E7D32") + ';">'
+      + a.escala.length + ' caminhão(ões) para ' + n(a.ton, 1) + ' t'
+      + (a.naoAtendido > 0 ? ' — sobram ' + n(a.naoAtendido, 1) + ' t sem caminhão' : ' — a frota cobre')
+      + '</b><div style="color:#ddd;margin-top:3px;">Capacidade escalada ' + n(a.capTotal, 1) + ' t · ocupação média ' + n(a.ocupacaoMedia) + '%.'
+      + (a.naoAtendido > 0 ? ' Precisa de mais caminhão, de agregado, ou de dividir em mais de um dia.' : '')
+      + '</div></div>';
+  }
+  // cadastro do peso por placa
+  h += '<div style="margin-top:12px;"><div style="font-size:12px;font-weight:800;color:#bbb;margin-bottom:5px;">Carga útil de cada caminhão (t)'
+    + (semPeso.length ? ' <span style="color:#C0392B;">— ' + semPeso.length + ' sem peso cadastrado, ficam fora da escala</span>' : "") + '</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+  (state.veiculos || []).filter(function (v) { return v.placa && String(v.statusOp || "") !== "Fora de operação"; })
+    .sort(function (a2, b2) { return String(a2.placa).localeCompare(String(b2.placa), "pt-BR"); })
+    .forEach(function (v) {
+      var c = szCargaUtil(v);
+      h += '<div style="border:1px solid ' + (c > 0 ? "#2A2A2A" : "#C0392B") + ';border-radius:8px;padding:5px 8px;background:#0E0E0E;">'
+        + '<div style="font-size:11px;font-weight:800;">' + esc(v.placa) + ' <span style="color:#777;font-weight:400;">' + esc(v.tipo || "") + '</span></div>'
+        + '<input type="number" step="0.1" min="0" value="' + (c || "") + '" placeholder="t" onchange="szSetCargaUtil(\'' + v.id + '\',this.value)" style="width:72px;text-align:right;font-weight:700;">'
+        + '</div>';
+    });
+  h += '</div></div></div>';
+  return h;
+}
 function szTelaPlano() {
   var p = szPlano(), calc = szPlanoCalcular(), t = calc.tot, fr = calc.frota;
   var faltaT = t.camT - fr.toco, falta3 = t.cam3 - fr.tres4;
@@ -3962,7 +4096,8 @@ function szTelaPlano() {
     + (faltaT > 0 || falta3 > 0
       ? 'Faltam ' + (faltaT > 0 ? faltaT + " TOCO" : "") + (faltaT > 0 && falta3 > 0 ? " e " : "") + (falta3 > 0 ? falta3 + " 3/4" : "") + ' para atender essa tonelada com os dias de viagem informados.'
       : 'A frota apta cobre a tonelada com os dias de viagem informados.')
-    + ' A conta não considera pico nem quebra: para folga, some 1 ou 2 por tipo.</div></div>';
+    + ' A conta não considera pico nem quebra: para folga, some 1 ou 2 por tipo.</div></div>'
+    + szTelaEscala();
   return h + '</div>';
 }
 function szTelaEquipe() {
@@ -8480,7 +8615,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
 - O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
 - Sem placa e sem motorista o caminhão não é liberado.
-- A aba tem também o bloco "📊 Planejamento: tonelada → veículos". A Suzano passa a TONELADA, que não muda; o que a RF decide é quantos caminhões põe pra rodar. A conta é fechada, não é estimativa: viagens necessárias = tonelada ÷ capacidade útil do veículo; viagens que um caminhão faz no mês = dias úteis ÷ dias por viagem; caminhões necessários = viagens ÷ viagens por caminhão, sempre arredondando pra cima. Capacidade útil, dias por viagem e o percentual que vai de TOCO são informados pelo Renato, e o resultado é comparado com a frota REAL cadastrada, contando por tipo e ignorando quem está "Fora de operação". O que mais mexe no número de caminhões não é a tonelada, são os DIAS POR VIAGEM: dobrar os dias praticamente dobra a frota necessária.
+- A aba tem também o bloco "📊 Planejamento: tonelada → veículos", com duas partes. A de cima é o mês por regional (viagens = ton ÷ capacidade; viagens por caminhão = dias úteis ÷ dias por viagem; caminhões = viagens ÷ viagens por caminhão, arredondando pra cima). O que mais mexe no número de caminhões NÃO é a tonelada, são os DIAS POR VIAGEM: dobrar os dias praticamente dobra a frota necessária.
+- A de baixo é a ESCALA DO DIA, que responde quais PLACAS saem. Cada caminhão tem carga útil própria cadastrada em toneladas (os 3/4 da RF vão de 2,5 a 4,1 t e os TOCO de 6,9 a 11 t — planejar pela média do tipo erraria nos dois sentidos, mandando o de 6,9 t com excesso de peso e o de 11 t com folga). Informada a tonelada do dia, o sistema escolhe as placas por uma regra simples: usa o MENOR caminhão que sozinho resolve o que falta, e só chama o maior quando nenhum sozinho dá conta. Caminhão sem carga útil cadastrada fica FORA da escala e a tela cobra o cadastro — melhor faltar da lista do que entrar com peso inventado. Se a frota não cobrir a tonelada, o sistema diz quantas toneladas sobraram sem caminhão em vez de esconder.
 - VALOR do frete e valor da mercadoria são informação RESTRITA nesta operação: só aparecem na tela de quem tem a permissão "💰 Ver valores (frete e mercadoria)". Motorista e cliente nunca veem. Se alguém perguntar quanto a RF recebe por uma carga da Suzano e não tiver essa permissão, não informe valores — diga que é informação restrita e que o Renato libera o acesso na aba Usuários.
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
