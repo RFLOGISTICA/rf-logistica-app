@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v232)</title>
+<title>RF Logística — Painel da Frota (v233)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2974,9 +2974,66 @@ function szCnpjFmt(c) {
    Onde o texto é previsível, regra ganha de modelo: não custa nada, não erra e
    funciona sem internet. Devolve os campos que reconheceu; o que não achar fica
    em branco pra pessoa completar — nunca inventa. */
+/* Corta o valor quando o RÓTULO SEGUINTE vem colado na mesma linha, que é o que
+   acontece o tempo todo num documento de duas colunas convertido em texto:
+   "Motorista : JEFSON DE ALMEIDA MARTINS Cidade : SIMOES FILHO" precisa devolver
+   só o nome. Corta no primeiro rótulo conhecido do espelho — lista fechada, pra
+   não cortar no meio de um nome de empresa que tenha uma dessas palavras. */
+var SZ_ROTULOS = ["Cidade", "UF", "CEP", "Pais", "País", "Fone", "IE", "CPF", "CNPJ/CPF", "CNPJ",
+  "Placa", "Composi", "Qtde", "Marca", "Doc\\.", "Obs\\.", "Endere", "Munic", "Remetente",
+  "Destinat", "Expedidor", "Recebedor", "T\\. Servi", "Emiss", "Hor", "Resp", "Und\\.", "Loc Org",
+  "Transportadora", "Itiner", "Motorista", "Frete", "Adicional", "Vlr", "Subs", "Redu", "Aliquota", "Valor"];
+function szCortaNoProximoRotulo(v) {
+  v = String(v || "").trim();
+  if (!v) return "";
+  var corte = v.length;
+  SZ_ROTULOS.forEach(function (r) {
+    var m = v.match(new RegExp("\\s" + r + "[^:]{0,12}:"));
+    if (m && m.index < corte) corte = m.index;
+  });
+  return v.slice(0, corte).replace(/\s+/g, " ").trim();
+}
 function szLerEspelhoTexto(txt) {
   txt = String(txt || "");
   var pega = function (re) { var m = txt.match(re); return m ? String(m[1]).trim() : ""; };
+  /* v233: o espelho é impresso em DUAS COLUNAS — remetente à esquerda,
+     destinatário à direita — e quando o PDF é convertido em texto as duas caem
+     na MESMA linha:
+       "Endereço : Estrada SEST/SENAT 908   Endereço : AV CONSELHEIRO ZACARIAS 66"
+       "Município : SIMÕES FILHO            Município : SALVADOR"
+     Pegar "o que vem depois do rótulo" trazia a coluna da esquerda colada com a
+     da direita, e era isso que aparecia na tela como
+     "SIMÕES FILHO Município : SALVADOR". Regra: quando o rótulo aparece mais de
+     uma vez na linha, vale a ÚLTIMA ocorrência — o destinatário é sempre a
+     coluna da direita.
+     (Meu teste anterior passava porque a amostra que eu montei tinha um campo
+     por linha. O layout de verdade só apareceu com o PDF na mão.) */
+  var direita = function (rotulo) {
+    var linhas = txt.split("\n");
+    /* Começa a procurar na linha do DESTINATÁRIO. Cobre os dois layouts:
+       - duas colunas na mesma linha → o destinatário está na mesma linha, e a
+         última ocorrência do rótulo naquela linha é a coluna dele;
+       - um campo por linha → o endereço e o município do destinatário são os
+         que vêm DEPOIS da linha "Destinatário :".
+       Sem esse ponto de partida, no layout de uma coluna o primeiro "Município"
+       do arquivo é o do REMETENTE (Simões Filho), que é justamente o erro que
+       apareceu na tela. */
+    var inicio = 0;
+    for (var k = 0; k < linhas.length; k++) {
+      if (/Destinat[áa]rio\s*:/i.test(linhas[k])) { inicio = k; break; }
+    }
+    var varre = function (de) {
+      for (var i = de; i < linhas.length; i++) {
+        var re = new RegExp(rotulo + "\\s*:", "gi"), pos = -1, m;
+        while ((m = re.exec(linhas[i])) !== null) pos = m.index + m[0].length;
+        if (pos === -1) continue;
+        var v = szCortaNoProximoRotulo(linhas[i].slice(pos).trim());
+        if (v) return v;
+      }
+      return "";
+    };
+    return varre(inicio) || varre(0);
+  };
   var num = function (s) {
     s = String(s || "").trim();
     if (!s) return 0;
@@ -2991,10 +3048,10 @@ function szLerEspelhoTexto(txt) {
     cFrete: pega(/N[rº°]*\s*C\.?\s*Frete\s*:?\s*(\d+)/i),
     dataEmissao: pega(/Data Emiss[ãa]o\s*:?\s*([\d.\/-]+)/i),
     placa: pega(/Placa\s*:?\s*([A-Z]{3}\s*\d[A-Z\d]\d{2})/i).replace(/\s/g, ""),
-    motorista: pega(/Motorista\s*:?\s*([A-ZÀ-Ÿ][A-ZÀ-Ÿ .]{4,60})/),
+    motorista: szCortaNoProximoRotulo(pega(/Motorista\s*:?\s*([^\n]{4,80})/)),
     cpfMotorista: pega(/CPF\s*:?\s*([\d.\-]{11,14})/),
-    itinerario: pega(/Itiner[áa]rio\s*:?\s*([^\n]{3,60})/i),
-    cliente: pega(/Destinat[áa]rio\s*:?\s*([^\n]{3,60})/i),
+    itinerario: szCortaNoProximoRotulo(pega(/Itiner[áa]rio\s*:?\s*([^\n]{3,80})/i)),
+    cliente: szCortaNoProximoRotulo(pega(/Destinat[áa]rio\s*:?\s*([^\n]{3,80})/i)),
     cnpjCliente: (function () {
       /* O espelho traz vários CNPJ na mesma região do texto (remetente,
          expedidor, tomador e destinatário), e num texto colado eles perdem a
@@ -3019,8 +3076,8 @@ function szLerEspelhoTexto(txt) {
       var m2 = txt.match(/Destinat[áa]rio[\s\S]{0,400}?CNPJ\/CPF\s*:?\s*[\d./-]{14,18}[\s\S]{0,120}?CNPJ\/CPF\s*:?\s*([\d./-]{14,18})/i);
       return m2 ? m2[1].replace(/\D/g, "") : "";
     })(),
-    endereco: (function () { var m = txt.match(/Destinat[áa]rio[\s\S]{0,200}?Endere[çc]o\s*:?\s*([^\n]{3,60})/i); return m ? m[1].trim() : ""; })(),
-    cidade: (function () { var m = txt.match(/Destinat[áa]rio[\s\S]{0,300}?Munic[íi]pio\s*:?\s*([^\n]{2,40})/i); return m ? m[1].trim() : ""; })(),
+    endereco: direita("Endere[çc]o"),
+    cidade: direita("Munic[íi]pio"),
     chave: chave,
     nfe: linhaNF ? linhaNF[1] : (szChavePartes(chave) ? String(parseInt(szChavePartes(chave).numero, 10)) : ""),
     produto: linhaNF ? linhaNF[3].trim() : "",
