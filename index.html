@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v244)</title>
+<title>RF Logística — Painel da Frota (v245)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1314,6 +1314,7 @@ function viagemDiasPelasDatas(v) {
 function setViagemDataFim(viagemId, valor) {
   const v = (state.viagens || []).find((x) => String(x.id) === String(viagemId));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   v.dataFim = valor || "";
   const d = viagemDiasPelasDatas(v);
   if (d !== null && d >= 1) v.dias = d;    // dias passa a vir das datas
@@ -1507,6 +1508,7 @@ function aplicarFreteKm(v, origem) {
 function setViagemKm(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   const medido = viagemKmMedido(v);
   if (medido !== null) {
     // v217: com as duas pontas medidas, o digitado não manda mais. Fica gravado
@@ -1544,6 +1546,7 @@ function kmManualOk(placa, km, opts) {
 function setViagemKmSaida(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   const km = Number(valor) || 0;
   if (km > 0 && !kmManualOk(v.placa, km, { data: v.data, ignorarRef: "viagem-saida:" + v.id })) { render(); return; }
   v.kmSaida = km;
@@ -1553,6 +1556,7 @@ function setViagemKmSaida(id, valor) {
 function setViagemKmChegada(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   const km = Number(valor) || 0;
   if (km > 0 && !kmManualOk(v.placa, km, { data: v.dataFim || v.data, ignorarRef: "viagem-chegada:" + v.id })) { render(); return; }
   v.kmChegada = km;
@@ -1597,6 +1601,7 @@ function recalcularKmTodasViagens() {
 function setFreteKmManual(id, checked) {          // v72: liga/desliga valor/km manual desta viagem
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   v.freteKmManual = !!checked;
   if (v.freteKmManual && !v.freteKmManualValor) {
     const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
@@ -1608,6 +1613,7 @@ function setFreteKmManual(id, checked) {          // v72: liga/desliga valor/km 
 function setFreteKmManualValor(id, valor) {       // v72: define o valor/km manual e recalcula o valor da viagem
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   v.freteKmManualValor = Number(String(valor).replace(",", ".")) || 0;
   aplicarFreteKm(v, "km");
   salvar(); render();
@@ -1622,6 +1628,7 @@ function setViagemM3(id, valor) {
 function setViagemValor(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v.trancada && !ehAdmin()) return;
   v.valorViagem = Number(valor) || 0;
   aplicarFreteKm(v, "valor");                         // cliente por km/m³ → preenche km/m³
@@ -1629,6 +1636,7 @@ function setViagemValor(id, valor) {
 }
 function removerViagem(id) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v && v.trancada) { alert("Essa viagem está travada 🔒 — destrave primeiro (só Admin) pra poder excluir."); return; }
   state.viagens = state.viagens.filter((v) => String(v.id) !== String(id));
   salvar(); render();
@@ -1654,6 +1662,7 @@ function toggleTravarViagem(id) {
 function setViagemPago(id, checked) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v.trancada && !ehAdmin()) return;
   v.pago = !!checked;
   if (v.pago && !v.dataPagamento) v.dataPagamento = hojeISO(); // marcou pago sem data → assume hoje
@@ -1663,6 +1672,7 @@ function setViagemPago(id, checked) {
 function setViagemDataPagamento(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v.trancada && !ehAdmin()) return;
   v.dataPagamento = valor;
   if (valor) v.pago = true; // preencheu uma data → considera pago automaticamente
@@ -1677,6 +1687,7 @@ function setViagemDataPagamento(id, valor) {
 function setViagemPagoMotorista(id, checked) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v.trancada && !ehAdmin()) return;
   v.pagoMotorista = !!checked;
   if (v.pagoMotorista && !v.dataPagamentoMotorista) v.dataPagamentoMotorista = hojeISO();
@@ -1686,6 +1697,7 @@ function setViagemPagoMotorista(id, checked) {
 function setViagemDataPagamentoMotorista(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
+  if (!podeAlterarViagem(v)) return;                 // v245: mês fechado
   if (v.trancada && !ehAdmin()) return;
   v.dataPagamentoMotorista = valor;
   if (valor) v.pagoMotorista = true;
@@ -2022,6 +2034,7 @@ function adicionarManutencao() {
 function atualizarManutencao(id, campo, valor) {
   const m = state.manutencoes.find((x) => String(x.id) === String(id));
   if (!m) return;
+  if (!podeAlterarData(m.data, "Esta manutenção")) return;                            // v245
   // auditável: registra alteração de intervalo ou garantia
   if (campo === "intervalKm" || campo === "garantiaMeses") {
     const de = m[campo];
@@ -2046,6 +2059,8 @@ function atualizarManutencao(id, campo, valor) {
 }
 
 function removerManutencao(id) {
+  var _m = state.manutencoes.find((x) => String(x.id) === String(id));                // v245
+  if (_m && !podeAlterarData(_m.data, "Esta manutenção")) return;
   if (!confirm("Excluir este lançamento de manutenção?")) return;
   state.manutencoes = state.manutencoes.filter((m) => String(m.id) !== String(id));
   salvar(); render();
@@ -2418,6 +2433,9 @@ function saidaAlmox(id) {
 function removerMovAlmox(id, tipo, movId) {
   const it = almoxItemPorId(id);
   if (!it) return;
+  var _l = tipo === "entrada" ? (it.entradas || []) : (it.saidas || []);              // v245
+  var _mv = _l.find((x) => x.id === movId);
+  if (_mv && !podeAlterarData(_mv.data, "Esta movimentação")) return;
   if (!confirm("Remover esta movimentação?")) return;
   if (tipo === "entrada") it.entradas = (it.entradas || []).filter((x) => x.id !== movId);
   else it.saidas = (it.saidas || []).filter((x) => x.id !== movId);
@@ -2430,6 +2448,7 @@ function editarDataMovAlmox(id, tipo, movId) {
   const lista = tipo === "entrada" ? (it.entradas || []) : (it.saidas || []);
   const mv = lista.find((x) => x.id === movId);
   if (!mv) return;
+  if (!podeAlterarData(mv.data, "Esta movimentação")) return;                         // v245
   const dStr = prompt("Nova DATA da compra?\nFormato DD/MM/AAAA (ex: 15/02/2026).", mv.data || "");
   if (dStr == null) return;
   const data = normalizarData(dStr, mv.data || hojeISO());
@@ -5129,6 +5148,53 @@ function garantirAcesso() {
   if (!Array.isArray(state._perfis)) state._perfis = [];
 }
 function ehAdmin() { return !!(state.sessao && state.sessao.papel === "admin"); }
+/* ===== v245: TRAVA DO MÊS FECHADO ==========================================
+   Renato encontrou várias alterações mal feitas por funcionário em meses que já
+   tinham passado. Regra: o mês anterior fica FECHADO. Todo mundo continua vendo
+   tudo — consulta, relatório, exportação seguem livres. O que trava é ALTERAR:
+   só login admin edita, cria ou exclui registro com data de mês fechado.
+
+   "Mês fechado" = qualquer data anterior ao primeiro dia do mês corrente. No dia
+   1º, portanto, o mês que acabou de terminar já entra fechado. Isso é de
+   propósito: se o fechamento só valesse dias depois, a janela de correção
+   silenciosa continuaria aberta justamente no período de maior movimento.
+
+   A trava é feita nas FUNÇÕES que gravam, não escondendo botão — quem souber
+   chamar por fora esbarra nela do mesmo jeito. Mesma lógica da trava de viagem
+   da v136. */
+function mesFechado(data) {
+  if (!data) return false;                       // sem data não dá pra julgar: não trava
+  var s = String(data).slice(0, 10);
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) {                                       // aceita dd/mm/aaaa também
+    var br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!br) return false;
+    m = [null, br[3], br[2], br[1]];
+  }
+  var ano = Number(m[1]), mes = Number(m[2]);
+  var hoje = new Date();
+  var refAno = hoje.getFullYear(), refMes = hoje.getMonth() + 1;
+  return (ano < refAno) || (ano === refAno && mes < refMes);
+}
+/* Devolve true quando a alteração PODE seguir. Quando não pode, avisa e devolve
+   false — quem chama só precisa de `if (!podeAlterarData(x)) return;`. */
+function podeAlterarData(data, oque) {
+  if (!mesFechado(data)) return true;
+  if (ehAdmin()) return true;
+  var s = String(data).slice(0, 10);
+  var quando = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.split("-").reverse().join("/") : s;
+  alert("🔒 Mês fechado.\n\n" + (oque || "Este registro") + " é de " + quando
+    + ", que está em um mês já encerrado. Depois que o mês vira, só o Admin pode alterar.\n\n"
+    + "Você continua podendo consultar, filtrar e exportar normalmente. "
+    + "Se houver um erro real para corrigir, fale com o Renato.");
+  return false;
+}
+/* Atalho para os pontos que mexem numa viagem inteira. */
+function podeAlterarViagem(v, oque) {
+  if (!v) return false;
+  return podeAlterarData(v.dataSaida || v.data || v.dataFim, oque || "Esta viagem");
+}
+
 // v80: papel "motorista" — acesso travado só na aba de Abastecimento, não passa pelos módulos normais.
 function ehMotorista() { return !!(state.sessao && state.sessao.papel === "motorista"); }
 // v120: papel "cliente" — login externo (ex: JT/Mateus), vê só a aba "painel_cliente" com
@@ -8247,6 +8313,7 @@ function adicionarAbastecimentoInterno() {
 function atualizarAbastecimento(id, campo, valor) {
   const a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));
   if (!a) return;
+  if (!podeAlterarData(a.data, "Este abastecimento")) { rfAbastCarregar(); return; }   // v245
   if (a.status !== "pendente") {
     alert("Esse abastecimento já foi revisado pela equipe e não pode mais ser editado.");
     rfAbastCarregar();
@@ -8267,6 +8334,8 @@ function atualizarAbastecimento(id, campo, valor) {
   rfAbastSalvarCampoMotorista(a);
 }
 function removerAbastecimento(id) {
+  var _a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));   // v245
+  if (_a && !podeAlterarData(_a.data, "Este abastecimento")) return;
   if (!confirm("Remover este abastecimento?")) return;
   state.abastecimentos = (state.abastecimentos || []).filter((x) => String(x.id) !== String(id));
   render();
@@ -8800,6 +8869,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O motorista da carga é sempre O QUE VAI ENTREGAR, porque é no nome dele que a carga é averbada no seguro. Por isso pode ser trocado a qualquer momento, inclusive com a carga já liberada, e cada troca fica registrada com data e hora. Trocar de motorista NÃO é problema nesta operação — quem pergunta sobre isso pode ser tranquilizado.
 - O espelho da Suzano pode vir com outro nome de motorista: isso é só informação, não erro, porque a averbação segue quem sai. Já a PLACA divergente é alerta de verdade — o veículo segurado é o que sai, e ele vai no documento.
 - Sem placa e sem motorista o caminhão não é liberado.
+- TRAVA DO MÊS FECHADO (v245): registro com data de mês já encerrado só pode ser alterado, criado ou excluído por login ADMIN. Todos os outros papéis (user, motorista, cliente) continuam vendo, filtrando e exportando tudo normalmente — o que trava é só a alteração. Vale para viagens, abastecimentos, manutenções e movimentações do almoxarifado. Se alguém reclamar que não consegue editar um lançamento antigo, explique essa regra e oriente a falar com o Renato, que é quem pode corrigir.
 - A aba tem também o bloco "📊 Planejamento: tonelada → veículos", com duas partes. A de cima é o mês por regional (viagens = ton ÷ capacidade; viagens por caminhão = dias úteis ÷ dias por viagem; caminhões = viagens ÷ viagens por caminhão, arredondando pra cima). O que mais mexe no número de caminhões NÃO é a tonelada, são os DIAS POR VIAGEM: dobrar os dias praticamente dobra a frota necessária.
 - A de baixo é a ESCALA DO DIA, que responde quais PLACAS saem. Cada caminhão tem carga útil própria cadastrada em toneladas (os 3/4 da RF vão de 2,5 a 4,1 t e os TOCO de 6,9 a 11 t — planejar pela média do tipo erraria nos dois sentidos, mandando o de 6,9 t com excesso de peso e o de 11 t com folga). Informada a tonelada do dia, o sistema escolhe as placas por uma regra simples: usa o MENOR caminhão que sozinho resolve o que falta, e só chama o maior quando nenhum sozinho dá conta. Caminhão sem carga útil cadastrada fica FORA da escala e a tela cobra o cadastro — melhor faltar da lista do que entrar com peso inventado. Se a frota não cobrir a tonelada, o sistema diz quantas toneladas sobraram sem caminhão em vez de esconder.
 - VALOR do frete e valor da mercadoria são informação RESTRITA nesta operação: só aparecem na tela de quem tem a permissão "💰 Ver valores (frete e mercadoria)". Motorista e cliente nunca veem. Se alguém perguntar quanto a RF recebe por uma carga da Suzano e não tiver essa permissão, não informe valores — diga que é informação restrita e que o Renato libera o acesso na aba Usuários.
