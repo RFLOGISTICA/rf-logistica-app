@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v246)</title>
+<title>RF Logística — Painel da Frota (v247)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5401,12 +5401,21 @@ function revalidarSessaoAoAbrir() {
         if (typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
         if (typeof rfOfflineAtualizarContador === "function") { rfOfflineAtualizarContador(); rfOfflineTentarSincronizar(); }
       }
+      // v247: CORREÇÃO — a chamada de rfIniciarSyncEquipe() estava presa dentro
+      // de "if (papelMudou)". Ao reabrir o app com sessão salva e papel igual
+      // (o caso normal), este caminho NUNCA ligava a sincronização da caixa
+      // geral. Só não quebrava sempre porque o script "RESTAURAR SESSAO (v55)"
+      // do fim do arquivo também chama carregarPerfilEEntrar(). Quando aquele
+      // caminho falha (getSession sem sessão por token expirado/refresh falho),
+      // ninguém liga o sync: o selo fica preso em "aguardando login" E, muito
+      // pior, salvar() passa a retornar cedo — nada do que a equipe edita sobe
+      // pra nuvem, em silêncio.
+      if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof window.rfIniciarSyncEquipe === "function") {
+        window.rfIniciarSyncEquipe();
+      }
       if (papelMudou) {
         const perm = abasPermitidas();
         state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
-        if (state.sessao.papel !== "motorista" && state.sessao.papel !== "cliente" && typeof window.rfIniciarSyncEquipe === "function") {
-          window.rfIniciarSyncEquipe();
-        }
         if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
       }
       render();
@@ -8721,6 +8730,14 @@ function rfArrastarParaRolar() {
 try { rfArrastarParaRolar(); } catch (e) { console.error("[arrastar]", e); }
 
 function gerarContextoAssistente() {
+  // v247: estado da sincronizacao da caixa geral. Se estiver desligada, tudo o
+  // que a pessoa edita fica SO no aparelho e os numeros na tela podem estar
+  // velhos -- o assistente precisa saber disso antes de responder qualquer
+  // coisa sobre dinheiro, frota ou viagens.
+  const _syncLigado = !!window.__rfDadosCarregados;
+  const blocoSync = _syncLigado
+    ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
+    : "SINCRONIZACAO: DESLIGADA nesta sessao (o selo no canto mostra \"aguardando login\"). Os dados abaixo vieram do aparelho, podem estar desatualizados, e nada que for editado agora esta subindo pra nuvem. Avise isso antes de responder numeros.";
   const t = calcularTotais();
   const mesA = mesLabel(state.mesAtivo);
   // v132: CORREÇÃO IMPORTANTE — existiam dois cálculos de "lucro do mês" no
@@ -9056,7 +9073,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   // dado que não recebeu e pra não dizer "não existe" quando na verdade é permissão).
   const abasDoUsuario = ABAS_DEF.filter((a) => podeVerAba(a.id)).map((a) => a.label.replace(/[^\wÀ-ÿ &/]/g, "").trim()).join(", ");
 
-  return `Mês ativo no painel: ${mesA}
+  return `${blocoSync}
+Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
 Margem da frota (manual): ${fmtR(t.margem)} (${t.margemPct.toFixed(1)}%)
@@ -12045,6 +12063,22 @@ revalidarSessaoAoAbrir();
   };
   // v92: chamado no logout — impede que uma sincronização em andamento (ou
   // agendada) escreva na nuvem depois que a sessão já foi encerrada.
+  // v247: rede de segurança. Se por qualquer motivo ninguém chamou
+  // rfIniciarSyncEquipe() mas existe uma sessão de equipe válida na tela, o
+  // sync se liga sozinho em vez de ficar preso em "aguardando login" com as
+  // gravações silenciosamente bloqueadas. Roda a cada 5s e para assim que
+  // ligar. Também avisa no selo enquanto estiver nesse estado.
+  var _tentativasAutoSync = 0;
+  setInterval(function () {
+    if (podeSincronizar || !sbPronto) return;
+    var ss = (typeof state === "object" && state) ? state.sessao : null;
+    if (!ss || !ss.uid) return;
+    if (ss.papel === "motorista" || ss.papel === "cliente") return;
+    _tentativasAutoSync++;
+    status("\u27F3 religando a sincroniza\u00e7\u00e3o...", "#D4A017");
+    window.rfIniciarSyncEquipe();
+  }, 5000);
+
   window.rfPararSyncEquipe = function () {
     podeSincronizar = false;
     dadosCarregados = false; // v118: próxima sessão repete a espera do 1º download real
