@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v250)</title>
+<title>RF Logística — Painel da Frota (v252)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5989,25 +5989,26 @@ function telaInicialHTML() {
   const cartao = (a) => {
     const desc = TAB_DESCRICOES[a.id] || "";
     return `<button onclick="abrirAreaDoInicio('${a.id}')" title="${esc(desc)}"
-      style="background:#0E0E0E; border:1px solid #2E2E2E; border-radius:14px; padding:18px 16px;
-             text-align:left; cursor:pointer; color:#fff; font-size:15px; font-weight:700;
-             min-height:88px; display:flex; flex-direction:column; gap:6px; justify-content:center;
+      style="background:#0E0E0E; border:1px solid #2E2E2E; border-radius:12px; padding:12px 13px;
+             text-align:left; cursor:pointer; color:#fff; font-size:13.5px; font-weight:700;
+             min-height:66px; display:flex; flex-direction:column; gap:4px; justify-content:center;
              transition:border-color .15s, background .15s;"
       onmouseover="this.style.borderColor='${GOLD}'; this.style.background='#171308';"
       onmouseout="this.style.borderColor='#2E2E2E'; this.style.background='#0E0E0E';">
       <span>${a.label}</span>
-      ${desc ? `<span style="font-size:11.5px; color:#8a8a8a; font-weight:400; line-height:1.35;">${esc(desc)}</span>` : ""}
+      ${desc ? `<span style="font-size:10.5px; color:#8a8a8a; font-weight:400; line-height:1.3;">${esc(desc)}</span>` : ""}
     </button>`;
   };
   return `
-  <div style="min-height:100vh; background:#000;">
-    <div style="padding:46px 24px 8px; display:flex; justify-content:center;">
+  <div style="min-height:100vh; background:#000000;">
+    <div style="padding:30px 24px 6px; display:flex; justify-content:center;">
       <img src="${RF_LOGO_SRC}" alt="RF Log\u00edstica"
-           style="width:min(760px, 88vw); height:auto; display:block;
-                  filter:drop-shadow(0 6px 26px rgba(212,160,23,0.30));">
+           style="width:min(940px, 94vw); height:auto; display:block;
+                  filter:drop-shadow(0 0 60px rgba(212,160,23,0.55))
+                         drop-shadow(0 0 130px rgba(212,160,23,0.30));">
     </div>
     <div style="display:flex; justify-content:center; padding:0 24px;">
-      <div style="width:min(760px,88vw); height:2px; border-radius:2px;
+      <div style="width:min(940px,94vw); height:2px; border-radius:2px;
                   background:linear-gradient(90deg, rgba(138,90,6,0) 0%, ${GOLD} 50%, rgba(138,90,6,0) 100%);"></div>
     </div>
     <div style="padding:18px 24px 0; display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -6025,7 +6026,7 @@ function telaInicialHTML() {
         <div style="margin-bottom:28px;">
           <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1.6px;
                       font-weight:700; margin-bottom:11px; padding-left:2px;">${esc(g.nome)}</div>
-          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(245px,1fr)); gap:12px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px,1fr)); gap:10px;">
             ${g.itens.map(cartao).join("")}
           </div>
         </div>`).join("")}
