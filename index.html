@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v245)</title>
+<title>RF Logística — Painel da Frota (v246)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -416,6 +416,13 @@
   .tab-btn { padding: 10px 14px; background: none; border: none; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; color: #999; font-weight: 500; font-size: 13px; transition: background .12s ease, color .12s ease; }
   .tab-btn:hover { color: #D4A017; background: #141414; }
   .tab-btn.active { border-bottom: 2px solid #D4A017; color: #D4A017; font-weight: 700; }
+  /* v246: arrastar com o mouse pra rolar a tabela (pedido: com muitas viagens
+     as pessoas se perdiam rolando). Cursor de mãozinha no fundo da tabela;
+     campos e botões mantêm o cursor normal, pra não atrapalhar a edição. */
+  #tabela-wrap { cursor: grab; }
+  #tabela-wrap input, #tabela-wrap select, #tabela-wrap textarea, #tabela-wrap option, #tabela-wrap [contenteditable="true"] { cursor: auto; }
+  #tabela-wrap button, #tabela-wrap a, #tabela-wrap summary, #tabela-wrap label, #tabela-wrap .btn-gold, #tabela-wrap .btn-outline { cursor: pointer; }
+  body.rf-arrastando, body.rf-arrastando * { cursor: grabbing !important; user-select: none !important; }
   .aba-grupo-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px; font-weight: 400; font-style: italic; padding: 0 6px 0 2px; align-self: center; white-space: nowrap; cursor: default; user-select: none; opacity: 0.7; }
   .aba-grupo-div { width: 1px; align-self: stretch; background: #262626; margin: 6px 6px; }
   .stat-card { background: #161616; border: 1px solid #2A2A2A; border-radius: 6px; padding: 12px 14px; }
@@ -8621,6 +8628,98 @@ function render() {
 // Monta um resumo textual dos dados atuais pra mandar junto da pergunta.
 // Não manda o banco inteiro — só um resumo do mês ativo + coisas de alerta,
 // pra manter a pergunta rápida e barata.
+
+/* ===== v246: ARRASTAR PARA ROLAR ==========================================
+   Pedido do Renato: com muitas viagens na aba Viagens o pessoal só conseguia
+   rolar pela barra/roda e acabava se perdendo. Agora dá pra SEGURAR o botão
+   do mouse em qualquer parte vazia da tabela e arrastar nos dois sentidos.
+
+   Decisões de desenho:
+   - Só vale pro MOUSE (e.pointerType === "mouse"). No tablet/celular o toque
+     nativo já rola bem, e sequestrar o touch quebraria a rolagem que existe.
+   - A horizontal move o #tabela-wrap (que tem overflow-x). A vertical move a
+     PÁGINA, porque é a página que rola pra baixo neste layout.
+   - Não dispara em input, select, botão, link, textarea ou summary — senão
+     seria impossível selecionar texto de um campo ou clicar num botão.
+   - Só começa a valer depois de 5px de movimento, e depois de arrastar o
+     clique seguinte é engolido, pra soltar o mouse em cima de uma célula não
+     acionar nada sem querer.
+   - Inércia leve ao soltar, pra atravessar uma lista longa num gesto só.
+   Ligado uma vez no document (delegação): o #tabela-wrap é recriado a cada
+   render(), então prender o evento nele exigiria religar sempre. */
+var _rfDrag = null;
+var _rfDragInercia = null;
+function rfArrastarParaRolar() {
+  if (window._rfArrastarLigado) return;
+  window._rfArrastarLigado = true;
+
+  var INTERATIVOS = "input,select,textarea,button,a,summary,label,option,[contenteditable='true']";
+
+  document.addEventListener("pointerdown", function (e) {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    var alvo = e.target;
+    if (!alvo || !alvo.closest) return;
+    var wrap = alvo.closest("#tabela-wrap");
+    if (!wrap) return;
+    if (alvo.closest(INTERATIVOS)) return;
+    if (_rfDragInercia) { cancelAnimationFrame(_rfDragInercia); _rfDragInercia = null; }
+    _rfDrag = {
+      wrap: wrap, x0: e.clientX, y0: e.clientY,
+      left0: wrap.scrollLeft, top0: window.pageYOffset,
+      ativo: false, ultX: e.clientX, ultY: e.clientY,
+      vx: 0, vy: 0, t: Date.now(),
+    };
+  }, true);
+
+  document.addEventListener("pointermove", function (e) {
+    var d = _rfDrag;
+    if (!d) return;
+    var dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+    if (!d.ativo) {
+      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;   // clique comum, não arrasto
+      d.ativo = true;
+      document.body.classList.add("rf-arrastando");
+    }
+    var agora = Date.now(), dt = Math.max(1, agora - d.t);
+    d.vx = (e.clientX - d.ultX) / dt * 16;                // px por quadro (~60fps)
+    d.vy = (e.clientY - d.ultY) / dt * 16;
+    d.ultX = e.clientX; d.ultY = e.clientY; d.t = agora;
+    d.wrap.scrollLeft = d.left0 - dx;
+    window.scrollTo(0, Math.max(0, d.top0 - dy));
+    e.preventDefault();
+  }, true);
+
+  function soltar() {
+    var d = _rfDrag;
+    _rfDrag = null;
+    if (!d || !d.ativo) return;
+    document.body.classList.remove("rf-arrastando");
+    // engole o clique que vem logo depois do arrasto
+    var engolir = function (ev) {
+      ev.stopPropagation(); ev.preventDefault();
+      document.removeEventListener("click", engolir, true);
+    };
+    document.addEventListener("click", engolir, true);
+    // se nenhum clique vier (soltou no vazio), tira o engolidor sozinho --
+    // senão ele ficaria de tocaia e comeria o próximo clique de verdade
+    setTimeout(function () { document.removeEventListener("click", engolir, true); }, 350);
+    // inércia: continua deslizando e vai perdendo força
+    var vx = d.vx, vy = d.vy, wrap = d.wrap;
+    if (Math.abs(vx) < 1 && Math.abs(vy) < 1) return;
+    (function desliza() {
+      vx *= 0.92; vy *= 0.92;
+      if (Math.abs(vx) < 0.5 && Math.abs(vy) < 0.5) { _rfDragInercia = null; return; }
+      wrap.scrollLeft -= vx;
+      window.scrollTo(0, Math.max(0, window.pageYOffset - vy));
+      _rfDragInercia = requestAnimationFrame(desliza);
+    })();
+  }
+  document.addEventListener("pointerup", soltar, true);
+  document.addEventListener("pointercancel", soltar, true);
+  window.addEventListener("blur", soltar);
+}
+try { rfArrastarParaRolar(); } catch (e) { console.error("[arrastar]", e); }
+
 function gerarContextoAssistente() {
   const t = calcularTotais();
   const mesA = mesLabel(state.mesAtivo);
@@ -9163,6 +9262,12 @@ SEJA PROATIVA COM ISSO: quando a pessoa abrir a conversa, cumprimentar, pergunta
 "tudo certo?" ou qualquer coisa genérica, NÃO responda apenas "tudo bem" — traga os problemas da lista acima, começando
 pelos URGENTES, em no máximo 5 linhas, dizendo em qual aba resolver cada um. Se a lista estiver vazia, aí sim diga que
 está tudo em ordem. Nunca invente um problema que não esteja nessa lista, e nunca omita um problema URGENTE.
+
+COMO NAVEGAR NAS TABELAS (v246): em qualquer aba, além da barra de rolagem e da roda do mouse, dá pra SEGURAR o botão
+esquerdo do mouse num espaço vazio da tabela e ARRASTAR pra rolar nos dois sentidos (lados e cima/baixo), com um
+deslize por inércia ao soltar. Não funciona em cima de campo, seletor ou botão, de propósito, pra não atrapalhar a
+edição; e no celular/tablet continua valendo o toque normal. Se alguém reclamar de se perder rolando a lista de
+viagens, é isso que você deve explicar.
 
 ABAS QUE ESTE USUÁRIO PODE VER: ${abasDoUsuario || "(nenhuma)"}
 Se ele perguntar sobre algo marcado acima como "(sem permissão pra esta aba)", NÃO invente e NÃO diga que o dado não existe — explique que esse módulo não está liberado no acesso dele e que o Renato pode liberar na aba Usuários.
@@ -10354,6 +10459,7 @@ function renderTabela() {
       <div style="margin-bottom:10px; font-size:12px; color:#999;">
         Cada linha é uma viagem. ADM (2,5%), Manutenção (3%) e Imposto (${impostoPctNum()}%) calculam automático sobre o valor da viagem. Pneus = R$0,12 × km. Alimentação = R$80 × dias (motorista e ajudante).
         Limite de referência: até 2 viagens/semana e 6 viagens/mês por veículo.
+        <br>🖐 <b style="color:${GOLD};">Dica:</b> segure o botão do mouse em qualquer espaço vazio da tabela e arraste para rolar — para os lados e para cima/baixo.
         ${(state.filtroPlacaViagem !== "Todas" || state.filtroClienteViagem !== "Todos" || (state.filtroPagViagem || "Todas") !== "Todas") ? `<br><b style="color:${GOLD};">Filtrando por: ${[state.filtroPlacaViagem !== "Todas" ? esc(state.filtroPlacaViagem) : "", state.filtroClienteViagem !== "Todos" ? esc(state.filtroClienteViagem) : "", (state.filtroPagViagem || "Todas") !== "Todas" ? esc(state.filtroPagViagem) : ""].filter((x) => x).join(" + ")}</b>` : ""}
       </div>
       <div style="margin-bottom:16px; padding:12px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
