@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v247)</title>
+<title>RF Logística — Painel da Frota (v248)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5425,7 +5425,7 @@ function revalidarSessaoAoAbrir() {
 function logout() {
   rfGetClient().then(function (sb) { if (sb) sb.auth.signOut(); });
   if (typeof window.rfPararSyncEquipe === "function") window.rfPararSyncEquipe();
-  state.sessao = null; state._perfis = [];
+  state.sessao = null; state._perfis = []; state._telaInicial = true;
   // v92: limpa da memória e do aparelho os dados sensíveis da sessão que estava
   // aberta — assim, se outra pessoa (ex: motorista) logar no mesmo celular
   // depois, não herda nada da conta anterior. Cada login recarrega só o que
@@ -5954,9 +5954,83 @@ function tabBtn(id, label) {
 function normTxt(txt) {
   return String(txt).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "").toLowerCase();
 }
+// ============================================================
+// v248: TELA INICIAL (tela de entrada). Antes o painel abria com
+// TUDO na tela de uma vez -- medidores, resumo, financeiro e a aba
+// Frota inteira. Pesado de ler e ruim pra mostrar o sistema a quem
+// chega de fora, porque o financeiro aparecia logo de cara.
+// Agora entra numa tela limpa, SEM NENHUM NUMERO, so com os botoes
+// das areas que o usuario tem permissao de ver. O painel so e
+// montado depois que ele escolhe uma area.
+// ============================================================
+function abrirAreaDoInicio(id) {
+  state._telaInicial = false;
+  state.aba = id;
+  render();
+}
+function voltarTelaInicial() {
+  state._telaInicial = true;
+  render();
+}
+function telaInicialHTML() {
+  const visiveis = ABAS_DEF.filter((a) => podeVerAba(a.id));
+  const grupos = [];
+  visiveis.forEach((a) => {
+    let g = grupos.find((x) => x.nome === a.grupo);
+    if (!g) { g = { nome: a.grupo, itens: [] }; grupos.push(g); }
+    g.itens.push(a);
+  });
+  if (ehAdmin()) {
+    grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
+  }
+  const nome = esc((usuarioLogado() || {}).nome || "");
+  const cartao = (a) => {
+    const desc = TAB_DESCRICOES[a.id] || "";
+    return `<button onclick="abrirAreaDoInicio('${a.id}')" title="${esc(desc)}"
+      style="background:#0E0E0E; border:1px solid #2A2A2A; border-radius:14px; padding:18px 16px;
+             text-align:left; cursor:pointer; color:#fff; font-size:15px; font-weight:700;
+             min-height:86px; display:flex; flex-direction:column; gap:6px; justify-content:center;"
+      onmouseover="this.style.borderColor='${GOLD}'; this.style.background='#151515';"
+      onmouseout="this.style.borderColor='#2A2A2A'; this.style.background='#0E0E0E';">
+      <span>${a.label}</span>
+      ${desc ? `<span style="font-size:11.5px; color:#8a8a8a; font-weight:400; line-height:1.35;">${esc(desc)}</span>` : ""}
+    </button>`;
+  };
+  return `
+  <div style="min-height:100vh; background:#000;">
+    <div style="padding:34px 24px 10px; display:flex; justify-content:center;">
+      <div style="text-align:center;">
+        <div style="font-size:26px; font-weight:800; color:${GOLD}; letter-spacing:1px;">RF LOG\u00cdSTICA</div>
+        <div style="font-size:12.5px; color:#777; margin-top:4px;">Painel da Frota</div>
+      </div>
+    </div>
+    <div style="padding:4px 24px 0; display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#111;border:1px solid #333;border-radius:8px;padding:5px 12px;font-size:13px;">
+        <span>${ehAdmin() ? "\u{1F511}" : "\u{1F464}"}</span>
+        <span style="color:#fff;font-weight:600;">${ehAdmin() ? "Admin" : (nome || "Usu\u00e1rio")}</span>
+      </span>
+      <button class="btn-outline" onclick="logout()" title="Sair / trocar de usu\u00e1rio">Sair</button>
+    </div>
+    <div style="padding:26px 24px 40px; max-width:1100px; margin:0 auto;">
+      <div style="font-size:14px; color:#999; margin-bottom:22px; text-align:center;">
+        Escolha a \u00e1rea que quer abrir.
+      </div>
+      ${grupos.map((g) => `
+        <div style="margin-bottom:26px;">
+          <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1.4px;
+                      font-weight:700; margin-bottom:10px; padding-left:2px;">${esc(g.nome)}</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px,1fr)); gap:12px;">
+            ${g.itens.map(cartao).join("")}
+          </div>
+        </div>`).join("")}
+    </div>
+  </div>`;
+}
+
 function renderAbasAgrupadas() {
   const visiveis = ABAS_DEF.filter((a) => podeVerAba(a.id));
-  let out = "";
+  // v248: botao de volta pra tela de entrada
+  let out = `<button class="tab-btn" onclick="voltarTelaInicial()" title="Voltar \u00e0 tela inicial">\u{1F3E0} In\u00edcio</button><div class="aba-grupo-div"></div>`;
   let grupoAnterior = null;
   visiveis.forEach((a) => {
     if (a.grupo !== grupoAnterior) {
@@ -8494,6 +8568,13 @@ function render() {
     if (root0) root0.innerHTML = painelClienteHTML();
     return;
   }
+  // v248: a primeira coisa que a equipe ve ao entrar e a tela inicial limpa,
+  // sem numero nenhum. So depois de escolher uma area o painel e montado.
+  if (state._telaInicial === undefined) state._telaInicial = true;
+  if (state._telaInicial) {
+    if (root0) root0.innerHTML = telaInicialHTML();
+    return;
+  }
   const scrollY = window.scrollY;
   const oldWrap = document.getElementById("tabela-wrap");
   const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
@@ -8734,6 +8815,10 @@ function gerarContextoAssistente() {
   // que a pessoa edita fica SO no aparelho e os numeros na tela podem estar
   // velhos -- o assistente precisa saber disso antes de responder qualquer
   // coisa sobre dinheiro, frota ou viagens.
+  // v248: navegacao -- o painel abre numa tela inicial so com botoes das areas
+  const blocoTela = "NAVEGACAO: " + (state._telaInicial
+    ? "o usuario esta na TELA INICIAL (so os botoes das areas, sem numeros); para ver dados ele precisa escolher uma area"
+    : "o usuario ja abriu uma area do painel; o botao In\u00edcio na barra de abas volta para a tela inicial") + ".";
   const _syncLigado = !!window.__rfDadosCarregados;
   const blocoSync = _syncLigado
     ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
@@ -9074,6 +9159,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   const abasDoUsuario = ABAS_DEF.filter((a) => podeVerAba(a.id)).map((a) => a.label.replace(/[^\wÀ-ÿ &/]/g, "").trim()).join(", ");
 
   return `${blocoSync}
+${blocoTela}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
