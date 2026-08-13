@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v253)</title>
+<title>RF Logística — Painel da Frota (v254)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6004,7 +6004,7 @@ function telaInicialHTML() {
   <div style="position:relative; min-height:100vh; background:#000000; overflow:hidden;">
 
     <div style="position:absolute; top:0; left:0; right:0; z-index:0; pointer-events:none;
-                display:flex; justify-content:center; padding-top:clamp(60px,12vh,180px);">
+                display:flex; justify-content:center; padding-top:0; margin-top:-1.5vh;">
       <img src="${RF_LOGO_SRC}" alt="RF Log\u00edstica"
            style="width:100%; max-width:1800px; height:auto; display:block;
                   filter:drop-shadow(0 0 60px rgba(212,160,23,0.55))
@@ -6014,7 +6014,7 @@ function telaInicialHTML() {
     <div style="position:absolute; top:0; left:0; right:0; bottom:0; z-index:1; pointer-events:none;
                 background:rgba(0,0,0,0.46);"></div>
 
-    <div style="position:relative; z-index:2; padding-top:clamp(80px,17vh,230px);">
+    <div style="position:relative; z-index:2; padding-top:clamp(120px,25vh,310px);">
       <div style="padding:0 24px; display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap;">
         <span style="display:inline-flex;align-items:center;gap:6px;background:rgba(17,17,17,0.9);border:1px solid #3c3c3c;border-radius:9px;padding:5px 13px;font-size:13px;">
           <span>${ehAdmin() ? "\u{1F511}" : "\u{1F464}"}</span>
