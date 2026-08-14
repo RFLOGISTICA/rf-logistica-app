@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v255)</title>
+<title>RF Logística — Painel da Frota (v256)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5350,7 +5350,17 @@ function carregarPerfilEEntrar(sb, user) {
     if (state.sessao.papel === "motorista" && typeof motoristaCarregarViagensAtivas === "function") { motoristaCarregarViagensAtivas(); }
     if (state.sessao.papel === "cliente" && typeof clienteCarregarViagens === "function") { clienteCarregarViagens(); }
     const perm = abasPermitidas();
-    state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
+    // v256: SO define a aba padrao se a pessoa ainda nao escolheu area nenhuma.
+    // Esta funcao tambem roda no caminho assincrono do script "RESTAURAR SESSAO
+    // (v55)" no fim do arquivo, toda vez que o app abre. Quando a rede demora,
+    // ela terminava DEPOIS do clique num cartao da tela inicial e reescrevia
+    // state.aba pra "frota", chamando render() de novo -- a pessoa clicava em
+    // uma area e caia em outra, tendo que selecionar de novo na barra de abas.
+    // state._telaInicial === false significa "ja abriu uma area": nesse caso a
+    // escolha dela manda.
+    if (state._telaInicial !== false) {
+      state.aba = ehAdmin() ? "frota" : (perm[0] || "frota");
+    }
     render();
   }).catch(function () {
     if (el) { el.textContent = "Falha ao carregar seu perfil. Tente novamente."; el.style.display = "block"; }
@@ -6496,9 +6506,61 @@ function rfRomaneioVincularViagem(romaneioId, viagemId) {
   var r = state.romaneios.find(function (x) { return String(x.id) === String(romaneioId); });
   if (!r) return;
   r.viagemId = viagemId || "";
+  r.vinculoAuto = false;      // v256: escolha na mao manda -- o automatico nunca mexe depois
+  r.vinculoAmbiguo = false;
   render();
   rfRomaneioSalvar(r);
   rfRomaneioAplicarDiasNaViagem(r);
+}
+/* ===== v256: VINCULO AUTOMATICO ROMANEIO -> VIAGEM ==========================
+   Regra de negocio (Renato, 14/08): a viagem e SEMPRE lancada antes do
+   romaneio, e o romaneio ja traz a placa -- e pela placa, o motorista. Entao o
+   vinculo nao pode depender de alguem lembrar de usar o seletor: era isso que
+   deixava a aba Conferencia com romaneio solto, sem dono visivel, tudo
+   misturado numa fila so.
+
+   O que passa a rodar sozinho: romaneio ABERTO, com placa e SEM viagem,
+   procura viagem aberta daquele mesmo caminhao.
+     - achou uma  -> vincula na hora;
+     - achou mais de uma -> vincula a mais recente e marca pra conferencia;
+     - nao achou  -> fica como esta (aviso + botao "+ criar viagem").
+
+   Romaneio que ja tem viagem NUNCA e tocado -- vinculo feito na mao manda.
+   Mesma trava do v167/v156: nao mexe em state.viagens antes do 1o download
+   real da caixa geral (window.__rfDadosCarregados).
+============================================================================ */
+function rfViagensAbertasDaPlaca(placa) {
+  if (!placa) return [];
+  return (state.viagens || []).filter(function (v) {
+    if (v.placa !== placa) return false;
+    if (v.fotoKmChegada) return false;                  // motorista ja fechou
+    if (v.statusMotorista === "aprovada") return false; // equipe ja aprovou
+    return true;
+  }).sort(function (a, b) {
+    var da = String(a.data || ""), db = String(b.data || "");
+    if (da !== db) return db.localeCompare(da);         // mais recente primeiro
+    return (Number(b.criadoEm) || 0) - (Number(a.criadoEm) || 0);
+  });
+}
+function rfRomaneiosAutoVincular() {
+  if (typeof ehMotorista === "function" && ehMotorista()) return 0;
+  if (!window.__rfDadosCarregados) return 0;
+  var n = 0;
+  (state.romaneios || []).forEach(function (r) {
+    if (rfRomaneioEncerrado(r)) return;
+    if (r.viagemId) return;
+    if (!r.placa) return;
+    var cand = rfViagensAbertasDaPlaca(r.placa);
+    if (!cand.length) return;
+    r.viagemId = cand[0].id;
+    r.vinculoAuto = true;
+    r.vinculoAmbiguo = cand.length > 1;
+    rfRomaneioSalvar(r);
+    rfRomaneioAplicarDiasNaViagem(r);
+    n++;
+  });
+  if (n) render();
+  return n;
 }
 function rfRomaneioCriarViagemVinculada(romaneioId) {
   if (!window.__rfDadosCarregados) { alert("Ainda carregando os dados da frota — espera aparecer \"☁ sincronizado\" e tenta de novo."); return; }
@@ -6716,6 +6778,8 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
             state.aba = "conferencia";
             render();
             rfRomaneioSalvar(novo);
+            // v256: ja tenta casar com a viagem aberta dessa placa na hora do anexo
+            try { rfRomaneiosAutoVincular(); } catch (e) { console.error("[romaneio vinculo auto]", e); }
             // v169: confere o que foi extraído contra o total que o PRÓPRIO
             // documento declara no rodapé ("Declaro... N nota(s), V volumes, C
             // cliente(s)") -- pega erro de leitura, mais provável em foto de
@@ -7576,6 +7640,7 @@ function rfConfRomaneioCardAdmin(rom) {
         ${(state.viagens || []).filter((v) => v.placa === rom.placa).map((v) => `<option value="${v.id}" ${rom.viagemId === v.id ? "selected" : ""}>${esc(v.cliente || "sem cliente")} — ${v.data || "?"} (${v.dias || 1}d)</option>`).join("")}
       </select>
       ${!rom.viagemId ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfRomaneioCriarViagemVinculada('${rom.id}')">+ criar viagem</button>` : `<span style="font-size:11px;color:#2E7D32;">✓ o campo "dias" dessa viagem atualiza sozinho conforme o ritmo real</span>`}
+      ${rom.viagemId && rom.vinculoAuto ? `<span style="font-size:11px;color:${rom.vinculoAmbiguo ? "#C0392B" : GOLD};">⚡ vinculada automaticamente pela placa${rom.vinculoAmbiguo ? " — havia mais de uma viagem aberta desse caminhão, confira se é essa" : ""}</span>` : ""}
     </div>
     ${rfConfRomaneioRelogioHTML(rom)}
     </div>
@@ -8952,6 +9017,9 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
     const relogio = rfConfRelogioRomaneio(rom);
     let linha = `- ${rom.nomeArquivo || "romaneio"} (Conhecimento ${rom.conhecimento || "?"}) — placa ${rom.placa || "(sem placa direcionada)"}${veic && veic.motorista ? ", motorista " + veic.motorista : ""}: ${totalFechados}/${totalClientes} clientes/entregas concluídos (${totalClientes ? ((totalFechados / totalClientes) * 100).toFixed(0) : 0}%), romaneio anexado em ${new Date(rom.criadoEm || 0).toLocaleString("pt-BR")}`;
     if (viagemVinc) linha += `. Viagem vinculada na aba Viagens: cliente ${viagemVinc.cliente || "?"}, campo "dias" atual: ${viagemVinc.dias || 1} (esse campo é atualizado automaticamente pelo relógio recalculado)`;
+    // v256: o assistente precisa saber se o vínculo saiu automático e se ficou dúvida
+    if (viagemVinc && rom.vinculoAuto) linha += `. Esse vínculo foi feito AUTOMATICAMENTE pelo sistema, casando a placa do romaneio com a viagem aberta do mesmo caminhão${rom.vinculoAmbiguo ? " — havia MAIS DE UMA viagem aberta dessa placa, foi usada a mais recente e vale conferir" : ""}`;
+    if (!rom.viagemId) linha += `. SEM viagem vinculada${rom.placa ? " (não existe viagem aberta dessa placa; a equipe pode criar uma pelo botão \"+ criar viagem\")" : " (o romaneio ainda não tem placa direcionada)"} — o prazo não atualiza na aba Viagens`;
     if (relogio && relogio.pendente) {
       linha += `. Relógio de previsão (${relogio.diasPrevistos} dia(s)) AINDA NÃO COMEÇOU A CONTAR — o motorista ainda não confirmou o início real da viagem no app dele (foto do KM de saída). Não estime prazo de chegada até isso acontecer.`;
     } else if (relogio) {
@@ -9288,7 +9356,7 @@ ${seguroVencendo || "(nenhum)"}
 Abastecimentos (pendentes primeiro, depois os mais recentes já revisados — até 60 registros; "fotos faltando: nenhuma" quer dizer que as 3 fotos obrigatórias foram enviadas):
 ${linhasAbastecimento || "(nenhum abastecimento lançado)"}
 
-Romaneios / Conferência de Carga (entregas em andamento, uma linha por romaneio anexado — "clientes/entregas concluídos" é quanto já foi CONFERIDO por foto/confirmação do motorista; a previsão RECALCULADA usa o ritmo real de entregas até agora, é sempre uma estimativa que se ajusta sozinha conforme a rota avança):
+Romaneios / Conferência de Carga (v256: cada romaneio se vincula SOZINHO à viagem aberta da mesma placa assim que é anexado — quem quiser trocar usa o seletor "Viagem vinculada" no card, e a escolha manual passa a mandar; a aba tem um seletor de motorista/placa em cima e mostra os romaneios agrupados por caminhão, não mais numa fila só. Uma linha por romaneio anexado — "clientes/entregas concluídos" é quanto já foi CONFERIDO por foto/confirmação do motorista; a previsão RECALCULADA usa o ritmo real de entregas até agora, é sempre uma estimativa que se ajusta sozinha conforme a rota avança):
 ${linhasRomaneios || "(nenhum romaneio anexado)"}
 
 Status do Dia — viagens EM ANDAMENTO agora (já saíram, ainda não confirmaram chegada). "NUNCA atualizado pela carteira" significa que ninguém deu baixa no fim do dia:
@@ -11166,8 +11234,46 @@ function renderTabela() {
         const abertos = todos.filter((r) => !rfRomaneioEncerrado(r));
         const encerrados = todos.filter((r) => rfRomaneioEncerrado(r));
         const verEncerrados = !!state._verRomaneiosEncerrados;
-        return (abertos.length ? abertos.map((r) => rfConfRomaneioCardAdmin(r)).join("")
-          : `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio em andamento.</div>`)
+        // v256: a aba deixou de ser uma fila corrida com todos os romaneios de
+        // todo mundo misturados. Agora tem seletor de motorista/placa em cima e,
+        // dentro, um bloco por caminhao -- da pra escolher o motorista e ver so
+        // os romaneios dele.
+        const placasAbertas = [];
+        abertos.forEach((r) => { const p = r.placa || ""; if (placasAbertas.indexOf(p) === -1) placasAbertas.push(p); });
+        placasAbertas.sort((a, b) => (a || "zzzz").localeCompare(b || "zzzz"));
+        const filtroPl = state._confFiltroPlaca || "";
+        const seletorMot = `
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+            <span style="font-size:12px;color:#999;">Motorista / placa:</span>
+            <select style="min-width:250px;" onchange="state._confFiltroPlaca=this.value; render();">
+              <option value="">Todos (${abertos.length} romaneio${abertos.length === 1 ? "" : "s"} em andamento)</option>
+              ${placasAbertas.map((p) => {
+                const vv = state.veiculos.find((x) => x.placa === p);
+                const qtd = abertos.filter((r) => (r.placa || "") === p).length;
+                const rot = p ? (esc(p) + (vv && vv.motorista ? " — " + esc(vv.motorista) : "")) : "(sem placa direcionada)";
+                return `<option value="${esc(p)}" ${filtroPl === p ? "selected" : ""}>${rot} (${qtd})</option>`;
+              }).join("")}
+            </select>
+            ${filtroPl ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="state._confFiltroPlaca=''; render();">✕ ver todos</button>` : ""}
+          </div>`;
+        const mostrar = filtroPl ? abertos.filter((r) => (r.placa || "") === filtroPl) : abertos;
+        const blocosPorPlaca = placasAbertas.filter((p) => !filtroPl || p === filtroPl).map((p) => {
+          const doGrupo = mostrar.filter((r) => (r.placa || "") === p);
+          if (!doGrupo.length) return "";
+          const vv = state.veiculos.find((x) => x.placa === p);
+          const cab = p
+            ? `${esc(p)}${vv && vv.motorista ? ` <span style="color:#bbb;font-weight:600;">— ${esc(vv.motorista)}</span>` : ` <span style="color:#C0392B;font-weight:600;">— sem motorista no cadastro</span>`}`
+            : `<span style="color:#C0392B;">Sem placa direcionada</span>`;
+          return `<div style="margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-left:3px solid ${GOLD};padding-left:10px;margin-bottom:10px;">
+              <div style="font-size:14px;font-weight:800;color:#fff;">🚛 ${cab}</div>
+              <span style="font-size:11px;color:#888;">${doGrupo.length} romaneio${doGrupo.length === 1 ? "" : "s"} em andamento</span>
+            </div>
+            ${doGrupo.map((r) => rfConfRomaneioCardAdmin(r)).join("")}
+          </div>`;
+        }).join("");
+        return seletorMot + (mostrar.length ? blocosPorPlaca
+          : `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio em andamento${filtroPl ? " para essa placa" : ""}.</div>`)
           + (encerrados.length ? `
             <div style="margin-top:22px;padding-top:14px;border-top:1px solid #2A2A2A;">
               <button class="btn-outline" style="font-size:11px;" onclick="state._verRomaneiosEncerrados=!state._verRomaneiosEncerrados;render();">
@@ -12244,6 +12350,11 @@ revalidarSessaoAoAbrir();
         const nRom = rfRomaneiosAutoArquivar();
         if (nRom) console.log("[romaneios] " + nRom + " arquivado(s) por viagem fechada");
       } catch (e) { console.error("[romaneios auto]", e); }
+      // v256: romaneio sem viagem casa sozinho com a viagem aberta da mesma placa
+      try {
+        const nVinc = rfRomaneiosAutoVincular();
+        if (nVinc) console.log("[romaneios] " + nVinc + " vinculado(s) automaticamente a viagem pela placa");
+      } catch (e) { console.error("[romaneios vinculo auto]", e); }
       // v217: o KM de chegada pode ter chegado pela RPC do app do motorista, que
       // grava direto na viagem sem passar pelo recálculo. Aqui o KM rodado volta
       // a ser a diferença medida entre as duas pontas (e o frete por km junto).
