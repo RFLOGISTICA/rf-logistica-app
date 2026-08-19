@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v261)</title>
+<title>RF Logística — Painel da Frota (v263)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4362,12 +4362,15 @@ function szRot() {
   if (c.tempoGrande == null) c.tempoGrande = 240;
   if (c.limiteGrandeKg == null) c.limiteGrandeKg = 1000;
   if (c.tipo == null) c.tipo = "3/4";   // v261: a operacao Suzano roda com os 3/4
+  if (c.maxCidades == null) c.maxCidades = 3;  // v263: cidade tem prazo -- espalhar cidade fura lead time
   if (!Array.isArray(r.paradas)) r.paradas = [];
   if (!Array.isArray(r.placas)) r.placas = [];
   if (!r.tempos || typeof r.tempos !== "object") r.tempos = {};
   return r;
 }
 function szRotSetTipo(t) { szRot().cfg.tipo = t; salvar(); render(); }
+function szRotPlacasTodas() { var r = szRot(); r.placas = szRotFrotaDoTipo().map(function (v) { return v.placa; }); salvar(); render(); }
+function szRotPlacasLimpar() { szRot().placas = []; salvar(); render(); }
 function szRotSet(campo, valor) {
   var r = szRot();
   if (campo === "tipo") r.cfg.tipo = String(valor);
@@ -4388,6 +4391,16 @@ function szRotTetoKg(v) {
   var extra = (r.cfg.tolerancia && Number(v.pbtT) > 0) ? Number(v.pbtT) * 1000 * 0.05 : 0;
   return util + extra;
 }
+/* v262: a lista de caminhoes que aparece na tela pra marcar mostra SEMPRE a
+   frota apta do tipo escolhido -- nunca a selecao ja filtrada. Na v261 ela
+   usava szRotFrota(), que ja vem filtrada pelas placas marcadas: bastava
+   marcar uma pra lista ficar so com aquela e nao ter como marcar a segunda. */
+function szRotFrotaDoTipo() {
+  var r = szRot();
+  var frota = szFrotaEscalavel();
+  if (r.cfg.tipo && r.cfg.tipo !== "Todos") frota = frota.filter(function (v) { return String(v.tipo || "") === r.cfg.tipo; });
+  return frota;
+}
 function szRotFrota() {
   var r = szRot();
   var frota = szFrotaEscalavel();
@@ -4395,9 +4408,12 @@ function szRotFrota() {
      configurado (padrao 3/4, que e como a operacao Suzano roda hoje). Antes,
      sem nada marcado, entravam todos os caminhoes e o sistema escalava Toco de
      10 t pra levar 3,5 t -- desperdicio que a escala do dia ja evitava. */
-  if (r.placas.length) return frota.filter(function (v) { return r.placas.indexOf(v.placa) >= 0; });
-  if (r.cfg.tipo && r.cfg.tipo !== "Todos") frota = frota.filter(function (v) { return String(v.tipo || "") === r.cfg.tipo; });
-  return frota;
+  var doTipo = szRotFrotaDoTipo();
+  if (!r.placas.length) return doTipo;
+  /* marcou placas: manda a escolha dela, e a marcacao vale mesmo que a placa
+     seja de outro tipo (ex: precisou de um Toco num dia de 3/4) */
+  var escolhidas = frota.filter(function (v) { return r.placas.indexOf(v.placa) >= 0; });
+  return escolhidas.length ? escolhidas : doTipo;
 }
 function szRotTempoParada(p) {
   var r = szRot();
@@ -4549,6 +4565,11 @@ function szRotOrdenar(lista) {
 }
 function szRotAlocar() {
   var r = szRot(), cfg = r.cfg;
+  /* v262: quando a pessoa MARCA as placas na tela, a intenção é usar aquelas
+     — todas. Nesse caso o sistema equilibra a carga entre elas em vez de
+     encher umas e deixar outra quase vazia. Sem placas marcadas ele volta a
+     economizar caminhão, que é o certo quando a frota é escolhida por ele. */
+  var escolhaManual = (r.placas || []).length > 0;
   var frota = szRotFrota();
   var carros = frota.map(function (v) {
     return { placa: v.placa, veiculo: v, tetoKg: szRotTetoKg(v), utilKg: szRotUtilKg(v), metaKg: cfg.metaKg, peso: 0, volumes: 0, tempo: 0, paradas: [] };
@@ -4586,10 +4607,25 @@ function szRotAlocar() {
     if (nivel === 2) return carro.utilKg || carro.tetoKg;
     return carro.tetoKg;
   }
+  /* v263: quantas cidades DIFERENTES o caminhao ficaria atendendo se pegasse
+     esse item. Cada cidade nova e deslocamento entre municipios, e é aí que o
+     lead time se perde -- não no peso. Por isso a cidade deixou de ser só uma
+     preferência e virou limite: o carro não passa do teto de cidades, mesmo
+     que ainda tenha peso e jornada sobrando. Vale para os níveis 1 e 2; no
+     nível 3 (último recurso, quando não cabe em mais nada) a trava cede, senão
+     o sistema diria "não coube" com caminhão vazio na garagem. */
+  function cidadesSeReceber(carro, item) {
+    var lista = [];
+    carro.paradas.forEach(function (p) { var c = rfConfNorm(p.cidade); if (c && lista.indexOf(c) < 0) lista.push(c); });
+    item.lista.forEach(function (p) { var c = rfConfNorm(p.cidade); if (c && lista.indexOf(c) < 0) lista.push(c); });
+    return lista.length;
+  }
   function cabe(carro, item, nivel) {
     if (carro.tetoKg && carro.peso + item.peso > carro.tetoKg) return false;
     if (carro.peso + item.peso > limiteDoNivel(carro, nivel)) return false;
     if (carro.tempo + item.tempo > cfg.jornadaMin) return false;
+    var max = Number(cfg.maxCidades) || 0;
+    if (max > 0 && nivel < 3 && cidadesSeReceber(carro, item) > max) return false;
     return true;
   }
   function melhorCarro(item, nivel, iniciado) {
@@ -4599,6 +4635,8 @@ function szRotAlocar() {
     });
     if (!aptos.length) return null;
     /* prefere quem já tem a mesma cidade (menos deslocamento), depois quem tem mais espaço */
+    /* a cidade continua sendo a 1ª preferência: encaixar num carro que já vai
+       naquela cidade não cria deslocamento novo nenhum. */
     var cidades = item.lista.map(function (p) { return rfConfNorm(p.cidade); });
     /* v261: preferencia 1 -- carro que ja tem a mesma cidade (menos deslocamento).
        Preferencia 2 -- carro que ja comecou a ser montado, pra nao espalhar a
@@ -4610,6 +4648,10 @@ function szRotAlocar() {
       var ca = a.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
       var cb = b.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
       if (ca !== cb) return ca - cb;
+      if (escolhaManual) {
+        var oa = a.tetoKg ? a.peso / a.tetoKg : 1, ob = b.tetoKg ? b.peso / b.tetoKg : 1;
+        if (Math.abs(oa - ob) > 0.0001) return oa - ob;     // o mais vazio primeiro
+      }
       return a.tetoKg - b.tetoKg;
     });
     return aptos[0];
@@ -4620,11 +4662,13 @@ function szRotAlocar() {
      3/4 inteiro pra levar 117 kg. A tolerancia legal dos 5% fica por ultimo,
      como recurso, nunca como escolha automatica. */
   function escolherCarro(item) {
-    var tentativas = [
-      { nivel: 1, iniciado: true }, { nivel: 2, iniciado: true },
-      { nivel: 1, iniciado: false }, { nivel: 2, iniciado: false },
-      { nivel: 3, iniciado: true }, { nivel: 3, iniciado: false },
-    ];
+    var tentativas = escolhaManual
+      ? [{ nivel: 1 }, { nivel: 2 }, { nivel: 3 }]              // usa todas as marcadas, equilibrando
+      : [
+        { nivel: 1, iniciado: true }, { nivel: 2, iniciado: true },
+        { nivel: 1, iniciado: false }, { nivel: 2, iniciado: false },
+        { nivel: 3, iniciado: true }, { nivel: 3, iniciado: false },
+      ];
     for (var i = 0; i < tentativas.length; i++) {
       var t = tentativas[i];
       if (t.nivel === 2 && !cfg.usarTeto) continue;
@@ -4715,6 +4759,8 @@ function szTelaRoteirizador() {
     + ' · tempo padrão <input type="number" min="1" value="' + cfg.tempoPadrao + '" onchange="szRotSet(\'tempoPadrao\',this.value)" style="width:60px;text-align:right;font-weight:700;"> min'
     + ' · cliente grande <input type="number" min="1" value="' + cfg.tempoGrande + '" onchange="szRotSet(\'tempoGrande\',this.value)" style="width:60px;text-align:right;font-weight:700;"> min'
     + ' acima de <input type="number" min="0" step="100" value="' + cfg.limiteGrandeKg + '" onchange="szRotSet(\'limiteGrandeKg\',this.value)" style="width:70px;text-align:right;font-weight:700;"> kg'
+    + ' · máx. de cidades por caminhão <input type="number" min="0" value="' + cfg.maxCidades + '" onchange="szRotSet(\'maxCidades\',this.value)" style="width:56px;text-align:right;font-weight:700;">'
+    + ' <span style="color:#888;">(0 = sem limite)</span>'
     + '</div>'
     + '<div style="font-size:12px;color:#ddd;margin-bottom:10px;">'
     + '<label style="cursor:pointer;"><input type="checkbox" ' + (cfg.usarTeto ? "checked" : "") + ' onchange="szRotSet(\'usarTeto\',this.checked)"> pode passar da meta até a carga útil do CRLV quando não fechar sem partir cliente</label>'
@@ -4727,8 +4773,12 @@ function szTelaRoteirizador() {
           + (sel ? "background:" + GOLD + ";color:#000;border:none;" : "") + 'padding:3px 10px;border-radius:8px;font-size:12px;">' + t + '</button>';
       }).join("")
     + '</div>';
-  var frotaToda = szRotFrota();
-  h += '<div style="font-size:12px;color:#999;margin-bottom:4px;">Caminhões que participam (nenhum marcado = todos os ' + esc(cfg.tipo === "Todos" ? "aptos" : cfg.tipo) + ' aptos):</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  var frotaToda = szRotFrotaDoTipo();
+  h += '<div style="font-size:12px;color:#999;margin-bottom:4px;">Caminhões que participam (nenhum marcado = todos os ' + esc(cfg.tipo === "Todos" ? "aptos" : cfg.tipo) + ' aptos)'
+    + ' &nbsp;<button onclick="szRotPlacasTodas()" style="font-size:11px;padding:2px 8px;">marcar todos</button>'
+    + ' <button onclick="szRotPlacasLimpar()" style="font-size:11px;padding:2px 8px;">limpar seleção</button>'
+    + ' &nbsp;<b style="color:#ddd;">' + (r.placas.length ? r.placas.length + ' marcado(s)' : 'nenhum marcado') + '</b></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
   frotaToda.forEach(function (v) {
     var marcado = r.placas.indexOf(v.placa) >= 0;
     h += '<label style="cursor:pointer;border:1px solid ' + (marcado ? GOLD : "#333") + ';border-radius:8px;padding:4px 8px;font-size:12px;">'
@@ -4758,7 +4808,7 @@ function szTelaRoteirizador() {
       + '<td style="text-align:right;">' + n(c.volumes) + '</td>'
       + '<td style="text-align:right;">' + c.paradas.length + '</td>'
       + '<td style="text-align:right;">' + Math.floor(c.tempo / 60) + 'h' + ("0" + (c.tempo % 60)).slice(-2) + '</td>'
-      + '<td>' + esc(cidades.join(" → ")) + '</td></tr>';
+      + '<td>' + esc(cidades.join(" → ")) + ' <span style="color:#888;font-size:10px;">(' + cidades.length + ' cidade' + (cidades.length > 1 ? "s" : "") + ')</span></td></tr>';
     c.paradas.forEach(function (p, i) {
       h += '<tr style="color:#bbb;"><td></td><td colspan="2" style="padding-left:10px;">' + (i + 1) + '. ' + esc(p.cliente) + '</td>'
         + '<td colspan="2">' + esc(p.cidade) + (p.bairro ? " · " + esc(p.bairro) : "") + '</td>'
