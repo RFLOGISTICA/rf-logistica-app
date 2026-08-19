@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v257)</title>
+<title>RF Logística — Painel da Frota (v259)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -651,6 +651,14 @@ function salvar() {
     localStorage.setItem("rf-frota-romaneios-v1", JSON.stringify(state.romaneios));
     localStorage.setItem("rf-frota-caixasconf-v1", JSON.stringify(state.caixasConferencia));
     localStorage.setItem("rf-frota-clienteslocais-v1", JSON.stringify(state.clientesLocais));
+    /* v259 — BUG ANTIGO CORRIGIDO: nada da aba Carregamento Suzano era gravado.
+       As cargas, o planejamento e (agora) a roteirização viviam só na memória
+       da sessão: bastava recarregar a página, o celular descartar a aba ou o
+       app ser fechado pra perder tudo o que tinha sido montado. Passa a gravar
+       igual ao resto do sistema. */
+    localStorage.setItem("rf-frota-suzanocargas-v1", JSON.stringify(state.suzanoCargas || []));
+    localStorage.setItem("rf-frota-suzanoplano-v1", JSON.stringify(state.suzanoPlano || {}));
+    localStorage.setItem("rf-frota-suzanorot-v1", JSON.stringify(state.suzanoRot || {}));
   } catch (e) {}
 }
 
@@ -673,6 +681,9 @@ let state = {
   romaneios: carregar("rf-frota-romaneios-v1", () => []),
   caixasConferencia: carregar("rf-frota-caixasconf-v1", () => []),
   clientesLocais: carregar("rf-frota-clienteslocais-v1", () => []),
+  suzanoCargas: carregar("rf-frota-suzanocargas-v1", () => []),
+  suzanoPlano: carregar("rf-frota-suzanoplano-v1", () => ({})),
+  suzanoRot: carregar("rf-frota-suzanorot-v1", () => ({})),
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -1942,18 +1953,27 @@ function exportarPagMotoristaExcel() {
   });
   exportarCSV("rf-frota-pag-motoristas-" + new Date().toISOString().slice(0,10) + ".csv", cab, linhas);
 }
+// v258: este export NAO filtrava pelo mes ativo -- a tela de Viagens filtra
+// (v.data.slice(0,7) === state.mesAtivo), mas a planilha trazia TODOS os meses
+// com os mesmos filtros de placa/cliente/pagamento. Resultado: filtrar o mes 07
+// + JT/Mateus e exportar trazia junto viagens de junho, e o motorista da epoca
+// aparecia num mes em que ele ja estava rodando pra outro cliente. Agora a
+// planilha segue exatamente o que esta na tela, e a data de saida e a data fim
+// vem nas duas primeiras colunas, pra nao restar duvida de que mes e a viagem.
 function exportarViagensExcel() {
-  const cabecalho = ["Placa","Motorista","Cliente","Data","Valor Viagem","Pago","Data Pagamento","KM Saida","KM Chegada","KM","Dias","Combustivel","Tem Ajudante","Alim Motorista","Alim Ajudante","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista","Pag Ajudante","ADM","Manutencao","Imposto","Pneus","Outros","Total Despesas","Sobra"];
+  const cabecalho = ["Data Saida","Data Fim","Placa","Motorista","Cliente","Valor Viagem","Pago","Data Pagamento","KM Saida","KM Chegada","KM","Dias","Combustivel","Tem Ajudante","Alim Motorista","Alim Ajudante","Pag Motorista","Pago ao Motorista","Data Pagamento Motorista","Pag Ajudante","ADM","Manutencao","Imposto","Pneus","Outros","Total Despesas","Sobra"];
   const viagensFiltradas = state.viagens.filter((v) =>
+    (v.data && v.data.slice(0, 7) === state.mesAtivo) &&
     (state.filtroPlacaViagem === "Todas" || v.placa === state.filtroPlacaViagem) &&
     (state.filtroClienteViagem === "Todos" || v.cliente === state.filtroClienteViagem) &&
     ((state.filtroPagViagem || "Todas") === "Todas" || (state.filtroPagViagem === "Pagas" ? v.pago : !v.pago))
-  );
+  ).slice().sort((a, b) => (a.data || "").localeCompare(b.data || ""));
   const linhas = viagensFiltradas.map((v) => {
     const c = calcularViagem(v);
     return [
+      v.data || "", v.dataFim || "",
       v.placa, motoristaDaViagem(v) || "", v.cliente || "",
-      v.data, v.valorViagem || 0, v.pago ? "Sim" : "Nao", v.dataPagamento || "",
+      v.valorViagem || 0, v.pago ? "Sim" : "Nao", v.dataPagamento || "",
       v.kmSaida || 0, v.kmChegada || 0, v.km || 0, v.dias || 1,
       c.combustivel.toFixed(2), (v.temAjudante !== false) ? "Sim" : "Nao",
       c.alimMotorista.toFixed(2), c.alimAjudante.toFixed(2),
@@ -1963,7 +1983,10 @@ function exportarViagensExcel() {
     ];
   });
   const sufixoPlaca = state.filtroPlacaViagem === "Todas" ? "" : "-" + state.filtroPlacaViagem;
-  exportarCSV("rf-frota-viagens" + sufixoPlaca + "-" + new Date().toISOString().slice(0, 10) + ".csv", cabecalho, linhas);
+  // v258: mes e cliente no nome do arquivo -- assim a planilha que vai pro
+  // cliente ja se identifica sozinha, sem depender de abrir pra saber o periodo.
+  const sufixoCliente = state.filtroClienteViagem === "Todos" ? "" : "-" + String(state.filtroClienteViagem).replace(/[^A-Za-z0-9]+/g, "_");
+  exportarCSV("rf-frota-viagens-" + (state.mesAtivo || "") + sufixoCliente + sufixoPlaca + ".csv", cabecalho, linhas);
 }
 
 function exportarDados() {
@@ -4311,13 +4334,382 @@ function szTelaPlano() {
     + szTelaEscala();
   return h + '</div>';
 }
+/* ===================== v259 — ROTEIRIZAÇÃO DA PLANILHA SUZANO ===============
+   A Suzano manda a planilha da carga (uma linha por remessa) e é a RF que
+   divide por caminhão e roteiriza. Isso era feito à mão. Aqui o sistema lê a
+   planilha, agrupa por RECEBEDOR (não por "Nome Emissor" — as duas colunas
+   divergem, e quem recebe é o recebedor), e monta a divisão pelas mesmas
+   regras que a gente usou à mão:
+   - cliente nunca se parte entre dois caminhões;
+   - cliente que sozinho enche o carro ganha o carro só pra ele;
+   - lojas da mesma rede andam juntas quando o peso deixa;
+   - o teto de verdade não é o número de paradas, é o TEMPO: cada cliente tem
+     um tempo estimado de atendimento (atacadão pode levar o dia inteiro) e o
+     carro fecha quando a jornada enche;
+   - peso: meta de 3,5 t por 3/4 (referência da Suzano) e, se não fechar sem
+     partir cliente, sobe até a carga útil do CRLV (com os 5% de tolerância
+     legal sobre o PBT), sempre sinalizando quem passou da meta. */
+function szRot() {
+  if (!state.suzanoRot || typeof state.suzanoRot !== "object") state.suzanoRot = {};
+  var r = state.suzanoRot;
+  if (!r.cfg || typeof r.cfg !== "object") r.cfg = {};
+  var c = r.cfg;
+  if (c.metaKg == null) c.metaKg = 3500;
+  if (c.usarTeto == null) c.usarTeto = true;
+  if (c.tolerancia == null) c.tolerancia = true;
+  if (c.jornadaMin == null) c.jornadaMin = 540;
+  if (c.tempoPadrao == null) c.tempoPadrao = 30;
+  if (c.tempoGrande == null) c.tempoGrande = 240;
+  if (c.limiteGrandeKg == null) c.limiteGrandeKg = 1000;
+  if (!Array.isArray(r.paradas)) r.paradas = [];
+  if (!Array.isArray(r.placas)) r.placas = [];
+  if (!r.tempos || typeof r.tempos !== "object") r.tempos = {};
+  return r;
+}
+function szRotSet(campo, valor) {
+  var r = szRot();
+  if (campo === "usarTeto" || campo === "tolerancia") r.cfg[campo] = !!valor;
+  else r.cfg[campo] = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
+  salvar(); render();
+}
+function szRotTogglePlaca(placa) {
+  var r = szRot(), i = r.placas.indexOf(placa);
+  if (i >= 0) r.placas.splice(i, 1); else r.placas.push(placa);
+  salvar(); render();
+}
+function szRotTetoKg(v) {
+  var r = szRot();
+  var util = szCargaUtil(v) * 1000;
+  if (!util) return 0;
+  var extra = (r.cfg.tolerancia && Number(v.pbtT) > 0) ? Number(v.pbtT) * 1000 * 0.05 : 0;
+  return util + extra;
+}
+function szRotFrota() {
+  var r = szRot();
+  var frota = szFrotaEscalavel();
+  if (r.placas.length) frota = frota.filter(function (v) { return r.placas.indexOf(v.placa) >= 0; });
+  return frota;
+}
+function szRotTempoParada(p) {
+  var r = szRot();
+  var manual = r.tempos[rfConfNorm(p.cliente)];
+  if (manual != null && Number(manual) > 0) return Number(manual);
+  return (Number(p.peso) || 0) >= r.cfg.limiteGrandeKg ? r.cfg.tempoGrande : r.cfg.tempoPadrao;
+}
+function szRotSetTempo(cliente) {
+  var r = szRot(), chave = rfConfNorm(cliente);
+  var atual = r.tempos[chave] || "";
+  var v = prompt("Tempo estimado de atendimento de \"" + cliente + "\" (em minutos).\n\nDeixe vazio para voltar ao automático (por peso).", atual);
+  if (v === null) return;
+  v = String(v).trim();
+  if (!v) delete r.tempos[chave];
+  else r.tempos[chave] = Math.max(1, parseInt(v.replace(/[^0-9]/g, ""), 10) || 0);
+  salvar(); render();
+}
+function szRotRede(nome) {
+  var n = rfConfNorm(nome).split(" ").filter(function (x) { return x.length >= 4; });
+  return n.length ? n[0] : rfConfNorm(nome);
+}
+/* Lê a planilha da Suzano (xlsx) direto no navegador — sem IA, sem custo. */
+function szRotLerArquivo(input) {
+  var file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Verifique a conexão e recarregue a página."); return; }
+  var fr = new FileReader();
+  fr.onload = function () {
+    try {
+      var wb = XLSX.read(new Uint8Array(fr.result), { type: "array" });
+      var melhor = null;
+      wb.SheetNames.forEach(function (nome) {
+        var linhas = XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "" });
+        var cab = szRotAcharCabecalho(linhas);
+        if (cab && (!melhor || linhas.length > melhor.linhas.length)) melhor = { linhas: linhas, cab: cab, aba: nome };
+      });
+      if (!melhor) { alert("Não achei nessa planilha as colunas que a roteirização precisa (cidade, peso e recebedor).\n\nUse o arquivo que a Suzano manda, sem apagar a linha de cabeçalho."); return; }
+      szRotAplicar(melhor, file.name);
+    } catch (e) { alert("Erro ao ler a planilha: " + (e.message || e)); }
+  };
+  fr.onerror = function () { alert("Não consegui abrir esse arquivo."); };
+  fr.readAsArrayBuffer(file);
+}
+function szRotAcharCabecalho(linhas) {
+  for (var i = 0; i < Math.min(linhas.length, 15); i++) {
+    var l = (linhas[i] || []).map(function (x) { return rfConfNorm(x); });
+    var idx = {};
+    l.forEach(function (t, j) {
+      if (!t) return;
+      if (idx.recebedor == null && t.indexOf("RECEBEDOR MERCADORIA") >= 0) idx.recebedor = j;
+      if (idx.nome == null && t === "NOME") idx.nome = j;
+      if (idx.cidade == null && t.indexOf("CIDADE") >= 0) idx.cidade = j;
+      if (idx.bairro == null && t.indexOf("BAIRRO") >= 0) idx.bairro = j;
+      if (idx.endereco == null && t.indexOf("ENDERECO") >= 0) idx.endereco = j;
+      if (idx.remessa == null && t.indexOf("REMESSA") >= 0) idx.remessa = j;
+      if (idx.volume == null && t === "VOLUME") idx.volume = j;
+      if (idx.peso == null && t.indexOf("PESO LIQUIDO") >= 0) idx.peso = j;
+      if (idx.rota == null && t === "ROTA") idx.rota = j;
+      if (idx.emissor == null && t.indexOf("NOME EMISSOR") >= 0) idx.emissor = j;
+    });
+    if (idx.peso == null) l.forEach(function (t, j) { if (idx.peso == null && t.indexOf("PESO") >= 0) idx.peso = j; });
+    if (idx.cidade != null && idx.peso != null && (idx.recebedor != null || idx.nome != null)) return { linha: i, idx: idx };
+  }
+  return null;
+}
+function szRotAplicar(res, nomeArquivo) {
+  var r = szRot(), idx = res.cab.idx, mapa = {};
+  for (var i = res.cab.linha + 1; i < res.linhas.length; i++) {
+    var l = res.linhas[i] || [];
+    var nome = String(idx.nome != null ? l[idx.nome] : "").trim();
+    var cod = String(idx.recebedor != null ? l[idx.recebedor] : "").trim();
+    var peso = parseFloat(String(idx.peso != null ? l[idx.peso] : "0").toString().replace(/\./g, "").replace(",", ".")) || 0;
+    if (!nome && !cod) continue;
+    if (!peso && !nome) continue;
+    var chave = cod || rfConfNorm(nome);
+    if (!mapa[chave]) {
+      mapa[chave] = {
+        codigo: cod, cliente: nome || cod,
+        cidade: String(idx.cidade != null ? l[idx.cidade] : "").trim(),
+        bairro: String(idx.bairro != null ? l[idx.bairro] : "").trim(),
+        endereco: String(idx.endereco != null ? l[idx.endereco] : "").trim(),
+        rota: String(idx.rota != null ? l[idx.rota] : "").trim(),
+        emissor: String(idx.emissor != null ? l[idx.emissor] : "").trim(),
+        remessas: [], volumes: 0, peso: 0,
+      };
+    }
+    var p = mapa[chave];
+    var rem = String(idx.remessa != null ? l[idx.remessa] : "").trim();
+    if (rem && p.remessas.indexOf(rem) < 0) p.remessas.push(rem);
+    p.volumes += parseInt(String(idx.volume != null ? l[idx.volume] : "0").replace(/[^0-9]/g, ""), 10) || 0;
+    p.peso += peso;
+  }
+  var paradas = Object.keys(mapa).map(function (k) { return mapa[k]; }).filter(function (p) { return p.peso > 0 || p.volumes > 0; });
+  if (!paradas.length) { alert("A planilha foi lida, mas não achei nenhuma linha com cliente e peso."); return; }
+  r.paradas = paradas;
+  r.arquivo = nomeArquivo || "";
+  r.lidoEm = Date.now();
+  salvar();
+  var totalPeso = paradas.reduce(function (s, p) { return s + p.peso; }, 0);
+  var totalVol = paradas.reduce(function (s, p) { return s + p.volumes; }, 0);
+  salvar(); render();
+  alert("Planilha lida: " + paradas.length + " ponto(s) de entrega, "
+    + totalVol.toLocaleString("pt-BR") + " volumes, "
+    + totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " kg.\n\n"
+    + "Confira os tempos de atendimento dos clientes grandes antes de fechar a divisão — é o tempo, não o número de paradas, que estoura o prazo.");
+}
+function szRotLimpar() {
+  if (!confirm("Limpar a carga lida da planilha?")) return;
+  var r = szRot(); r.paradas = []; r.arquivo = ""; r.lidoEm = 0;
+  salvar(); render();
+}
+/* Ordena as paradas de um carro: cidades de passagem primeiro (as com menos
+   entregas), a cidade com mais entregas por último, e dentro da cidade agrupa
+   por bairro. É o roteiro "desce pra Feira" que o Renato descreveu. */
+function szRotOrdenar(lista) {
+  var porCidade = {};
+  lista.forEach(function (p) { var c = rfConfNorm(p.cidade) || "-"; (porCidade[c] = porCidade[c] || []).push(p); });
+  var cidades = Object.keys(porCidade).sort(function (a, b) {
+    var d = porCidade[a].length - porCidade[b].length;
+    if (d !== 0) return d;
+    return a.localeCompare(b);
+  });
+  var saida = [];
+  cidades.forEach(function (c) {
+    porCidade[c].sort(function (x, y) {
+      var b = rfConfNorm(x.bairro).localeCompare(rfConfNorm(y.bairro));
+      if (b !== 0) return b;
+      return (y.peso || 0) - (x.peso || 0);
+    });
+    porCidade[c].forEach(function (p) { saida.push(p); });
+  });
+  return saida;
+}
+function szRotAlocar() {
+  var r = szRot(), cfg = r.cfg;
+  var frota = szRotFrota();
+  var carros = frota.map(function (v) {
+    return { placa: v.placa, veiculo: v, tetoKg: szRotTetoKg(v), metaKg: cfg.metaKg, peso: 0, volumes: 0, tempo: 0, paradas: [] };
+  });
+  var sobra = [];
+  if (!carros.length) return { carros: carros, sobra: (r.paradas || []).slice(), semFrota: true };
+  var tetoMax = carros.reduce(function (m, c) { return Math.max(m, c.tetoKg); }, 0);
+  /* 1) agrupa por rede (lojas do mesmo grupo andam juntas quando dá) */
+  var redes = {};
+  (r.paradas || []).forEach(function (p) { var k = szRotRede(p.cliente); (redes[k] = redes[k] || []).push(p); });
+  var blocos = Object.keys(redes).map(function (k) {
+    var lista = redes[k];
+    var peso = lista.reduce(function (s, p) { return s + (p.peso || 0); }, 0);
+    var tempo = lista.reduce(function (s, p) { return s + szRotTempoParada(p); }, 0);
+    return { rede: k, lista: lista, peso: peso, tempo: tempo };
+  });
+  /* bloco de rede que não cabe em nenhum carro vira paradas soltas */
+  var itens = [];
+  blocos.forEach(function (b) {
+    if (b.lista.length > 1 && (b.peso > tetoMax || b.tempo > cfg.jornadaMin)) {
+      b.lista.forEach(function (p) { itens.push({ lista: [p], peso: p.peso || 0, tempo: szRotTempoParada(p) }); });
+    } else itens.push(b);
+  });
+  itens.sort(function (a, b) { return b.peso - a.peso; });
+  function cabe(carro, item, usarTeto) {
+    var limite = usarTeto ? Math.max(carro.tetoKg, carro.metaKg) : Math.min(carro.metaKg, carro.tetoKg || carro.metaKg);
+    if (carro.tetoKg && carro.peso + item.peso > carro.tetoKg) return false;
+    if (carro.peso + item.peso > limite) return false;
+    if (carro.tempo + item.tempo > cfg.jornadaMin) return false;
+    return true;
+  }
+  function melhorCarro(item, usarTeto) {
+    var aptos = carros.filter(function (c) { return cabe(c, item, usarTeto); });
+    if (!aptos.length) return null;
+    /* prefere quem já tem a mesma cidade (menos deslocamento), depois quem tem mais espaço */
+    var cidades = item.lista.map(function (p) { return rfConfNorm(p.cidade); });
+    aptos.sort(function (a, b) {
+      var ca = a.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
+      var cb = b.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return (b.tetoKg - b.peso) - (a.tetoKg - a.peso);
+    });
+    return aptos[0];
+  }
+  itens.forEach(function (item) {
+    var alvo = melhorCarro(item, false);          // 1º tenta respeitando a meta de 3,5 t
+    if (!alvo && cfg.usarTeto) alvo = melhorCarro(item, true);  // senão sobe até o teto do CRLV
+    if (!alvo) { item.lista.forEach(function (p) { sobra.push(p); }); return; }
+    item.lista.forEach(function (p) {
+      alvo.paradas.push(p);
+      alvo.peso += p.peso || 0;
+      alvo.volumes += p.volumes || 0;
+      alvo.tempo += szRotTempoParada(p);
+    });
+  });
+  carros.forEach(function (c) { c.paradas = szRotOrdenar(c.paradas); c.acimaMeta = c.peso > c.metaKg; });
+  return { carros: carros.filter(function (c) { return c.paradas.length; }), sobra: sobra, semFrota: false, vazios: carros.filter(function (c) { return !c.paradas.length; }) };
+}
+function szRotExportar() {
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou."); return; }
+  var a = szRotAlocar();
+  if (!a.carros.length) { alert("Não há divisão para exportar."); return; }
+  var hoje = new Date();
+  var dataTxt = ("0" + hoje.getDate()).slice(-2) + "/" + ("0" + (hoje.getMonth() + 1)).slice(-2) + "/" + hoje.getFullYear();
+  var resumo = [
+    ["RF LOGÍSTICA TRANSPORTES & DISTRIBUIÇÃO LTDA"],
+    ["Plano de carregamento — Operação Suzano"],
+    ["Data: " + dataTxt + "   ·   Origem: Suzano CDL Salvador — Simões Filho/BA"],
+    [],
+    ["Carro", "Placa", "Motorista", "Capacidade (kg)", "Peso carregado (kg)", "Ocupação", "Volumes", "Entregas", "Cidades atendidas"],
+  ];
+  a.carros.forEach(function (c, i) {
+    var cidades = [];
+    c.paradas.forEach(function (p) { if (p.cidade && cidades.indexOf(p.cidade) < 0) cidades.push(p.cidade); });
+    resumo.push([i + 1, c.placa, (c.veiculo && c.veiculo.motorista) || "", Math.round(c.tetoKg), Math.round(c.peso * 1000) / 1000,
+      c.tetoKg ? (Math.round(c.peso / c.tetoKg * 1000) / 10) + "%" : "", c.volumes, c.paradas.length, cidades.join(" · ")]);
+  });
+  var detalhe = [["Carro", "Placa", "Motorista", "Ordem", "Cliente (recebedor)", "Cidade", "Bairro", "Endereço", "Remessa(s)", "Volumes", "Peso (kg)", "Tempo estimado (min)"]];
+  a.carros.forEach(function (c, i) {
+    c.paradas.forEach(function (p, j) {
+      detalhe.push([i + 1, c.placa, (c.veiculo && c.veiculo.motorista) || "", j + 1, p.cliente, p.cidade, p.bairro, p.endereco,
+        p.remessas.join(", "), p.volumes, Math.round(p.peso * 1000) / 1000, szRotTempoParada(p)]);
+    });
+  });
+  if (a.sobra.length) {
+    detalhe.push([]);
+    detalhe.push(["SEM CAMINHÃO — não coube na frota selecionada"]);
+    a.sobra.forEach(function (p) { detalhe.push(["", "", "", "", p.cliente, p.cidade, p.bairro, p.endereco, p.remessas.join(", "), p.volumes, Math.round(p.peso * 1000) / 1000, szRotTempoParada(p)]); });
+  }
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumo), "Resumo por Veículo");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalhe), "Carregamento por Entrega");
+  XLSX.writeFile(wb, "RF_Suzano_Carregamento_" + hoje.getFullYear() + ("0" + (hoje.getMonth() + 1)).slice(-2) + ("0" + hoje.getDate()).slice(-2) + ".xlsx");
+}
+function szTelaRoteirizador() {
+  var r = szRot(), cfg = r.cfg;
+  var aberto = !!state.szRotAberto;
+  var n = function (x, c) { return Number(x || 0).toLocaleString("pt-BR", { minimumFractionDigits: c || 0, maximumFractionDigits: c || 0 }); };
+  var totalPeso = (r.paradas || []).reduce(function (s, p) { return s + (p.peso || 0); }, 0);
+  var totalVol = (r.paradas || []).reduce(function (s, p) { return s + (p.volumes || 0); }, 0);
+  var h = '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:12px 14px;margin-bottom:14px;background:#0B0B0B;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;" onclick="state.szRotAberto=!state.szRotAberto;render();">'
+    + '<div><span style="font-size:16px;font-weight:900;color:' + GOLD + ';">📦 Roteirização: planilha da Suzano → caminhões</span>'
+    + '<div style="font-size:12px;color:#bbb;">'
+    + ((r.paradas || []).length
+      ? (r.paradas.length + ' ponto(s) de entrega · ' + n(totalVol) + ' volumes · ' + n(totalPeso, 1) + ' kg' + (r.arquivo ? ' · ' + esc(r.arquivo) : ''))
+      : 'Nenhuma planilha lida ainda — anexe o arquivo que a Suzano mandou.')
+    + '</div></div>'
+    + '<span style="color:#888;font-size:12px;">' + (aberto ? "▾ fechar" : "▸ abrir") + '</span></div>';
+  if (!aberto) return h + '</div>';
+  h += '<div style="margin-top:10px;font-size:12px;color:#999;">O sistema agrupa por RECEBEDOR (nunca pelo "Nome Emissor" — as duas colunas divergem e quem recebe é o recebedor), '
+    + 'não parte cliente entre caminhões, mantém lojas da mesma rede juntas quando o peso deixa, e fecha o carro pelo TEMPO de atendimento, não pelo número de paradas.</div>'
+    + '<div style="margin:10px 0;"><label class="btn-gold" style="cursor:pointer;display:inline-block;">📎 Anexar planilha da Suzano (.xlsx)'
+    + '<input type="file" accept=".xlsx,.xls" style="display:none" onchange="szRotLerArquivo(this)"></label>'
+    + ((r.paradas || []).length ? ' <button onclick="szRotLimpar()" style="margin-left:8px;">limpar carga</button>' : '')
+    + '</div>';
+  h += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:10px;">'
+    + 'meta por 3/4 <input type="number" min="0" step="100" value="' + cfg.metaKg + '" onchange="szRotSet(\'metaKg\',this.value)" style="width:80px;text-align:right;font-weight:700;"> kg'
+    + ' · jornada <input type="number" min="60" step="30" value="' + cfg.jornadaMin + '" onchange="szRotSet(\'jornadaMin\',this.value)" style="width:70px;text-align:right;font-weight:700;"> min'
+    + ' · tempo padrão <input type="number" min="1" value="' + cfg.tempoPadrao + '" onchange="szRotSet(\'tempoPadrao\',this.value)" style="width:60px;text-align:right;font-weight:700;"> min'
+    + ' · cliente grande <input type="number" min="1" value="' + cfg.tempoGrande + '" onchange="szRotSet(\'tempoGrande\',this.value)" style="width:60px;text-align:right;font-weight:700;"> min'
+    + ' acima de <input type="number" min="0" step="100" value="' + cfg.limiteGrandeKg + '" onchange="szRotSet(\'limiteGrandeKg\',this.value)" style="width:70px;text-align:right;font-weight:700;"> kg'
+    + '</div>'
+    + '<div style="font-size:12px;color:#ddd;margin-bottom:10px;">'
+    + '<label style="cursor:pointer;"><input type="checkbox" ' + (cfg.usarTeto ? "checked" : "") + ' onchange="szRotSet(\'usarTeto\',this.checked)"> pode passar da meta até a carga útil do CRLV quando não fechar sem partir cliente</label>'
+    + ' &nbsp; <label style="cursor:pointer;"><input type="checkbox" ' + (cfg.tolerancia ? "checked" : "") + ' onchange="szRotSet(\'tolerancia\',this.checked)"> somar os 5% de tolerância legal (sobre o PBT)</label>'
+    + '</div>';
+  var frotaToda = szFrotaEscalavel();
+  h += '<div style="font-size:12px;color:#999;margin-bottom:4px;">Caminhões que participam (nenhum marcado = todos os aptos):</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  frotaToda.forEach(function (v) {
+    var marcado = r.placas.indexOf(v.placa) >= 0;
+    h += '<label style="cursor:pointer;border:1px solid ' + (marcado ? GOLD : "#333") + ';border-radius:8px;padding:4px 8px;font-size:12px;">'
+      + '<input type="checkbox" ' + (marcado ? "checked" : "") + ' onchange="szRotTogglePlaca(\'' + esc(v.placa) + '\')"> '
+      + esc(v.placa) + ' <span style="color:#888;">' + n(szRotTetoKg(v)) + ' kg</span></label>';
+  });
+  h += '</div>';
+  if (!(r.paradas || []).length) return h + '</div>';
+  var a = szRotAlocar();
+  if (a.semFrota) {
+    h += '<div style="color:#C0392B;font-weight:800;font-size:13px;">Nenhum caminhão apto: cadastre a carga útil das placas no bloco de planejamento acima.</div>';
+    return h + '</div>';
+  }
+  h += '<div style="overflow-x:auto;"><table style="min-width:900px;width:100%;font-size:12px;"><thead><tr>'
+    + '<th style="text-align:left;">Carro</th><th style="text-align:left;">Motorista</th><th>Peso (kg)</th><th>Teto (kg)</th><th>Ocupação</th><th>Volumes</th><th>Entregas</th><th>Tempo</th><th style="text-align:left;">Roteiro</th></tr></thead><tbody>';
+  a.carros.forEach(function (c) {
+    var ocup = c.tetoKg ? (c.peso / c.tetoKg * 100) : 0;
+    var cidades = [];
+    c.paradas.forEach(function (p) { if (p.cidade && cidades.indexOf(p.cidade) < 0) cidades.push(p.cidade); });
+    h += '<tr><td style="font-weight:800;">' + esc(c.placa) + (c.acimaMeta ? ' <span style="color:#8a6d1f;font-size:10px;">acima da meta</span>' : '') + '</td>'
+      + '<td>' + esc((c.veiculo && c.veiculo.motorista) || "—") + '</td>'
+      + '<td style="text-align:right;">' + n(c.peso, 1) + '</td>'
+      + '<td style="text-align:right;color:#888;">' + n(c.tetoKg) + '</td>'
+      + '<td style="text-align:right;font-weight:800;color:' + (ocup > 100 ? "#C0392B" : (c.acimaMeta ? "#8a6d1f" : "#2E7D32")) + ';">' + n(ocup, 1) + '%</td>'
+      + '<td style="text-align:right;">' + n(c.volumes) + '</td>'
+      + '<td style="text-align:right;">' + c.paradas.length + '</td>'
+      + '<td style="text-align:right;">' + Math.floor(c.tempo / 60) + 'h' + ("0" + (c.tempo % 60)).slice(-2) + '</td>'
+      + '<td>' + esc(cidades.join(" → ")) + '</td></tr>';
+    c.paradas.forEach(function (p, i) {
+      h += '<tr style="color:#bbb;"><td></td><td colspan="2" style="padding-left:10px;">' + (i + 1) + '. ' + esc(p.cliente) + '</td>'
+        + '<td colspan="2">' + esc(p.cidade) + (p.bairro ? " · " + esc(p.bairro) : "") + '</td>'
+        + '<td style="text-align:right;">' + n(p.volumes) + '</td>'
+        + '<td style="text-align:right;">' + n(p.peso, 1) + ' kg</td>'
+        + '<td style="text-align:right;">' + szRotTempoParada(p) + ' min</td>'
+        + '<td><button onclick="szRotSetTempo(\'' + esc(String(p.cliente).replace(/'/g, "")) + '\')" style="font-size:11px;padding:2px 6px;">ajustar tempo</button></td></tr>';
+    });
+  });
+  h += '</tbody></table></div>';
+  if (a.sobra.length) {
+    h += '<div style="margin-top:10px;color:#C0392B;font-size:12px;font-weight:800;">Não coube na frota selecionada ('
+      + n(a.sobra.reduce(function (s, p) { return s + (p.peso || 0); }, 0), 1) + ' kg): '
+      + a.sobra.map(function (p) { return esc(p.cliente) + " (" + esc(p.cidade) + ")"; }).join(", ")
+      + ' — marque mais um caminhão acima ou aumente a jornada.</div>';
+  }
+  h += '<div style="margin-top:12px;"><button onclick="szRotExportar()" class="btn-gold" style="font-weight:800;">⬇ Exportar planilha pra mandar pra Suzano</button></div>';
+  return h + '</div>';
+}
+
 function szTelaEquipe() {
   var cargas = szCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
     + '<div style="font-size:12px;color:#999;max-width:760px;">Operação Suzano: eles não emitem CT-e e não homologam, então a conferência é toda da RF. '
     + 'Um espelho = uma NF = um cliente. O caminhão só é liberado quando a soma dos volumes bipados bate com a soma das notas.</div>'
     + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>'
-    + szTelaPlano();
+    + szTelaPlano()
+    + szTelaRoteirizador();
   if (!cargas.length) return h + '<div style="color:#888;padding:20px;">Nenhum carregamento lançado ainda.</div>';
   cargas.forEach(function (c) {
     var t = szTotais(c), aberta = String(state.szCargaAberta) === String(c.id);
@@ -6800,7 +7192,28 @@ function rfConfRomaneioUpload(input, placa, diasPrevistos) {
 // que o próprio romaneio já declara (tabela "TRECHOS DA ROTA" do documento,
 // extraída pela IA). Se o documento não tiver essa tabela, usa as cidades
 // dos clientes na ordem em que aparecem no romaneio, como alternativa.
+/* v259: a rota estava mandando so "Cidade, Brasil" pro Google Maps. Cidade sem
+   estado leva o mapa pra longe: "Bonito" cai no Mato Grosso do Sul e "Ipira"
+   em Santa Catarina. Agora vai sempre com a UF. O padrao e BA (e o que a RF
+   roda todo dia), mas fica editavel no cartao do romaneio, porque a empresa
+   atende o Nordeste inteiro e um dia sai carga pra SE ou PE. */
+function rfConfUf(rom) {
+  var uf = String((rom || {}).uf || "").toUpperCase().replace(/[^A-Z]/g, "");
+  return uf.length === 2 ? uf : "BA";
+}
+function rfConfSetUf(romaneioId) {
+  var rom = state.romaneios.find(function (r) { return String(r.id) === String(romaneioId); });
+  if (!rom) return;
+  var v = prompt("Estado (UF) das cidades desse romaneio — 2 letras.\n\nSó mexa aqui se a carga for de fora da Bahia.", rfConfUf(rom));
+  if (v === null) return;
+  v = String(v).toUpperCase().replace(/[^A-Z]/g, "");
+  if (v.length !== 2) { alert("Digite a UF com 2 letras, por exemplo BA."); return; }
+  rom.uf = v;
+  render();
+  rfRomaneioSalvar(rom);
+}
 function rfConfRotaGoogleMapsUrl(rom) {
+  var uf = rfConfUf(rom);
   var cidades = (rom.rota && rom.rota.length) ? rom.rota.slice() : [];
   if (!cidades.length) {
     (rom.clientes || []).forEach(function (c) {
@@ -6815,9 +7228,9 @@ function rfConfRotaGoogleMapsUrl(rom) {
   // de simplesmente não mostrar o botão.
   if (cidades.length === 1) {
     return "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent("Feira de Santana, BA, Brasil") +
-      "&destination=" + encodeURIComponent(cidades[0] + ", Brasil") + "&travelmode=driving";
+      "&destination=" + encodeURIComponent(cidades[0] + ", " + uf + ", Brasil") + "&travelmode=driving";
   }
-  var paradas = cidades.map(function (c) { return c + ", Brasil"; });
+  var paradas = cidades.map(function (c) { return c + ", " + uf + ", Brasil"; });
   var origem = paradas[0];
   var destino = paradas[paradas.length - 1];
   var meio = paradas.slice(1, -1);
@@ -6846,6 +7259,149 @@ function rfConfConferirExtracaoRomaneio(clientes, j) {
     alert("⚠ Atenção — a leitura pode ter ficado incompleta. O que foi extraído não bate com o total que o próprio romaneio declara no rodapé:\n\n" + divergencias.join("\n") + "\n\nConfira o documento com calma (se foi foto, tente tirar de novo com mais luz e sem cortar nenhuma parte da tabela) antes de mandar o motorista sair com esse romaneio.");
   }
 }
+
+/* ===================== v259 — CÂMERA DENTRO DO APP =========================
+   O <input type="file" capture> abre o app de câmera do Android. O navegador
+   vai pra segundo plano e, em celular apertado de memória (ou rodando dentro
+   de uma aba do Chrome em vez do app instalado), o Android descarrega a
+   página. Quando volta, a tela recarrega e a foto se perde — foi exatamente o
+   que o motorista relatou: "sai e volta, tem que tirar outra foto".
+   A câmera aqui roda DENTRO da página (getUserMedia + canvas): não troca de
+   processo, então não existe o que descarregar, e ainda fica mais rápido pra
+   bipar caixa atrás de caixa. Se o aparelho não deixar (permissão negada,
+   navegador antigo, página sem https), cai sozinho no input de arquivo de
+   sempre — ninguém fica sem conseguir fotografar. */
+var rfCamStream = null, rfCamCb = null;
+function rfCamSuportada() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.HTMLCanvasElement);
+}
+function rfCamFechar() {
+  try { if (rfCamStream) rfCamStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+  rfCamStream = null; rfCamCb = null;
+  var d = document.getElementById("rf-cam");
+  if (d && d.parentNode) d.parentNode.removeChild(d);
+}
+function rfCamUsarGaleria() {
+  var id = state._camInputId;
+  rfCamFechar();
+  var el = id && document.getElementById(id);
+  if (el) el.click();
+  else alert("Não achei o campo de anexo nessa tela. Feche e abra a aba de novo.");
+}
+function rfCamDisparar() {
+  var v = document.getElementById("rf-cam-video");
+  if (!v || !v.videoWidth) { alert("A câmera ainda está abrindo — espere um instante e tente de novo."); return; }
+  var cv = document.createElement("canvas");
+  cv.width = v.videoWidth; cv.height = v.videoHeight;
+  cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height);
+  var cb = rfCamCb;
+  rfCamFechar();
+  if (!cb) return;
+  if (cv.toBlob) cv.toBlob(function (blob) { if (blob) cb(blob); }, "image/jpeg", 0.9);
+  else {
+    var dataUrl = cv.toDataURL("image/jpeg", 0.9);
+    var bin = atob(dataUrl.split(",")[1]), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    cb(new Blob([arr], { type: "image/jpeg" }));
+  }
+}
+function rfCamAbrir(titulo, inputFallbackId, onFoto) {
+  state._camInputId = inputFallbackId || "";
+  rfCamCb = onFoto;
+  if (!rfCamSuportada()) { rfCamUsarGaleria(); return; }
+  var d = document.createElement("div");
+  d.id = "rf-cam";
+  d.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:#000;display:flex;flex-direction:column;";
+  d.innerHTML = '<div style="color:' + GOLD + ';font-weight:900;padding:10px 14px;font-size:15px;">' + esc(titulo || "Fotografar") + '</div>'
+    + '<video id="rf-cam-video" playsinline autoplay muted style="flex:1;width:100%;object-fit:contain;background:#000;"></video>'
+    + '<div id="rf-cam-msg" style="color:#bbb;font-size:12px;padding:0 14px 6px;">Enquadre a etiqueta e toque em Tirar foto. A câmera fica dentro do app — a tela não sai daqui, então não tem como perder a foto.</div>'
+    + '<div style="display:flex;gap:8px;padding:10px 14px 18px;">'
+    + '<button onclick="rfCamFechar()" style="flex:1;padding:14px;font-weight:800;">Cancelar</button>'
+    + '<button onclick="rfCamUsarGaleria()" style="flex:1;padding:14px;font-weight:800;">Galeria</button>'
+    + '<button onclick="rfCamDisparar()" style="flex:2;padding:14px;font-weight:900;background:' + GOLD + ';color:#000;border:none;border-radius:8px;">📷 Tirar foto</button>'
+    + '</div>';
+  document.body.appendChild(d);
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1600 } }, audio: false })
+    .then(function (s) {
+      rfCamStream = s;
+      var v = document.getElementById("rf-cam-video");
+      if (v) { v.srcObject = s; var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+    })
+    .catch(function () {
+      var m = document.getElementById("rf-cam-msg");
+      if (m) m.innerHTML = '<span style="color:#C0392B;font-weight:800;">Não consegui abrir a câmera dentro do app</span> (permissão negada ou navegador antigo). Toque em <b>Galeria</b> — funciona igual, só exige mais cuidado pra não perder a foto.';
+    });
+}
+function rfConfCameraCaixa(romaneioId) {
+  rfCamAbrir("Foto da etiqueta da caixa", "conf-file-" + romaneioId, function (blob) {
+    rfConfEtiquetaProcessarBlob(blob, romaneioId);
+  });
+}
+
+/* ===================== v259 — ACHAR O CLIENTE DA CAIXA ======================
+   Antes, se o número do PEDIDO lido não existisse no romaneio, o app dizia que
+   a mercadoria não pertencia ao romaneio e parava por aí. Em 18/08 isso
+   aconteceu com carga certa: a etiqueta foi fotografada de cabeça pra baixo, a
+   IA pegou um número curto (campo vizinho da etiqueta) no lugar do pedido, e a
+   caixa — que estava no romaneio — foi acusada de não estar.
+   Leitura por foto nunca é 100%; cruzamento de dados é. Agora, quando o pedido
+   não bate, ainda tenta pela RAZÃO/FANTASIA + cidade e, por último, pelo total
+   de volumes da etiqueta ("VOL x/y") contra o volume do cliente. Só desiste
+   depois disso — e quando acha por um caminho alternativo, marca o pedido do
+   cliente na caixa (o mesmo mecanismo do "marcar pedido manualmente"), pra
+   caixa contar na conferência em vez de ficar pendurada. */
+function rfConfNorm(s) {
+  return String(s || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+function rfConfParecido(a, b) {
+  a = rfConfNorm(a); b = rfConfNorm(b);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= 5 && b.length >= 5 && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0)) return true;
+  var ign = ["LTDA", "ME", "EPP", "EIRELI", "SA", "COMERCIO", "COM", "DE", "DA", "DO", "DOS", "DAS", "E"];
+  var pa = a.split(" ").filter(function (x) { return x.length > 2 && ign.indexOf(x) < 0; });
+  var pb = b.split(" ").filter(function (x) { return x.length > 2 && ign.indexOf(x) < 0; });
+  if (!pa.length || !pb.length) return false;
+  var iguais = pa.filter(function (x) { return pb.indexOf(x) >= 0; }).length;
+  return iguais >= 2 || (iguais >= 1 && Math.min(pa.length, pb.length) === 1);
+}
+function rfConfAcharCliente(rom, dados) {
+  if (!rom || !rom.clientes || !rom.clientes.length) return null;
+  var d = dados || {};
+  var pedido = String(d.pedido || "").trim();
+  if (pedido) {
+    var exato = rom.clientes.find(function (c) { return (c.pedidos || []).some(function (p) { return String(p.pedido) === pedido; }); });
+    if (exato) return { cliente: exato, via: "pedido" };
+  }
+  var cidade = d.cidade || "";
+  var nomes = [d.razao, d.fantasia].filter(Boolean);
+  for (var i = 0; i < nomes.length; i++) {
+    var nome = nomes[i];
+    var achado = rom.clientes.find(function (c) {
+      if (!rfConfParecido(c.cliente, nome)) return false;
+      if (cidade && c.cidade && !rfConfParecido(c.cidade, cidade)) return false;
+      return true;
+    });
+    if (achado) return { cliente: achado, via: "nome" };
+  }
+  var volTotal = Number(d.volTotal) || 0;
+  if (volTotal > 0) {
+    var porVol = (rom.clientes || []).filter(function (c) { return (Number(c.volumeTotal) || 0) === volTotal; });
+    if (cidade) {
+      var comCidade = porVol.filter(function (c) { return c.cidade && rfConfParecido(c.cidade, cidade); });
+      if (comCidade.length) porVol = comCidade;
+    }
+    if (porVol.length === 1) return { cliente: porVol[0], via: "volume" };
+  }
+  return null;
+}
+function rfConfViaTexto(via) {
+  if (via === "nome") return "pelo nome do cliente na etiqueta";
+  if (via === "volume") return "pelo total de volumes da etiqueta";
+  return "pelo número do pedido";
+}
+
 
 // ---- Foto da etiqueta da caixa (motorista) e leitura pela IA (ler-etiqueta-caixa) ----
 /* ===================== FILA OFFLINE (v163) =====================
@@ -6973,11 +7529,19 @@ function rfConfEtiquetaSalvarOffline(romaneioId, blob, pedido, volAtual, volTota
 function rfConfEtiquetaProcessar(input, romaneioId) {
   var file = input.files && input.files[0];
   input.value = "";
-  // v172: se o app da câmera não confirmar a foto (ex: tirou mas não apertou
-  // o ✓ de usar), o input volta sem nenhum arquivo -- antes isso não avisava
-  // nada, parecia que o botão não tinha feito nada. Agora avisa e pede pra
-  // tentar de novo, em vez de falhar em silêncio.
+  // v172: se o app da camera nao confirmar a foto (ex: tirou mas nao apertou
+  // o v de usar), o input volta sem nenhum arquivo -- antes isso nao avisava
+  // nada, parecia que o botao nao tinha feito nada. Agora avisa e pede pra
+  // tentar de novo, em vez de falhar em silencio.
   if (!file) { alert("Não recebi nenhuma foto — parece que a câmera não confirmou a captura. Tenta de novo e, depois de tirar a foto, confirma/usa ela na tela da câmera."); return; }
+  rfConfEtiquetaProcessarBlob(file, romaneioId);
+}
+/* v259: o corpo virou funcao separada porque a foto agora pode chegar de dois
+   lugares -- da camera de dentro do app (blob, caminho novo e que nao perde a
+   foto) ou do anexo/galeria (arquivo, caminho antigo, mantido como reserva).
+   Dali pra frente o tratamento e exatamente o mesmo. */
+function rfConfEtiquetaProcessarBlob(file, romaneioId) {
+  if (!file) return;
   if (!romaneioId) return;
   state._confLendoEtiqueta = true; render();
   rfComprimirImagem(file).then(function (blob) {
@@ -7050,8 +7614,12 @@ function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
     rfCaixaSalvar(nova);
     return;
   }
+  // v259: a leitura passou a devolver tambem a RAZAO social e a marca semVol
+  // (etiqueta do modelo B, que nao tem o campo "VOL x/y" -- ela existe na mesma
+  // carga e nao e erro). Os dois entram no cruzamento que acha o cliente.
   nova = Object.assign({}, base, { pedido: j.pedido || "", volAtual: j.volAtual || 0, volTotal: j.volTotal || 0,
-    fantasia: j.fantasia || "", cidade: j.cidade || "", fracionada: false, semEtiqueta: false, sinalizada: false });
+    fantasia: j.fantasia || "", razao: j.razao || "", cidade: j.cidade || "", semVol: !!j.semVol,
+    fracionada: false, semEtiqueta: false, sinalizada: false });
   state.caixasConferencia.unshift(nova);
   render();
   rfCaixaSalvar(nova);
@@ -7062,12 +7630,32 @@ function rfConfEtiquetaSalvarResultado(romaneioId, fotoPath, j) {
   // v165: resolve ANTES do aviso quem é o dono de verdade do pedido lido, pra
   // mostrar pro motorista não só "não é o cliente selecionado" mas também
   // "de quem é essa caixa" -- ele consegue decidir na hora o que fazer.
-  var clienteDonoReal = romAtivo && nova.pedido ? (romAtivo.clientes || []).find(function (c) { return (c.pedidos || []).some(function (p) { return p.pedido === nova.pedido; }); }) : null;
+  // v259: nao desiste no primeiro nao. Se o pedido lido nao existe no romaneio,
+  // tenta pelo nome do cliente da etiqueta + cidade e, por ultimo, pelo total de
+  // volumes. Quando acha por um caminho alternativo, marca o pedido do cliente
+  // na caixa -- mesmo mecanismo do "marcar pedido manualmente" -- pra caixa
+  // contar na conferencia em vez de ficar pendurada como pendente.
+  var achadoConf = romAtivo ? rfConfAcharCliente(romAtivo, nova) : null;
+  var clienteDonoReal = achadoConf ? achadoConf.cliente : null;
+  if (achadoConf && achadoConf.via !== "pedido" && clienteDonoReal) {
+    var pedidosDoDono = (clienteDonoReal.pedidos || []).map(function (p) { return p.pedido; }).filter(Boolean);
+    if (pedidosDoDono.length) {
+      nova.pedidoLido = nova.pedido;
+      nova.pedido = pedidosDoDono[0];
+      nova.pedidosExtra = pedidosDoDono.slice(0, 1);
+      nova.corrigidaPor = achadoConf.via;
+      rfCaixaSalvar(nova);
+      render();
+    }
+  }
   if (romAtivo && idxAtivo !== undefined && idxAtivo !== null && romAtivo.clientes && romAtivo.clientes[idxAtivo]) {
     var pedidosDoAtivo = (romAtivo.clientes[idxAtivo].pedidos || []).map(function (p) { return p.pedido; });
     if (nova.pedido && pedidosDoAtivo.indexOf(nova.pedido) === -1) {
       alert("Atenção: essa caixa é do pedido " + nova.pedido + (nova.fantasia ? " (" + nova.fantasia + ")" : "") + ", que não é do cliente selecionado (" + romAtivo.clientes[idxAtivo].cliente + ").\n\n" +
-        (clienteDonoReal ? "Essa caixa pertence a: " + clienteDonoReal.cliente + " — " + clienteDonoReal.cidade + "." : "Não achei esse pedido em nenhum cliente desse romaneio.") +
+        (clienteDonoReal
+          ? "Essa caixa pertence a: " + clienteDonoReal.cliente + " — " + clienteDonoReal.cidade + "."
+            + (achadoConf && achadoConf.via !== "pedido" ? "\n(O número do pedido na foto não bateu; achei o cliente " + rfConfViaTexto(achadoConf.via) + " — confira a etiqueta.)" : "")
+          : "Não achei esse cliente em nenhuma linha desse romaneio, nem pelo pedido, nem pelo nome, nem pelo total de volumes. Se a caixa é dessa carga, tire a foto de novo com a etiqueta na posição certa.") +
         "\n\nA caixa foi registrada mesmo assim — confira se pegou a caixa certa.");
     }
   }
@@ -7522,7 +8110,8 @@ function rfConfRomaneioCardMotorista(rom) {
       <div style="font-size:11px;color:#888;">${(cliAtivo.pedidos || []).map((p) => `Pedido ${esc(p.pedido)}${p.notaFiscal ? ` · NF ${esc(p.notaFiscal)}` : ""}`).join(" &nbsp;·&nbsp; ")}</div>
       `}
     </div>
-    <label class="btn-gold" style="cursor:pointer;display:inline-block;margin-bottom:10px;">📷 Fotografar caixa<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')"></label>
+    <button class="btn-gold" style="display:inline-block;margin-bottom:10px;font-weight:800;cursor:pointer;" onclick="rfConfCameraCaixa('${rom.id}')">📷 Fotografar caixa</button>
+    <input type="file" id="conf-file-${rom.id}" accept="image/*" style="display:none" onchange="rfConfEtiquetaProcessar(this, '${rom.id}')">
     ${state._confLendoEtiqueta ? `<div style="color:${GOLD};font-size:12px;margin-bottom:10px;">Lendo etiqueta com IA...</div>` : ""}
     ${minhas.length === 0 ? "" : `<div style="font-size:11px;color:#777;margin-bottom:6px;">Últimas caixas desse cliente:</div>
       ${minhas.map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:1px solid #1a1a1a;flex-wrap:wrap;">
@@ -7621,7 +8210,7 @@ function rfConfRomaneioCardAdmin(rom) {
         : `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="rfRomaneioArquivar('${rom.id}')" title="Tira do app do motorista sem apagar nada — a conferência continua aqui">📦 Encerrar romaneio</button>`}
       <button class="btn-del" onclick="rfRomaneioExcluir('${rom.id}')">🗑 Excluir romaneio</button>
     </div>
-    ${rfConfRotaGoogleMapsUrl(rom) ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;margin-bottom:8px;" onclick="rfConfVerRotaMaps('${rom.id}')">🗺️ Ver rota no Google Maps${rom.rota && rom.rota.length ? ` (${rom.rota.length} cidades da rota do romaneio)` : ` (${(function(){var s=new Set();(rom.clientes||[]).forEach(function(c){if(c.cidade)s.add(c.cidade);});return s.size;})()} cidades dos clientes)`}</button>` : ""}
+    ${rfConfRotaGoogleMapsUrl(rom) ? `<button class="btn-outline" style="font-size:11px;padding:4px 10px;margin-bottom:8px;margin-right:6px;" onclick="rfConfSetUf('${rom.id}')" title="Estado usado para montar a rota no mapa">UF: ${rfConfUf(rom)}</button><button class="btn-outline" style="font-size:11px;padding:4px 10px;margin-bottom:8px;" onclick="rfConfVerRotaMaps('${rom.id}')">🗺️ Ver rota no Google Maps${rom.rota && rom.rota.length ? ` (${rom.rota.length} cidades da rota do romaneio)` : ` (${(function(){var s=new Set();(rom.clientes||[]).forEach(function(c){if(c.cidade)s.add(c.cidade);});return s.size;})()} cidades dos clientes)`}</button>` : ""}
     <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px;flex-wrap:wrap;">
       <span style="font-size:12px;color:#999;">Direcionado pra:</span>
       <select onchange="rfRomaneioAtualizarPlaca('${rom.id}', this.value)" style="font-size:12px;min-width:220px;${rom.placa ? "" : "border-color:#C0392B;"}">
@@ -8910,6 +9499,10 @@ function gerarContextoAssistente() {
   const blocoTela = "NAVEGACAO: " + (state._telaInicial
     ? "o usuario esta na TELA INICIAL (so os botoes das areas, sem numeros); para ver dados ele precisa escolher uma area"
     : "o usuario ja abriu uma area do painel; o botao In\u00edcio na barra de abas volta para a tela inicial") + ".";
+  // v258: o assistente precisa saber o recorte da planilha de viagens. Ate a
+  // v257 o export trazia todos os meses e isso ja gerou divergencia com o que
+  // a pessoa via na tela (viagem de junho aparecendo numa conferencia de julho).
+  const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   const blocoSync = _syncLigado
     ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
@@ -9170,7 +9763,14 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - VALOR do frete e valor da mercadoria são informação RESTRITA nesta operação: só aparecem na tela de quem tem a permissão "💰 Ver valores (frete e mercadoria)". Motorista e cliente nunca veem. Se alguém perguntar quanto a RF recebe por uma carga da Suzano e não tiver essa permissão, não informe valores — diga que é informação restrita e que o Renato libera o acesso na aba Usuários.
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
-- Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".`;
+- Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- ROTEIRIZAÇÃO AUTOMÁTICA (v259, bloco "📦 Roteirização: planilha da Suzano → caminhões"): a Suzano manda a planilha da carga (uma linha por remessa) e é a RF que divide por caminhão e roteiriza — antes isso era feito à mão. O sistema lê o .xlsx direto no navegador (sem IA e sem custo) e monta a divisão com estas regras, que são as mesmas que a equipe usava na mão: (1) agrupa por RECEBEDOR, nunca pelo "Nome Emissor" — as duas colunas divergem na planilha deles e quem recebe a mercadoria é o recebedor; (2) cliente NUNCA se parte entre dois caminhões; (3) cliente que sozinho enche o carro ganha o carro só pra ele; (4) lojas da mesma rede andam juntas enquanto o peso deixar; (5) as paradas saem ordenadas com as cidades de passagem primeiro e a cidade com mais entregas por último, agrupando por bairro dentro da cidade — é o roteiro "desce pra Feira".
+- O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
+- Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
+- A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
+- CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
+- Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
+- CÂMERA (v259): a foto da etiqueta passou a ser tirada DENTRO do app, não mais chamando o app de câmera do Android. Motivo: ao abrir a câmera do sistema o navegador ia pra segundo plano e, em celular apertado de memória, o Android descarregava a página — ao voltar a tela recarregava e a foto se perdia ("sai e volta, tem que tirar outra foto"). Se o aparelho não liberar a câmera, o botão Galeria continua funcionando como antes. Se alguém relatar que o app fecha ao fotografar, verifique também se ele está usando o app INSTALADO (sem barra de endereço em cima) e se há espaço livre no celular.`;
   })();
 
 
@@ -9254,6 +9854,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 
   return `${blocoSync}
 ${blocoTela}
+${blocoExportViagens}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
