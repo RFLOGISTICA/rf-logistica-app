@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v260)</title>
+<title>RF Logística — Painel da Frota (v261)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4361,14 +4361,17 @@ function szRot() {
   if (c.tempoPadrao == null) c.tempoPadrao = 30;
   if (c.tempoGrande == null) c.tempoGrande = 240;
   if (c.limiteGrandeKg == null) c.limiteGrandeKg = 1000;
+  if (c.tipo == null) c.tipo = "3/4";   // v261: a operacao Suzano roda com os 3/4
   if (!Array.isArray(r.paradas)) r.paradas = [];
   if (!Array.isArray(r.placas)) r.placas = [];
   if (!r.tempos || typeof r.tempos !== "object") r.tempos = {};
   return r;
 }
+function szRotSetTipo(t) { szRot().cfg.tipo = t; salvar(); render(); }
 function szRotSet(campo, valor) {
   var r = szRot();
-  if (campo === "usarTeto" || campo === "tolerancia") r.cfg[campo] = !!valor;
+  if (campo === "tipo") r.cfg.tipo = String(valor);
+  else if (campo === "usarTeto" || campo === "tolerancia") r.cfg[campo] = !!valor;
   else r.cfg[campo] = Math.max(0, parseFloat(String(valor).replace(",", ".")) || 0);
   salvar(); render();
 }
@@ -4377,6 +4380,7 @@ function szRotTogglePlaca(placa) {
   if (i >= 0) r.placas.splice(i, 1); else r.placas.push(placa);
   salvar(); render();
 }
+function szRotUtilKg(v) { return szCargaUtil(v) * 1000; }
 function szRotTetoKg(v) {
   var r = szRot();
   var util = szCargaUtil(v) * 1000;
@@ -4387,7 +4391,12 @@ function szRotTetoKg(v) {
 function szRotFrota() {
   var r = szRot();
   var frota = szFrotaEscalavel();
-  if (r.placas.length) frota = frota.filter(function (v) { return r.placas.indexOf(v.placa) >= 0; });
+  /* v261: se a pessoa marcou placas, manda a escolha dela. Senao, usa o TIPO
+     configurado (padrao 3/4, que e como a operacao Suzano roda hoje). Antes,
+     sem nada marcado, entravam todos os caminhoes e o sistema escalava Toco de
+     10 t pra levar 3,5 t -- desperdicio que a escala do dia ja evitava. */
+  if (r.placas.length) return frota.filter(function (v) { return r.placas.indexOf(v.placa) >= 0; });
+  if (r.cfg.tipo && r.cfg.tipo !== "Todos") frota = frota.filter(function (v) { return String(v.tipo || "") === r.cfg.tipo; });
   return frota;
 }
 function szRotTempoParada(p) {
@@ -4542,7 +4551,7 @@ function szRotAlocar() {
   var r = szRot(), cfg = r.cfg;
   var frota = szRotFrota();
   var carros = frota.map(function (v) {
-    return { placa: v.placa, veiculo: v, tetoKg: szRotTetoKg(v), metaKg: cfg.metaKg, peso: 0, volumes: 0, tempo: 0, paradas: [] };
+    return { placa: v.placa, veiculo: v, tetoKg: szRotTetoKg(v), utilKg: szRotUtilKg(v), metaKg: cfg.metaKg, peso: 0, volumes: 0, tempo: 0, paradas: [] };
   });
   var sobra = [];
   if (!carros.length) return { carros: carros, sobra: (r.paradas || []).slice(), semFrota: true };
@@ -4564,29 +4573,69 @@ function szRotAlocar() {
     } else itens.push(b);
   });
   itens.sort(function (a, b) { return b.peso - a.peso; });
-  function cabe(carro, item, usarTeto) {
-    var limite = usarTeto ? Math.max(carro.tetoKg, carro.metaKg) : Math.min(carro.metaKg, carro.tetoKg || carro.metaKg);
+  /* v261: TRES niveis de limite, do mais folgado pro mais apertado:
+     1 = meta comercial da Suzano (3,5 t por 3/4);
+     2 = carga util do CRLV, sem tolerancia -- o caminhao continua legal e com
+         folga de balanca;
+     3 = carga util + os 5% de tolerancia legal, so quando nao tem outro jeito.
+     Antes existiam so os niveis 1 e 3, e por isso a divisao anterior colocou um
+     3/4 de 3,5 t levando 3.801 kg: 97% de ocupacao contando com a tolerancia,
+     que e exatamente o que a gente nao quer como escolha automatica. */
+  function limiteDoNivel(carro, nivel) {
+    if (nivel === 1) return Math.min(carro.metaKg, carro.utilKg || carro.tetoKg || carro.metaKg);
+    if (nivel === 2) return carro.utilKg || carro.tetoKg;
+    return carro.tetoKg;
+  }
+  function cabe(carro, item, nivel) {
     if (carro.tetoKg && carro.peso + item.peso > carro.tetoKg) return false;
-    if (carro.peso + item.peso > limite) return false;
+    if (carro.peso + item.peso > limiteDoNivel(carro, nivel)) return false;
     if (carro.tempo + item.tempo > cfg.jornadaMin) return false;
     return true;
   }
-  function melhorCarro(item, usarTeto) {
-    var aptos = carros.filter(function (c) { return cabe(c, item, usarTeto); });
+  function melhorCarro(item, nivel, iniciado) {
+    var aptos = carros.filter(function (c) {
+      if (iniciado !== undefined && (c.paradas.length > 0) !== iniciado) return false;
+      return cabe(c, item, nivel);
+    });
     if (!aptos.length) return null;
     /* prefere quem já tem a mesma cidade (menos deslocamento), depois quem tem mais espaço */
     var cidades = item.lista.map(function (p) { return rfConfNorm(p.cidade); });
+    /* v261: preferencia 1 -- carro que ja tem a mesma cidade (menos deslocamento).
+       Preferencia 2 -- carro que ja comecou a ser montado, pra nao espalhar a
+       carga por mais caminhoes do que o necessario. Preferencia 3 -- o MENOR
+       que ainda resolve, mesma regra da escala do dia: nao se manda o caminhao
+       de 10 t levar 3,5 t tendo um 3/4 parado. Antes ele escolhia pelo maior
+       espaco livre, que fazia exatamente o contrario. */
     aptos.sort(function (a, b) {
       var ca = a.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
       var cb = b.paradas.some(function (p) { return cidades.indexOf(rfConfNorm(p.cidade)) >= 0; }) ? 0 : 1;
       if (ca !== cb) return ca - cb;
-      return (b.tetoKg - b.peso) - (a.tetoKg - a.peso);
+      return a.tetoKg - b.tetoKg;
     });
     return aptos[0];
   }
+  /* v261: a ordem das tentativas evita os dois desperdicios classicos. Primeiro
+     tenta encher melhor um caminhao QUE JA ESTA MONTADO (na meta, depois ate a
+     carga util) e so entao abre um caminhao NOVO -- senao o sistema abria um
+     3/4 inteiro pra levar 117 kg. A tolerancia legal dos 5% fica por ultimo,
+     como recurso, nunca como escolha automatica. */
+  function escolherCarro(item) {
+    var tentativas = [
+      { nivel: 1, iniciado: true }, { nivel: 2, iniciado: true },
+      { nivel: 1, iniciado: false }, { nivel: 2, iniciado: false },
+      { nivel: 3, iniciado: true }, { nivel: 3, iniciado: false },
+    ];
+    for (var i = 0; i < tentativas.length; i++) {
+      var t = tentativas[i];
+      if (t.nivel === 2 && !cfg.usarTeto) continue;
+      if (t.nivel === 3 && !(cfg.usarTeto && cfg.tolerancia)) continue;
+      var alvo = melhorCarro(item, t.nivel, t.iniciado);
+      if (alvo) return alvo;
+    }
+    return null;
+  }
   itens.forEach(function (item) {
-    var alvo = melhorCarro(item, false);          // 1º tenta respeitando a meta de 3,5 t
-    if (!alvo && cfg.usarTeto) alvo = melhorCarro(item, true);  // senão sobe até o teto do CRLV
+    var alvo = escolherCarro(item);
     if (!alvo) { item.lista.forEach(function (p) { sobra.push(p); }); return; }
     item.lista.forEach(function (p) {
       alvo.paradas.push(p);
@@ -4595,7 +4644,11 @@ function szRotAlocar() {
       alvo.tempo += szRotTempoParada(p);
     });
   });
-  carros.forEach(function (c) { c.paradas = szRotOrdenar(c.paradas); c.acimaMeta = c.peso > c.metaKg; });
+  carros.forEach(function (c) {
+    c.paradas = szRotOrdenar(c.paradas);
+    c.acimaMeta = c.peso > c.metaKg;
+    c.naTolerancia = c.utilKg > 0 && c.peso > c.utilKg;   // so com a tolerancia legal e que fecha
+  });
   return { carros: carros.filter(function (c) { return c.paradas.length; }), sobra: sobra, semFrota: false, vazios: carros.filter(function (c) { return !c.paradas.length; }) };
 }
 function szRotExportar() {
@@ -4667,8 +4720,15 @@ function szTelaRoteirizador() {
     + '<label style="cursor:pointer;"><input type="checkbox" ' + (cfg.usarTeto ? "checked" : "") + ' onchange="szRotSet(\'usarTeto\',this.checked)"> pode passar da meta até a carga útil do CRLV quando não fechar sem partir cliente</label>'
     + ' &nbsp; <label style="cursor:pointer;"><input type="checkbox" ' + (cfg.tolerancia ? "checked" : "") + ' onchange="szRotSet(\'tolerancia\',this.checked)"> somar os 5% de tolerância legal (sobre o PBT)</label>'
     + '</div>';
-  var frotaToda = szFrotaEscalavel();
-  h += '<div style="font-size:12px;color:#999;margin-bottom:4px;">Caminhões que participam (nenhum marcado = todos os aptos):</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  h += '<div style="font-size:12px;color:#ddd;margin-bottom:8px;">Tipo de caminhão: '
+    + ["3/4", "Toco", "Todos"].map(function (t) {
+        var sel = (cfg.tipo || "3/4") === t;
+        return '<button onclick="szRotSetTipo(\'' + t + '\')" style="margin-right:6px;font-weight:' + (sel ? "900" : "600") + ';'
+          + (sel ? "background:" + GOLD + ";color:#000;border:none;" : "") + 'padding:3px 10px;border-radius:8px;font-size:12px;">' + t + '</button>';
+      }).join("")
+    + '</div>';
+  var frotaToda = szRotFrota();
+  h += '<div style="font-size:12px;color:#999;margin-bottom:4px;">Caminhões que participam (nenhum marcado = todos os ' + esc(cfg.tipo === "Todos" ? "aptos" : cfg.tipo) + ' aptos):</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
   frotaToda.forEach(function (v) {
     var marcado = r.placas.indexOf(v.placa) >= 0;
     h += '<label style="cursor:pointer;border:1px solid ' + (marcado ? GOLD : "#333") + ';border-radius:8px;padding:4px 8px;font-size:12px;">'
@@ -4688,7 +4748,9 @@ function szTelaRoteirizador() {
     var ocup = c.tetoKg ? (c.peso / c.tetoKg * 100) : 0;
     var cidades = [];
     c.paradas.forEach(function (p) { if (p.cidade && cidades.indexOf(p.cidade) < 0) cidades.push(p.cidade); });
-    h += '<tr><td style="font-weight:800;">' + esc(c.placa) + (c.acimaMeta ? ' <span style="color:#8a6d1f;font-size:10px;">acima da meta</span>' : '') + '</td>'
+    h += '<tr><td style="font-weight:800;">' + esc(c.placa)
+      + (c.naTolerancia ? ' <span style="color:#C0392B;font-size:10px;font-weight:900;">só fecha com os 5%</span>'
+        : (c.acimaMeta ? ' <span style="color:#8a6d1f;font-size:10px;">acima da meta</span>' : '')) + '</td>'
       + '<td>' + esc((c.veiculo && c.veiculo.motorista) || "—") + '</td>'
       + '<td style="text-align:right;">' + n(c.peso, 1) + '</td>'
       + '<td style="text-align:right;color:#888;">' + n(c.tetoKg) + '</td>'
