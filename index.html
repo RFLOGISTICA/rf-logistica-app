@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v259)</title>
+<title>RF Logística — Painel da Frota (v260)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4455,13 +4455,28 @@ function szRotAcharCabecalho(linhas) {
   }
   return null;
 }
+/* v260 — BUG DA v259 CORRIGIDO: o peso vinha multiplicado por mil.
+   A planilha da Suzano guarda o peso como NUMERO (3801.724 = tres mil e
+   oitocentos, ponto decimal). O leitor tratava tudo como texto em formato
+   brasileiro e apagava o ponto, transformando 3.801,724 kg em 3.801.724 kg --
+   uma carga de 10,2 t virava 10 mil toneladas e, claro, nao cabia em caminhao
+   nenhum. Agora numero vem como numero; so texto passa pela limpeza pt-BR. */
+function szRotNumero(v) {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  var t = String(v == null ? "" : v).trim();
+  if (!t) return 0;
+  if (t.indexOf(",") >= 0) t = t.replace(/\./g, "").replace(",", ".");   // 1.234,56 -> 1234.56
+  t = t.replace(/[^0-9.\-]/g, "");
+  var n = parseFloat(t);
+  return isFinite(n) ? n : 0;
+}
 function szRotAplicar(res, nomeArquivo) {
   var r = szRot(), idx = res.cab.idx, mapa = {};
   for (var i = res.cab.linha + 1; i < res.linhas.length; i++) {
     var l = res.linhas[i] || [];
     var nome = String(idx.nome != null ? l[idx.nome] : "").trim();
     var cod = String(idx.recebedor != null ? l[idx.recebedor] : "").trim();
-    var peso = parseFloat(String(idx.peso != null ? l[idx.peso] : "0").toString().replace(/\./g, "").replace(",", ".")) || 0;
+    var peso = szRotNumero(idx.peso != null ? l[idx.peso] : 0);
     if (!nome && !cod) continue;
     if (!peso && !nome) continue;
     var chave = cod || rfConfNorm(nome);
@@ -4479,7 +4494,7 @@ function szRotAplicar(res, nomeArquivo) {
     var p = mapa[chave];
     var rem = String(idx.remessa != null ? l[idx.remessa] : "").trim();
     if (rem && p.remessas.indexOf(rem) < 0) p.remessas.push(rem);
-    p.volumes += parseInt(String(idx.volume != null ? l[idx.volume] : "0").replace(/[^0-9]/g, ""), 10) || 0;
+    p.volumes += Math.round(szRotNumero(idx.volume != null ? l[idx.volume] : 0));
     p.peso += peso;
   }
   var paradas = Object.keys(mapa).map(function (k) { return mapa[k]; }).filter(function (p) { return p.peso > 0 || p.volumes > 0; });
