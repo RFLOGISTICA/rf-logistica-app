@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v264)</title>
+<title>RF Logística — Painel da Frota (v265)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1019,49 +1019,55 @@ function removerDivida(id) {
    Regras do próprio BID, confirmadas por Renato em 19/08/2026:
      - carga que caiba em VAN é faturada como VAN, seja qual for o caminhão usado;
      - um mesmo veículo não atende duas regionais na mesma viagem.             */
-const SUZANO_FAIXAS = [
-  { van: 4828.62, tresQuartos: 6959.71, toco: 8214.76, lead: 5, cidades: ["Alcobaça", "Amargosa", "Apuarema", "Arataca", "Barra do Rocha", "Barro Preto", "Belmonte", "Buerarema", "Cachoeira", "Cairu", "Camacan", "Canavieiras", "Caravelas", "Eunápolis", "Gandu", "Ibicuí", "Ibirapuã", "Ibirataia", "Igrapiúna", "Ilhéus", "Ipiaú", "Itabela", "Itabuna", "Itacaré", "Itagimirim", "Itamaraju", "Itamari", "Itanhém", "Itaparica", "Itapebi", "Ituberá", "Jaguaripe", "Jiquiriçá", "Jussari", "Laje", "Lajedão", "Maragogipe", "Maraú", "Mascote", "Medeiros Neto", "Mucuri", "Muritiba", "Nilo Peçanha", "Nova Ibiá", "Nova Viçosa", "Pau Brasil", "Piraí do Norte", "Porto Seguro", "Potiraguá", "Prado", "Presidente Tancredo Neves", "Santa Cruz Cabrália", "Santa Luzia", "São Félix", "São Miguel das Matas", "Taperoá", "Teixeira de Freitas", "Teolândia", "Ubaitaba", "Ubatã", "Ubaíra", "Uruçuca", "Vera Cruz", "Vereda", "Wenceslau Guimarães"] },
-  { van: 5198.51, tresQuartos: 6984.6, toco: 8316.79, lead: 5, cidades: ["Aracatu", "Barra da Estiva", "Boa Nova", "Bom Jesus da Lapa", "Boquira", "Brejões", "Brumado", "Caetanos", "Caetité", "Carinhanha", "Correntina", "Feira da Mata", "Guanambi", "Ibiassucê", "Igaporã", "Irajuba", "Itagi", "Itaquara", "Itatim", "Itiruçu", "Iuiú", "Jitaúna", "Lajedo do Tabocal", "Licínio de Almeida", "Livramento de Nossa Senhora", "Macaúbas", "Malhada", "Manoel Vitorino", "Milagres", "Mirante", "Palmas de Monte Alto", "Paramirim", "Planalto", "Riacho de Santana", "Santa Maria da Vitória", "Santana", "Serra do Ramalho", "São Félix do Coribe", "Tabocas do Brejo Velho", "Tanhaçu", "Tanque Novo", "Urandi"] },
-  { van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, lead: 5, cidades: ["Abaré", "Andorinha", "Antônio Gonçalves", "Barrocas", "Caldeirão Grande", "Campo Formoso", "Cansanção", "Canudos", "Capim Grosso", "Casa Nova", "Conceição do Coité", "Coração de Maria", "Filadélfia", "Ichu", "Itiúba", "Jacobina", "Jaguarari", "Juazeiro", "Lamarão", "Monte Santo", "Nordestina", "Nova Fátima", "Ourolândia", "Pindobaçu", "Ponto Novo", "Pé de Serra", "Queimadas", "Quijingue", "Remanso", "Retirolândia", "Riachão do Jacuípe", "Santaluz", "Saúde", "Senhor do Bonfim", "Serrolândia", "Sobradinho", "São José do Jacuípe", "Tanquinho", "Uauá", "Valente"] },
-  { van: 2548.85, tresQuartos: 4266.22, toco: 4828.17, lead: 5, cidades: ["Acajutiba", "Adustina", "Aporá", "Araci", "Araças", "Banzaê", "Biritinga", "Cardeal da Silva", "Cipó", "Conde", "Coronel João Sá", "Crisópolis", "Cícero Dantas", "Entre Rios", "Esplanada", "Euclides da Cunha", "Fátima", "Inhambupe", "Itanagra", "Itapicuru", "Jandaíra", "Jeremoabo", "Nova Soure", "Novo Triunfo", "Olindina", "Paulo Afonso", "Pojuca", "Ribeira do Amparo", "Ribeira do Pombal", "Rio Real", "Sátiro Dias", "Teofilândia", "Tucano", "Água Fria"] },
-  { van: 5525.18, tresQuartos: 7969.38, toco: 9535.59, lead: 5, cidades: ["Angical", "Barreiras", "Boa Vista do Tupim", "Brotas de Macaúbas", "Cotegipe", "Cristópolis", "Iaçu", "Ibitiara", "Ibotirama", "Iraquara", "Itaberaba", "Lençóis", "Luís Eduardo Magalhães", "Muquém de São Francisco", "Oliveira dos Brejinhos", "Rafael Jambeiro", "Ruy Barbosa", "Seabra", "Souto Soares", "São Desidério", "Utinga", "Wagner"] },
-  { van: 4375.95, tresQuartos: 5692.62, toco: 6731.16, lead: 5, cidades: ["Baixa Grande", "Barra", "Barra do Mendes", "Cafarnaum", "Canarana", "Ibititá", "Irecê", "Itaguaçu da Bahia", "Jussara", "Mairi", "Miguel Calmon", "Morro do Chapéu", "Mundo Novo", "Serra Preta", "São Gabriel", "Tapiramutá", "Uibaí", "Xique-Xique"] },
-  { van: 3499.32, tresQuartos: 5539.84, toco: 6548.11, lead: 5, cidades: ["Aramari", "Camamu", "Coaraci", "Ibicaraí", "Itajuípe", "Itapetinga", "Itapé", "Itororó", "Jaguaquara", "Jequié", "Maracás", "Pedrão", "Poções", "Santa Inês", "Santo Estêvão", "São Gonçalo dos Campos", "Vitória da Conquista"] },
-  { van: 1368.89, tresQuartos: 1675.59, toco: 1883.24, lead: 1, cidades: ["Alagoinhas", "Amélia Rodrigues", "Candeias", "Catu", "Conceição da Feira", "Conceição do Jacuípe", "Feira de Santana", "Irará", "Madre de Deus", "Mata de São João", "Santa Bárbara", "Santo Amaro", "São Francisco do Conde", "São Sebastião do Passé"] },
-  { van: 1018.4, tresQuartos: 1302.74, toco: 1641.19, lead: 1, cidades: ["Camaçari", "Dias d'Ávila", "Lauro de Freitas", "Salvador", "Simões Filho"] },
-  { van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, lead: 1, cidades: ["Serrinha"] },
-  { van: 5558.67, tresQuartos: 8017.68, toco: 9593.38, lead: 5, cidades: ["Ipupiara"] },
-  { van: 2274.78, tresQuartos: 3807.48, toco: 4309.01, lead: 5, cidades: ["Ouriçangas"] },
-  { van: 6228.39, tresQuartos: 8983.66, toco: 10749.21, lead: 5, cidades: ["Riachão das Neves"] },
-  { van: 4857.88, tresQuartos: 7001.89, toco: 8264.55, lead: 5, cidades: ["Una"] },
+const SUZANO_REGIONAIS = [
+  { nome: "CENTRO NORTE",  van: 1368.89, tresQuartos: 1675.59, toco: 1883.24, porTon: 0, lead: 1,
+    cidades: "Feira de Santana · Alagoinhas · Catu · Candeias · Santo Amaro · Irará · Mata de São João e mais 7" },
+  { nome: "SALVADOR RM",   van: 1018.40, tresQuartos: 1302.74, toco: 1641.19, porTon: 296.04, lead: 1,
+    cidades: "Salvador · Camaçari · Lauro de Freitas · Dias d'Ávila · Simões Filho — cobrada por TONELADA" },
+  { nome: "NORTE",         van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, porTon: 0, lead: 5,
+    cidades: "Juazeiro · Senhor do Bonfim · Campo Formoso · Jacobina · Valente e mais 35" },
+  { nome: "LESTE",         van: 2548.85, tresQuartos: 4266.22, toco: 4828.17, porTon: 0, lead: 5,
+    cidades: "Paulo Afonso · Ribeira do Pombal · Euclides da Cunha · Entre Rios · Esplanada e mais 29" },
+  { nome: "SUL",           van: 4828.62, tresQuartos: 6959.71, toco: 8214.76, porTon: 0, lead: 5,
+    cidades: "Itabuna · Ilhéus · Porto Seguro · Eunápolis · Teixeira de Freitas · Itamaraju e mais 59" },
+  { nome: "SUDESTE",       van: 5198.51, tresQuartos: 6984.60, toco: 8316.79, porTon: 0, lead: 5,
+    cidades: "Brumado · Guanambi · Caetité · Bom Jesus da Lapa · Correntina e mais 37" },
+  { nome: "CENTRO SUL",    van: 3499.32, tresQuartos: 5539.84, toco: 6548.11, porTon: 0, lead: 5,
+    cidades: "Vitória da Conquista · Jequié · Itapetinga · Maracás · Poções e mais 12" },
+  { nome: "CENTRO OESTE",  van: 4375.95, tresQuartos: 5692.62, toco: 6731.16, porTon: 0, lead: 5,
+    cidades: "Irecê · Xique-Xique · Morro do Chapéu · Jussara · Canarana e mais 13" },
+  { nome: "OESTE",         van: 5525.18, tresQuartos: 7969.38, toco: 9535.59, porTon: 0, lead: 5,
+    cidades: "Barreiras · Luís Eduardo Magalhães · Ibotirama · Seabra · Itaberaba · Lençóis e mais 16" },
 ];
-const SUZANO_SALVADOR_RM = { porTon: 296.04, lead: 1, van: 1018.40, tresQuartos: 1302.74, toco: 1641.19,
-  cidades: ["Camaçari", "Dias d'Ávila", "Lauro de Freitas", "Salvador", "Simões Filho"] };
+/* Cinco destinos ficaram com preço PRÓPRIO na tabela aceita, diferente do preço
+   da regional deles. Entram como opções à parte pra não sumir na regionalização. */
+const SUZANO_EXCECOES = [
+  { nome: "SERRINHA (Norte, SLA 1 dia)", van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, porTon: 0, lead: 1 },
+  { nome: "IPUPIARA (Oeste)",            van: 5558.67, tresQuartos: 8017.68, toco: 9593.38, porTon: 0, lead: 5 },
+  { nome: "OURIÇANGAS (Leste)",          van: 2274.78, tresQuartos: 3807.48, toco: 4309.01, porTon: 0, lead: 5 },
+  { nome: "RIACHÃO DAS NEVES (Oeste)",   van: 6228.39, tresQuartos: 8983.66, toco: 10749.21, porTon: 0, lead: 5 },
+  { nome: "UNA (Sul)",                   van: 4857.88, tresQuartos: 7001.89, toco: 8264.55, porTon: 0, lead: 5 },
+];
 const SUZANO_VAN_ATE_KG = 1500;   // limite de carga da VAN (editável na tela do cliente)
 function carregarTabelaSuzano(cliente) {
   const nome = cliente || "SUZANO";
-  if (!window.confirm("Carregar a tabela da Suzano em \"" + nome + "\"?\n\n262 destinos do interior + Salvador RM (por tonelada).\nRotas com o mesmo nome serão sobrescritas; as demais são mantidas.")) return;
+  if (!window.confirm("Carregar a tabela da Suzano em \"" + nome + "\"?\n\n9 regionais do BID aceito + 5 destinos de preço próprio.\nVocê escolhe a REGIONAL na viagem; o valor sai sozinho pelo tipo do caminhão da placa.\n\nRotas com o mesmo nome serão sobrescritas; as demais são mantidas.")) return;
   if (!state.tarifas) state.tarifas = {};
   const t = state.tarifas[nome] || { modo: "rota" };
   t.modo = "rota";
   if (!t.rotas) t.rotas = {};
   if (t.vanAteKg == null) t.vanAteKg = SUZANO_VAN_ATE_KG;
   let n = 0;
-  SUZANO_FAIXAS.forEach((f) => {
-    f.cidades.forEach((cid) => {
-      t.rotas[String(cid).toUpperCase()] = { van: f.van, tresQuartos: f.tresQuartos, toco: f.toco, porTon: 0, lead: f.lead };
-      n++;
-    });
-  });
-  SUZANO_SALVADOR_RM.cidades.forEach((cid) => {
-    t.rotas[String(cid).toUpperCase()] = { van: SUZANO_SALVADOR_RM.van, tresQuartos: SUZANO_SALVADOR_RM.tresQuartos,
-      toco: SUZANO_SALVADOR_RM.toco, porTon: SUZANO_SALVADOR_RM.porTon, lead: SUZANO_SALVADOR_RM.lead };
+  const por = (f) => {
+    t.rotas[f.nome] = { van: f.van, tresQuartos: f.tresQuartos, toco: f.toco, porTon: f.porTon || 0, lead: f.lead, cidades: f.cidades || "" };
     n++;
-  });
+  };
+  SUZANO_REGIONAIS.forEach(por);
+  SUZANO_EXCECOES.forEach(por);
   state.tarifas[nome] = t;
   if (!state.clientes.includes(nome)) { state.clientes.push(nome); state.clientes.sort(); }
   salvar(); render();
-  alert(n + " destinos carregados em " + nome + ".\n\nSalvador RM está por tonelada (R$ 296,04) — informe o peso da viagem pra ele calcular.\nCarga até " + (t.vanAteKg) + " kg é faturada como VAN automaticamente.");
+  alert(n + " rotas carregadas em " + nome + ".\n\nNa viagem você escolhe a REGIONAL e o sistema aplica o preço do tipo do caminhão (Toco ou 3/4) pela placa.\n\nSALVADOR RM é por tonelada (R$ 296,04) — informe o peso da viagem.\nCarga até " + (t.vanAteKg) + " kg é faturada como VAN automaticamente, seja qual for o caminhão.");
 }
 
 // ===== CALCULADORA DE FRETE YAMAHA =====
@@ -11623,10 +11629,10 @@ function renderTabela() {
           <div style="margin:10px 0 4px 0; padding:10px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:6px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
               <span style="font-size:11px; color:#bbb;">Carga até <input type="number" step="1" value="${t.vanAteKg != null ? t.vanAteKg : ""}" placeholder="1500" onchange="setTarifaValor('${cEsc}','vanAteKg',this.value)" style="width:75px; text-align:right;"> kg é faturada como <b style="color:${GOLD};">VAN</b>, seja qual for o caminhão</span>
-              <button class="btn-outline" style="font-size:10px;" onclick="carregarTabelaSuzano('${cEsc}')" title="Carrega os 262 destinos do BID aceito + Salvador RM por tonelada">📋 Carregar tabela Suzano</button>
+              <button class="btn-outline" style="font-size:10px;" onclick="carregarTabelaSuzano('${cEsc}')" title="Carrega as 9 regionais do BID aceito + os 5 destinos de preço próprio">📋 Carregar tabela Suzano</button>
             </div>
             <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
-              <span>ROTA / DESTINO</span><span>TOCO</span><span>3/4</span><span>VAN</span><span>R$/TON</span><span></span>
+              <span>REGIONAL / DESTINO</span><span>TOCO</span><span>3/4</span><span>VAN</span><span>R$/TON</span><span></span>
             </div>
             ${rotasNomes.map((rn) => `
               <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; align-items:center; margin-bottom:4px;">
