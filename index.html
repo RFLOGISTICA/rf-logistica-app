@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v263)</title>
+<title>RF Logística — Painel da Frota (v264)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -474,12 +474,37 @@ function freteM3De(cliente) {
   if (!t || t.modo !== "m3") return 0;
   return Number(t.m3) || 0;
 }
-function freteRotaDe(cliente, rota, tipo) {
+// v264: além de Toco/3-4, a rota agora aceita VAN e cobrança por TONELADA.
+// Ordem de decisão (regra do BID da Suzano):
+//   1) rota por tonelada (Salvador RM) e peso informado -> peso/1000 x R$/ton
+//   2) peso informado e dentro do limite da VAN -> preço de VAN, seja qual for o caminhão
+//   3) senão, preço do tipo do veículo escalado
+function freteRotaDe(cliente, rota, tipo, pesoKg) {
   const t = tarifaCliente(cliente);
   if (!t || t.modo !== "rota" || !rota) return 0;
   const r = (t.rotas || {})[rota];
   if (!r) return 0;
+  const peso = Number(pesoKg) || 0;
+  const porTon = Number(r.porTon) || 0;
+  if (porTon > 0 && peso > 0) return Math.round((peso / 1000) * porTon * 100) / 100;
+  const limiteVan = Number(t.vanAteKg) || 0;
+  const van = Number(r.van) || 0;
+  if (peso > 0 && limiteVan > 0 && peso <= limiteVan && van > 0) return van;
+  if (tipo === "VAN" && van > 0) return van;
   return tipo === "3/4" ? (Number(r.tresQuartos) || 0) : (Number(r.toco) || 0);
+}
+// Explica em uma linha por que o valor saiu daquele jeito (aparece na tela da viagem)
+function freteRotaMotivo(cliente, rota, tipo, pesoKg) {
+  const t = tarifaCliente(cliente);
+  if (!t || t.modo !== "rota" || !rota) return "";
+  const r = (t.rotas || {})[rota];
+  if (!r) return "";
+  const peso = Number(pesoKg) || 0;
+  if ((Number(r.porTon) || 0) > 0 && peso > 0) return "por tonelada: " + (peso / 1000).toFixed(3) + " t × " + fmtR(r.porTon);
+  const limiteVan = Number(t.vanAteKg) || 0;
+  if (peso > 0 && limiteVan > 0 && peso <= limiteVan && (Number(r.van) || 0) > 0) return "faturado como VAN (carga até " + limiteVan + " kg)";
+  if ((Number(r.porTon) || 0) > 0 && peso <= 0) return "rota por tonelada — informe o peso";
+  return "tabela da rota (" + (tipo === "3/4" ? "3/4" : tipo === "VAN" ? "VAN" : "Toco") + ")";
 }
 function freteKmViagem(v) {
   if (v.freteKmManual) return Number(v.freteKmManualValor) || 0;   // v72: valor/km escolhido manualmente nesta viagem
@@ -521,7 +546,7 @@ function adicionarRotaCliente(cliente) {
   const t = state.tarifas[cliente] || { modo: "rota" };
   if (!t.rotas) t.rotas = {};
   const chave = nome.trim().toUpperCase();
-  if (!t.rotas[chave]) t.rotas[chave] = { toco: 0, tresQuartos: 0 };
+  if (!t.rotas[chave]) t.rotas[chave] = { toco: 0, tresQuartos: 0, van: 0, porTon: 0 };
   state.tarifas[cliente] = t;
   salvar(); render();
 }
@@ -529,7 +554,7 @@ function setRotaValor(cliente, rota, campo, valor) {
   if (!state.tarifas) state.tarifas = {};
   const t = state.tarifas[cliente] || { modo: "rota" };
   if (!t.rotas) t.rotas = {};
-  if (!t.rotas[rota]) t.rotas[rota] = { toco: 0, tresQuartos: 0 };
+  if (!t.rotas[rota]) t.rotas[rota] = { toco: 0, tresQuartos: 0, van: 0, porTon: 0 };
   t.rotas[rota][campo] = Number(String(valor).replace(",", ".")) || 0;
   state.tarifas[cliente] = t;
   salvar(); render();
@@ -986,29 +1011,94 @@ function removerDivida(id) {
   salvar(); render();
 }
 
+/* ===================== TABELA SUZANO (v264) =====================
+   Preços do BID aceito pela Suzano — 262 destinos do interior em 14 faixas
+   (preço ÚNICO por regional) + Salvador RM, que é cobrada por TONELADA.
+   Guardado como faixa + lista de cidades pra não inflar o arquivo; o botão
+   "Carregar tabela Suzano" expande isso nas rotas do cliente.
+   Regras do próprio BID, confirmadas por Renato em 19/08/2026:
+     - carga que caiba em VAN é faturada como VAN, seja qual for o caminhão usado;
+     - um mesmo veículo não atende duas regionais na mesma viagem.             */
+const SUZANO_FAIXAS = [
+  { van: 4828.62, tresQuartos: 6959.71, toco: 8214.76, lead: 5, cidades: ["Alcobaça", "Amargosa", "Apuarema", "Arataca", "Barra do Rocha", "Barro Preto", "Belmonte", "Buerarema", "Cachoeira", "Cairu", "Camacan", "Canavieiras", "Caravelas", "Eunápolis", "Gandu", "Ibicuí", "Ibirapuã", "Ibirataia", "Igrapiúna", "Ilhéus", "Ipiaú", "Itabela", "Itabuna", "Itacaré", "Itagimirim", "Itamaraju", "Itamari", "Itanhém", "Itaparica", "Itapebi", "Ituberá", "Jaguaripe", "Jiquiriçá", "Jussari", "Laje", "Lajedão", "Maragogipe", "Maraú", "Mascote", "Medeiros Neto", "Mucuri", "Muritiba", "Nilo Peçanha", "Nova Ibiá", "Nova Viçosa", "Pau Brasil", "Piraí do Norte", "Porto Seguro", "Potiraguá", "Prado", "Presidente Tancredo Neves", "Santa Cruz Cabrália", "Santa Luzia", "São Félix", "São Miguel das Matas", "Taperoá", "Teixeira de Freitas", "Teolândia", "Ubaitaba", "Ubatã", "Ubaíra", "Uruçuca", "Vera Cruz", "Vereda", "Wenceslau Guimarães"] },
+  { van: 5198.51, tresQuartos: 6984.6, toco: 8316.79, lead: 5, cidades: ["Aracatu", "Barra da Estiva", "Boa Nova", "Bom Jesus da Lapa", "Boquira", "Brejões", "Brumado", "Caetanos", "Caetité", "Carinhanha", "Correntina", "Feira da Mata", "Guanambi", "Ibiassucê", "Igaporã", "Irajuba", "Itagi", "Itaquara", "Itatim", "Itiruçu", "Iuiú", "Jitaúna", "Lajedo do Tabocal", "Licínio de Almeida", "Livramento de Nossa Senhora", "Macaúbas", "Malhada", "Manoel Vitorino", "Milagres", "Mirante", "Palmas de Monte Alto", "Paramirim", "Planalto", "Riacho de Santana", "Santa Maria da Vitória", "Santana", "Serra do Ramalho", "São Félix do Coribe", "Tabocas do Brejo Velho", "Tanhaçu", "Tanque Novo", "Urandi"] },
+  { van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, lead: 5, cidades: ["Abaré", "Andorinha", "Antônio Gonçalves", "Barrocas", "Caldeirão Grande", "Campo Formoso", "Cansanção", "Canudos", "Capim Grosso", "Casa Nova", "Conceição do Coité", "Coração de Maria", "Filadélfia", "Ichu", "Itiúba", "Jacobina", "Jaguarari", "Juazeiro", "Lamarão", "Monte Santo", "Nordestina", "Nova Fátima", "Ourolândia", "Pindobaçu", "Ponto Novo", "Pé de Serra", "Queimadas", "Quijingue", "Remanso", "Retirolândia", "Riachão do Jacuípe", "Santaluz", "Saúde", "Senhor do Bonfim", "Serrolândia", "Sobradinho", "São José do Jacuípe", "Tanquinho", "Uauá", "Valente"] },
+  { van: 2548.85, tresQuartos: 4266.22, toco: 4828.17, lead: 5, cidades: ["Acajutiba", "Adustina", "Aporá", "Araci", "Araças", "Banzaê", "Biritinga", "Cardeal da Silva", "Cipó", "Conde", "Coronel João Sá", "Crisópolis", "Cícero Dantas", "Entre Rios", "Esplanada", "Euclides da Cunha", "Fátima", "Inhambupe", "Itanagra", "Itapicuru", "Jandaíra", "Jeremoabo", "Nova Soure", "Novo Triunfo", "Olindina", "Paulo Afonso", "Pojuca", "Ribeira do Amparo", "Ribeira do Pombal", "Rio Real", "Sátiro Dias", "Teofilândia", "Tucano", "Água Fria"] },
+  { van: 5525.18, tresQuartos: 7969.38, toco: 9535.59, lead: 5, cidades: ["Angical", "Barreiras", "Boa Vista do Tupim", "Brotas de Macaúbas", "Cotegipe", "Cristópolis", "Iaçu", "Ibitiara", "Ibotirama", "Iraquara", "Itaberaba", "Lençóis", "Luís Eduardo Magalhães", "Muquém de São Francisco", "Oliveira dos Brejinhos", "Rafael Jambeiro", "Ruy Barbosa", "Seabra", "Souto Soares", "São Desidério", "Utinga", "Wagner"] },
+  { van: 4375.95, tresQuartos: 5692.62, toco: 6731.16, lead: 5, cidades: ["Baixa Grande", "Barra", "Barra do Mendes", "Cafarnaum", "Canarana", "Ibititá", "Irecê", "Itaguaçu da Bahia", "Jussara", "Mairi", "Miguel Calmon", "Morro do Chapéu", "Mundo Novo", "Serra Preta", "São Gabriel", "Tapiramutá", "Uibaí", "Xique-Xique"] },
+  { van: 3499.32, tresQuartos: 5539.84, toco: 6548.11, lead: 5, cidades: ["Aramari", "Camamu", "Coaraci", "Ibicaraí", "Itajuípe", "Itapetinga", "Itapé", "Itororó", "Jaguaquara", "Jequié", "Maracás", "Pedrão", "Poções", "Santa Inês", "Santo Estêvão", "São Gonçalo dos Campos", "Vitória da Conquista"] },
+  { van: 1368.89, tresQuartos: 1675.59, toco: 1883.24, lead: 1, cidades: ["Alagoinhas", "Amélia Rodrigues", "Candeias", "Catu", "Conceição da Feira", "Conceição do Jacuípe", "Feira de Santana", "Irará", "Madre de Deus", "Mata de São João", "Santa Bárbara", "Santo Amaro", "São Francisco do Conde", "São Sebastião do Passé"] },
+  { van: 1018.4, tresQuartos: 1302.74, toco: 1641.19, lead: 1, cidades: ["Camaçari", "Dias d'Ávila", "Lauro de Freitas", "Salvador", "Simões Filho"] },
+  { van: 4169.91, tresQuartos: 4612.48, toco: 5670.66, lead: 1, cidades: ["Serrinha"] },
+  { van: 5558.67, tresQuartos: 8017.68, toco: 9593.38, lead: 5, cidades: ["Ipupiara"] },
+  { van: 2274.78, tresQuartos: 3807.48, toco: 4309.01, lead: 5, cidades: ["Ouriçangas"] },
+  { van: 6228.39, tresQuartos: 8983.66, toco: 10749.21, lead: 5, cidades: ["Riachão das Neves"] },
+  { van: 4857.88, tresQuartos: 7001.89, toco: 8264.55, lead: 5, cidades: ["Una"] },
+];
+const SUZANO_SALVADOR_RM = { porTon: 296.04, lead: 1, van: 1018.40, tresQuartos: 1302.74, toco: 1641.19,
+  cidades: ["Camaçari", "Dias d'Ávila", "Lauro de Freitas", "Salvador", "Simões Filho"] };
+const SUZANO_VAN_ATE_KG = 1500;   // limite de carga da VAN (editável na tela do cliente)
+function carregarTabelaSuzano(cliente) {
+  const nome = cliente || "SUZANO";
+  if (!window.confirm("Carregar a tabela da Suzano em \"" + nome + "\"?\n\n262 destinos do interior + Salvador RM (por tonelada).\nRotas com o mesmo nome serão sobrescritas; as demais são mantidas.")) return;
+  if (!state.tarifas) state.tarifas = {};
+  const t = state.tarifas[nome] || { modo: "rota" };
+  t.modo = "rota";
+  if (!t.rotas) t.rotas = {};
+  if (t.vanAteKg == null) t.vanAteKg = SUZANO_VAN_ATE_KG;
+  let n = 0;
+  SUZANO_FAIXAS.forEach((f) => {
+    f.cidades.forEach((cid) => {
+      t.rotas[String(cid).toUpperCase()] = { van: f.van, tresQuartos: f.tresQuartos, toco: f.toco, porTon: 0, lead: f.lead };
+      n++;
+    });
+  });
+  SUZANO_SALVADOR_RM.cidades.forEach((cid) => {
+    t.rotas[String(cid).toUpperCase()] = { van: SUZANO_SALVADOR_RM.van, tresQuartos: SUZANO_SALVADOR_RM.tresQuartos,
+      toco: SUZANO_SALVADOR_RM.toco, porTon: SUZANO_SALVADOR_RM.porTon, lead: SUZANO_SALVADOR_RM.lead };
+    n++;
+  });
+  state.tarifas[nome] = t;
+  if (!state.clientes.includes(nome)) { state.clientes.push(nome); state.clientes.sort(); }
+  salvar(); render();
+  alert(n + " destinos carregados em " + nome + ".\n\nSalvador RM está por tonelada (R$ 296,04) — informe o peso da viagem pra ele calcular.\nCarga até " + (t.vanAteKg) + " kg é faturada como VAN automaticamente.");
+}
+
 // ===== CALCULADORA DE FRETE YAMAHA =====
+/* v264: tabela oficial "Tarifas Distribuição - Filial Feira de Santana".
+   Passou a cobrir os TRÊS estados do arquivo: Bahia (Capital, Interior I e II),
+   Pernambuco (Interior II) e Sergipe (Interior II). Antes só tinha a Bahia, então
+   viagem com Aracaju ou Petrolina não conseguia ser lançada.
+   Também corrigido o NTC 1 Interior II: era 50,44 marcado como estimado; a tabela
+   oficial traz 53,59. Peso/cubagem vêm da planilha "Dimensões embalagens". */
 const YAMAHA_MODELOS = [
-  { id: "mtc1", nome: "Rack Small", cod: "MTC 1", cat: "Moto",    cabe: 33, tar: { cap: 192.43, int1: 269.58, int2: 283.06 } },
-  { id: "mtc2", nome: "Rack Big",   cod: "MTC 2", cat: "Moto",    cabe: 24, tar: { cap: 233.76, int1: 326.91, int2: 372.53 } },
-  { id: "mtc4", nome: "Rack Big",   cod: "MTC 4", cat: "Moto",    cabe: 24, tar: { cap: 233.76, int1: 326.91, int2: 372.53 } },
-  { id: "mtc5", nome: "Teneré ★",   cod: "MTC 5", cat: "Moto",    cabe: 19, tar: { cap: 577.28, int1: 808.72, int2: 849.16 } },
-  { id: "mtc6", nome: "Rack S.Big", cod: "MTC 6", cat: "Moto",    cabe: 23, tar: { cap: 282.97, int1: 395.73, int2: 417.14 } },
-  { id: "ntc1", nome: "Náutica 1",  cod: "NTC 1", cat: "Náutica", cabe: 142, tar: { cap: 33.21,  int1: 36.10,  int2: 50.44 }, estimado: "int2" },
-  { id: "ntc2", nome: "Náutica 2",  cod: "NTC 2", cat: "Náutica", cabe: 96,  tar: { cap: 46.78,  int1: 50.85,  int2: 73.29 } },
-  { id: "ntc3", nome: "Náutica 3",  cod: "NTC 3", cat: "Náutica", cabe: 68,  tar: { cap: 64.21,  int1: 69.80,  int2: 95.41 } },
-  { id: "ntc4", nome: "Náutica 4",  cod: "NTC 4", cat: "Náutica", cabe: 51,  tar: { cap: 86.15,  int1: 93.64,  int2: 134.49 } },
-  { id: "ntc5", nome: "Náutica 5",  cod: "NTC 5", cat: "Náutica", cabe: 44,  tar: { cap: 172.76, int1: 187.78, int2: 252.48 } },
+  { id: "mtc1", nome: "Rack Small", cod: "MTC 1", cat: "Moto",    cabe: 33, emb: 56, kg: 205,   m3: 1.684, tar: { cap: 192.43, int1: 269.58, int2: 283.06, pe2: 252.96, se2: 232.72 } },
+  { id: "mtc2", nome: "Rack Big",   cod: "MTC 2", cat: "Moto",    cabe: 24, emb: 46, kg: 227.5, m3: 2.346, tar: { cap: 233.76, int1: 326.91, int2: 372.53, pe2: 258.70, se2: 238.00 } },
+  { id: "mtc4", nome: "Rack Big",   cod: "MTC 4", cat: "Moto",    cabe: 24, emb: 42, kg: 227.5, m3: 2.346, tar: { cap: 233.76, int1: 326.91, int2: 372.53, pe2: 258.70, se2: 238.00 } },
+  { id: "mtc5", nome: "Teneré ★",   cod: "MTC 5", cat: "Moto",    cabe: 19, emb: 62, kg: 220,   m3: 2.875, tar: { cap: 577.28, int1: 808.72, int2: 849.16, pe2: 758.86, se2: 698.15 } },
+  { id: "mtc6", nome: "Rack S.Big", cod: "MTC 6", cat: "Moto",    cabe: 23, emb: 38, kg: null,  m3: 2.455, tar: { cap: 282.97, int1: 395.73, int2: 417.14, pe2: 313.16, se2: 288.11 } },
+  { id: "ntc1", nome: "Náutica 1",  cod: "NTC 1", cat: "Náutica", cabe: 142, emb: 204, kg: 46,  m3: 0.402, tar: { cap: 33.21,  int1: 36.10,  int2: 53.59,  pe2: 61.33,  se2: 56.42 } },
+  { id: "ntc2", nome: "Náutica 2",  cod: "NTC 2", cat: "Náutica", cabe: 96,  emb: 96,  kg: 122, m3: 0.522, tar: { cap: 46.78,  int1: 50.85,  int2: 73.29,  pe2: 130.32, se2: 119.89 } },
+  { id: "ntc3", nome: "Náutica 3",  cod: "NTC 3", cat: "Náutica", cabe: 68,  emb: 85,  kg: 153, m3: 0.829, tar: { cap: 64.21,  int1: 69.80,  int2: 95.41,  pe2: 149.47, se2: 137.51 } },
+  { id: "ntc4", nome: "Náutica 4",  cod: "NTC 4", cat: "Náutica", cabe: 51,  emb: 52,  kg: 230, m3: 1.109, tar: { cap: 86.15,  int1: 93.64,  int2: 134.49, pe2: 241.46, se2: 222.14 } },
+  { id: "ntc5", nome: "Náutica 5",  cod: "NTC 5", cat: "Náutica", cabe: 44,  emb: 40,  kg: 246, m3: 1.282, tar: { cap: 172.76, int1: 187.78, int2: 252.48, pe2: 306.61, se2: 282.08 } },
 ];
 const YAMAHA_REGIOES = {
-  cap:  { nome: "BA Capital",     cidades: "Salvador · Camaçari · Lauro de Freitas", km: 240, dias: 0 },
-  int1: { nome: "BA Interior I",  cidades: "Juazeiro · Irecê · Jacobina · Valença", km: 600, dias: 1 },
-  int2: { nome: "BA Interior II", cidades: "Barreiras · Conquista · Porto Seguro · LEM", km: 2000, dias: 2 },
+  cap:  { nome: "BA Capital",     cidades: "Feira de Santana · Salvador · Camaçari · Lauro de Freitas", km: 240, dias: 0 },
+  int1: { nome: "BA Interior I",  cidades: "Alagoinhas · Juazeiro · Irecê · Itabuna · Jacobina · Paulo Afonso · Sto Antônio de Jesus · Sr do Bonfim · Valença · Jequié · Itaberaba", km: 600, dias: 1 },
+  int2: { nome: "BA Interior II", cidades: "Barreiras · Bom Jesus da Lapa · Eunápolis · Guanambi · Porto Seguro · V. da Conquista · Teixeira de Freitas", km: 2000, dias: 2 },
+  pe2:  { nome: "PE Interior II", cidades: "Petrolina", km: 1000, dias: 2 },
+  se2:  { nome: "SE Interior II", cidades: "Aracaju · Indiaroba · Itabaiana", km: 670, dias: 1 },
 };
+// Apelidos que aparecem no picking list da Yamalog (coluna "Tipo")
+const YAMAHA_APELIDOS = { "SMALL": "mtc1", "BIG": "mtc2", "SBIG": "mtc6" };
 function calcAjuste() {
   if (!state.calcYamaha) {
     const qtdZero = {}; YAMAHA_MODELOS.forEach((m) => qtdZero[m.id] = 0);
-    state.calcYamaha = { regiao: "int1", qtd: qtdZero, km: 600, dias: 1, placa: "", cliente: "Yamaha" };
+    state.calcYamaha = { regiao: "int1", qtd: qtdZero, km: 600, dias: 1, placa: "", cliente: "Yamaha", blocos: [], cidade: "" };
   }
+  if (!Array.isArray(state.calcYamaha.blocos)) state.calcYamaha.blocos = [];   // v264: estado antigo salvo sem o campo
+  if (state.calcYamaha.cidade == null) state.calcYamaha.cidade = "";
   return state.calcYamaha;
 }
 function calcSetRegiao(r) {
@@ -1033,20 +1123,55 @@ function calcSetCampo(campo, v) {
   c[campo] = v;
   salvar(); render();
 }
+// v264: o pedido pode ter MAIS DE UM DESTINO em classificações diferentes
+// (ex: Alagoinhas = BA Interior I e Aracaju = SE Interior II na mesma viagem).
+// O bloco que está sendo digitado é o "atual"; ao adicionar, ele vai pra lista
+// c.blocos e o total soma tudo, cada destino na tarifa da região dele.
+function calcBlocoTotais(regiao, qtd) {
+  let frete = 0, itens = 0, motos = 0, kg = 0, m3 = 0, semPeso = 0;
+  YAMAHA_MODELOS.forEach((m) => {
+    const q = (qtd || {})[m.id] || 0;
+    if (!q) return;
+    frete += q * (m.tar[regiao] || 0);
+    itens += q;
+    if (m.cat === "Moto") motos += q;
+    if (m.kg == null) semPeso += q; else kg += q * m.kg;
+    m3 += q * (m.m3 || 0);
+  });
+  return { frete, itens, motos, kg, m3, semPeso };
+}
+function calcMixTexto(qtd) {
+  return YAMAHA_MODELOS.filter((m) => ((qtd || {})[m.id] || 0) > 0)
+    .map((m) => `${qtd[m.id]}x ${m.nome}`).join(", ");
+}
+function calcAdicionarDestino() {
+  const c = calcAjuste();
+  const t = calcBlocoTotais(c.regiao, c.qtd);
+  if (t.itens <= 0) { alert("Informe a quantidade antes de adicionar o destino."); return; }
+  const cidade = String(c.cidade || "").trim();
+  if (!Array.isArray(c.blocos)) c.blocos = [];
+  c.blocos.push({ id: uid(), regiao: c.regiao, cidade: cidade, qtd: Object.assign({}, c.qtd) });
+  const z = {}; YAMAHA_MODELOS.forEach((m) => z[m.id] = 0);
+  c.qtd = z; c.cidade = "";
+  salvar(); render();
+}
+function calcRemoverDestino(id) {
+  const c = calcAjuste();
+  c.blocos = (c.blocos || []).filter((b) => String(b.id) !== String(id));
+  salvar(); render();
+}
 function calcResultado() {
   const c = calcAjuste();
-  let frete = 0, totMotos = 0, totItens = 0;
-  YAMAHA_MODELOS.forEach((m) => {
-    const q = c.qtd[m.id] || 0;
-    frete += q * m.tar[c.regiao];
-    totItens += q;
-    if (m.cat === "Moto") totMotos += q;
-  });
-  return { frete, totMotos, totItens };
+  let frete = 0, totMotos = 0, totItens = 0, totKg = 0, totM3 = 0, semPeso = 0;
+  const somar = (t) => { frete += t.frete; totMotos += t.motos; totItens += t.itens; totKg += t.kg; totM3 += t.m3; semPeso += t.semPeso; };
+  (c.blocos || []).forEach((b) => somar(calcBlocoTotais(b.regiao, b.qtd)));
+  somar(calcBlocoTotais(c.regiao, c.qtd));      // bloco em digitação também conta
+  return { frete, totMotos, totItens, totKg, totM3, semPeso };
 }
 function calcLimpar() {
   const c = calcAjuste();
   const z = {}; YAMAHA_MODELOS.forEach((m) => z[m.id] = 0); c.qtd = z;
+  c.blocos = []; c.cidade = "";
   salvar(); render();
 }
 function lancarComoViagem() {
@@ -1054,9 +1179,16 @@ function lancarComoViagem() {
   const r = calcResultado();
   if (r.frete <= 0) { alert("Adicione pelo menos uma moto antes de lançar."); return; }
   const placa = c.placa || (state.veiculos[0] ? state.veiculos[0].placa : "");
-  // monta descrição do mix para o campo "Outros" (apenas informativo, valor 0)
-  const mix = YAMAHA_MODELOS.filter((m) => (c.qtd[m.id] || 0) > 0)
-    .map((m) => `${c.qtd[m.id]}x ${m.nome}`).join(", ");
+  // v264: descrição do mix considerando TODOS os destinos do pedido, não só o bloco atual
+  const partes = [];
+  (c.blocos || []).forEach((b) => {
+    const t = calcBlocoTotais(b.regiao, b.qtd);
+    if (t.itens > 0) partes.push((b.cidade ? b.cidade + " (" + YAMAHA_REGIOES[b.regiao].nome + ")" : YAMAHA_REGIOES[b.regiao].nome) + ": " + calcMixTexto(b.qtd));
+  });
+  if (calcBlocoTotais(c.regiao, c.qtd).itens > 0) {
+    partes.push((c.cidade ? String(c.cidade).trim() + " (" + YAMAHA_REGIOES[c.regiao].nome + ")" : YAMAHA_REGIOES[c.regiao].nome) + ": " + calcMixTexto(c.qtd));
+  }
+  const mix = partes.join(" | ");
   state.viagens.push({
     id: uid(), placa: placa, cliente: c.cliente || "Yamaha",
     data: dataPadraoMes(), criadoEm: Date.now(),
@@ -1066,7 +1198,7 @@ function lancarComoViagem() {
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
     motoristaNaEpoca: (state.veiculos.find((x) => x.placa === placa) || {}).motorista || "",
     temAjudante: true, pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
-    outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha " + YAMAHA_REGIOES[c.regiao].nome + " — " + r.totItens + " itens: " + mix }],
+    outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha — " + r.totItens + " itens · " + mix }],
   });
   if (!state.clientes.includes(c.cliente || "Yamaha")) { state.clientes.push(c.cliente || "Yamaha"); state.clientes.sort(); }
   preencherLocalSeVazio(placa, c.cliente || "Yamaha");
@@ -1347,7 +1479,8 @@ function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
   if (v.trancada && !ehAdmin()) return; // v136: viagem travada — edição bloqueada de verdade, não só escondida na tela
-  v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
+  if (campo === "pesoKg") v.pesoKg = Number(String(valor).replace(",", ".")) || 0;   // v264: peso da carga (kg)
+  else v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
   // v131: quando a placa é definida/trocada, "congela" quem dirigia o caminhão
   // NAQUELE momento — assim, se o motorista do caminhão mudar depois (ex: troca
   // de motorista), essa viagem antiga continua correta no pagamento de quem
@@ -1358,7 +1491,7 @@ function atualizarViagem(id, campo, valor) {
     v.motoristaNaEpoca = (vc && vc.motorista) || "";
   }
   // Mudou placa, cliente ou rota? Reajusta valor conforme o modo do cliente (km/m³/rota).
-  if (campo === "placa" || campo === "cliente" || campo === "rota") aplicarFreteKm(v, "auto");
+  if (campo === "placa" || campo === "cliente" || campo === "rota" || campo === "pesoKg") aplicarFreteKm(v, "auto");
   // v54: mantém "Local alocado" do veículo em dia (só se ainda estiver vazio).
   if ((campo === "placa" || campo === "cliente") && v.placa && v.cliente) {
     preencherLocalSeVazio(v.placa, v.cliente);
@@ -1517,7 +1650,7 @@ function aplicarFreteKm(v, origem) {
     // conforme o tipo do veículo escalado (Toco ou 3/4).
     if (!v.rota) return;
     const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
-    const valorRota = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "");
+    const valorRota = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "", v.pesoKg);   // v264: peso decide VAN/tonelada
     if (valorRota > 0) v.valorViagem = valorRota;
   }
   // modo "viagem": valor é manual, não mexe.
@@ -9979,6 +10112,58 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   // dado que não recebeu e pra não dizer "não existe" quando na verdade é permissão).
   const abasDoUsuario = ABAS_DEF.filter((a) => podeVerAba(a.id)).map((a) => a.label.replace(/[^\wÀ-ÿ &/]/g, "").trim()).join(", ");
 
+  // v264: tabelas de preço dos clientes — o assistente precisa saber COMO cada
+  // cliente é cobrado pra responder "quanto vale essa viagem" sem chutar.
+  const blocoTarifas = (function () {
+    const tar = state.tarifas || {};
+    const nomes = Object.keys(tar);
+    if (!nomes.length) return "";
+    const linhas = nomes.map((cli) => {
+      const t = tar[cli] || {};
+      const m = t.modo || "viagem";
+      if (m === "km") return `- ${cli}: por KM (Toco ${fmtR(t.kmDefault || 0)}/km, 3/4 ${fmtR(t.km34 || t.kmDefault || 0)}/km)`;
+      if (m === "m3") return `- ${cli}: por m³ (${fmtR(t.m3 || 0)}/m³)`;
+      if (m === "viagem") return `- ${cli}: valor digitado manualmente em cada viagem`;
+      const rotas = t.rotas || {};
+      const nr = Object.keys(rotas);
+      const porTon = nr.filter((r) => (Number(rotas[r].porTon) || 0) > 0);
+      // agrupa as rotas por faixa de preço, pra não despejar centenas de linhas
+      const faixas = {};
+      nr.forEach((r) => {
+        if ((Number(rotas[r].porTon) || 0) > 0) return;
+        const k = [rotas[r].toco || 0, rotas[r].tresQuartos || 0, rotas[r].van || 0].join("|");
+        (faixas[k] = faixas[k] || []).push(r);
+      });
+      const detalhe = Object.keys(faixas).sort((a, b) => faixas[b].length - faixas[a].length).map((k) => {
+        const p = k.split("|");
+        const cids = faixas[k];
+        const amostra = cids.slice(0, 6).join(", ") + (cids.length > 6 ? ` e mais ${cids.length - 6}` : "");
+        return `    • Toco ${fmtR(p[0])} · 3/4 ${fmtR(p[1])} · VAN ${fmtR(p[2])} → ${cids.length} destino(s): ${amostra}`;
+      }).join("\n");
+      const ton = porTon.length ? `\n    • por TONELADA ${fmtR(rotas[porTon[0]].porTon)}/t → ${porTon.join(", ")}` : "";
+      const regraVan = (Number(t.vanAteKg) || 0) > 0
+        ? `\n    • REGRA: carga de até ${t.vanAteKg} kg é faturada pelo preço de VAN, mesmo indo em Toco ou 3/4. Por isso o peso da viagem precisa estar preenchido.`
+        : "";
+      return `- ${cli}: preço fechado POR ROTA, ${nr.length} destino(s) cadastrado(s)\n${detalhe}${ton}${regraVan}`;
+    }).join("\n");
+    return `\nTABELAS DE PREÇO POR CLIENTE (é daqui que sai o valor automático da viagem):\n${linhas}\n`;
+  })();
+
+  // v264: calculadora Yamaha — classificações e tarifas por unidade
+  const blocoYamaha = (function () {
+    const regs = Object.keys(YAMAHA_REGIOES);
+    const cab = regs.map((r) => YAMAHA_REGIOES[r].nome).join(" | ");
+    const linhas = YAMAHA_MODELOS.map((m) =>
+      `  ${m.cod} ${m.nome} (emb. ${m.emb}${m.kg != null ? ", " + m.kg + " kg" : ", peso não informado"}, ${m.m3} m³): ` +
+      regs.map((r) => `${YAMAHA_REGIOES[r].nome} ${fmtR(m.tar[r])}`).join(" · ")).join("\n");
+    const cidades = regs.map((r) => `  ${YAMAHA_REGIOES[r].nome}: ${YAMAHA_REGIOES[r].cidades}`).join("\n");
+    const cy = state.calcYamaha || {};
+    const pedido = (cy.blocos || []).length
+      ? `\n  Pedido em montagem na calculadora: ${cy.blocos.map((b) => (b.cidade || YAMAHA_REGIOES[b.regiao].nome) + " (" + calcBlocoTotais(b.regiao, b.qtd).itens + " itens)").join(", ")}`
+      : "";
+    return `\nCALCULADORA YAMAHA — tarifa POR UNIDADE, conforme a classificação da cidade de entrega (${cab}):\n${linhas}\nCidades de cada classificação:\n${cidades}\n  No picking list da Yamalog, "SMALL" = MTC 1, "BIG" = MTC 2 e "SBIG" = MTC 6.\n  Uma mesma viagem pode ter destinos em classificações diferentes — cada destino é somado pela tarifa da região dele.${pedido}\n`;
+  })();
+
   return `${blocoSync}
 ${blocoTela}
 ${blocoExportViagens}
@@ -9992,6 +10177,7 @@ Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
 Abastecimento aprovado no mês (fora do cálculo por viagem): ${fmtR(abastMesAprovado)}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
+${blocoTarifas}${blocoYamaha}
 
 ⚠️ IMPORTANTE — existem DUAS informações de "dívidas fixas" no sistema, não confunda:
 - Total de TODAS as dívidas fixas cadastradas (inclui algumas que podem não estar ativas nesse mês específico): ${fmtR(t.totalDividasFixas)}
@@ -11435,17 +11621,24 @@ function renderTabela() {
           </div>
           ${modo === "rota" && (state._rotasAbertas || {})[c] ? `
           <div style="margin:10px 0 4px 0; padding:10px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:6px;">
-            <div style="display:grid; grid-template-columns:1fr 90px 90px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
-              <span>ROTA</span><span>TOCO</span><span>3/4</span><span></span>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+              <span style="font-size:11px; color:#bbb;">Carga até <input type="number" step="1" value="${t.vanAteKg != null ? t.vanAteKg : ""}" placeholder="1500" onchange="setTarifaValor('${cEsc}','vanAteKg',this.value)" style="width:75px; text-align:right;"> kg é faturada como <b style="color:${GOLD};">VAN</b>, seja qual for o caminhão</span>
+              <button class="btn-outline" style="font-size:10px;" onclick="carregarTabelaSuzano('${cEsc}')" title="Carrega os 262 destinos do BID aceito + Salvador RM por tonelada">📋 Carregar tabela Suzano</button>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
+              <span>ROTA / DESTINO</span><span>TOCO</span><span>3/4</span><span>VAN</span><span>R$/TON</span><span></span>
             </div>
             ${rotasNomes.map((rn) => `
-              <div style="display:grid; grid-template-columns:1fr 90px 90px 30px; gap:6px; align-items:center; margin-bottom:4px;">
-                <span style="font-size:11px; color:#ddd;">${esc(rn)}</span>
-                <input type="number" step="0.01" value="${rotas[rn].toco || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','toco',this.value)" style="width:85px; text-align:right; font-size:11px;">
-                <input type="number" step="0.01" value="${rotas[rn].tresQuartos || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','tresQuartos',this.value)" style="width:85px; text-align:right; font-size:11px;">
+              <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; align-items:center; margin-bottom:4px;">
+                <span style="font-size:11px; color:#ddd;">${esc(rn)}${rotas[rn].lead ? `<span style="font-size:9px;color:#666;"> · lead ${rotas[rn].lead}d</span>` : ""}</span>
+                <input type="number" step="0.01" value="${rotas[rn].toco || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','toco',this.value)" style="width:78px; text-align:right; font-size:11px;">
+                <input type="number" step="0.01" value="${rotas[rn].tresQuartos || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','tresQuartos',this.value)" style="width:78px; text-align:right; font-size:11px;">
+                <input type="number" step="0.01" value="${rotas[rn].van || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','van',this.value)" style="width:78px; text-align:right; font-size:11px;">
+                <input type="number" step="0.01" value="${rotas[rn].porTon || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','porTon',this.value)" style="width:84px; text-align:right; font-size:11px;" title="Se preenchido, a viagem é cobrada por tonelada (peso × este valor) e ignora os preços por veículo">
                 <button onclick="removerRotaCliente('${cEsc}','${esc(rn).replace(/'/g, "\\'")}')" style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;">✕</button>
               </div>`).join("")}
             <button class="btn-outline" style="font-size:10px; margin-top:4px;" onclick="adicionarRotaCliente('${cEsc}')">+ Nova rota</button>
+            <div style="font-size:10px; color:#666; margin-top:6px;">Preencha <b>R$/TON</b> só nos destinos cobrados por tonelada (Salvador RM da Suzano). Nesses, o valor sai do peso da viagem e os preços por veículo ficam de reserva.</div>
           </div>` : ""}
           <details style="margin-top:6px;">
             <summary style="font-size:10px; color:#888; cursor:pointer;">Parâmetros avançados (ADM, manutenção, pneus, imposto)</summary>
@@ -11483,7 +11676,20 @@ function renderTabela() {
         const corPct = estPct >= 20 ? "#2E7D32" : estPct > 0 ? "#D4A017" : "#C0392B";
         return `
       <div style="margin-bottom:18px; padding:16px; background:#0E0E0E; border:1px solid ${GOLD}; border-top:none; border-radius:0 0 8px 8px;">
-        <div style="font-size:10px; color:#888; margin-bottom:12px;">Motos (MTC) e náutica (NTC) — selecione a região e as quantidades.</div>
+        <div style="font-size:10px; color:#888; margin-bottom:12px;">Motos (MTC) e náutica (NTC) — escolha a classificação, informe as quantidades e, se a viagem tiver mais de uma cidade, use "adicionar destino".</div>
+        ${(cy.blocos || []).length ? `
+        <div style="margin-bottom:12px; padding:10px; background:#161616; border:1px solid ${GOLD}; border-radius:6px;">
+          <div style="font-size:10px; color:${GOLD}; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">Destinos já no pedido</div>
+          ${cy.blocos.map((b) => { const tb = calcBlocoTotais(b.regiao, b.qtd); return `
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:12px; font-weight:600;">${esc(b.cidade || YAMAHA_REGIOES[b.regiao].nome)} <span style="color:#777; font-size:10px;">${esc(YAMAHA_REGIOES[b.regiao].nome)}</span></div>
+                <div style="font-size:10px; color:#888;">${tb.itens} itens · ${esc(calcMixTexto(b.qtd))}</div>
+              </div>
+              <div style="font-size:12px; color:${GOLD}; font-weight:700;">${fmtR(tb.frete)}</div>
+              <button onclick="calcRemoverDestino('${b.id}')" style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;">✕</button>
+            </div>`; }).join("")}
+        </div>` : ""}
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
           ${Object.keys(YAMAHA_REGIOES).map((rk) => {
             const on = cy.regiao === rk;
@@ -11513,6 +11719,12 @@ function renderTabela() {
           }).join("")}
         </div>`;
         }).join("")}
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; padding:10px; background:#161616; border:1px dashed #3A3A3A; border-radius:6px;">
+          <div><div style="font-size:11px;color:#999;margin-bottom:3px;">Cidade deste destino (opcional)</div>
+            <input value="${esc(cy.cidade || "")}" placeholder="ex: Aracaju" onchange="calcSetCampo('cidade',this.value)" style="width:170px;"></div>
+          <button class="btn-outline" style="font-size:11px;" onclick="calcAdicionarDestino()" title="Guarda as quantidades acima como um destino e limpa os campos pro próximo">➕ Adicionar destino ao pedido</button>
+          <span style="font-size:10px; color:#666; flex:1; min-width:200px;">Use quando a viagem entrega em cidades de classificações diferentes — cada destino é somado pela tarifa da região dele.</span>
+        </div>
         <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
           <div><div style="font-size:11px;color:#999;margin-bottom:3px;">Placa</div>
             <select onchange="calcSetCampo('placa',this.value)" style="width:150px;">
@@ -11640,6 +11852,7 @@ function renderTabela() {
               <option value="__novo__" style="color:${GOLD};">+ Novo cliente...</option>
             </select>
             ${modoCliente(v.cliente) === "rota" ? (() => { const t = tarifaCliente(v.cliente) || {}; const rotas = Object.keys(t.rotas || {}).sort(); return `
+              <div style="margin-top:4px;"><input type="number" step="1" value="${v.pesoKg || ""}" placeholder="peso kg" onchange="atualizarViagem('${v.id}','pesoKg',this.value)" style="width:88px; font-size:11px;" title="Peso da carga em kg — define VAN e cobrança por tonelada"><span style="font-size:9px;color:#888;"> kg</span></div>
               <select onchange="atualizarViagem('${v.id}','rota',this.value)" style="min-width:140px; margin-top:4px; font-size:11px;" title="Rota (define o valor da viagem)">
                 <option value="" ${!v.rota ? "selected" : ""}>(selecione a rota)</option>
                 ${rotas.map((r) => `<option ${v.rota === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
@@ -11655,7 +11868,7 @@ function renderTabela() {
                 return `<div style="font-size:9px;color:${dif ? GOLD : "#2E7D32"};">${d} dia(s)${dif ? " — ajustei o campo Dias" : ""}</div>`;
               })()}
             </td>
-            <td><input type="number" value="${v.valorViagem || 0}" onchange="setViagemValor('${v.id}',this.value)" style="font-weight:700;">${(() => { if (v.freteKmManual) { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">manual: km × ${fmtR(r)}</div>` : ""; } const m = modoCliente(v.cliente); if (m === "km") { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">auto: km × ${fmtR(r)}</div>` : ""; } if (m === "m3") { const r = freteM3De(v.cliente); return r ? `<div style="font-size:9px;color:${GOLD};">auto: m³ × ${fmtR(r)}</div>` : ""; } if (m === "rota") { const veic = state.veiculos.find((x) => x.placa === v.placa); const r = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : ""); return v.rota ? (r ? `<div style="font-size:9px;color:${GOLD};">auto: tabela da rota</div>` : `<div style="font-size:9px;color:#C0392B;">sem valor cadastrado pra essa rota/veículo</div>`) : `<div style="font-size:9px;color:#C0392B;">selecione a rota acima</div>`; } return ""; })()}</td>
+            <td><input type="number" value="${v.valorViagem || 0}" onchange="setViagemValor('${v.id}',this.value)" style="font-weight:700;">${(() => { if (v.freteKmManual) { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">manual: km × ${fmtR(r)}</div>` : ""; } const m = modoCliente(v.cliente); if (m === "km") { const r = freteKmViagem(v); return r ? `<div style="font-size:9px;color:${GOLD};">auto: km × ${fmtR(r)}</div>` : ""; } if (m === "m3") { const r = freteM3De(v.cliente); return r ? `<div style="font-size:9px;color:${GOLD};">auto: m³ × ${fmtR(r)}</div>` : ""; } if (m === "rota") { const veic = state.veiculos.find((x) => x.placa === v.placa); const r = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "", v.pesoKg); const mot = freteRotaMotivo(v.cliente, v.rota, veic ? veic.tipo : "", v.pesoKg); return v.rota ? (r ? `<div style="font-size:9px;color:${GOLD};">auto: ${esc(mot)}</div>` : `<div style="font-size:9px;color:#C0392B;">${esc(mot || "sem valor cadastrado pra essa rota/veículo")}</div>`) : `<div style="font-size:9px;color:#C0392B;">selecione a rota acima</div>`; } return ""; })()}</td>
             <td style="text-align:center;min-width:120px;">
               <label style="display:flex; align-items:center; gap:5px; cursor:pointer; justify-content:center; white-space:nowrap;">
                 <input type="checkbox" ${v.pago ? "checked" : ""} onchange="setViagemPago('${v.id}', this.checked)" style="width:18px;height:18px;">
