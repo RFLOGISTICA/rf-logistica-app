@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v265)</title>
+<title>RF Logística — Painel da Frota (v266)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1242,7 +1242,80 @@ function garantirConfig() {
   if (state.config.avisoOleoKm == null) state.config.avisoOleoKm = 1000;               // v49: avisar troca de óleo faltando X km
   if (state.config.emplAvisoDias == null) state.config.emplAvisoDias = 10;             // v187: lança emplacamento em contas a pagar faltando X dias
   if (state.config.taxaLicenciamento == null) state.config.taxaLicenciamento = TAXA_LICENCIAMENTO_BA_2026; // v187: taxa DETRAN-BA (reajusta todo ano)
+  /* v266: premissas de custo que estavam CHUMBADAS no calculo da viagem.
+     Antes: ADM 2,5% fixo, alimentacao R$80/dia fixa, motorista sempre pago por
+     viagem mesmo com o caminhao cadastrado como CLT. Agora tudo isso e' premissa
+     editavel, e o regime CLT do veiculo passa a valer de verdade na conta. */
+  if (state.config.admPct == null) state.config.admPct = 3;                     // % sobre o valor da viagem
+  if (state.config.diariaPadrao == null) state.config.diariaPadrao = 80;        // R$ por pessoa por dia
+  if (state.config.pernoitePadrao == null) state.config.pernoitePadrao = 0;     // R$ por pessoa por noite fora
+  if (state.config.diasUteisMes == null) state.config.diasUteisMes = 22;        // divisor do rateio da folha CLT
+  if (!state.config.cltMotorista || typeof state.config.cltMotorista !== "object")
+    state.config.cltMotorista = { salario: 2587.73, encargoPct: 75, sla: 500, vt: 150 };
+  if (!state.config.cltAjudante || typeof state.config.cltAjudante !== "object")
+    state.config.cltAjudante = { salario: 1771, encargoPct: 75, sla: 250, vt: 150 };
 }
+
+/* ===================== CUSTO DA MAO DE OBRA CLT (v266) =====================
+   Renato cadastrou caminhoes como CLT na aba Frota e a aba Viagens nao mudou
+   nada: continuava debitando "pagamento por viagem" de R$500 + R$300. Estava
+   errado -- com CLT o que existe e' salario fixo, e o que a viagem tem que
+   carregar e' o RATEIO dessa folha pelos dias que o caminhao ficou na estrada.
+
+   Formula do rateio, a mesma do modelo de custo do BID:
+       custo mensal x dias de viagem / dias uteis do mes
+   Custo mensal = salario + encargos + bonificacao de SLA + vale-transporte.
+   Nao entram plano de saude, cesta nem seguro de vida: a RF nao paga.        */
+function cltPremissas(tipo) {
+  garantirConfig();
+  return (tipo === "ajudante" ? state.config.cltAjudante : state.config.cltMotorista) || {};
+}
+function cltCustoMensal(tipo) {
+  const p = cltPremissas(tipo);
+  const salario = Number(p.salario) || 0;
+  const encargo = (Number(p.encargoPct) || 0) / 100;
+  return salario * (1 + encargo) + (Number(p.sla) || 0) + (Number(p.vt) || 0);
+}
+function cltCustoPorViagem(tipo, dias) {
+  garantirConfig();
+  const uteis = Number(state.config.diasUteisMes) || 22;
+  return cltCustoMensal(tipo) * (Number(dias) || 1) / uteis;
+}
+function cltSetPremissa(tipo, campo, valor) {
+  garantirConfig();
+  const alvo = tipo === "ajudante" ? state.config.cltAjudante : state.config.cltMotorista;
+  alvo[campo] = Number(String(valor).replace(",", ".")) || 0;
+  salvar(); render();
+}
+function setConfigNumero(campo, valor) {
+  garantirConfig();
+  state.config[campo] = Number(String(valor).replace(",", ".")) || 0;
+  salvar(); render();
+}
+
+/* ===================== DIARIA E PERNOITE (v266) =====================
+   A diaria era R$80/dia pra todo mundo. Na pratica muda por rota: no Centro
+   Norte sao R$50/dia e o motorista dorme em casa; no Norte sao R$80 de diaria
+   MAIS R$80 de pernoite por noite fora. Ordem de busca: valor da ROTA do
+   cliente -> valor do CLIENTE -> padrao da empresa.
+   Noites fora = dias - 1 (viagem de 1 dia nao tem pernoite).                 */
+function diariaDaViagem(v) {
+  garantirConfig();
+  const t = tarifaCliente(v.cliente) || {};
+  const r = (t.rotas || {})[v.rota] || {};
+  if (numOuNull(r.diaria) != null) return numOuNull(r.diaria);
+  if (numOuNull(t.diaria) != null) return numOuNull(t.diaria);
+  return Number(state.config.diariaPadrao) || 0;
+}
+function pernoiteDaViagem(v) {
+  garantirConfig();
+  const t = tarifaCliente(v.cliente) || {};
+  const r = (t.rotas || {})[v.rota] || {};
+  if (numOuNull(r.pernoite) != null) return numOuNull(r.pernoite);
+  if (numOuNull(t.pernoite) != null) return numOuNull(t.pernoite);
+  return Number(state.config.pernoitePadrao) || 0;
+}
+function noitesForaDaViagem(v) { return Math.max(0, (Number(v.dias) || 1) - 1); }
 function impostoPctNum() { garantirConfig(); return Number(state.config.impostoPct) || 0; }
 function impostoFator() { return impostoPctNum() / 100; }
 function setImpostoPct(valor) {
@@ -1350,7 +1423,7 @@ function calcularViagem(v) {
   // v120: cada cliente pode ter ADM/Manutenção/Pneus/Imposto próprios (configurável
   // na aba Clientes, em "parâmetros avançados"). Vazio = usa o padrão da empresa.
   const t = tarifaCliente(v.cliente) || {};
-  const admPct = numOuNull(t.admPct) != null ? numOuNull(t.admPct) / 100 : 0.025;
+  const admPct = numOuNull(t.admPct) != null ? numOuNull(t.admPct) / 100 : (Number(state.config && state.config.admPct) || 3) / 100;
   const manutPct = numOuNull(t.manutencaoPct) != null ? numOuNull(t.manutencaoPct) / 100 : 0.03;
   const pneusRate = numOuNull(t.pneusPorKm) != null ? numOuNull(t.pneusPorKm) : 0.12;
   const impostoPctCliente = numOuNull(t.impostoPct) != null ? numOuNull(t.impostoPct) / 100 : impostoFator();
@@ -1359,18 +1432,28 @@ function calcularViagem(v) {
   const imposto = valorViagem * impostoPctCliente;
   const pneus = km * pneusRate;
   const temAjudante = v.temAjudante !== false;
-  const alimMotorista = dias * 80;
-  const alimAjudante = temAjudante ? dias * 80 : 0;
+  /* v266: diaria e pernoite por rota (antes era R$80/dia chumbado pra todos) */
+  const diaria = diariaDaViagem(v);
+  const pernoite = pernoiteDaViagem(v);
+  const noites = noitesForaDaViagem(v);
+  const alimMotorista = dias * diaria + noites * pernoite;
+  const alimAjudante = temAjudante ? (dias * diaria + noites * pernoite) : 0;
   const infoComb = calcularTanques().porViagem[v.id] || { custo: 0, litrosConsumidos: 0, precoLitroUsado: 0, faltouLitros: 0 };
   const combustivel = infoComb.custo;
-  const pagMotorista = Number(v.vgPagMotorista) || 0;
-  const pagAjudante = temAjudante ? (Number(v.vgPagAjudante) || 0) : 0;
+  /* v266: AQUI estava o furo. O regime do caminhao (aba Frota) nunca era lido
+     no custo da viagem: CLT ou nao, entrava sempre o "pago por viagem". Agora,
+     se o caminhao e' CLT, o que entra e' o rateio da folha pelos dias. */
+  const regime = regimeMotoristaDaPlaca(v.placa);
+  const ehCLT = regime === "clt";
+  const pagMotorista = ehCLT ? cltCustoPorViagem("motorista", dias) : (Number(v.vgPagMotorista) || 0);
+  const pagAjudante = !temAjudante ? 0 : (ehCLT ? cltCustoPorViagem("ajudante", dias) : (Number(v.vgPagAjudante) || 0));
   const outros = (v.outrosItens || []).reduce((s, item) => s + (Number(item.valor) || 0), 0);
   const totalDesp = adm + manutencao + imposto + pneus + alimMotorista + alimAjudante + combustivel + pagMotorista + pagAjudante + outros;
   const sobra = valorViagem - totalDesp;
   return {
     valorViagem, km, dias, adm, manutencao, imposto, pneus, alimMotorista, alimAjudante, combustivel, pagMotorista, pagAjudante, outros, totalDesp, sobra,
     litrosConsumidos: infoComb.litrosConsumidos, precoLitroUsado: infoComb.precoLitroUsado, faltouLitros: infoComb.faltouLitros,
+    ehCLT, diaria, pernoite, noites,
   };
 }
 
@@ -10120,6 +10203,23 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 
   // v264: tabelas de preço dos clientes — o assistente precisa saber COMO cada
   // cliente é cobrado pra responder "quanto vale essa viagem" sem chutar.
+  /* v266: o assistente precisa saber COMO o custo da viagem e' montado agora.
+     Antes ele explicava R$500 por viagem e R$80/dia porque era isso que estava
+     no codigo -- e passou a responder errado quando o CLT entrou. */
+  const blocoPremissasCusto = (function () {
+    garantirConfig();
+    const cfg = state.config;
+    const mot = cltCustoMensal("motorista"), aju = cltCustoMensal("ajudante");
+    const cltPlacas = (state.veiculos || []).filter((v) => v.regimeMotorista === "clt").map((v) => v.placa);
+    return "\nPREMISSAS DE CUSTO DA VIAGEM (v266 -- valem para TODA conta de custo, lucro e projecao):\n"
+      + "- Administrativo " + (Number(cfg.admPct) || 0) + "% e imposto " + impostoPctNum() + "% sobre o valor da viagem; manutencao 3%; pneus R$0,12/km. Cliente pode ter percentual proprio, que manda sobre esses.\n"
+      + "- Alimentacao NAO e' mais R$80/dia fixo: e' diaria x dias + pernoite x noites fora (noites = dias - 1), por pessoa. O valor sai da ROTA; se a rota nao tiver, do CLIENTE; se nao tiver, do padrao da empresa (diaria R$" + (Number(cfg.diariaPadrao) || 0) + ", pernoite R$" + (Number(cfg.pernoitePadrao) || 0) + ").\n"
+      + "- REGIME DO MOTORISTA: cada caminhao e' 'por viagem' ou 'CLT' (aba Frota). Caminhao CLT NAO paga valor por viagem: a viagem carrega o RATEIO da folha = custo mensal / " + (Number(cfg.diasUteisMes) || 22) + " dias uteis x dias de viagem.\n"
+      + "- Custo mensal CLT = salario + encargos + bonificacao de SLA + vale-transporte. Hoje: motorista " + fmtR(mot) + "/mes (" + fmtR(mot / ((Number(cfg.diasUteisMes) || 22))) + " por dia de viagem), ajudante " + fmtR(aju) + "/mes (" + fmtR(aju / ((Number(cfg.diasUteisMes) || 22))) + " por dia). NAO ha plano de saude, cesta nem seguro de vida -- a RF nao paga esses beneficios.\n"
+      + (cltPlacas.length ? "- Caminhoes hoje cadastrados como CLT: " + cltPlacas.join(", ") + ".\n" : "- Nenhum caminhao cadastrado como CLT no momento.\n")
+      + "- Se perguntarem por que o custo de uma viagem mudou, a causa costuma ser uma destas premissas (regime CLT, diaria da rota ou percentual do cliente) -- verifique antes de dizer que houve erro de lancamento.\n";
+  })();
+
   const blocoTarifas = (function () {
     const tar = state.tarifas || {};
     const nomes = Object.keys(tar);
@@ -10183,7 +10283,7 @@ Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
 Abastecimento aprovado no mês (fora do cálculo por viagem): ${fmtR(abastMesAprovado)}
 Abastecimentos pendentes de aprovação: ${abastPendentes}
-${blocoTarifas}${blocoYamaha}
+${blocoPremissasCusto}${blocoTarifas}${blocoYamaha}
 
 ⚠️ IMPORTANTE — existem DUAS informações de "dívidas fixas" no sistema, não confunda:
 - Total de TODAS as dívidas fixas cadastradas (inclui algumas que podem não estar ativas nesse mês específico): ${fmtR(t.totalDividasFixas)}
@@ -11501,6 +11601,41 @@ function renderTabela() {
           : ""}
       </div>
 
+      <!-- v266: PREMISSAS DE CUSTO DA VIAGEM ------------------------------
+           Tudo que antes estava chumbado no codigo (ADM 2,5%, alimentacao de
+           R$80/dia, motorista sempre pago por viagem) virou premissa editavel.
+           Mexer aqui recalcula TODAS as viagens na hora.                    -->
+      <div style="background:#161616; border:1px solid ${GOLD}; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="font-size:13px; color:${GOLD}; font-weight:800; text-transform:uppercase; letter-spacing:.5px;">⚙️ Premissas de custo da viagem</div>
+        <div style="font-size:11px; color:#999; margin:4px 0 14px;">Valem pra toda viagem que não tiver valor próprio no cliente ou na rota. Alterar aqui refaz o cálculo de todas as viagens.</div>
+
+        <div style="display:flex; gap:22px; flex-wrap:wrap; margin-bottom:16px;">
+          <span style="font-size:12px; color:#bbb;">Administrativo<br><input type="number" step="0.1" value="${Number(state.config.admPct) || 0}" onchange="setConfigNumero('admPct',this.value)" style="width:90px; text-align:right; font-weight:700;"> %</span>
+          <span style="font-size:12px; color:#bbb;">Diária por pessoa/dia<br><input type="number" step="1" value="${Number(state.config.diariaPadrao) || 0}" onchange="setConfigNumero('diariaPadrao',this.value)" style="width:90px; text-align:right; font-weight:700;"> R$</span>
+          <span style="font-size:12px; color:#bbb;">Pernoite por pessoa/noite<br><input type="number" step="1" value="${Number(state.config.pernoitePadrao) || 0}" onchange="setConfigNumero('pernoitePadrao',this.value)" style="width:90px; text-align:right; font-weight:700;"> R$</span>
+          <span style="font-size:12px; color:#bbb;">Dias úteis no mês<br><input type="number" step="1" value="${Number(state.config.diasUteisMes) || 22}" onchange="setConfigNumero('diasUteisMes',this.value)" style="width:90px; text-align:right; font-weight:700;"></span>
+        </div>
+
+        <div style="font-size:12px; color:${GOLD}; font-weight:700; margin-bottom:6px;">Mão de obra CLT — usada nos caminhões cadastrados como CLT na aba Frota</div>
+        <table style="min-width:640px; font-size:12px;"><thead><tr>
+          <th></th><th>Salário</th><th>Encargos %</th><th>SLA/mês</th><th>Vale-transporte</th><th>Custo mensal</th><th>Por dia de viagem</th>
+        </tr></thead><tbody>
+        ${["motorista", "ajudante"].map((tipo) => {
+          const pr = cltPremissas(tipo);
+          return `<tr>
+            <td style="font-weight:700; color:#fff; text-transform:capitalize;">${tipo}</td>
+            <td><input type="number" step="0.01" value="${Number(pr.salario) || 0}" onchange="cltSetPremissa('${tipo}','salario',this.value)" style="width:100px; text-align:right;"></td>
+            <td><input type="number" step="1" value="${Number(pr.encargoPct) || 0}" onchange="cltSetPremissa('${tipo}','encargoPct',this.value)" style="width:70px; text-align:right;"></td>
+            <td><input type="number" step="1" value="${Number(pr.sla) || 0}" onchange="cltSetPremissa('${tipo}','sla',this.value)" style="width:80px; text-align:right;"></td>
+            <td><input type="number" step="1" value="${Number(pr.vt) || 0}" onchange="cltSetPremissa('${tipo}','vt',this.value)" style="width:90px; text-align:right;"></td>
+            <td style="font-weight:700; color:${GOLD};">${fmtR(cltCustoMensal(tipo))}</td>
+            <td style="font-weight:700; color:#bbb;">${fmtR(cltCustoPorViagem(tipo, 1))}</td>
+          </tr>`;
+        }).join("")}
+        </tbody></table>
+        <div style="font-size:11px; color:#777; margin-top:10px;">Custo mensal = salário + encargos + SLA + vale-transporte. Não entram plano de saúde, cesta nem seguro de vida — a RF não paga. O rateio por viagem é custo mensal ÷ dias úteis × dias de viagem.</div>
+      </div>
+
       <!-- DETALHE POR VEÍCULO (VIAGENS DO MÊS SELECIONADO) -->
       <div style="margin-bottom:10px; font-size:12px; color:#999;">
         Detalhe por veículo — colunas de viagens referentes a <b style="color:${GOLD};">${mesLabel(mesAtivo)}</b>. Colunas manuais (aluguel fixo) são os valores recorrentes da frota.
@@ -11575,7 +11710,7 @@ function renderTabela() {
 
     wrap.innerHTML = `
       <div style="margin-bottom:10px; font-size:12px; color:#999;">
-        Cada linha é uma viagem. ADM (2,5%), Manutenção (3%) e Imposto (${impostoPctNum()}%) calculam automático sobre o valor da viagem. Pneus = R$0,12 × km. Alimentação = R$80 × dias (motorista e ajudante).
+        Cada linha é uma viagem. ADM (${Number(state.config.admPct) || 3}%), Manutenção (3%) e Imposto (${impostoPctNum()}%) calculam automático sobre o valor da viagem. Pneus = R$0,12 × km. Alimentação = diária × dias (+ pernoite por noite fora), pelo valor da rota. Caminhão cadastrado como <b>CLT</b> na aba Frota não paga por viagem: entra o rateio da folha (salário + encargos + SLA + vale-transporte) ÷ ${Number(state.config.diasUteisMes) || 22} dias úteis × dias de viagem.
         Limite de referência: até 2 viagens/semana e 6 viagens/mês por veículo.
         <br>🖐 <b style="color:${GOLD};">Dica:</b> segure o botão do mouse em qualquer espaço vazio da tabela e arraste para rolar — para os lados e para cima/baixo.
         ${(state.filtroPlacaViagem !== "Todas" || state.filtroClienteViagem !== "Todos" || (state.filtroPagViagem || "Todas") !== "Todas") ? `<br><b style="color:${GOLD};">Filtrando por: ${[state.filtroPlacaViagem !== "Todas" ? esc(state.filtroPlacaViagem) : "", state.filtroClienteViagem !== "Todos" ? esc(state.filtroClienteViagem) : "", (state.filtroPagViagem || "Todas") !== "Todas" ? esc(state.filtroPagViagem) : ""].filter((x) => x).join(" + ")}</b>` : ""}
@@ -11631,16 +11766,18 @@ function renderTabela() {
               <span style="font-size:11px; color:#bbb;">Carga até <input type="number" step="1" value="${t.vanAteKg != null ? t.vanAteKg : ""}" placeholder="1500" onchange="setTarifaValor('${cEsc}','vanAteKg',this.value)" style="width:75px; text-align:right;"> kg é faturada como <b style="color:${GOLD};">VAN</b>, seja qual for o caminhão</span>
               <button class="btn-outline" style="font-size:10px;" onclick="carregarTabelaSuzano('${cEsc}')" title="Carrega as 9 regionais do BID aceito + os 5 destinos de preço próprio">📋 Carregar tabela Suzano</button>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
-              <span>REGIONAL / DESTINO</span><span>TOCO</span><span>3/4</span><span>VAN</span><span>R$/TON</span><span></span>
+            <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 72px 72px 30px; gap:6px; font-size:10px; color:#888; margin-bottom:4px;">
+              <span>REGIONAL / DESTINO</span><span>TOCO</span><span>3/4</span><span>VAN</span><span>R$/TON</span><span title="Diária por pessoa por dia nesta rota. Em branco = padrão da empresa">DIÁRIA</span><span title="Pernoite por pessoa por noite fora nesta rota. Em branco = padrão da empresa">PERNOITE</span><span></span>
             </div>
             ${rotasNomes.map((rn) => `
-              <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 30px; gap:6px; align-items:center; margin-bottom:4px;">
+              <div style="display:grid; grid-template-columns:1fr 82px 82px 82px 88px 72px 72px 30px; gap:6px; align-items:center; margin-bottom:4px;">
                 <span style="font-size:11px; color:#ddd;">${esc(rn)}${rotas[rn].lead ? `<span style="font-size:9px;color:#666;"> · lead ${rotas[rn].lead}d</span>` : ""}</span>
                 <input type="number" step="0.01" value="${rotas[rn].toco || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','toco',this.value)" style="width:78px; text-align:right; font-size:11px;">
                 <input type="number" step="0.01" value="${rotas[rn].tresQuartos || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','tresQuartos',this.value)" style="width:78px; text-align:right; font-size:11px;">
                 <input type="number" step="0.01" value="${rotas[rn].van || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','van',this.value)" style="width:78px; text-align:right; font-size:11px;">
                 <input type="number" step="0.01" value="${rotas[rn].porTon || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','porTon',this.value)" style="width:84px; text-align:right; font-size:11px;" title="Se preenchido, a viagem é cobrada por tonelada (peso × este valor) e ignora os preços por veículo">
+                <input type="number" step="1" value="${rotas[rn].diaria != null ? rotas[rn].diaria : ""}" placeholder="${Number(state.config.diariaPadrao) || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','diaria',this.value)" style="width:68px; text-align:right; font-size:11px;" title="Diária por pessoa/dia nesta rota. Vazio = padrão da empresa">
+                <input type="number" step="1" value="${rotas[rn].pernoite != null ? rotas[rn].pernoite : ""}" placeholder="${Number(state.config.pernoitePadrao) || 0}" onchange="setRotaValor('${cEsc}','${esc(rn).replace(/'/g, "\\'")}','pernoite',this.value)" style="width:68px; text-align:right; font-size:11px;" title="Pernoite por pessoa/noite fora nesta rota. Vazio = padrão da empresa">
                 <button onclick="removerRotaCliente('${cEsc}','${esc(rn).replace(/'/g, "\\'")}')" style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;">✕</button>
               </div>`).join("")}
             <button class="btn-outline" style="font-size:10px; margin-top:4px;" onclick="adicionarRotaCliente('${cEsc}')">+ Nova rota</button>
@@ -11946,11 +12083,15 @@ function renderTabela() {
               </div>
               ${c.faltouLitros > 0.3 ? `<div style="font-size:10px;color:#C0392B;margin-top:2px;">⚠ faltam ${c.faltouLitros.toFixed(1)} L no tanque — registre o abastecimento pra fechar a conta certa</div>` : ""}
             </td>
-            <td style="color:#999;">${fmtR(c.alimMotorista)}</td>
+            <td style="color:#999;">${fmtR(c.alimMotorista)}<div style="font-size:9px;color:#777;">${c.dias}×${fmtR(c.diaria)}${c.noites > 0 && c.pernoite > 0 ? ` + ${c.noites}×${fmtR(c.pernoite)} pernoite` : ""}</div></td>
             <td style="text-align:center;"><input type="checkbox" ${temAjudante ? "checked" : ""} onchange="atualizarViagem('${v.id}','temAjudante',this.checked)" style="width:18px;height:18px;"></td>
             <td style="color:${temAjudante ? "#999" : "#555"};">${fmtR(c.alimAjudante)}</td>
-            <td><input type="number" value="${v.vgPagMotorista || 0}" onchange="atualizarViagem('${v.id}','vgPagMotorista',this.value)"></td>
-            <td><input type="number" value="${v.vgPagAjudante || 0}" onchange="atualizarViagem('${v.id}','vgPagAjudante',this.value)" ${temAjudante ? "" : "disabled"} style="${temAjudante ? "" : "opacity:0.4;"}"></td>
+            <td>${c.ehCLT
+              ? `<div style="font-weight:700;color:#999;">${fmtR(c.pagMotorista)}</div><div style="font-size:9px;color:${GOLD};">CLT: folha ÷ ${Number(state.config.diasUteisMes) || 22} × ${c.dias} dia${c.dias > 1 ? "s" : ""}</div>`
+              : `<input type="number" value="${v.vgPagMotorista || 0}" onchange="atualizarViagem('${v.id}','vgPagMotorista',this.value)">`}</td>
+            <td>${!temAjudante ? `<span style="color:#555;">—</span>` : (c.ehCLT
+              ? `<div style="font-weight:700;color:#999;">${fmtR(c.pagAjudante)}</div><div style="font-size:9px;color:${GOLD};">CLT: folha ÷ ${Number(state.config.diasUteisMes) || 22} × ${c.dias} dia${c.dias > 1 ? "s" : ""}</div>`
+              : `<input type="number" value="${v.vgPagAjudante || 0}" onchange="atualizarViagem('${v.id}','vgPagAjudante',this.value)">`)}</td>
             <td style="color:#999;">${fmtR(c.adm)}</td>
             <td style="color:#999;">${fmtR(c.manutencao)}</td>
             <td style="color:#999;">${fmtR(c.imposto)}</td>
