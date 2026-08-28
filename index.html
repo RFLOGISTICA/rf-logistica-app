@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v269)</title>
+<title>RF Logística — Painel da Frota (v270)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -8822,7 +8822,7 @@ function concluirViagemFim(id) {
   if (!a) return;
   // v267: primeiro as ENTREGAS, depois o KM final. A viagem só fecha quando
   // todo canhoto estiver anexado -- um por nota fiscal.
-  var _r = rfEntregasResumo(rfVgIdDoAviso(a));
+  var _r = rfEntregasResumoLista(rfEntregasDoAviso(a, ehMotorista()));
   if (!_r.entregas) { alert("Esta viagem não tem entregas cadastradas.\n\nPuxe do romaneio (ou adicione na mão) e anexe o canhoto de cada nota antes de concluir."); return; }
   if (!_r.tudoOk) { alert("Ainda faltam " + (_r.notas - _r.canhotos) + " canhoto(s) em " + _r.pendentes + " entrega(s).\n\nAnexe a foto do canhoto assinado de cada nota fiscal antes de concluir a viagem."); return; }
   if (!a.fotoKmFim) { alert("Anexe a foto do KM final antes de concluir a viagem. Isso é obrigatório."); return; }
@@ -9267,6 +9267,9 @@ function rfEntregaParaJS(r) {
     obs: r.obs || "",
     motoristaUid: r.motorista_uid || null,
     motoristaNome: r.motorista_nome || "",
+    liberada: !!r.liberada,
+    origem: r.origem || "manual",
+    dataPrevista: r.data_prevista || "",
     criadoEm: Number(r.criado_em) || 0,
     concluidaEm: Number(r.concluida_em) || 0,
   };
@@ -9287,6 +9290,9 @@ function rfEntregaParaDB(e) {
     obs: e.obs || "",
     motorista_uid: e.motoristaUid || null,
     motorista_nome: e.motoristaNome || "",
+    liberada: !!e.liberada,
+    origem: e.origem || "manual",
+    data_prevista: e.dataPrevista || null,
     criado_em: e.criadoEm || Date.now(),
     concluida_em: e.concluidaEm || null,
   };
@@ -9333,6 +9339,15 @@ function entregasDaViagem(viagemId) {
 function entregaConcluida(e) {
   var n = e.notas || [];
   return n.length > 0 && n.every(function (x) { return !!x.foto; });
+}
+function rfEntregasResumoLista(lista) {
+  var notas = 0, comFoto = 0, concl = 0;
+  (lista || []).forEach(function (e) {
+    (e.notas || []).forEach(function (n) { notas++; if (n.foto) comFoto++; });
+    if (entregaConcluida(e)) concl++;
+  });
+  return { entregas: (lista || []).length, concluidas: concl, notas: notas, canhotos: comFoto,
+           pendentes: (lista || []).length - concl, tudoOk: (lista || []).length > 0 && concl === (lista || []).length };
 }
 function rfEntregasResumo(viagemId) {
   var lista = entregasDaViagem(viagemId);
@@ -9497,10 +9512,25 @@ function rfCanhotoExcluir(id, idx) {
 }
 
 // ---- interface ----
-function rfEntregasBlocoHTML(a, souMotorista, editavel) {
+function rfEntregasDoAviso(a, souMotorista) {
   var vgId = rfVgIdDoAviso(a);
   var lista = entregasDaViagem(vgId);
-  var r = rfEntregasResumo(vgId);
+  if (!lista.length) {
+    // roteirização importada na véspera: a entrega está pendurada na viagem
+    // PREVISTA, não neste aviso. Casa por placa + data, e só se já foi liberada.
+    lista = (state.entregas || []).filter(function (e) {
+      return e.placa === a.placa && e.liberada
+        && (!e.dataPrevista || !a.data || String(e.dataPrevista).slice(0, 10) === String(a.data).slice(0, 10));
+    });
+  }
+  // o motorista só enxerga o que foi liberado; a equipe vê tudo
+  if (souMotorista) lista = lista.filter(function (e) { return e.liberada || e.origem !== "roteirizacao"; });
+  return lista.sort(function (x, y) { return (x.ordem - y.ordem) || (x.criadoEm - y.criadoEm); });
+}
+function rfEntregasBlocoHTML(a, souMotorista, editavel) {
+  var vgId = rfVgIdDoAviso(a);
+  var lista = rfEntregasDoAviso(a, souMotorista);
+  var r = rfEntregasResumoLista(lista);
   var corBarra = r.tudoOk ? "#2E7D32" : (r.entregas ? GOLD : "#C0392B");
   var cabecalho = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">'
     + '<div style="font-size:12px;font-weight:800;color:' + corBarra + ';">📋 ENTREGAS DESTA VIAGEM'
@@ -9565,6 +9595,250 @@ function rfEntregasBlocoHTML(a, souMotorista, editavel) {
     + '</div>';
 }
 
+// ============ v270: ROTEIRIZAÇÃO SUZANO -> VIAGEM PREVISTA + ENTREGAS ============
+// Por que existe: a nota da Suzano sai em cima da hora, mas o motorista precisa
+// saber a rota dele na véspera. A roteirização que a RF manda para o André no
+// fim da tarde reflete 100% a carga do dia seguinte, então ela é a fonte boa
+// para adiantar. Importar aqui cria a viagem prevista e as entregas; quando a
+// NF-e sair, o número entra na linha de canhoto que já está lá esperando.
+//
+// Reenvio: importar de novo a MESMA data+placa substitui as entregas que ainda
+// não têm canhoto e PRESERVA as já entregues. Correção de última hora não apaga
+// trabalho feito.
+//
+// Liberação: nada disso aparece para o motorista até Renato clicar em liberar.
+
+// Painel da roteirização dentro da aba Carregamento Suzano: importar o arquivo
+// que foi enviado ao cliente, conferir o que virou viagem prevista, e liberar
+// (ou recolher) a rota de cada motorista.
+function rfRotBlocoHTML() {
+  var previstas = (state.viagens || []).filter(function (v) { return v.previstaRoteirizacao; })
+    .sort(function (a, b) { return String(b.data).localeCompare(String(a.data)); }).slice(0, 12);
+  var linhas = previstas.map(function (v) {
+    var lista = entregasDaViagem(v.id);
+    var lib = lista.filter(function (e) { return e.liberada; }).length;
+    var r = rfEntregasResumo(v.id);
+    var mot = v.motoristaNaEpoca || "sem motorista no cadastro";
+    var corLib = lib ? "#2E7D32" : "#777";
+    return '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + (lib ? "#2E7D32" : GOLD) + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
+        + '<div style="font-size:13px;color:#fff;font-weight:700;">' + esc(v.placa) + ' <span style="color:#999;font-weight:400;">· ' + esc(mot) + '</span></div>'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+          + '<span style="font-size:11px;color:#999;">' + (v.data ? new Date(v.data + "T00:00:00").toLocaleDateString("pt-BR") : "") + '</span>'
+          + '<span style="font-size:11px;color:' + GOLD + ';">' + esc(v.rota || "") + '</span>'
+          + '<span style="font-size:11px;color:#ccc;">' + lista.length + ' parada(s) · ' + r.notas + ' nota(s)</span>'
+          + '<span style="font-size:11px;color:#ccc;">' + (Number(v.km) ? Number(v.km) + " km est." : "km a definir") + '</span>'
+          + '<span style="font-size:10px;font-weight:800;color:' + corLib + ';border:1px solid ' + corLib + ';border-radius:5px;padding:1px 7px;">' + (lib ? "LIBERADA" : "NÃO LIBERADA") + '</span>'
+          + (lib
+              ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(\'' + v.id + '\',false)">↩ recolher</button>'
+              : '<button class="btn-gold" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(\'' + v.id + '\',true)">✓ liberar para o motorista</button>')
+        + '</div>'
+      + '</div>'
+      + '<div style="font-size:11px;color:#888;margin-top:5px;">' + esc(lista.map(function (e) { return e.cidade; }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; }).join(" · ")) + '</div>'
+      + '</div>';
+  }).join("");
+  return '<div style="background:#0E0E0E;border:1px solid #262626;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">'
+      + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';">🗺️ ROTEIRIZAÇÃO DO DIA SEGUINTE</div>'
+      + '<label class="btn-gold" style="font-size:11px;padding:4px 10px;cursor:pointer;">⬆ Importar roteirização (.xlsx)'
+        + '<input type="file" accept=".xlsx,.xls" style="display:none" onchange="rfRotImportar(this)"></label>'
+    + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.5;">'
+      + 'A nota da Suzano sai em cima da hora, mas a roteirização enviada ao cliente na véspera já reflete a carga do dia seguinte. '
+      + 'Importe aqui: o app cria a viagem prevista com o KM estimado pelo histórico da rota e monta as entregas com as linhas de canhoto esperando foto. '
+      + 'Nada aparece para o motorista até você liberar. Reenviou uma correção? Importe de novo — as entregas que já têm canhoto são preservadas.'
+    + '</div>'
+    + (linhas || '<div style="font-size:12px;color:#777;">Nenhuma roteirização importada ainda.</div>')
+    + '</div>';
+}
+
+function rfRotImportar(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Recarregue a página com internet e tente de novo."); return; }
+  var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
+  if (!dataPrev) { input.value = ""; return; }
+  var leitor = new FileReader();
+  leitor.onload = function (ev) {
+    try {
+      var wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+      var res = rfRotProcessarPlanilha(wb, dataPrev);
+      input.value = "";
+      render();
+      alert(res);
+    } catch (e) {
+      input.value = "";
+      alert("Não consegui ler a roteirização: " + (e.message || e));
+    }
+  };
+  leitor.readAsArrayBuffer(file);
+}
+
+function rfRotAba(wb, pedaco) {
+  var nome = wb.SheetNames.find(function (n) { return normTxt(n).indexOf(normTxt(pedaco)) >= 0; });
+  return nome ? XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "" }) : null;
+}
+// acha a linha de cabeçalho olhando pelo nome das colunas, em vez de fixar a
+// linha 3 ou 4 -- se eu mudar o título da planilha, o import continua achando
+function rfRotCabecalho(linhas, chaves) {
+  for (var i = 0; i < Math.min(linhas.length, 12); i++) {
+    var l = (linhas[i] || []).map(function (c) { return normTxt(String(c)); });
+    var ok = chaves.every(function (k) { return l.some(function (c) { return c.indexOf(normTxt(k)) >= 0; }); });
+    if (ok) {
+      var idx = {};
+      chaves.forEach(function (k) {
+        idx[k] = l.findIndex(function (c) { return c.indexOf(normTxt(k)) >= 0; });
+      });
+      return { linha: i, idx: idx };
+    }
+  }
+  return null;
+}
+
+function rfRotProcessarPlanilha(wb, dataPrev) {
+  var det = rfRotAba(wb, "Detalhe por Cliente");
+  if (!det) throw new Error('não achei a aba "Detalhe por Cliente" na planilha.');
+  var h = rfRotCabecalho(det, ["Veiculo", "Ordem", "Cidade", "Recebedor"]);
+  if (!h) throw new Error('a aba "Detalhe por Cliente" não tem as colunas esperadas (Veículo, Ordem, Cidade, Recebedor).');
+  var col = function (l, nome) {
+    var i = h.idx[nome];
+    return i >= 0 && l[i] != null ? String(l[i]).trim() : "";
+  };
+  var iEnd = (det[h.linha] || []).findIndex(function (c) { return normTxt(String(c)).indexOf("endereco") >= 0; });
+  var iRem = (det[h.linha] || []).findIndex(function (c) { return normTxt(String(c)).indexOf("remessa") >= 0; });
+  var iReg = (det[h.linha] || []).findIndex(function (c) { return normTxt(String(c)).indexOf("regional") >= 0; });
+  var iPeso = (det[h.linha] || []).findIndex(function (c) { return normTxt(String(c)).indexOf("peso") >= 0; });
+
+  // agrupa por veículo
+  var porVeic = {};
+  for (var r = h.linha + 1; r < det.length; r++) {
+    var l = det[r] || [];
+    var placa = col(l, "Veiculo").toUpperCase();
+    var receb = col(l, "Recebedor");
+    if (!placa || !receb || normTxt(placa) === "total") continue;
+    if (!porVeic[placa]) porVeic[placa] = { placa: placa, regional: iReg >= 0 ? String(l[iReg] || "").trim() : "", paradas: [], peso: 0 };
+    porVeic[placa].paradas.push({
+      ordem: Number(col(l, "Ordem")) || porVeic[placa].paradas.length + 1,
+      cidade: col(l, "Cidade"),
+      recebedor: receb,
+      endereco: iEnd >= 0 ? String(l[iEnd] || "").trim() : "",
+      remessas: iRem >= 0 ? String(l[iRem] || "").trim() : "",
+    });
+    if (iPeso >= 0) porVeic[placa].peso += Number(String(l[iPeso]).replace(",", ".")) || 0;
+  }
+  var placas = Object.keys(porVeic);
+  if (!placas.length) throw new Error("não encontrei nenhuma parada na planilha.");
+
+  var criadas = 0, atualizadas = 0, preservadas = 0, viagensNovas = 0;
+  placas.forEach(function (placa) {
+    var v = porVeic[placa];
+    // 1) viagem prevista (uma por placa+data). Reimportar não duplica.
+    var viagem = (state.viagens || []).find(function (x) {
+      return x.placa === placa && x.data === dataPrev && String(x.cliente || "").indexOf("Suzano") === 0;
+    });
+    if (!viagem) {
+      viagem = {
+        id: uid(), placa: placa, cliente: "Suzano", rota: v.regional, data: dataPrev, criadoEm: Date.now(),
+        valorViagem: 0, km: rfRotKmEstimado(placa, v.regional), dias: 1,
+        kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+        combustivelItens: [], outrosItens: [],
+        vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true,
+        motoristaNaEpoca: (state.veiculos.find(function (x) { return x.placa === placa; }) || {}).motorista || "",
+        pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+        pesoKg: Math.round(v.peso * 10) / 10,
+        obs: "Prevista pela roteirização enviada ao cliente.", previstaRoteirizacao: true,
+      };
+      // valor pela tabela do cliente, se o app souber calcular
+      try {
+        if (typeof freteRotaDe === "function") {
+          var tipo = (state.veiculos.find(function (x) { return x.placa === placa; }) || {}).tipo || "";
+          var val = freteRotaDe("Suzano", v.regional, tipo, viagem.pesoKg);
+          if (val) viagem.valorViagem = val;
+        }
+      } catch (e) { /* sem tabela carregada: fica zero e Renato preenche */ }
+      state.viagens.push(viagem);
+      viagensNovas++;
+    }
+
+    // 2) entregas -- preserva o que já tem canhoto
+    var atuais = entregasDaViagem(viagem.id);
+    var comCanhoto = atuais.filter(function (e) { return (e.notas || []).some(function (n) { return n.foto; }); });
+    var chaveViva = comCanhoto.map(function (e) { return normTxt(e.recebedor) + "|" + normTxt(e.cidade); });
+    preservadas += comCanhoto.length;
+    // apaga só as intocadas
+    atuais.filter(function (e) { return !(e.notas || []).some(function (n) { return n.foto; }); })
+      .forEach(function (e) {
+        state.entregas = (state.entregas || []).filter(function (x) { return x.id !== e.id; });
+        rfEntregaDeletar(e.id);
+      });
+
+    v.paradas.sort(function (a, b) { return a.ordem - b.ordem; }).forEach(function (p, i) {
+      if (chaveViva.indexOf(normTxt(p.recebedor) + "|" + normTxt(p.cidade)) >= 0) { atualizadas++; return; }
+      var notas = (p.remessas ? p.remessas.split(/[,;]/) : [""]).map(function (rm) {
+        return { nf: "", pedido: String(rm || "").trim(), remessa: String(rm || "").trim(), foto: "", recebedor: "", data: "", ressalva: "" };
+      });
+      var nova = {
+        id: "ent-" + Date.now() + "-" + placa + "-" + i,
+        viagemId: viagem.id, romaneioId: "", placa: placa, clienteContrato: "Suzano",
+        recebedor: p.recebedor, cidade: p.cidade, endereco: p.endereco,
+        ordem: i + 1, notas: notas, status: "pendente", obs: "",
+        motoristaUid: null, motoristaNome: viagem.motoristaNaEpoca || "",
+        liberada: false, origem: "roteirizacao", dataPrevista: dataPrev,
+        criadoEm: Date.now(), concluidaEm: 0,
+      };
+      state.entregas = (state.entregas || []).concat([nova]);
+      rfEntregaSalvar(nova);
+      criadas++;
+    });
+  });
+  salvar();
+  return "Roteirização importada.\n\n"
+    + viagensNovas + " viagem(ns) prevista(s) criada(s)\n"
+    + criadas + " entrega(s) criada(s)\n"
+    + (preservadas ? preservadas + " entrega(s) já com canhoto foram preservadas\n" : "")
+    + "\nAs entregas ainda NÃO estão visíveis para os motoristas. Use o botão \"Liberar para o motorista\" quando quiser soltar.";
+}
+
+// KM estimado: a média das viagens já fechadas da MESMA placa na MESMA regional.
+// É estimativa a partir do histórico real, não distância calculada por endereço
+// -- o app não tem serviço de mapas com chave, então prometer distância exata
+// seria inventar número. Sem histórico, volta zero e Renato preenche.
+function rfRotKmEstimado(placa, regional) {
+  var base = (state.viagens || []).filter(function (v) {
+    return v.placa === placa && normTxt(v.rota || "") === normTxt(regional || "") && Number(v.km) > 0;
+  });
+  if (!base.length) {
+    base = (state.viagens || []).filter(function (v) {
+      return normTxt(v.rota || "") === normTxt(regional || "") && Number(v.km) > 0;
+    });
+  }
+  if (!base.length) return 0;
+  var soma = base.reduce(function (s, v) { return s + Number(v.km); }, 0);
+  return Math.round(soma / base.length);
+}
+
+// ---- liberação para o motorista ----
+function rfEntregasLiberadasDaViagem(viagemId) {
+  return entregasDaViagem(viagemId).filter(function (e) { return e.liberada; });
+}
+function rfRotLiberar(viagemId, liberar) {
+  var lista = entregasDaViagem(viagemId);
+  if (!lista.length) { alert("Essa viagem não tem entregas para liberar."); return; }
+  if (liberar && !confirm("Liberar " + lista.length + " entrega(s) para o motorista ver no celular?")) return;
+  if (!liberar && !confirm("Recolher a rota? O motorista deixa de ver as entregas até você liberar de novo.")) return;
+  var uidMot = rfUidDoMotoristaDaPlaca(lista[0].placa);
+  lista.forEach(function (e) {
+    e.liberada = !!liberar;
+    if (liberar && !e.motoristaUid && uidMot) e.motoristaUid = uidMot;
+    rfEntregaSalvar(e);
+  });
+  render();
+}
+function rfUidDoMotoristaDaPlaca(placa) {
+  var p = (state._perfis || []).find(function (x) { return (x.placa_motorista || "") === placa; });
+  return p ? p.id : null;
+}
+
 function rfViagemFimCard(a, souMotorista) {
   const mapa = {
     em_andamento: { cor: "#3498DB", txt: "Em viagem" },
@@ -9614,7 +9888,7 @@ function rfViagemFimCard(a, souMotorista) {
         : `<input type="file" accept="image/*" onchange="rfViagemFimUploadKmFim(this,'${a.id}')">`}
     </div>
     <div style="margin-top:12px;">
-      <button class="btn-gold" ${(!a.fotoKmFim || !rfEntregasResumo(rfVgIdDoAviso(a)).tudoOk) ? 'style="opacity:.5;"' : ""} onclick="concluirViagemFim('${a.id}')">🏁 Concluir viagem</button>
+      <button class="btn-gold" ${(!a.fotoKmFim || !rfEntregasResumoLista(rfEntregasDoAviso(a, souMotorista)).tudoOk) ? 'style="opacity:.5;"' : ""} onclick="concluirViagemFim('${a.id}')">🏁 Concluir viagem</button>
     </div>` : `<div style="font-size:13px;color:#ccc;">${a.cliente ? esc(a.cliente) + " — " : ""}${esc(a.obs || "sem observações")}</div>
       <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
         ${a.fotoComprovante ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoComprovante}')">📷 ver comprovante</button>` : ""}
@@ -10537,6 +10811,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
 - ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos.
+- ROTEIRIZAÇÃO ANTECIPADA DA SUZANO (v270): a nota fiscal da Suzano sai em cima da hora, mas a roteirização que a RF envia ao cliente no fim da tarde já reflete 100% a carga do dia seguinte. Por isso a aba Carregamento Suzano tem o bloco "Roteirização do dia seguinte": importa-se o MESMO arquivo .xlsx que foi mandado ao cliente e o app cria (a) a viagem PREVISTA de cada placa, com cliente Suzano, a regional, o peso somado e o KM estimado, e (b) as entregas de cada parada, com uma linha de canhoto por remessa esperando a foto. Quando a NF-e sair, o número entra na linha que já existe. O KM estimado vem da MÉDIA das viagens anteriores da mesma placa na mesma regional (e, sem histórico da placa, da média da regional) — é estimativa por histórico real, não distância calculada por endereço; o app não tem serviço de mapas com chave e não inventa distância. Reimportar a mesma placa e data substitui as entregas ainda sem canhoto e PRESERVA as já entregues, então correção de última hora não apaga trabalho feito. NADA disso aparece para o motorista até alguém da equipe clicar em "liberar para o motorista"; há também o botão de recolher. No celular do motorista, a rota da véspera é casada por PLACA + DATA (a viagem que ele abre no app não é o mesmo registro da viagem prevista), e ele só enxerga o que foi liberado.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
 - CÂMERA (v259): a foto da etiqueta passou a ser tirada DENTRO do app, não mais chamando o app de câmera do Android. Motivo: ao abrir a câmera do sistema o navegador ia pra segundo plano e, em celular apertado de memória, o Android descarregava a página — ao voltar a tela recarregava e a foto se perdia ("sai e volta, tem que tirar outra foto"). Se o aparelho não liberar a câmera, o botão Galeria continua funcionando como antes. Se alguém relatar que o app fecha ao fotografar, verifique também se ele está usando o app INSTALADO (sem barra de endereço em cima) e se há espaço livre no celular.`;
@@ -12815,6 +13090,7 @@ function renderTabela() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
         <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
       </div>
+      ${rfRotBlocoHTML()}
       ${szTelaEquipe()}
     `;
     return;
