@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v282)</title>
+<title>RF Logística — Painel da Frota (v283)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9474,25 +9474,16 @@ function rfCanhotoUpload(input, id, idx) {
   if (!e) return;
   var file = input.files && input.files[0];
   if (!file) return;
-  rfGetClient().then(function (sb) {
-    if (!sb) { alert("Sem conexão com a nuvem. Tente de novo com internet."); return; }
-    var isImg = /^image\//.test(file.type);
-    var prep = isImg
-      ? rfComprimirImagem(file).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
-      : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
-    prep.then(function (p) {
-      var path = "canhotos/" + (e.placa || "sem-placa") + "/" + e.id + "-nf" + idx + "-" + Date.now() + "." + p.ext;
-      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
-        if (res.error) throw res.error;
-        e.notas[idx].foto = path;
-        if (!e.notas[idx].data) e.notas[idx].data = hojeISO();
-        rfEntregaAtualizarStatus(e);
-        input.value = "";
-        render();
-        rfEntregaSalvar(e);
-      });
-    }).catch(function (err) { alert("Erro ao anexar o canhoto: " + (err.message || err)); });
-  });
+  // v283: mesmo núcleo de upload do lote (rfCanhotoSubirBlob) -- uma
+  // implementação só, pra não repetir o erro da v210 de ter duas.
+  rfDocsMaterializar(file)
+    .then(function (blob) { return rfCanhotoSubirBlob(e.placa, e.id, idx, blob); })
+    .then(function (path) {
+      rfCanhotoAplicarPath(e.id, idx, path, (e.notas[idx] || {}).nf);
+      input.value = "";
+      render();
+    })
+    .catch(function (err) { alert("Erro ao anexar o canhoto: " + (err.message || err)); });
 }
 function rfCanhotoVer(path) {
   rfGetClient().then(function (sb) {
@@ -9602,6 +9593,360 @@ function rfEntregasBlocoHTML(a, souMotorista, editavel) {
     + (r.tudoOk
         ? '<div style="font-size:11px;color:#2E7D32;">✓ Todas as entregas com canhoto. Falta só a foto do KM final para concluir a viagem.</div>'
         : '<div style="font-size:11px;color:#C0392B;">Faltam ' + (r.notas - r.canhotos) + ' canhoto(s) em ' + r.pendentes + ' entrega(s). A viagem não fecha sem eles.</div>')
+    + '</div>';
+}
+
+// ===================== v283: CANHOTOS EM LOTE (QR DA NF-e) =====================
+// O canhoto da Suzano traz um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos).
+// Conferido em duas fotos reais de 28/08: os dois QR leram inteiros e a chave
+// bate com o número impresso ao lado ("NFE No. 000195669 SÉRIE 1").
+// Isso é ouro: dá pra saber QUAL nota é cada canhoto sem IA, sem custo e sem
+// risco de número inventado -- a chave ainda tem dígito verificador, que o app
+// já sabe conferir (szChaveValida). O nome do destinatário no papel fica por
+// baixo da assinatura à mão e não é confiável; o QR é.
+// Caminho: QR -> chave -> número da NF -> espelho já lido (state.suzanoCargas,
+// que tem cliente/cidade/placa por NF) -> parada pendente correspondente.
+// Nada é casado no chute: o que não fechar sozinho vai pra pilha "conferir",
+// onde a pessoa aponta a parada. A foto sobe do mesmo jeito nos dois casos, então
+// nenhum canhoto se perde enquanto a dúvida não é resolvida.
+var RF_CANH_QR_URL = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js";
+
+function rfCanhLote() {
+  if (!state._canhLote) state._canhLote = { itens: [], rodando: false, feitos: 0, total: 0, msg: "" };
+  return state._canhLote;
+}
+function rfQrLib() {
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  if (window.__rfQrLoad) return window.__rfQrLoad;
+  window.__rfQrLoad = new Promise(function (resolve) {
+    var sc = document.createElement("script");
+    sc.src = RF_CANH_QR_URL;
+    sc.onload = function () { resolve(window.jsQR || null); };
+    sc.onerror = function () { resolve(null); };
+    document.head.appendChild(sc);
+  });
+  return window.__rfQrLoad;
+}
+// Lê o QR de um blob de imagem. Tenta o leitor nativo do navegador primeiro
+// (não baixa nada) e cai no jsQR. O QR do canhoto é pequeno dentro da foto, por
+// isso as tentativas em escala -- no teste com as fotos reais só decodificou
+// depois de ampliar 3x.
+function rfQrLerBlob(blob) {
+  var nativo = (typeof window.BarcodeDetector === "function")
+    ? (function () {
+        try {
+          var det = new window.BarcodeDetector({ formats: ["qr_code"] });
+          return createImageBitmap(blob).then(function (bm) {
+            return det.detect(bm).then(function (cods) { return (cods && cods[0] && cods[0].rawValue) || ""; });
+          }).catch(function () { return ""; });
+        } catch (e) { return Promise.resolve(""); }
+      })()
+    : Promise.resolve("");
+  return nativo.then(function (txt) {
+    if (txt) return txt;
+    return rfQrLib().then(function (jsQR) {
+      if (!jsQR) return "";
+      return new Promise(function (resolve) {
+        var url = URL.createObjectURL(blob);
+        var img = new Image();
+        img.onload = function () {
+          var escalas = [1, 2, 3], achou = "";
+          for (var i = 0; i < escalas.length && !achou; i++) {
+            var f = escalas[i];
+            var w = Math.round(img.width * f), h = Math.round(img.height * f);
+            if (w * h > 14000000) continue;   // não estoura a memória do aparelho
+            try {
+              var cv = document.createElement("canvas");
+              cv.width = w; cv.height = h;
+              var cx = cv.getContext("2d");
+              cx.drawImage(img, 0, 0, w, h);
+              var dados = cx.getImageData(0, 0, w, h);
+              var r = jsQR(dados.data, w, h, { inversionAttempts: "attemptBoth" });
+              if (r && r.data) achou = r.data;
+            } catch (e) { /* escala grande demais pro aparelho: tenta a próxima */ }
+          }
+          URL.revokeObjectURL(url);
+          resolve(achou);
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); resolve(""); };
+        img.src = url;
+      });
+    });
+  });
+}
+// Chave -> número da NF (sem os zeros à esquerda). Só aceita chave com o
+// dígito verificador certo; QR de outra coisa não vira NF nenhuma.
+function rfCanhNfDaChave(txt) {
+  var ch = String(txt || "").replace(/\D/g, "");
+  var m = ch.match(/\d{44}/);
+  if (!m) return null;
+  var partes = szChavePartes(m[0]);
+  if (!partes || !partes.valida) return null;
+  return { chave: m[0], nf: parseInt(partes.numero, 10), aamm: partes.aamm, cnpj: partes.cnpj };
+}
+// Procura a NF nos espelhos já lidos (aba Carregamento Suzano). É de lá que sai
+// o cliente, a cidade e a placa daquela nota.
+function rfCanhEspelhoPorNF(nf) {
+  var achado = null;
+  (state.suzanoCargas || []).forEach(function (c) {
+    ((c || {}).espelhos || []).forEach(function (e) {
+      if (achado) return;
+      var n = parseInt(String(e.nfe || "").replace(/\D/g, ""), 10);
+      if (n && nf && n === nf) achado = e;
+    });
+  });
+  return achado;
+}
+// Todas as vagas de canhoto ainda vazias, em qualquer rota.
+function rfCanhVagas() {
+  var out = [];
+  (state.entregas || []).forEach(function (e) {
+    (e.notas || []).forEach(function (n, i) { if (!n.foto) out.push({ e: e, idx: i, nota: n }); });
+  });
+  return out;
+}
+// Comparação de razão social só pro canhoto. A do espelho vem por extenso
+// ("CRIATIVA COMERCIO E SERVICOS LTDA") e a da roteirização vem abreviada
+// ("CRIATIVA COM E SERV LTDA") -- o comparador da Conferência de Carga exige
+// palavra igual e por isso não fechava esse par (apareceu no teste com as duas
+// NF reais de 28/08). Aqui uma palavra também vale quando é começo da outra e
+// tem 4+ letras: SERV≈SERVICOS, DISTR≈DISTRIBUIDORA. Continua exigindo DUAS
+// palavras coincidindo, e o casamento ainda depende de placa e cidade baterem.
+// Não mexi em rfConfParecido de propósito: ela é usada na conferência de caixa.
+function rfCanhNomeParecido(a, b) {
+  if (rfConfParecido(a, b)) return true;
+  var ign = ["LTDA", "ME", "EPP", "EIRELI", "SA", "COMERCIO", "COM", "DE", "DA", "DO", "DOS", "DAS", "E"];
+  var toks = function (x) {
+    return rfConfNorm(x).split(" ").filter(function (t) { return t.length > 2 && ign.indexOf(t) < 0; });
+  };
+  var pa = toks(a), pb = toks(b);
+  if (!pa.length || !pb.length) return false;
+  var bate = function (x, y) {
+    if (x === y) return true;
+    var curto = x.length <= y.length ? x : y, longo = x.length <= y.length ? y : x;
+    return curto.length >= 4 && longo.indexOf(curto) === 0;
+  };
+  var iguais = pa.filter(function (x) { return pb.some(function (y) { return bate(x, y); }); }).length;
+  return iguais >= 2 || (iguais >= 1 && Math.min(pa.length, pb.length) === 1);
+}
+// Casamento. Ordem, da mais forte pra mais fraca:
+//   1. alguma vaga já está com esse número de NF escrito -> é ela
+//   2. o espelho diz cliente/cidade/placa da NF -> acha a parada por nome+cidade
+//   3. nada disso -> devolve null e o canhoto vai pra pilha de conferir
+function rfCanhCasar(nf, esp) {
+  var vagas = rfCanhVagas();
+  var porNf = vagas.filter(function (v) {
+    return parseInt(String(v.nota.nf || "").replace(/\D/g, ""), 10) === nf;
+  });
+  if (porNf.length === 1) return { alvo: porNf[0], via: "número da NF já cadastrado na parada" };
+  if (!esp) return null;
+  var cands = vagas.filter(function (v) {
+    if (esp.placa && v.e.placa && v.e.placa !== esp.placa) return false;
+    if (!rfCanhNomeParecido(v.e.recebedor, esp.cliente)) return false;
+    if (esp.cidade && v.e.cidade && !rfConfParecido(v.e.cidade, esp.cidade)) return false;
+    return true;
+  });
+  if (!cands.length) return null;
+  // O desempate é entre PARADAS, não entre vagas: uma parada com duas notas
+  // vazias é uma parada só, e a segunda nota é justamente onde o próximo
+  // canhoto do mesmo cliente vai cair. Dentro da parada escolhida, a primeira
+  // vaga livre. (Sem isso, cliente com 2 NF nunca casava -- caiu no teste.)
+  var porEntrega = {};
+  cands.forEach(function (v) { if (!porEntrega[v.e.id]) porEntrega[v.e.id] = v; });
+  var ids = Object.keys(porEntrega);
+  if (ids.length === 1) {
+    return { alvo: porEntrega[ids[0]], via: "cliente " + (esp.cliente || "") + " no espelho da NF" };
+  }
+  // mesmo cliente em dias diferentes: fica com a rota mais antiga que ainda
+  // está aberta, que é a atrasada -- e marca dúvida pra ser conferida.
+  var ord = ids.map(function (k) { return porEntrega[k]; }).sort(function (x, y) {
+    return String(x.e.dataPrevista || "").localeCompare(String(y.e.dataPrevista || ""));
+  });
+  if (String(ord[0].e.dataPrevista || "") !== String(ord[1].e.dataPrevista || "")) {
+    return { alvo: ord[0], via: "cliente " + (esp.cliente || "") + ", rota mais antiga em aberto", duvida: true };
+  }
+  return null;
+}
+// ---- upload (núcleo compartilhado com o anexo avulso do motorista) ----
+function rfCanhotoSubirBlob(placa, ref, idx, blob) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("Sem conexão com a nuvem. Tente de novo com internet.");
+    var isImg = /^image\//.test(blob.type || "");
+    var prep = isImg
+      ? rfComprimirImagem(blob).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
+      : Promise.resolve({ blob: blob, ext: "bin", ct: blob.type || "application/octet-stream" });
+    return prep.then(function (p) {
+      var path = "canhotos/" + (placa || "sem-placa") + "/" + (ref || "lote") + "-nf" + idx + "-"
+        + Date.now() + "-" + Math.random().toString(36).slice(2, 7) + "." + p.ext;
+      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false })
+        .then(function (res) { if (res.error) throw res.error; return path; });
+    });
+  });
+}
+function rfCanhotoAplicarPath(entregaId, idx, path, nf) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(entregaId); });
+  if (!e || !e.notas || !e.notas[idx]) return false;
+  e.notas[idx].foto = path;
+  if (nf && !e.notas[idx].nf) e.notas[idx].nf = String(nf);
+  if (!e.notas[idx].data) e.notas[idx].data = String(e.dataPrevista || "").slice(0, 10) || hojeISO();
+  rfEntregaAtualizarStatus(e);
+  rfEntregaSalvar(e);
+  return true;
+}
+// ---- o lote em si ----
+function rfCanhLoteSelecionar(input) {
+  var arqs = Array.prototype.slice.call((input && input.files) || []);
+  if (!arqs.length) return;
+  input.value = "";
+  var L = rfCanhLote();
+  L.rodando = true; L.feitos = 0; L.total = arqs.length; L.msg = "";
+  render();
+  var i = 0;
+  function proximo() {
+    if (i >= arqs.length) {
+      L.rodando = false;
+      L.msg = "Leitura concluída.";
+      salvar(); render();
+      return;
+    }
+    var f = arqs[i++];
+    var item = { id: "cl-" + Date.now() + "-" + i, nome: f.name || ("foto " + i), nf: null, chave: "",
+                 esp: null, path: "", status: "lendo", detalhe: "", entregaId: "", idx: -1 };
+    L.itens.push(item);
+    // v192: File vindo do seletor do Android não streama; remonta em memória.
+    rfDocsMaterializar(f).then(function (blob) {
+      return rfQrLerBlob(blob).then(function (txt) {
+        var lido = rfCanhNfDaChave(txt);
+        if (lido) { item.nf = lido.nf; item.chave = lido.chave; item.esp = rfCanhEspelhoPorNF(lido.nf); }
+        var casou = lido ? rfCanhCasar(lido.nf, item.esp) : null;
+        var placa = casou ? casou.alvo.e.placa : ((item.esp && item.esp.placa) || "lote");
+        var ref = casou ? casou.alvo.e.id : "pendente";
+        var vaga = casou ? casou.alvo.idx : 0;
+        return rfCanhotoSubirBlob(placa, ref, vaga, blob).then(function (path) {
+          item.path = path;
+          if (casou) {
+            rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, path, item.nf);
+            item.entregaId = casou.alvo.e.id; item.idx = casou.alvo.idx;
+            item.status = casou.duvida ? "duvida" : "ok";
+            item.detalhe = casou.alvo.e.recebedor + (casou.alvo.e.cidade ? " — " + casou.alvo.e.cidade : "")
+              + " (" + casou.via + ")";
+          } else {
+            item.status = "pendente";
+            item.detalhe = !lido
+              ? "QR não foi lido nesta foto — aponte a parada na mão"
+              : (item.esp ? "NF " + item.nf + " é de " + (item.esp.cliente || "?") + ", mas não achei uma parada aberta que bata"
+                          : "NF " + item.nf + " não está em nenhum espelho lido nesta aba");
+          }
+        });
+      });
+    }).catch(function (err) {
+      item.status = "erro"; item.detalhe = String((err && err.message) || err);
+    }).then(function () {
+      L.feitos++;
+      if (L.feitos % 3 === 0 || L.feitos === L.total) render();
+      proximo();
+    });
+  }
+  proximo();
+}
+function rfCanhLoteAplicarManual(itemId, valor) {
+  var L = rfCanhLote();
+  var item = L.itens.find(function (x) { return x.id === itemId; });
+  if (!item || !valor) return;
+  var partes = String(valor).split("|");
+  if (!rfCanhotoAplicarPath(partes[0], Number(partes[1]), item.path, item.nf)) {
+    alert("Não consegui aplicar nessa parada — ela pode ter sido alterada. Atualize a tela.");
+    return;
+  }
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(partes[0]); });
+  item.status = "ok"; item.entregaId = partes[0]; item.idx = Number(partes[1]);
+  item.detalhe = (e ? e.recebedor + (e.cidade ? " — " + e.cidade : "") : "") + " (apontado à mão)";
+  salvar(); render();
+}
+function rfCanhLoteDesfazer(itemId) {
+  var L = rfCanhLote();
+  var item = L.itens.find(function (x) { return x.id === itemId; });
+  if (!item || !item.entregaId) return;
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(item.entregaId); });
+  if (e && e.notas && e.notas[item.idx] && e.notas[item.idx].foto === item.path) {
+    e.notas[item.idx].foto = "";
+    rfEntregaAtualizarStatus(e);
+    rfEntregaSalvar(e);
+  }
+  item.status = "pendente"; item.entregaId = ""; item.idx = -1;
+  item.detalhe = "desfeito — aponte a parada de novo";
+  salvar(); render();
+}
+function rfCanhLoteLimpar() {
+  if (!confirm("Limpar a lista da tela? Os canhotos já casados continuam anexados nas entregas — só some o histórico desta leitura.")) return;
+  state._canhLote = null; render();
+}
+function rfCanhLoteBlocoHTML() {
+  var L = rfCanhLote();
+  var vagas = rfCanhVagas();
+  var opcoes = vagas.map(function (v) {
+    var d = String(v.e.dataPrevista || "").slice(0, 10);
+    return '<option value="' + v.e.id + '|' + v.idx + '">'
+      + esc((v.e.placa || "?") + " · " + (d ? d.split("-").reverse().join("/") : "sem data") + " · "
+            + (v.e.recebedor || "sem nome") + (v.e.cidade ? " (" + v.e.cidade + ")" : "")
+            + (v.nota.nf ? " · NF " + v.nota.nf : (v.nota.remessa ? " · remessa " + v.nota.remessa : "")))
+      + '</option>';
+  }).join("");
+  var cont = { ok: 0, duvida: 0, pendente: 0, erro: 0 };
+  L.itens.forEach(function (i) { if (cont[i.status] != null) cont[i.status]++; });
+  var pendentes = L.itens.filter(function (i) { return i.status === "pendente" || i.status === "erro"; });
+  var duvidas = L.itens.filter(function (i) { return i.status === "duvida"; });
+
+  var linhaItem = function (i, comSeletor) {
+    var cor = i.status === "ok" ? "#2E7D32" : (i.status === "duvida" ? "#E67E22" : "#C0392B");
+    return '<div style="border-top:1px solid #1c1c1c;padding:7px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+      + '<span style="font-size:11px;font-weight:800;color:' + cor + ';min-width:96px;">'
+        + (i.nf ? "NF " + i.nf : "sem NF") + '</span>'
+      + '<span style="font-size:11px;color:#bbb;flex:1;min-width:170px;">' + esc(i.detalhe || i.nome) + '</span>'
+      + (i.path ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfCanhotoVer(\'' + i.path + '\')">👁 ver</button>' : "")
+      + (comSeletor && i.path
+          ? '<select style="font-size:11px;max-width:280px;" onchange="rfCanhLoteAplicarManual(\'' + i.id + '\',this.value)">'
+            + '<option value="">— apontar a parada —</option>' + opcoes + '</select>'
+          : "")
+      + (i.status === "duvida" || i.status === "ok"
+          ? '<button class="btn-del" style="font-size:10px;padding:2px 7px;" onclick="rfCanhLoteDesfazer(\'' + i.id + '\')" title="tirar da entrega e apontar outra">↶ desfazer</button>'
+          : "")
+      + '</div>';
+  };
+
+  return '<div style="background:#0E0E0E;border:1px solid #262626;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
+    + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">📥 CANHOTOS EM LOTE</div>'
+    + '<div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.5;">'
+      + 'Solte todas as fotos de canhoto de uma vez, de várias viagens juntas. O app lê o <b style="color:#bbb;">QR code do canhoto</b>, '
+      + 'que traz a chave da NF-e, e casa cada foto com a parada certa usando os espelhos já lidos nesta aba. '
+      + 'Sem IA e sem custo — a chave tem dígito verificador, então ou lê certo ou não lê. '
+      + 'O que não casar sozinho fica aqui embaixo pra você apontar; a foto já sobe do mesmo jeito, nenhum canhoto se perde.'
+      + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">'
+      + '<label class="btn-gold" style="cursor:pointer;font-size:12px;padding:6px 12px;display:inline-block;">📷 Escolher as fotos'
+        + '<input type="file" accept="image/*" multiple style="display:none" onchange="rfCanhLoteSelecionar(this)">'
+        + '</label>'
+      + (L.itens.length ? '<button class="btn-outline" style="font-size:11px;padding:5px 10px;" onclick="rfCanhLoteLimpar()">limpar lista</button>' : "")
+      + '<span style="font-size:11px;color:#999;">' + vagas.length + ' canhoto(s) ainda faltando no sistema</span>'
+      + '</div>'
+    + (L.rodando
+        ? '<div style="font-size:12px;color:' + GOLD + ';margin-bottom:6px;">Lendo ' + L.feitos + ' de ' + L.total + '...</div>'
+        : "")
+    + (L.itens.length
+        ? '<div style="font-size:12px;color:#ccc;margin-bottom:4px;">'
+            + '<b style="color:#2E7D32;">' + cont.ok + ' casado(s)</b> · '
+            + '<b style="color:#E67E22;">' + cont.duvida + ' com dúvida</b> · '
+            + '<b style="color:#C0392B;">' + (cont.pendente + cont.erro) + ' pra apontar</b>'
+          + '</div>'
+        : "")
+    + (duvidas.length
+        ? '<div style="margin-top:6px;"><div style="font-size:11px;font-weight:800;color:#E67E22;">CASADOS COM DÚVIDA — confira antes de fechar</div>'
+          + duvidas.map(function (i) { return linhaItem(i, false); }).join("") + '</div>'
+        : "")
+    + (pendentes.length
+        ? '<div style="margin-top:6px;"><div style="font-size:11px;font-weight:800;color:#C0392B;">CONFERIR — aponte a parada de cada um</div>'
+          + pendentes.map(function (i) { return linhaItem(i, true); }).join("") + '</div>'
+        : "")
     + '</div>';
 }
 
@@ -11164,7 +11509,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
-- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar.
+- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar. CANHOTOS EM LOTE (v283, bloco \"📥 CANHOTOS EM LOTE\" na aba Carregamento Suzano): pra pôr em dia o atraso de canhotos de várias viagens juntas, a equipe solta todas as fotos de uma vez. O canhoto da Suzano tem um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos) -- o app lê esse QR no próprio navegador (biblioteca jsQR, ou o leitor nativo do aparelho), confere o dígito verificador da chave, tira o número da NF e procura essa NF nos espelhos já lidos, que dizem o cliente, a cidade e a placa. Com isso acha a parada pendente e anexa. É determinístico: sem IA, sem custo de API e sem risco de número inventado; ou a chave lê certa ou não lê. O nome do destinatário impresso no canhoto NÃO serve, porque fica coberto pela assinatura à mão. O que não casa sozinho não é chutado: a foto sobe igual e o canhoto aparece na lista \"CONFERIR\", onde a pessoa escolhe a parada num seletor. Casamento por cliente repetido em dias diferentes é marcado como DÚVIDA (fica com a rota mais antiga em aberto) e pode ser desfeito no botão \"↶ desfazer\". Anexar em lote preenche também o número da NF na parada, que nas entregas vindas da roteirização nasce vazio (elas só têm a remessa).
 - ROTEIRIZAÇÃO ANTECIPADA DA SUZANO (v270): a nota fiscal da Suzano sai em cima da hora, mas a roteirização que a RF envia ao cliente no fim da tarde já reflete 100% a carga do dia seguinte. Por isso a aba Carregamento Suzano tem o bloco "Roteirização do dia seguinte": importa-se o MESMO arquivo .xlsx que foi mandado ao cliente e o app cria (a) a viagem PREVISTA de cada placa, com cliente Suzano, a regional, o peso somado e o KM estimado, e (b) as entregas de cada parada, com uma linha de canhoto por remessa esperando a foto. Quando a NF-e sair, o número entra na linha que já existe. O KM estimado vem da MÉDIA das viagens anteriores da mesma placa na mesma regional (e, sem histórico da placa, da média da regional) — é estimativa por histórico real, não distância calculada por endereço; o app não tem serviço de mapas com chave e não inventa distância. Reimportar a mesma placa e data substitui as entregas ainda sem canhoto e PRESERVA as já entregues, então correção de última hora não apaga trabalho feito. NADA disso aparece para o motorista até alguém da equipe clicar em "liberar para o motorista"; há também o botão de recolher. No celular do motorista, a rota da véspera é casada por PLACA + DATA (a viagem que ele abre no app não é o mesmo registro da viagem prevista), e ele só enxerga o que foi liberado.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
@@ -13448,6 +13793,7 @@ function renderTabela() {
         <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
       </div>
       ${rfRotBlocoHTML()}
+      ${rfCanhLoteBlocoHTML()}
       ${szTelaEquipe()}
     `;
     return;
