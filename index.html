@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v277)</title>
+<title>RF Logística — Painel da Frota (v278)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9887,7 +9887,10 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
     var l = det[r] || [];
     var placa = col(l, "Veiculo").toUpperCase();
     var receb = col(l, "Recebedor");
-    if (!placa || !receb || normTxt(placa) === "total") continue;
+    // v278: só entra linha com PLACA de verdade (padrão Mercosul ou antigo).
+    // Antes, uma linha de rodapé tipo "— NÃO ALOCADO —" virava um veículo fantasma.
+    if (!placa || !receb) continue;
+    if (!/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placa.replace(/[^A-Z0-9]/g, ""))) continue;
     if (!porVeic[placa]) {
       var regBruta = iReg >= 0 ? String(l[iReg] || "").trim() : "";
       porVeic[placa] = { placa: placa, regional: rfRotCasarRegional(regBruta, rfRotRotasDoCliente("Suzano")) || regBruta, paradas: [], peso: 0 };
