@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v280)</title>
+<title>RF Logística — Painel da Frota (v281)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -10027,13 +10027,29 @@ function rfRotLiberar(viagemId, liberar, placa) {
   if (!lista.length) { alert("Essa viagem não tem entregas para liberar."); return; }
   if (liberar && !confirm("Liberar " + lista.length + " entrega(s) para o motorista ver no celular?")) return;
   if (!liberar && !confirm("Recolher a rota? O motorista deixa de ver as entregas até você liberar de novo.")) return;
-  var uidMot = rfUidDoMotoristaDaPlaca(lista[0].placa);
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); }) || {};
+  var nomeMot = v.motoristaNaEpoca || lista[0].motoristaNome || "";
+  var uidMot = rfUidDoMotoristaPorNome(nomeMot) || rfUidDoMotoristaDaPlaca(lista[0].placa);
+  if (!uidMot && nomeMot) {
+    alert("Aviso: não achei login de motorista com o nome \"" + nomeMot + "\".\n\nA rota vai aparecer para ele pelo nome, mas para anexar canhoto ele precisa de login cadastrado.");
+  }
   lista.forEach(function (e) {
     e.liberada = !!liberar;
-    if (liberar && !e.motoristaUid && uidMot) e.motoristaUid = uidMot;
+    if (liberar) {
+      if (nomeMot) e.motoristaNome = nomeMot;
+      if (uidMot) e.motoristaUid = uidMot;
+    }
     rfEntregaSalvar(e);
   });
   render();
+}
+function rfUidDoMotoristaPorNome(nome) {
+  var alvo = normTxt(nome || "");
+  if (!alvo) return null;
+  var p = (state._perfis || []).find(function (x) {
+    return x.papel === "motorista" && normTxt(x.nome || "") === alvo;
+  });
+  return p ? p.id : null;
 }
 function rfUidDoMotoristaDaPlaca(placa) {
   var p = (state._perfis || []).find(function (x) { return (x.placa_motorista || "") === placa; });
@@ -10206,8 +10222,15 @@ function painelClienteHTML() {
 function motoristaRotaLiberadaHTML() {
   var placa = (state.sessao && state.sessao.placa_motorista) || "";
   var uid = (state.sessao && state.sessao.uid) || "";
+  var meuNome = normTxt((state.sessao && state.sessao.nome) || "");
+  // v281: casar por NOME também. O motorista pode ir num caminhão diferente do
+  // que está no cadastro dele — foi o que aconteceu com o Werlone, cadastrado
+  // no OTQ9B07 e escalado no QEN6J82. Só por placa a rota nunca aparecia.
   var lista = (state.entregas || []).filter(function (e) {
-    return e.liberada && (e.placa === placa || (uid && e.motoristaUid === uid));
+    if (!e.liberada) return false;
+    if (uid && e.motoristaUid === uid) return true;
+    if (meuNome && normTxt(e.motoristaNome || "") === meuNome) return true;
+    return e.placa === placa;
   });
   if (!lista.length) return "";
   var porData = {};
