@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v266)</title>
+<title>RF Logística — Painel da Frota (v267)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -674,6 +674,7 @@ function salvar() {
     localStorage.setItem("rf-frota-abastecimentos-v1", JSON.stringify(state.abastecimentos));
     localStorage.setItem("rf-frota-viagensfim-v1", JSON.stringify(state.viagensFinalizadas));
     localStorage.setItem("rf-frota-romaneios-v1", JSON.stringify(state.romaneios));
+    localStorage.setItem("rf-frota-entregas-v1", JSON.stringify(state.entregas || []));   // v267
     localStorage.setItem("rf-frota-caixasconf-v1", JSON.stringify(state.caixasConferencia));
     localStorage.setItem("rf-frota-clienteslocais-v1", JSON.stringify(state.clientesLocais));
     /* v259 — BUG ANTIGO CORRIGIDO: nada da aba Carregamento Suzano era gravado.
@@ -704,6 +705,7 @@ let state = {
   abastecimentos: carregar("rf-frota-abastecimentos-v1", () => []),
   viagensFinalizadas: carregar("rf-frota-viagensfim-v1", () => []),
   romaneios: carregar("rf-frota-romaneios-v1", () => []),
+  entregas: carregar("rf-frota-entregas-v1", () => []),   // v267
   caixasConferencia: carregar("rf-frota-caixasconf-v1", () => []),
   clientesLocais: carregar("rf-frota-clienteslocais-v1", () => []),
   suzanoCargas: carregar("rf-frota-suzanocargas-v1", () => []),
@@ -6082,6 +6084,7 @@ function carregarPerfilEEntrar(sb, user) {
     if (state.sessao.papel !== "cliente" && typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
     if (state.sessao.papel !== "cliente" && typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
     if (state.sessao.papel !== "cliente" && typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
+    if (state.sessao.papel !== "cliente" && typeof rfEntregasCarregar === "function") { rfEntregasCarregar(); }   // v267
     if (state.sessao.papel !== "cliente" && typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
     if (state.sessao.papel !== "cliente" && typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
     if (state.sessao.papel !== "cliente" && typeof rfClientesLocaisCarregar === "function") { rfClientesLocaisCarregar(); }
@@ -6142,6 +6145,7 @@ function revalidarSessaoAoAbrir() {
         if (typeof rfViagemFimCarregar === "function") { rfViagemFimCarregar(); }
         if (typeof rfViagemFimAssinarTempoReal === "function") { rfViagemFimAssinarTempoReal(); }
         if (typeof rfRomaneiosCarregar === "function") { rfRomaneiosCarregar(); }
+        if (typeof rfEntregasCarregar === "function") { rfEntregasCarregar(); }   // v267
         if (typeof rfCaixasCarregar === "function") { rfCaixasCarregar(); }
         if (typeof rfConferenciaAssinarTempoReal === "function") { rfConferenciaAssinarTempoReal(); }
         if (typeof rfClientesLocaisCarregar === "function") { rfClientesLocaisCarregar(); }
@@ -8734,6 +8738,11 @@ function adicionarViagemFim() {
 function concluirViagemFim(id) {
   const a = (state.viagensFinalizadas || []).find((x) => String(x.id) === String(id));
   if (!a) return;
+  // v267: primeiro as ENTREGAS, depois o KM final. A viagem só fecha quando
+  // todo canhoto estiver anexado -- um por nota fiscal.
+  var _r = rfEntregasResumo(rfVgIdDoAviso(a));
+  if (!_r.entregas) { alert("Esta viagem não tem entregas cadastradas.\n\nPuxe do romaneio (ou adicione na mão) e anexe o canhoto de cada nota antes de concluir."); return; }
+  if (!_r.tudoOk) { alert("Ainda faltam " + (_r.notas - _r.canhotos) + " canhoto(s) em " + _r.pendentes + " entrega(s).\n\nAnexe a foto do canhoto assinado de cada nota fiscal antes de concluir a viagem."); return; }
   if (!a.fotoKmFim) { alert("Anexe a foto do KM final antes de concluir a viagem. Isso é obrigatório."); return; }
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com a nuvem."); return; }
@@ -9145,6 +9154,335 @@ function motoristaViagemCard(vg) {
     </div>` : ""}
   </div>`;
 }
+// ===================== v267: ENTREGAS E CANHOTOS =====================
+// VIAGEM  = o veículo saindo da base e voltando (uma placa, um motorista, um
+//           frete). É o que já existia.
+// ENTREGA = cada parada num recebedor DENTRO da viagem. Uma viagem tem N
+//           entregas. Entrega não tem frete próprio.
+// CANHOTO = a foto do comprovante assinado. É UM POR NOTA FISCAL, porque o
+//           mesmo recebedor pode ter mais de uma NF e assinar uma por nota.
+//
+// Regra de fechamento (pedido de Renato em 28/08/2026):
+//   canhoto de todas as NF anexado -> ENTREGA concluída
+//   todas as entregas concluídas + foto do KM final -> VIAGEM pode concluir
+// A foto do KM final é sempre o último passo; sem as entregas fechadas ela
+// não libera nada.
+var RF_ENTREGAS_TABELA = "entregas";
+
+function rfEntregaParaJS(r) {
+  return {
+    id: r.id,
+    viagemId: r.viagem_id || "",
+    romaneioId: r.romaneio_id || "",
+    placa: r.placa || "",
+    clienteContrato: r.cliente_contrato || "Suzano",
+    recebedor: r.recebedor || "",
+    cidade: r.cidade || "",
+    endereco: r.endereco || "",
+    ordem: Number(r.ordem) || 0,
+    notas: Array.isArray(r.notas) ? r.notas : [],
+    status: r.status || "pendente",
+    obs: r.obs || "",
+    motoristaUid: r.motorista_uid || null,
+    motoristaNome: r.motorista_nome || "",
+    criadoEm: Number(r.criado_em) || 0,
+    concluidaEm: Number(r.concluida_em) || 0,
+  };
+}
+function rfEntregaParaDB(e) {
+  return {
+    id: e.id,
+    viagem_id: e.viagemId || null,
+    romaneio_id: e.romaneioId || null,
+    placa: e.placa || "",
+    cliente_contrato: e.clienteContrato || "Suzano",
+    recebedor: e.recebedor || "",
+    cidade: e.cidade || "",
+    endereco: e.endereco || "",
+    ordem: Number(e.ordem) || 0,
+    notas: e.notas || [],
+    status: e.status || "pendente",
+    obs: e.obs || "",
+    motorista_uid: e.motoristaUid || null,
+    motorista_nome: e.motoristaNome || "",
+    criado_em: e.criadoEm || Date.now(),
+    concluida_em: e.concluidaEm || null,
+  };
+}
+function rfEntregasCarregar() {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_ENTREGAS_TABELA).select("*").then(function (res) {
+      if (res.error) { console.warn("entregas:", res.error.message); return; }
+      state.entregas = (res.data || []).map(rfEntregaParaJS)
+        .sort(function (x, y) { return (x.ordem - y.ordem) || (x.criadoEm - y.criadoEm); });
+      render();
+    });
+    if (!window.__rfEntregasCanal) {
+      window.__rfEntregasCanal = sb.channel("entregas-rf")
+        .on("postgres_changes", { event: "*", schema: "public", table: RF_ENTREGAS_TABELA }, function () { rfEntregasCarregar(); })
+        .subscribe();
+    }
+  });
+}
+function rfEntregaSalvar(e) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_ENTREGAS_TABELA).upsert(rfEntregaParaDB(e)).then(function (res) {
+      if (res.error) console.warn("entrega salvar:", res.error.message);
+    });
+  });
+}
+function rfEntregaDeletar(id) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.from(RF_ENTREGAS_TABELA).delete().eq("id", id).then(function (res) {
+      if (res.error) alert("Não consegui excluir a entrega: " + res.error.message);
+    });
+  });
+}
+
+// ---- helpers de leitura ----
+function rfVgIdDoAviso(a) { return (a && (a.viagemId || a.id)) || ""; }
+function entregasDaViagem(viagemId) {
+  if (!viagemId) return [];
+  return (state.entregas || []).filter(function (e) { return String(e.viagemId) === String(viagemId); });
+}
+function entregaConcluida(e) {
+  var n = e.notas || [];
+  return n.length > 0 && n.every(function (x) { return !!x.foto; });
+}
+function rfEntregasResumo(viagemId) {
+  var lista = entregasDaViagem(viagemId);
+  var notas = 0, comFoto = 0, concl = 0;
+  lista.forEach(function (e) {
+    (e.notas || []).forEach(function (n) { notas++; if (n.foto) comFoto++; });
+    if (entregaConcluida(e)) concl++;
+  });
+  return { entregas: lista.length, concluidas: concl, notas: notas, canhotos: comFoto,
+           pendentes: lista.length - concl, tudoOk: lista.length > 0 && concl === lista.length };
+}
+
+// ---- criação ----
+// Caminho normal: puxa do romaneio já conferido, sem digitação nova. Cada
+// cliente do romaneio vira uma entrega, e cada nota fiscal dele vira uma
+// linha de canhoto esperando foto.
+function rfEntregasGerarDoRomaneio(avisoId) {
+  var a = (state.viagensFinalizadas || []).find(function (x) { return String(x.id) === String(avisoId); });
+  if (!a) return;
+  var vgId = rfVgIdDoAviso(a);
+  var rom = (state.romaneios || []).find(function (r) {
+    return String(r.viagemId) === String(vgId) || (!r.viagemId && r.placa === a.placa);
+  });
+  if (!rom) { alert("Não achei um romaneio vinculado a essa viagem. Anexe o romaneio primeiro, ou adicione as entregas na mão."); return; }
+  var jaTem = entregasDaViagem(vgId).length;
+  if (jaTem && !confirm("Essa viagem já tem " + jaTem + " entrega(s). Gerar de novo vai ADICIONAR as do romaneio, sem apagar as atuais. Continuar?")) return;
+  var criadas = 0;
+  (rom.clientes || []).forEach(function (c, i) {
+    var notas = (c.pedidos || []).map(function (p) {
+      return { nf: String(p.notaFiscal || p.pedido || ""), pedido: String(p.pedido || ""), foto: "", recebedor: "", data: "", ressalva: "" };
+    });
+    if (!notas.length) notas = [{ nf: "", pedido: "", foto: "", recebedor: "", data: "", ressalva: "" }];
+    var nova = {
+      id: "ent-" + Date.now() + "-" + i,
+      viagemId: vgId, romaneioId: rom.id, placa: a.placa || "",
+      clienteContrato: a.cliente || "Suzano",
+      recebedor: c.cliente || "", cidade: c.cidade || "", endereco: c.endereco || "",
+      ordem: i + 1, notas: notas, status: "pendente", obs: "",
+      motoristaUid: a.motoristaUid || (state.sessao && state.sessao.uid) || null,
+      motoristaNome: a.motoristaNome || "",
+      criadoEm: Date.now(), concluidaEm: 0,
+    };
+    state.entregas = (state.entregas || []).concat([nova]);
+    rfEntregaSalvar(nova);
+    criadas++;
+  });
+  render();
+  alert(criadas + " entrega(s) criada(s) a partir do romaneio.");
+}
+function rfEntregaNova(avisoId) {
+  var a = (state.viagensFinalizadas || []).find(function (x) { return String(x.id) === String(avisoId); });
+  if (!a) return;
+  var nome = prompt("Nome do recebedor:");
+  if (!nome) return;
+  var cidade = prompt("Cidade da entrega:") || "";
+  var vgId = rfVgIdDoAviso(a);
+  var nova = {
+    id: "ent-" + Date.now(), viagemId: vgId, romaneioId: "", placa: a.placa || "",
+    clienteContrato: a.cliente || "Suzano", recebedor: nome, cidade: cidade, endereco: "",
+    ordem: entregasDaViagem(vgId).length + 1,
+    notas: [{ nf: "", pedido: "", foto: "", recebedor: "", data: "", ressalva: "" }],
+    status: "pendente", obs: "",
+    motoristaUid: a.motoristaUid || (state.sessao && state.sessao.uid) || null,
+    motoristaNome: a.motoristaNome || "", criadoEm: Date.now(), concluidaEm: 0,
+  };
+  state.entregas = (state.entregas || []).concat([nova]);
+  render();
+  rfEntregaSalvar(nova);
+}
+function rfEntregaExcluir(id) {
+  if (!confirm("Excluir esta entrega? Os canhotos já anexados nela serão perdidos.")) return;
+  state.entregas = (state.entregas || []).filter(function (e) { return String(e.id) !== String(id); });
+  render();
+  rfEntregaDeletar(id);
+}
+function rfEntregaAddNota(id) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  e.notas = (e.notas || []).concat([{ nf: "", pedido: "", foto: "", recebedor: "", data: "", ressalva: "" }]);
+  rfEntregaAtualizarStatus(e);
+  render(); rfEntregaSalvar(e);
+}
+function rfEntregaRemoverNota(id, idx) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  if ((e.notas || []).length <= 1) { alert("A entrega precisa de pelo menos uma nota."); return; }
+  if (!confirm("Remover esta nota da entrega?")) return;
+  e.notas.splice(idx, 1);
+  rfEntregaAtualizarStatus(e);
+  render(); rfEntregaSalvar(e);
+}
+function rfEntregaSetNota(id, idx, campo, valor) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e || !e.notas || !e.notas[idx]) return;
+  e.notas[idx][campo] = valor;
+  rfEntregaAtualizarStatus(e);
+  rfEntregaSalvar(e);
+}
+function rfEntregaSetCampo(id, campo, valor) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  e[campo] = valor;
+  rfEntregaSalvar(e);
+}
+function rfEntregaAtualizarStatus(e) {
+  var ok = entregaConcluida(e);
+  e.status = ok ? "concluida" : "pendente";
+  e.concluidaEm = ok ? (e.concluidaEm || Date.now()) : 0;
+}
+
+// ---- foto do canhoto (mesmo bucket e mesma compressão do resto do app) ----
+function rfCanhotoUpload(input, id, idx) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  var file = input.files && input.files[0];
+  if (!file) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão com a nuvem. Tente de novo com internet."); return; }
+    var isImg = /^image\//.test(file.type);
+    var prep = isImg
+      ? rfComprimirImagem(file).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
+      : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
+    prep.then(function (p) {
+      var path = "canhotos/" + (e.placa || "sem-placa") + "/" + e.id + "-nf" + idx + "-" + Date.now() + "." + p.ext;
+      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
+        if (res.error) throw res.error;
+        e.notas[idx].foto = path;
+        if (!e.notas[idx].data) e.notas[idx].data = hojeISO();
+        rfEntregaAtualizarStatus(e);
+        input.value = "";
+        render();
+        rfEntregaSalvar(e);
+      });
+    }).catch(function (err) { alert("Erro ao anexar o canhoto: " + (err.message || err)); });
+  });
+}
+function rfCanhotoVer(path) {
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.storage.from(RF_BUCKET).createSignedUrl(path, 3600).then(function (res) {
+      if (res.error || !res.data) { alert("Não foi possível abrir o canhoto."); return; }
+      window.open(res.data.signedUrl, "_blank");
+    });
+  });
+}
+function rfCanhotoExcluir(id, idx) {
+  if (!confirm("Excluir a foto deste canhoto? A entrega volta a ficar pendente.")) return;
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e || !e.notas || !e.notas[idx]) return;
+  var path = e.notas[idx].foto;
+  if (!path) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.storage.from(RF_BUCKET).remove([path]).then(function (res) {
+      if (res.error) { alert("Erro ao excluir a foto."); return; }
+      e.notas[idx].foto = "";
+      rfEntregaAtualizarStatus(e);
+      render();
+      rfEntregaSalvar(e);
+    });
+  });
+}
+
+// ---- interface ----
+function rfEntregasBlocoHTML(a, souMotorista, editavel) {
+  var vgId = rfVgIdDoAviso(a);
+  var lista = entregasDaViagem(vgId);
+  var r = rfEntregasResumo(vgId);
+  var corBarra = r.tudoOk ? "#2E7D32" : (r.entregas ? GOLD : "#C0392B");
+  var cabecalho = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + corBarra + ';">📋 ENTREGAS DESTA VIAGEM'
+    + (r.entregas ? ' — ' + r.concluidas + '/' + r.entregas + ' concluída(s) · ' + r.canhotos + '/' + r.notas + ' canhoto(s)' : ' — nenhuma cadastrada')
+    + '</div>'
+    + (editavel ? '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfEntregasGerarDoRomaneio(\'' + a.id + '\')" title="Cria uma entrega por cliente do romaneio, com uma linha de canhoto por nota fiscal">↻ puxar do romaneio</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfEntregaNova(\'' + a.id + '\')">+ entrega</button>'
+      + '</div>' : '')
+    + '</div>';
+
+  if (!lista.length) {
+    return '<div style="margin-top:12px;padding-top:10px;border-top:1px dashed #333;">' + cabecalho
+      + '<div style="font-size:11px;color:#C0392B;">Sem entregas cadastradas — a viagem não pode ser concluída assim. Puxe do romaneio ou adicione na mão.</div></div>';
+  }
+
+  var linhas = lista.map(function (e) {
+    var ok = entregaConcluida(e);
+    var cor = ok ? "#2E7D32" : GOLD;
+    var notasHtml = (e.notas || []).map(function (n, i) {
+      var temFoto = !!n.foto;
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:6px 0;border-top:1px solid #1c1c1c;">'
+        + '<span style="font-size:14px;">' + (temFoto ? "✅" : "⬜") + '</span>'
+        + (editavel
+            ? '<input value="' + esc(n.nf || "") + '" placeholder="NF-e" style="width:110px;font-size:11px;" onchange="rfEntregaSetNota(\'' + e.id + '\',' + i + ',\'nf\',this.value)">'
+            : '<span style="font-size:12px;color:#ccc;">NF ' + esc(n.nf || "—") + '</span>')
+        + (editavel
+            ? '<input value="' + esc(n.recebedor || "") + '" placeholder="quem assinou" style="width:140px;font-size:11px;" onchange="rfEntregaSetNota(\'' + e.id + '\',' + i + ',\'recebedor\',this.value)">'
+            : (n.recebedor ? '<span style="font-size:11px;color:#999;">' + esc(n.recebedor) + '</span>' : ''))
+        + (editavel
+            ? '<input value="' + esc(n.ressalva || "") + '" placeholder="ressalva (avaria, parcial, recusa)" style="flex:1;min-width:150px;font-size:11px;" onchange="rfEntregaSetNota(\'' + e.id + '\',' + i + ',\'ressalva\',this.value)">'
+            : (n.ressalva ? '<span style="font-size:11px;color:#E67E22;">⚠ ' + esc(n.ressalva) + '</span>' : ''))
+        + (temFoto
+            ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfCanhotoVer(\'' + n.foto + '\')">ver canhoto</button>'
+              + (editavel ? '<button class="btn-del" style="font-size:10px;" onclick="rfCanhotoExcluir(\'' + e.id + '\',' + i + ')">✕</button>' : '')
+            : (editavel
+                ? '<input type="file" accept="image/*" capture="environment" style="font-size:10px;max-width:190px;" onchange="rfCanhotoUpload(this,\'' + e.id + '\',' + i + ')">'
+                : '<span style="font-size:11px;color:#C0392B;">sem canhoto</span>'))
+        + (editavel && (e.notas || []).length > 1 ? '<button class="btn-del" style="font-size:10px;" onclick="rfEntregaRemoverNota(\'' + e.id + '\',' + i + ')" title="remover esta nota">− nota</button>' : '')
+        + '</div>';
+    }).join("");
+
+    return '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + cor + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">'
+        + '<div style="font-size:13px;font-weight:700;color:#fff;">' + e.ordem + '. ' + esc(e.recebedor || "sem nome")
+          + (e.cidade ? ' <span style="font-size:11px;color:#999;font-weight:400;">— ' + esc(e.cidade) + '</span>' : '') + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;">'
+          + '<span style="font-size:10px;font-weight:800;color:' + cor + ';border:1px solid ' + cor + ';border-radius:5px;padding:1px 7px;">'
+            + (ok ? "ENTREGUE" : "PENDENTE") + '</span>'
+          + (editavel ? '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfEntregaAddNota(\'' + e.id + '\')">+ nota</button>'
+                        + '<button class="btn-del" style="font-size:10px;" onclick="rfEntregaExcluir(\'' + e.id + '\')">🗑</button>' : '')
+        + '</div>'
+      + '</div>'
+      + notasHtml
+      + '</div>';
+  }).join("");
+
+  return '<div style="margin-top:12px;padding-top:10px;border-top:1px dashed #333;">' + cabecalho + linhas
+    + (r.tudoOk
+        ? '<div style="font-size:11px;color:#2E7D32;">✓ Todas as entregas com canhoto. Falta só a foto do KM final para concluir a viagem.</div>'
+        : '<div style="font-size:11px;color:#C0392B;">Faltam ' + (r.notas - r.canhotos) + ' canhoto(s) em ' + r.pendentes + ' entrega(s). A viagem não fecha sem eles.</div>')
+    + '</div>';
+}
+
 function rfViagemFimCard(a, souMotorista) {
   const mapa = {
     em_andamento: { cor: "#3498DB", txt: "Em viagem" },
@@ -9186,19 +9524,21 @@ function rfViagemFimCard(a, souMotorista) {
         ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoComprovante}')">ver foto</button> <button class="btn-del" style="font-size:11px;" onclick="rfViagemFimExcluirFoto('${a.id}','comprovante')">✕ remover</button>`
         : `<input type="file" accept="image/*,.pdf" onchange="rfViagemFimUpload(this,'${a.id}')">`}
     </div>
+    ${rfEntregasBlocoHTML(a, souMotorista, true)}
     <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #333;">
-      <div style="font-size:10px;color:${a.fotoKmFim ? "#999" : "#C0392B"};margin-bottom:3px;">📷 Foto do KM final <b>(obrigatória para concluir)</b></div>
+      <div style="font-size:10px;color:${a.fotoKmFim ? "#999" : "#C0392B"};margin-bottom:3px;">📷 Foto do KM final <b>(obrigatória para concluir)</b> — só libera depois das entregas</div>
       ${a.fotoKmFim
         ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoKmFim}')">ver foto</button> <button class="btn-del" style="font-size:11px;" onclick="rfViagemFimExcluirFoto('${a.id}','kmfim')">✕ remover</button>`
         : `<input type="file" accept="image/*" onchange="rfViagemFimUploadKmFim(this,'${a.id}')">`}
     </div>
     <div style="margin-top:12px;">
-      <button class="btn-gold" ${!a.fotoKmFim ? 'style="opacity:.5;"' : ""} onclick="concluirViagemFim('${a.id}')">🏁 Concluir viagem</button>
+      <button class="btn-gold" ${(!a.fotoKmFim || !rfEntregasResumo(rfVgIdDoAviso(a)).tudoOk) ? 'style="opacity:.5;"' : ""} onclick="concluirViagemFim('${a.id}')">🏁 Concluir viagem</button>
     </div>` : `<div style="font-size:13px;color:#ccc;">${a.cliente ? esc(a.cliente) + " — " : ""}${esc(a.obs || "sem observações")}</div>
       <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
         ${a.fotoComprovante ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoComprovante}')">📷 ver comprovante</button>` : ""}
         ${a.fotoKmFim ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="rfViagemFimVerFoto('${a.fotoKmFim}')">📷 ver KM final</button>` : `<span style="font-size:11px;color:#C0392B;">⚠ sem foto do KM final</span>`}
       </div>
+      ${rfEntregasBlocoHTML(a, souMotorista, !souMotorista)}
       ${a.status === "aprovada" && a.viagemId ? `<div style="margin-top:6px;font-size:11px;color:#2E7D32;">✓ Viagem criada na aba Viagens — falta completar valor e km.</div>` : ""}
       ${a.status === "rejeitada" && a.motivoRejeicao ? `<div style="margin-top:6px;font-size:12px;color:#C0392B;">Motivo: ${esc(a.motivoRejeicao)}</div>` : ""}`}
   </div>`;
@@ -10117,6 +10457,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
+- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
 - CÂMERA (v259): a foto da etiqueta passou a ser tirada DENTRO do app, não mais chamando o app de câmera do Android. Motivo: ao abrir a câmera do sistema o navegador ia pra segundo plano e, em celular apertado de memória, o Android descarregava a página — ao voltar a tela recarregava e a foto se perdia ("sai e volta, tem que tirar outra foto"). Se o aparelho não liberar a câmera, o botão Galeria continua funcionando como antes. Se alguém relatar que o app fecha ao fotografar, verifique também se ele está usando o app INSTALADO (sem barra de endereço em cima) e se há espaço livre no celular.`;
