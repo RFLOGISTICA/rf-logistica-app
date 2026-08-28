@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v271)</title>
+<title>RF Logística — Painel da Frota (v272)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9611,6 +9611,28 @@ function rfEntregasBlocoHTML(a, souMotorista, editavel) {
 // Painel da roteirização dentro da aba Carregamento Suzano: importar o arquivo
 // que foi enviado ao cliente, conferir o que virou viagem prevista, e liberar
 // (ou recolher) a rota de cada motorista.
+
+// v272: a regional pode vir errada da planilha (aconteceu com Irecê marcado
+// como Norte). Corrigir aqui, sem reimportar: troca a rota da viagem, refaz o
+// frete pela tabela do cliente e recalcula o KM estimado da nova regional.
+function rfRotTrocarRegional(viagemId, placa, rota) {
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); });
+  if (!v) { alert("Não achei a viagem dessa linha."); return; }
+  v.rota = rota;
+  var tipo = (state.veiculos.find(function (x) { return x.placa === placa; }) || {}).tipo || "";
+  try {
+    var val = freteRotaDe(v.cliente || "Suzano", rota, tipo, Number(v.pesoKg) || 0);
+    if (val) v.valorViagem = val;
+  } catch (e) { /* sem tabela carregada: mantém o valor atual */ }
+  var km = rfRotKmEstimado(placa, rota);
+  if (km) v.km = km;
+  salvar();
+  render();
+}
+function rfRotRotasDoCliente(cliente) {
+  var t = tarifaCliente(cliente || "Suzano");
+  return t && t.rotas ? Object.keys(t.rotas).sort() : [];
+}
 function rfRotBlocoHTML() {
   var grupos = {};
   (state.entregas || []).forEach(function (e) {
@@ -9623,7 +9645,7 @@ function rfRotBlocoHTML() {
     var g = grupos[k];
     var v = (state.viagens || []).find(function (x) { return String(x.id) === String(g.viagemId); }) || {};
     return { id: g.viagemId, placa: g.placa, data: v.data || g.data, rota: v.rota || "",
-             km: v.km || 0,
+             km: v.km || 0, valorViagem: v.valorViagem || 0,
              motoristaNaEpoca: v.motoristaNaEpoca || (state.veiculos.find(function (x) { return x.placa === g.placa; }) || {}).motorista || "",
              _itens: g.itens };
   }).sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || String(a.placa).localeCompare(String(b.placa)); }).slice(0, 20);
@@ -9638,9 +9660,17 @@ function rfRotBlocoHTML() {
         + '<div style="font-size:13px;color:#fff;font-weight:700;">' + esc(v.placa) + ' <span style="color:#999;font-weight:400;">· ' + esc(mot) + '</span></div>'
         + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
           + '<span style="font-size:11px;color:#999;">' + (v.data ? new Date(v.data + "T00:00:00").toLocaleDateString("pt-BR") : "") + '</span>'
-          + '<span style="font-size:11px;color:' + GOLD + ';">' + esc(v.rota || "") + '</span>'
+          + (function () {
+              var rotas = rfRotRotasDoCliente("Suzano");
+              if (!rotas.length) return '<span style="font-size:11px;color:' + GOLD + ';">' + esc(v.rota || "") + '</span>';
+              return '<select title="Corrigir a regional desta viagem" style="font-size:11px;min-width:135px;color:' + GOLD + ';" onchange="rfRotTrocarRegional(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">'
+                + (rotas.indexOf(v.rota) < 0 ? '<option value="" selected>— regional —</option>' : '')
+                + rotas.map(function (r) { return '<option value="' + esc(r) + '"' + (r === v.rota ? " selected" : "") + '>' + esc(r) + '</option>'; }).join("")
+                + '</select>';
+            })()
           + '<span style="font-size:11px;color:#ccc;">' + lista.length + ' parada(s) · ' + r.notas + ' nota(s)</span>'
           + '<span style="font-size:11px;color:#ccc;">' + (Number(v.km) ? Number(v.km) + " km est." : "km a definir") + '</span>'
+          + '<span style="font-size:11px;color:#2E7D32;font-weight:700;">' + (Number(v.valorViagem) ? fmtR(v.valorViagem) : "") + '</span>'
           + '<span style="font-size:10px;font-weight:800;color:' + corLib + ';border:1px solid ' + corLib + ';border-radius:5px;padding:1px 7px;">' + (lib ? "LIBERADA" : "NÃO LIBERADA") + '</span>'
           + (lib
               ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(&#39;' + v.id + '&#39;,false,&#39;' + v.placa + '&#39;)">↩ recolher</button>'
