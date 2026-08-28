@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v267)</title>
+<title>RF Logística — Painel da Frota (v268)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6808,6 +6808,47 @@ function telaInicialHTML() {
   </div>`;
 }
 
+
+// ===================== v267: navegação enxuta =====================
+// Antes, toda área aberta repetia a MESMA tela: os 4 medidores da frota, o
+// resumo rápido e a parede com as ~20 abas. Isso fazia cada escolha parecer
+// a anterior. Agora cada área abre só o que é dela; os indicadores ficam
+// onde fazem sentido (a área Frota) e a navegação vira uma linha só:
+// onde estou, um seletor pra trocar de área e a volta pro início.
+function rotuloDaAba(id) {
+  var a = ABAS_DEF.find(function (x) { return x.id === id; });
+  if (a) return a.label;
+  if (id === "usuarios") return "\u{1F464} Usu\u00e1rios";
+  return id || "";
+}
+function tituloDaArea(totais) {
+  if (state.aba === "frota") return "Painel da Frota \u2014 " + totais.totalVeiculos + " ve\u00edculos";
+  return String(rotuloDaAba(state.aba)).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim() || "RF Log\u00edstica";
+}
+function barraNavegacao() {
+  var visiveis = ABAS_DEF.filter(function (a) { return podeVerAba(a.id); });
+  var grupos = [];
+  visiveis.forEach(function (a) {
+    var g = grupos.find(function (x) { return x.nome === a.grupo; });
+    if (!g) { g = { nome: a.grupo, itens: [] }; grupos.push(g); }
+    g.itens.push(a);
+  });
+  if (ehAdmin()) grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
+  var opcoes = grupos.map(function (g) {
+    return '<optgroup label="' + esc(g.nome) + '">'
+      + g.itens.map(function (a) {
+          return '<option value="' + a.id + '"' + (a.id === state.aba ? " selected" : "") + '>' + esc(String(a.label).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim()) + '</option>';
+        }).join("")
+      + '</optgroup>';
+  }).join("");
+  return '<div style="display:flex; gap:10px; padding:14px 24px 12px; border-bottom:1px solid #2A2A2A; flex-wrap:wrap; align-items:center;">'
+    + '<button class="btn-outline" onclick="voltarTelaInicial()" title="Voltar \u00e0 tela de \u00e1reas">\u{1F3E0} In\u00edcio</button>'
+    + '<span style="color:#555;">\u203A</span>'
+    + '<span style="font-size:13px; font-weight:700; color:' + GOLD + ';">' + esc(String(rotuloDaAba(state.aba)).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim()) + '</span>'
+    + '<select onchange="abrirAreaDoInicio(this.value)" title="Trocar de \u00e1rea sem voltar ao in\u00edcio" style="margin-left:8px; min-width:190px; font-size:12px;">' + opcoes + '</select>'
+    + '<button class="btn-outline" style="margin-left:auto;" onclick="exportarPDFAtual()" title="Gera um PDF da \u00e1rea atual (usa a impress\u00e3o do navegador)">\u{1F5A8}\uFE0F Exportar PDF</button>'
+    + '</div>';
+}
 function renderAbasAgrupadas() {
   const visiveis = ABAS_DEF.filter((a) => podeVerAba(a.id));
   // v248: botao de volta pra tela de entrada
@@ -9960,7 +10001,7 @@ function render() {
         <img src="${RF_LOGO_SRC}" style="height:150px; display:block;" alt="RF Logística">
     </div>
     <div style="border-bottom:2px solid ${GOLD}; padding:10px 24px 16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#000;">
-      <div style="font-size:22px; font-weight:800; color:#fff;">Painel da Frota — ${totais.totalVeiculos} veículos</div>
+      <div style="font-size:22px; font-weight:800; color:#fff;">${tituloDaArea(totais)}</div>
       <div style="font-size:12px; color:#999; display:flex; align-items:center; gap:10px;">
         <div style="display:flex; align-items:center; gap:4px; background:#111; border:1px solid ${GOLD}; border-radius:8px; padding:3px 6px;">
           <span style="font-size:14px;" title="Mês de trabalho — afeta todas as abas">📅</span>
@@ -10001,7 +10042,7 @@ function render() {
     })() : ""}
     ${state.aba === "frota" ? bannerVeiculos() : ""}
 
-    <div style="padding:16px 24px 0;">
+    ${state.aba === "frota" ? `<div style="padding:16px 24px 0;">
       <div style="background:#0E0E0E; border:1px solid #262626; border-radius:14px; padding:20px 12px 12px;">
         <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1px; font-weight:700; margin-bottom:4px; padding-left:8px;">Indicadores da frota</div>
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px,1fr)); gap:8px; justify-items:center;">
@@ -10011,9 +10052,9 @@ function render() {
           ${podeVerAba("financeiro") ? gauge(totais.margemViagensAcumPct, "Margem acumulada (todos os meses)", fmtR(totais.viagensSobraAcum) + " líquido • histórico", totais.viagensSobraAcum >= 0 ? "#2E7D32" : "#C0392B") : ""}
         </div>
       </div>
-    </div>
+    </div>` : ""}
 
-    <div style="padding:14px 24px 0;">
+    ${state.aba === "frota" ? `<div style="padding:14px 24px 0;">
       <div style="background:#0E0E0E; border:1px solid #262626; border-radius:14px; padding:14px 12px;">
         <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1px; font-weight:700; margin-bottom:10px; padding-left:4px;">Resumo rápido</div>
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px;">
@@ -10025,13 +10066,9 @@ function render() {
           ${(podeVerAba("financeiro") || podeVerAba("dividas")) ? statCard("Dívidas fixas/mês", fmtR(totais.totalDividasFixas), "#C0392B") : ""}
         </div>
       </div>
-    </div>
+    </div>` : ""}
 
-    <div style="display:flex; gap:4px; padding:20px 24px 0; border-bottom:1px solid #2A2A2A; flex-wrap:wrap; align-items:center;">
-      ${renderAbasAgrupadas()}
-      ${ehAdmin() ? `<div class="aba-grupo-div"></div><span class="aba-grupo-label">ADMIN</span>${tabBtn("usuarios", "Usuários 👤")}` : ""}
-      <button class="btn-outline" style="margin-left:auto;" onclick="exportarPDFAtual()" title="Gera um PDF da aba atual (usa a impressão do navegador)">🖨️ Exportar PDF</button>
-    </div>
+    ${barraNavegacao()}
 
     <div style="display:flex; gap:10px; padding:14px 24px; flex-wrap:wrap; align-items:center;">
       ${state.aba === "frota" ? `<input id="busca" placeholder="Buscar placa ou motorista..." value="${esc(state.busca)}" style="width:220px;" oninput="state.busca=this.value; renderTabela();">
