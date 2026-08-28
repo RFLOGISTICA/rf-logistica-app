@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v276)</title>
+<title>RF Logística — Painel da Frota (v277)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9803,8 +9803,10 @@ function rfRotBlocoHTML() {
   return '<div style="background:#0E0E0E;border:1px solid #262626;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">'
       + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';">🗺️ ROTEIRIZAÇÃO DO DIA SEGUINTE</div>'
-      + '<label class="btn-gold" style="font-size:11px;padding:4px 10px;cursor:pointer;">⬆ Importar roteirização (.xlsx)'
-        + '<input type="file" accept="*/*" style="display:none" onchange="rfRotImportar(this)"></label>'
+      + '<span style="display:inline-flex;align-items:center;gap:8px;background:#111;border:1px solid ' + GOLD + ';border-radius:8px;padding:5px 10px;">'
+        + '<span style="font-size:11px;font-weight:700;color:' + GOLD + ';">⬆ Importar roteirização</span>'
+        + '<input type="file" accept="*/*" style="font-size:11px;max-width:210px;color:#ccc;" onchange="rfRotImportar(this)">'
+      + '</span>'
       + (previstas.length ? '<button class="btn-outline" style="font-size:11px;padding:4px 10px;color:#C0392B;border-color:#C0392B;" title="Apaga todas as rotas importadas de uma data" onclick="var d=prompt(&quot;Excluir todas as rotas importadas de qual data? (AAAA-MM-DD)&quot;, &quot;' + esc(previstas[0].data || "") + '&quot;); if(d) rfRotExcluirData(d);">🗑 Limpar uma data</button>' : '')
     + '</div>'
     + '<div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.5;">'
