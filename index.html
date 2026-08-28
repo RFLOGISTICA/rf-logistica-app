@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v272)</title>
+<title>RF Logística — Painel da Frota (v273)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9629,6 +9629,14 @@ function rfRotTrocarRegional(viagemId, placa, rota) {
   salvar();
   render();
 }
+// a planilha escreve "Norte", a tabela do cliente guarda "NORTE" -- casar
+// ignorando caixa e acento evita a regional aparecer em branco no seletor
+function rfRotCasarRegional(rota, rotas) {
+  if (!rota) return "";
+  var alvo = normTxt(String(rota));
+  var achou = (rotas || []).find(function (r) { return normTxt(r) === alvo; });
+  return achou || "";
+}
 function rfRotRotasDoCliente(cliente) {
   var t = tarifaCliente(cliente || "Suzano");
   return t && t.rotas ? Object.keys(t.rotas).sort() : [];
@@ -9663,9 +9671,10 @@ function rfRotBlocoHTML() {
           + (function () {
               var rotas = rfRotRotasDoCliente("Suzano");
               if (!rotas.length) return '<span style="font-size:11px;color:' + GOLD + ';">' + esc(v.rota || "") + '</span>';
-              return '<select title="Corrigir a regional desta viagem" style="font-size:11px;min-width:135px;color:' + GOLD + ';" onchange="rfRotTrocarRegional(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">'
-                + (rotas.indexOf(v.rota) < 0 ? '<option value="" selected>— regional —</option>' : '')
-                + rotas.map(function (r) { return '<option value="' + esc(r) + '"' + (r === v.rota ? " selected" : "") + '>' + esc(r) + '</option>'; }).join("")
+              var atual = rfRotCasarRegional(v.rota, rotas);
+              return '<select title="Corrigir a regional desta viagem" style="font-size:11px;width:150px;flex:0 0 auto;color:' + GOLD + ';" onchange="rfRotTrocarRegional(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">'
+                + (atual ? '' : '<option value="" selected>— regional —</option>')
+                + rotas.map(function (r) { return '<option value="' + esc(r) + '"' + (r === atual ? " selected" : "") + '>' + esc(r) + '</option>'; }).join("")
                 + '</select>';
             })()
           + '<span style="font-size:11px;color:#ccc;">' + lista.length + ' parada(s) · ' + r.notas + ' nota(s)</span>'
@@ -9759,7 +9768,10 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
     var placa = col(l, "Veiculo").toUpperCase();
     var receb = col(l, "Recebedor");
     if (!placa || !receb || normTxt(placa) === "total") continue;
-    if (!porVeic[placa]) porVeic[placa] = { placa: placa, regional: iReg >= 0 ? String(l[iReg] || "").trim() : "", paradas: [], peso: 0 };
+    if (!porVeic[placa]) {
+      var regBruta = iReg >= 0 ? String(l[iReg] || "").trim() : "";
+      porVeic[placa] = { placa: placa, regional: rfRotCasarRegional(regBruta, rfRotRotasDoCliente("Suzano")) || regBruta, paradas: [], peso: 0 };
+    }
     porVeic[placa].paradas.push({
       ordem: Number(col(l, "Ordem")) || porVeic[placa].paradas.length + 1,
       cidade: col(l, "Cidade"),
