@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v279)</title>
+<title>RF Logística — Painel da Frota (v280)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -10199,6 +10199,47 @@ function painelClienteHTML() {
     </div>
   `;
 }
+// v280: a rota liberada na véspera precisa aparecer para o motorista MESMO
+// sem viagem aberta -- era esse o ponto de antecipar a roteirização. Antes as
+// entregas só existiam dentro do card da viagem em andamento, então na véspera
+// não havia onde mostrar e liberar não surtia efeito nenhum.
+function motoristaRotaLiberadaHTML() {
+  var placa = (state.sessao && state.sessao.placa_motorista) || "";
+  var uid = (state.sessao && state.sessao.uid) || "";
+  var lista = (state.entregas || []).filter(function (e) {
+    return e.liberada && (e.placa === placa || (uid && e.motoristaUid === uid));
+  });
+  if (!lista.length) return "";
+  var porData = {};
+  lista.forEach(function (e) {
+    var d = String(e.dataPrevista || "").slice(0, 10) || "sem data";
+    (porData[d] = porData[d] || []).push(e);
+  });
+  var blocos = Object.keys(porData).sort().map(function (d) {
+    var itens = porData[d].sort(function (a, b) { return (a.ordem - b.ordem) || (a.criadoEm - b.criadoEm); });
+    var r = rfEntregasResumoLista(itens);
+    var dataBr = d === "sem data" ? "sem data" : new Date(d + "T00:00:00").toLocaleDateString("pt-BR");
+    var paradas = itens.map(function (e) {
+      var ok = entregaConcluida(e);
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #1c1c1c;">'
+        + '<span style="font-size:16px;">' + (ok ? "✅" : "⬜") + '</span>'
+        + '<div style="flex:1;">'
+          + '<div style="font-size:13px;font-weight:700;color:#fff;">' + e.ordem + '. ' + esc(e.recebedor || "sem nome") + '</div>'
+          + '<div style="font-size:11px;color:#999;">' + esc(e.cidade || "") + (e.endereco && e.endereco !== "—" ? " · " + esc(e.endereco) : "") + '</div>'
+          + '<div style="font-size:11px;color:#777;">' + (e.notas || []).length + ' nota(s)</div>'
+        + '</div></div>';
+    }).join("");
+    return '<div style="background:#0E0E0E;border:1px solid #262626;border-left:4px solid ' + GOLD + ';border-radius:12px;padding:14px 16px;margin-bottom:12px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">'
+        + '<div style="font-size:15px;font-weight:800;color:' + GOLD + ';">🗺️ Sua rota de ' + dataBr + '</div>'
+        + '<span style="font-size:11px;color:#ccc;">' + itens.length + ' parada(s) · ' + r.notas + ' nota(s)</span>'
+      + '</div>'
+      + '<div style="font-size:11px;color:#888;margin-bottom:4px;">Confira as paradas antes de sair. As fotos dos canhotos você anexa quando iniciar a viagem.</div>'
+      + paradas
+      + '</div>';
+  }).join("");
+  return '<div style="padding:20px 24px 0;">' + blocos + '</div>';
+}
 function painelMotoristaHTML() {
   const nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "motorista";
   const placa = (state.sessao && state.sessao.placa_motorista) || "";
@@ -10239,6 +10280,7 @@ function painelMotoristaHTML() {
       </div>
     </div>
 
+    ${motoristaRotaLiberadaHTML()}
     <div style="padding:20px 24px 0;">
       <div style="font-size:20px; font-weight:800; color:${GOLD}; margin-bottom:6px;">🚚 Minhas viagens</div>
       ${(function () {
