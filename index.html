@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v270)</title>
+<title>RF Logística — Painel da Frota (v271)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9612,12 +9612,25 @@ function rfEntregasBlocoHTML(a, souMotorista, editavel) {
 // que foi enviado ao cliente, conferir o que virou viagem prevista, e liberar
 // (ou recolher) a rota de cada motorista.
 function rfRotBlocoHTML() {
-  var previstas = (state.viagens || []).filter(function (v) { return v.previstaRoteirizacao; })
-    .sort(function (a, b) { return String(b.data).localeCompare(String(a.data)); }).slice(0, 12);
+  var grupos = {};
+  (state.entregas || []).forEach(function (e) {
+    if (e.origem !== "roteirizacao") return;
+    var k = String(e.viagemId || "") + "|" + String(e.placa || "");
+    if (!grupos[k]) grupos[k] = { viagemId: e.viagemId, placa: e.placa, data: e.dataPrevista || "", itens: [] };
+    grupos[k].itens.push(e);
+  });
+  var previstas = Object.keys(grupos).map(function (k) {
+    var g = grupos[k];
+    var v = (state.viagens || []).find(function (x) { return String(x.id) === String(g.viagemId); }) || {};
+    return { id: g.viagemId, placa: g.placa, data: v.data || g.data, rota: v.rota || "",
+             km: v.km || 0,
+             motoristaNaEpoca: v.motoristaNaEpoca || (state.veiculos.find(function (x) { return x.placa === g.placa; }) || {}).motorista || "",
+             _itens: g.itens };
+  }).sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || String(a.placa).localeCompare(String(b.placa)); }).slice(0, 20);
   var linhas = previstas.map(function (v) {
-    var lista = entregasDaViagem(v.id);
+    var lista = v._itens;
     var lib = lista.filter(function (e) { return e.liberada; }).length;
-    var r = rfEntregasResumo(v.id);
+    var r = rfEntregasResumoLista(lista);
     var mot = v.motoristaNaEpoca || "sem motorista no cadastro";
     var corLib = lib ? "#2E7D32" : "#777";
     return '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + (lib ? "#2E7D32" : GOLD) + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
@@ -9630,8 +9643,8 @@ function rfRotBlocoHTML() {
           + '<span style="font-size:11px;color:#ccc;">' + (Number(v.km) ? Number(v.km) + " km est." : "km a definir") + '</span>'
           + '<span style="font-size:10px;font-weight:800;color:' + corLib + ';border:1px solid ' + corLib + ';border-radius:5px;padding:1px 7px;">' + (lib ? "LIBERADA" : "NÃO LIBERADA") + '</span>'
           + (lib
-              ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(\'' + v.id + '\',false)">↩ recolher</button>'
-              : '<button class="btn-gold" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(\'' + v.id + '\',true)">✓ liberar para o motorista</button>')
+              ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(&#39;' + v.id + '&#39;,false,&#39;' + v.placa + '&#39;)">↩ recolher</button>'
+              : '<button class="btn-gold" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(&#39;' + v.id + '&#39;,true,&#39;' + v.placa + '&#39;)">✓ liberar para o motorista</button>')
         + '</div>'
       + '</div>'
       + '<div style="font-size:11px;color:#888;margin-top:5px;">' + esc(lista.map(function (e) { return e.cidade; }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; }).join(" · ")) + '</div>'
@@ -9821,8 +9834,11 @@ function rfRotKmEstimado(placa, regional) {
 function rfEntregasLiberadasDaViagem(viagemId) {
   return entregasDaViagem(viagemId).filter(function (e) { return e.liberada; });
 }
-function rfRotLiberar(viagemId, liberar) {
-  var lista = entregasDaViagem(viagemId);
+function rfRotLiberar(viagemId, liberar, placa) {
+  var lista = (state.entregas || []).filter(function (e) {
+    return e.origem === "roteirizacao" && String(e.viagemId) === String(viagemId)
+      && (!placa || e.placa === placa);
+  });
   if (!lista.length) { alert("Essa viagem não tem entregas para liberar."); return; }
   if (liberar && !confirm("Liberar " + lista.length + " entrega(s) para o motorista ver no celular?")) return;
   if (!liberar && !confirm("Recolher a rota? O motorista deixa de ver as entregas até você liberar de novo.")) return;
