@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v278)</title>
+<title>RF Logística — Painel da Frota (v279)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9867,7 +9867,26 @@ function rfRotCabecalho(linhas, chaves) {
   return null;
 }
 
+// v279: o motorista tem que vir da PLANILHA, não do cadastro da Frota. Quem
+// monta a roteirização é quem sabe qual motorista vai naquele carro naquele
+// dia; o cadastro guarda só o motorista habitual da placa.
+function rfRotMotoristasDaPlanilha(wb) {
+  var res = {};
+  var res0 = rfRotAba(wb, "Resumo por Veiculo");
+  if (!res0) return res;
+  var h = rfRotCabecalho(res0, ["Veiculo", "Motorista"]);
+  if (!h) return res;
+  for (var i = h.linha + 1; i < res0.length; i++) {
+    var l = res0[i] || [];
+    var pl = String(l[h.idx["Veiculo"]] || "").trim().toUpperCase();
+    var mo = String(l[h.idx["Motorista"]] || "").trim();
+    if (!/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(pl.replace(/[^A-Z0-9]/g, ""))) continue;
+    if (mo && normTxt(mo) !== "a definir") res[pl] = mo;
+  }
+  return res;
+}
 function rfRotProcessarPlanilha(wb, dataPrev) {
+  var motPlan = rfRotMotoristasDaPlanilha(wb);
   var det = rfRotAba(wb, "Detalhe por Cliente");
   if (!det) throw new Error('não achei a aba "Detalhe por Cliente" na planilha.');
   var h = rfRotCabecalho(det, ["Veiculo", "Ordem", "Cidade", "Recebedor"]);
@@ -9921,7 +9940,7 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
         kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
         combustivelItens: [], outrosItens: [],
         vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true,
-        motoristaNaEpoca: (state.veiculos.find(function (x) { return x.placa === placa; }) || {}).motorista || "",
+        motoristaNaEpoca: motPlan[placa] || (state.veiculos.find(function (x) { return x.placa === placa; }) || {}).motorista || "",
         pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
         pesoKg: Math.round(v.peso * 10) / 10,
         obs: "Prevista pela roteirização enviada ao cliente.", previstaRoteirizacao: true,
@@ -9939,6 +9958,7 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
     }
 
     // 2) entregas -- preserva o que já tem canhoto
+    if (motPlan[placa] && viagem.motoristaNaEpoca !== motPlan[placa]) viagem.motoristaNaEpoca = motPlan[placa];
     var atuais = entregasDaViagem(viagem.id);
     var comCanhoto = atuais.filter(function (e) { return (e.notas || []).some(function (n) { return n.foto; }); });
     var chaveViva = comCanhoto.map(function (e) { return normTxt(e.recebedor) + "|" + normTxt(e.cidade); });
