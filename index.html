@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v268)</title>
+<title>RF Logística — Painel da Frota (v269)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6727,6 +6727,7 @@ function abrirAreaDoInicio(id) {
 }
 function voltarTelaInicial() {
   state._telaInicial = true;
+  state._trocarArea = false;
   render();
 }
 function telaInicialHTML() {
@@ -6825,6 +6826,53 @@ function tituloDaArea(totais) {
   if (state.aba === "frota") return "Painel da Frota \u2014 " + totais.totalVeiculos + " ve\u00edculos";
   return String(rotuloDaAba(state.aba)).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim() || "RF Log\u00edstica";
 }
+// v268: trocar de área abre as MESMAS caixas da tela inicial, no tema escuro
+// do app — e não a lista branca nativa do sistema, que destoava de tudo.
+function abrirTrocarArea() { state._trocarArea = true; render(); }
+function fecharTrocarArea() { state._trocarArea = false; render(); }
+function escolherArea(id) { state._trocarArea = false; abrirAreaDoInicio(id); }
+function painelTrocarAreaHTML() {
+  if (!state._trocarArea) return "";
+  var visiveis = ABAS_DEF.filter(function (a) { return podeVerAba(a.id); });
+  var grupos = [];
+  visiveis.forEach(function (a) {
+    var g = grupos.find(function (x) { return x.nome === a.grupo; });
+    if (!g) { g = { nome: a.grupo, itens: [] }; grupos.push(g); }
+    g.itens.push(a);
+  });
+  if (ehAdmin()) grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
+  var caixa = function (a) {
+    var desc = TAB_DESCRICOES[a.id] || "";
+    var ativa = a.id === state.aba;
+    var borda = ativa ? GOLD : "#3a3a3a";
+    return '<button onclick="escolherArea(\'' + a.id + '\')" title="' + esc(desc) + '"'
+      + ' style="background:' + (ativa ? "rgba(35,27,8,0.95)" : "rgba(12,12,12,0.95)") + ';'
+      + ' border:1px solid ' + borda + '; border-radius:12px; padding:12px 13px;'
+      + ' text-align:left; cursor:pointer; color:#fff; font-size:13.5px; font-weight:700;'
+      + ' min-height:64px; display:flex; flex-direction:column; gap:4px; justify-content:center;"'
+      + ' onmouseover="this.style.borderColor=\'' + GOLD + '\';"'
+      + ' onmouseout="this.style.borderColor=\'' + borda + '\';">'
+      + '<span>' + a.label + (ativa ? ' <span style="font-size:10px;color:' + GOLD + ';">\u2022 voc\u00ea est\u00e1 aqui</span>' : '') + '</span>'
+      + (desc ? '<span style="font-size:10.5px; color:#8a8a8a; font-weight:400; line-height:1.3;">' + esc(desc) + '</span>' : '')
+      + '</button>';
+  };
+  var corpo = grupos.map(function (g) {
+    return '<div style="margin-bottom:16px;">'
+      + '<div style="font-size:11px; color:' + GOLD + '; letter-spacing:2px; font-weight:700; margin-bottom:8px;">' + esc(g.nome) + '</div>'
+      + '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px,1fr)); gap:10px;">'
+      + g.itens.map(caixa).join("")
+      + '</div></div>';
+  }).join("");
+  return '<div onclick="fecharTrocarArea()" style="position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); z-index:9000; display:flex; align-items:flex-start; justify-content:center; padding:28px 16px; overflow:auto;">'
+    + '<div onclick="event.stopPropagation()" style="background:#080808; border:1px solid #2A2A2A; border-radius:16px; padding:20px 22px; max-width:1020px; width:100%;">'
+      + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:12px;">'
+        + '<div style="font-size:17px; font-weight:800; color:#fff;">Escolha a \u00e1rea que quer abrir</div>'
+        + '<button class="btn-outline" onclick="fecharTrocarArea()">\u2715 Fechar</button>'
+      + '</div>'
+      + corpo
+    + '</div></div>';
+}
+
 function barraNavegacao() {
   var visiveis = ABAS_DEF.filter(function (a) { return podeVerAba(a.id); });
   var grupos = [];
@@ -6834,18 +6882,11 @@ function barraNavegacao() {
     g.itens.push(a);
   });
   if (ehAdmin()) grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
-  var opcoes = grupos.map(function (g) {
-    return '<optgroup label="' + esc(g.nome) + '">'
-      + g.itens.map(function (a) {
-          return '<option value="' + a.id + '"' + (a.id === state.aba ? " selected" : "") + '>' + esc(String(a.label).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim()) + '</option>';
-        }).join("")
-      + '</optgroup>';
-  }).join("");
   return '<div style="display:flex; gap:10px; padding:14px 24px 12px; border-bottom:1px solid #2A2A2A; flex-wrap:wrap; align-items:center;">'
     + '<button class="btn-outline" onclick="voltarTelaInicial()" title="Voltar \u00e0 tela de \u00e1reas">\u{1F3E0} In\u00edcio</button>'
     + '<span style="color:#555;">\u203A</span>'
     + '<span style="font-size:13px; font-weight:700; color:' + GOLD + ';">' + esc(String(rotuloDaAba(state.aba)).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim()) + '</span>'
-    + '<select onchange="abrirAreaDoInicio(this.value)" title="Trocar de \u00e1rea sem voltar ao in\u00edcio" style="margin-left:8px; min-width:190px; font-size:12px;">' + opcoes + '</select>'
+    + '<button class="btn-outline" onclick="abrirTrocarArea()" title="Trocar de area sem voltar ao inicio" style="margin-left:8px;">\u21C4 Trocar de \u00e1rea</button>'
     + '<button class="btn-outline" style="margin-left:auto;" onclick="exportarPDFAtual()" title="Gera um PDF da \u00e1rea atual (usa a impress\u00e3o do navegador)">\u{1F5A8}\uFE0F Exportar PDF</button>'
     + '</div>';
 }
@@ -10069,6 +10110,7 @@ function render() {
     </div>` : ""}
 
     ${barraNavegacao()}
+    ${painelTrocarAreaHTML()}
 
     <div style="display:flex; gap:10px; padding:14px 24px; flex-wrap:wrap; align-items:center;">
       ${state.aba === "frota" ? `<input id="busca" placeholder="Buscar placa ou motorista..." value="${esc(state.busca)}" style="width:220px;" oninput="state.busca=this.value; renderTabela();">
