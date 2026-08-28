@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v273)</title>
+<title>RF Logística — Painel da Frota (v275)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9631,6 +9631,102 @@ function rfRotTrocarRegional(viagemId, placa, rota) {
 }
 // a planilha escreve "Norte", a tabela do cliente guarda "NORTE" -- casar
 // ignorando caixa e acento evita a regional aparecer em branco no seletor
+// v274: trocar a PLACA da linha. Muda o caminhão na viagem e em todas as
+// entregas do grupo. Como o tipo do veículo (Toco/3-4) define o preço, o frete
+// é refeito, e o KM estimado também, porque o histórico é por placa.
+function rfRotTrocarPlaca(viagemId, placaAtual, placaNova) {
+  if (!placaNova || placaNova === placaAtual) return;
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); });
+  if (!v) { alert("Não achei a viagem dessa linha."); return; }
+  var lista = (state.entregas || []).filter(function (e) {
+    return e.origem === "roteirizacao" && String(e.viagemId) === String(viagemId) && e.placa === placaAtual;
+  });
+  if (!confirm("Trocar o caminhão de " + placaAtual + " para " + placaNova + "?\n\n" + lista.length + " entrega(s) vão junto.")) return;
+  v.placa = placaNova;
+  var veic = state.veiculos.find(function (x) { return x.placa === placaNova; }) || {};
+  if (veic.motorista) v.motoristaNaEpoca = veic.motorista;
+  try {
+    var val = freteRotaDe(v.cliente || "Suzano", v.rota, veic.tipo || "", Number(v.pesoKg) || 0);
+    if (val) v.valorViagem = val;
+  } catch (e) { /* sem tabela: mantém */ }
+  var km = rfRotKmEstimado(placaNova, v.rota);
+  if (km) v.km = km;
+  var uidMot = rfUidDoMotoristaDaPlaca(placaNova);
+  lista.forEach(function (e) {
+    e.placa = placaNova;
+    if (veic.motorista) e.motoristaNome = veic.motorista;
+    if (uidMot) e.motoristaUid = uidMot;   // senão o motorista novo não consegue gravar o canhoto
+    rfEntregaSalvar(e);
+  });
+  salvar();
+  render();
+}
+// Trocar o MOTORISTA da linha. Além do nome, troca o dono das entregas -- é o
+// motorista_uid que dá permissão de anexar canhoto no banco.
+function rfRotTrocarMotorista(viagemId, placa, nome) {
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); });
+  if (!v) return;
+  v.motoristaNaEpoca = nome || "";
+  var perfil = (state._perfis || []).find(function (p) {
+    return p.papel === "motorista" && String(p.nome || "").trim() === String(nome || "").trim();
+  });
+  (state.entregas || []).filter(function (e) {
+    return e.origem === "roteirizacao" && String(e.viagemId) === String(viagemId) && e.placa === placa;
+  }).forEach(function (e) {
+    e.motoristaNome = nome || "";
+    if (perfil) e.motoristaUid = perfil.id;
+    rfEntregaSalvar(e);
+  });
+  salvar();
+  render();
+}
+// v275: mudou a rota depois de importar? Aqui se apaga a linha inteira de um
+// veículo — as entregas dele e, se a viagem tiver sido criada pela própria
+// importação e não sobrar mais nada nela, também a viagem prevista.
+// Entrega que JÁ TEM CANHOTO nunca é apagada em silêncio: o app avisa e pede
+// confirmação, porque é prova de entrega feita.
+function rfRotExcluir(viagemId, placa) {
+  var lista = (state.entregas || []).filter(function (e) {
+    return e.origem === "roteirizacao" && String(e.viagemId) === String(viagemId) && e.placa === placa;
+  });
+  if (!lista.length) return;
+  var comCanhoto = lista.filter(function (e) { return (e.notas || []).some(function (n) { return n.foto; }); });
+  var msg = "Excluir a rota do " + placa + "?\n\n" + lista.length + " entrega(s) serão apagadas.";
+  if (comCanhoto.length) msg += "\n\nATENÇÃO: " + comCanhoto.length + " dela(s) já tem canhoto anexado. As fotos serão perdidas.";
+  msg += "\n\nEssa ação não pode ser desfeita.";
+  if (!confirm(msg)) return;
+  lista.forEach(function (e) {
+    state.entregas = (state.entregas || []).filter(function (x) { return x.id !== e.id; });
+    rfEntregaDeletar(e.id);
+  });
+  // se a viagem foi criada pela importação e ficou vazia, some com ela também
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); });
+  var sobrou = (state.entregas || []).some(function (e) { return String(e.viagemId) === String(viagemId); });
+  if (v && v.previstaRoteirizacao && !sobrou) {
+    if (confirm("A viagem prevista do " + placa + " ficou sem nenhuma entrega. Excluir a viagem também?")) {
+      state.viagens = state.viagens.filter(function (x) { return String(x.id) !== String(viagemId); });
+    }
+  }
+  salvar();
+  render();
+}
+// Limpa TODAS as linhas de roteirização de uma data — útil quando a carteira
+// muda inteira e é mais rápido reimportar do zero.
+function rfRotExcluirData(data) {
+  var lista = (state.entregas || []).filter(function (e) {
+    return e.origem === "roteirizacao" && String(e.dataPrevista || "").slice(0,10) === String(data).slice(0,10);
+  });
+  if (!lista.length) { alert("Não há roteirização importada nessa data."); return; }
+  var comCanhoto = lista.filter(function (e) { return (e.notas || []).some(function (n) { return n.foto; }); }).length;
+  var msg = "Excluir TODAS as rotas importadas de " + data + "?\n\n" + lista.length + " entrega(s) em várias placas.";
+  if (comCanhoto) msg += "\n\nATENÇÃO: " + comCanhoto + " já tem canhoto anexado. As fotos serão perdidas.";
+  if (!confirm(msg)) return;
+  lista.forEach(function (e) {
+    state.entregas = (state.entregas || []).filter(function (x) { return x.id !== e.id; });
+    rfEntregaDeletar(e.id);
+  });
+  salvar(); render();
+}
 function rfRotCasarRegional(rota, rotas) {
   if (!rota) return "";
   var alvo = normTxt(String(rota));
@@ -9642,6 +9738,7 @@ function rfRotRotasDoCliente(cliente) {
   return t && t.rotas ? Object.keys(t.rotas).sort() : [];
 }
 function rfRotBlocoHTML() {
+  garantirPerfisCarregados();
   var grupos = {};
   (state.entregas || []).forEach(function (e) {
     if (e.origem !== "roteirizacao") return;
@@ -9665,7 +9762,20 @@ function rfRotBlocoHTML() {
     var corLib = lib ? "#2E7D32" : "#777";
     return '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + (lib ? "#2E7D32" : GOLD) + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
       + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-        + '<div style="font-size:13px;color:#fff;font-weight:700;">' + esc(v.placa) + ' <span style="color:#999;font-weight:400;">· ' + esc(mot) + '</span></div>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+          + '<select title="Trocar o caminhão desta rota" style="font-size:12px;font-weight:700;width:120px;color:#fff;" onchange="rfRotTrocarPlaca(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">'
+            + (state.veiculos || []).map(function (x) { return '<option value="' + esc(x.placa) + '"' + (x.placa === v.placa ? " selected" : "") + '>' + esc(x.placa) + '</option>'; }).join("")
+            + '</select>'
+          + (function () {
+              var nomes = loginsMotoristas();
+              if (nomes.indexOf(mot) < 0 && mot) nomes = [mot].concat(nomes);
+              if (!nomes.length) return '<span style="font-size:12px;color:#999;">' + esc(mot) + '</span>';
+              return '<select title="Trocar o motorista desta rota" style="font-size:12px;width:165px;color:#ccc;" onchange="rfRotTrocarMotorista(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">'
+                + '<option value=""' + (mot ? "" : " selected") + '>— motorista —</option>'
+                + nomes.map(function (n) { return '<option value="' + esc(n) + '"' + (n === mot ? " selected" : "") + '>' + esc(n) + '</option>'; }).join("")
+                + '</select>';
+            })()
+        + '</div>'
         + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
           + '<span style="font-size:11px;color:#999;">' + (v.data ? new Date(v.data + "T00:00:00").toLocaleDateString("pt-BR") : "") + '</span>'
           + (function () {
@@ -9684,6 +9794,7 @@ function rfRotBlocoHTML() {
           + (lib
               ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(&#39;' + v.id + '&#39;,false,&#39;' + v.placa + '&#39;)">↩ recolher</button>'
               : '<button class="btn-gold" style="font-size:10px;padding:2px 8px;" onclick="rfRotLiberar(&#39;' + v.id + '&#39;,true,&#39;' + v.placa + '&#39;)">✓ liberar para o motorista</button>')
+          + '<button class="btn-del" style="font-size:10px;padding:2px 7px;" title="Excluir esta rota importada" onclick="rfRotExcluir(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;)">\u{1F5D1} excluir</button>'
         + '</div>'
       + '</div>'
       + '<div style="font-size:11px;color:#888;margin-top:5px;">' + esc(lista.map(function (e) { return e.cidade; }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; }).join(" · ")) + '</div>'
@@ -9694,6 +9805,7 @@ function rfRotBlocoHTML() {
       + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';">🗺️ ROTEIRIZAÇÃO DO DIA SEGUINTE</div>'
       + '<label class="btn-gold" style="font-size:11px;padding:4px 10px;cursor:pointer;">⬆ Importar roteirização (.xlsx)'
         + '<input type="file" accept=".xlsx,.xls" style="display:none" onchange="rfRotImportar(this)"></label>'
+      + (previstas.length ? '<button class="btn-outline" style="font-size:11px;padding:4px 10px;color:#C0392B;border-color:#C0392B;" title="Apaga todas as rotas importadas de uma data" onclick="var d=prompt(&quot;Excluir todas as rotas importadas de qual data? (AAAA-MM-DD)&quot;, &quot;' + esc(previstas[0].data || "") + '&quot;); if(d) rfRotExcluirData(d);">🗑 Limpar uma data</button>' : '')
     + '</div>'
     + '<div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.5;">'
       + 'A nota da Suzano sai em cima da hora, mas a roteirização enviada ao cliente na véspera já reflete a carga do dia seguinte. '
