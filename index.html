@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v283)</title>
+<title>RF Logística — Painel da Frota (v284)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9877,6 +9877,49 @@ function rfCanhLoteDesfazer(itemId) {
   item.detalhe = "desfeito — aponte a parada de novo";
   salvar(); render();
 }
+// v284: excluir de vez uma foto do lote. Existe porque canhoto que o QR não
+// leu e que a pessoa não consegue identificar não pode ficar entulhando a lista
+// -- e a foto já subiu pro bucket, então apagar da tela sem apagar do storage
+// deixaria lixo pra sempre. Se a foto já estava aplicada numa entrega, ela sai
+// de lá primeiro e a parada volta a ficar pendente.
+function rfCanhLoteExcluirItem(item, silencioso) {
+  if (!item) return;
+  if (item.entregaId) {
+    var e = (state.entregas || []).find(function (x) { return String(x.id) === String(item.entregaId); });
+    if (e && e.notas && e.notas[item.idx] && e.notas[item.idx].foto === item.path) {
+      e.notas[item.idx].foto = "";
+      rfEntregaAtualizarStatus(e);
+      rfEntregaSalvar(e);
+    }
+  }
+  var L = rfCanhLote();
+  L.itens = L.itens.filter(function (x) { return x.id !== item.id; });
+  if (item.path) {
+    rfGetClient().then(function (sb) {
+      if (!sb) return;
+      sb.storage.from(RF_BUCKET).remove([item.path]).then(function (res) {
+        if (res.error && !silencioso) console.warn("canhoto excluir:", res.error.message);
+      });
+    });
+  }
+}
+function rfCanhLoteExcluir(itemId) {
+  var item = rfCanhLote().itens.find(function (x) { return x.id === itemId; });
+  if (!item) return;
+  var aviso = item.entregaId
+    ? "Esta foto está anexada numa entrega. Excluir tira o canhoto de lá e a parada volta a ficar pendente.\n\n"
+    : "";
+  if (!confirm(aviso + "Excluir esta foto de canhoto de vez? Ela sai do sistema e não dá pra desfazer.")) return;
+  rfCanhLoteExcluirItem(item, false);
+  salvar(); render();
+}
+function rfCanhLoteExcluirPendentes() {
+  var alvos = rfCanhLote().itens.filter(function (x) { return x.status === "pendente" || x.status === "erro"; });
+  if (!alvos.length) return;
+  if (!confirm("Excluir de vez as " + alvos.length + " foto(s) que ficaram sem parada?\n\nUse isto quando não dá pra identificar a viagem. Não tem como desfazer.")) return;
+  alvos.forEach(function (i) { rfCanhLoteExcluirItem(i, true); });
+  salvar(); render();
+}
 function rfCanhLoteLimpar() {
   if (!confirm("Limpar a lista da tela? Os canhotos já casados continuam anexados nas entregas — só some o histórico desta leitura.")) return;
   state._canhLote = null; render();
@@ -9911,6 +9954,7 @@ function rfCanhLoteBlocoHTML() {
       + (i.status === "duvida" || i.status === "ok"
           ? '<button class="btn-del" style="font-size:10px;padding:2px 7px;" onclick="rfCanhLoteDesfazer(\'' + i.id + '\')" title="tirar da entrega e apontar outra">↶ desfazer</button>'
           : "")
+      + '<button class="btn-del" style="font-size:10px;padding:2px 7px;" onclick="rfCanhLoteExcluir(\'' + i.id + '\')" title="apagar esta foto de vez">🗑</button>'
       + '</div>';
   };
 
@@ -9944,7 +9988,10 @@ function rfCanhLoteBlocoHTML() {
           + duvidas.map(function (i) { return linhaItem(i, false); }).join("") + '</div>'
         : "")
     + (pendentes.length
-        ? '<div style="margin-top:6px;"><div style="font-size:11px;font-weight:800;color:#C0392B;">CONFERIR — aponte a parada de cada um</div>'
+        ? '<div style="margin-top:6px;"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<div style="font-size:11px;font-weight:800;color:#C0392B;">CONFERIR — aponte a parada de cada um</div>'
+            + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;color:#C0392B;border-color:#C0392B;" onclick="rfCanhLoteExcluirPendentes()" title="apagar de vez todas as fotos que ficaram sem parada">🗑 excluir os ' + pendentes.length + ' sem parada</button>'
+          + '</div>'
           + pendentes.map(function (i) { return linhaItem(i, true); }).join("") + '</div>'
         : "")
     + '</div>';
@@ -11509,7 +11556,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
-- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar. CANHOTOS EM LOTE (v283, bloco \"📥 CANHOTOS EM LOTE\" na aba Carregamento Suzano): pra pôr em dia o atraso de canhotos de várias viagens juntas, a equipe solta todas as fotos de uma vez. O canhoto da Suzano tem um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos) -- o app lê esse QR no próprio navegador (biblioteca jsQR, ou o leitor nativo do aparelho), confere o dígito verificador da chave, tira o número da NF e procura essa NF nos espelhos já lidos, que dizem o cliente, a cidade e a placa. Com isso acha a parada pendente e anexa. É determinístico: sem IA, sem custo de API e sem risco de número inventado; ou a chave lê certa ou não lê. O nome do destinatário impresso no canhoto NÃO serve, porque fica coberto pela assinatura à mão. O que não casa sozinho não é chutado: a foto sobe igual e o canhoto aparece na lista \"CONFERIR\", onde a pessoa escolhe a parada num seletor. Casamento por cliente repetido em dias diferentes é marcado como DÚVIDA (fica com a rota mais antiga em aberto) e pode ser desfeito no botão \"↶ desfazer\". Anexar em lote preenche também o número da NF na parada, que nas entregas vindas da roteirização nasce vazio (elas só têm a remessa).
+- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar. CANHOTOS EM LOTE (v283, bloco \"📥 CANHOTOS EM LOTE\" na aba Carregamento Suzano): pra pôr em dia o atraso de canhotos de várias viagens juntas, a equipe solta todas as fotos de uma vez. O canhoto da Suzano tem um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos) -- o app lê esse QR no próprio navegador (biblioteca jsQR, ou o leitor nativo do aparelho), confere o dígito verificador da chave, tira o número da NF e procura essa NF nos espelhos já lidos, que dizem o cliente, a cidade e a placa. Com isso acha a parada pendente e anexa. É determinístico: sem IA, sem custo de API e sem risco de número inventado; ou a chave lê certa ou não lê. O nome do destinatário impresso no canhoto NÃO serve, porque fica coberto pela assinatura à mão. O que não casa sozinho não é chutado: a foto sobe igual e o canhoto aparece na lista \"CONFERIR\", onde a pessoa escolhe a parada num seletor. Casamento por cliente repetido em dias diferentes é marcado como DÚVIDA (fica com a rota mais antiga em aberto) e pode ser desfeito no botão \"↶ desfazer\". Anexar em lote preenche também o número da NF na parada, que nas entregas vindas da roteirização nasce vazio (elas só têm a remessa). v284: cada linha da lista tem 🗑 pra APAGAR a foto de vez (sai da tela e sai do bucket; se estava anexada numa entrega, o canhoto sai de lá e a parada volta a ficar pendente), mais um botão que apaga de uma vez todas as que ficaram sem parada. Serve pro canhoto que o QR não leu e que ninguém consegue identificar -- em vez de ficar entulhando a lista. \"limpar lista\" é outra coisa: só some com o histórico da tela e NÃO apaga foto nenhuma.
 - ROTEIRIZAÇÃO ANTECIPADA DA SUZANO (v270): a nota fiscal da Suzano sai em cima da hora, mas a roteirização que a RF envia ao cliente no fim da tarde já reflete 100% a carga do dia seguinte. Por isso a aba Carregamento Suzano tem o bloco "Roteirização do dia seguinte": importa-se o MESMO arquivo .xlsx que foi mandado ao cliente e o app cria (a) a viagem PREVISTA de cada placa, com cliente Suzano, a regional, o peso somado e o KM estimado, e (b) as entregas de cada parada, com uma linha de canhoto por remessa esperando a foto. Quando a NF-e sair, o número entra na linha que já existe. O KM estimado vem da MÉDIA das viagens anteriores da mesma placa na mesma regional (e, sem histórico da placa, da média da regional) — é estimativa por histórico real, não distância calculada por endereço; o app não tem serviço de mapas com chave e não inventa distância. Reimportar a mesma placa e data substitui as entregas ainda sem canhoto e PRESERVA as já entregues, então correção de última hora não apaga trabalho feito. NADA disso aparece para o motorista até alguém da equipe clicar em "liberar para o motorista"; há também o botão de recolher. No celular do motorista, a rota da véspera é casada por PLACA + DATA (a viagem que ele abre no app não é o mesmo registro da viagem prevista), e ele só enxerga o que foi liberado.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
