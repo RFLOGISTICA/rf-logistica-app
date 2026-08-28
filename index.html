@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v281)</title>
+<title>RF Logística — Painel da Frota (v282)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9209,6 +9209,16 @@ function motoristaViagemCard(vg) {
     </div>` : ""}
     ${vg.status === "em_andamento" ? `<div>
       ${vg.fotoKmSaida ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px;margin-bottom:8px;" onclick="motoristaVerFotoKm('${vg.fotoKmSaida}')">📷 ver KM inicial</button>` : ""}
+      ${(function () {
+        // v282: o KM final é sempre o ÚLTIMO passo. Se ainda falta canhoto, o
+        // motorista precisa ver isso aqui e ser mandado pra lista da rota, que
+        // é onde ele anexa.
+        const rc = rfCanhotosDaViagemMotorista(vg);
+        if (!rc.notas) return "";
+        return rc.tudoOk
+          ? `<div style="background:rgba(46,125,50,.14);border:1px solid #2E7D32;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#2E7D32;">✓ Os ${rc.notas} canhoto(s) da sua rota estão anexados. Pode mandar a foto do KM final.</div>`
+          : `<div style="background:rgba(192,57,43,.15);border:1px solid #C0392B;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#ddd;"><b style="color:#C0392B;">Faltam ${rc.notas - rc.canhotos} canhoto(s)</b> em ${rc.pendentes} parada(s). Anexe cada um na sua rota, aqui em cima — a viagem não fecha sem eles.</div>`;
+      })()}
       <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM final (obrigatória para concluir)</div>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">
         <label class="btn-gold" style="cursor:pointer; font-size:11px; padding:4px 10px; display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="motoristaUploadEConfirmar(this,'${vg.id}','fim')"></label>
@@ -10219,19 +10229,37 @@ function painelClienteHTML() {
 // sem viagem aberta -- era esse o ponto de antecipar a roteirização. Antes as
 // entregas só existiam dentro do card da viagem em andamento, então na véspera
 // não havia onde mostrar e liberar não surtia efeito nenhum.
-function motoristaRotaLiberadaHTML() {
+// v282: o mesmo recorte é usado em dois lugares (a lista da rota e o aviso
+// dentro do card da viagem), então virou função.
+function rfMinhasEntregasLiberadas() {
   var placa = (state.sessao && state.sessao.placa_motorista) || "";
   var uid = (state.sessao && state.sessao.uid) || "";
   var meuNome = normTxt((state.sessao && state.sessao.nome) || "");
   // v281: casar por NOME também. O motorista pode ir num caminhão diferente do
   // que está no cadastro dele — foi o que aconteceu com o Werlone, cadastrado
   // no OTQ9B07 e escalado no QEN6J82. Só por placa a rota nunca aparecia.
-  var lista = (state.entregas || []).filter(function (e) {
+  return (state.entregas || []).filter(function (e) {
     if (!e.liberada) return false;
     if (uid && e.motoristaUid === uid) return true;
     if (meuNome && normTxt(e.motoristaNome || "") === meuNome) return true;
     return e.placa === placa;
   });
+}
+// v282: canhotos que faltam na viagem que o motorista tem aberta. Casa por
+// DATA (e pela placa quando a viagem traz uma), do mesmo jeito que a rota da
+// véspera é casada -- a viagem que ele abre no app não é o mesmo registro da
+// viagem prevista da roteirização.
+function rfCanhotosDaViagemMotorista(vg) {
+  var d = String((vg && vg.data) || "").slice(0, 10);
+  var lista = rfMinhasEntregasLiberadas().filter(function (e) {
+    if (d && String(e.dataPrevista || "").slice(0, 10) !== d) return false;
+    if (vg && vg.placa && e.placa && e.placa !== vg.placa) return false;
+    return true;
+  });
+  return rfEntregasResumoLista(lista);
+}
+function motoristaRotaLiberadaHTML() {
+  var lista = rfMinhasEntregasLiberadas();
   if (!lista.length) return "";
   var porData = {};
   lista.forEach(function (e) {
@@ -10244,20 +10272,52 @@ function motoristaRotaLiberadaHTML() {
     var dataBr = d === "sem data" ? "sem data" : new Date(d + "T00:00:00").toLocaleDateString("pt-BR");
     var paradas = itens.map(function (e) {
       var ok = entregaConcluida(e);
-      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #1c1c1c;">'
-        + '<span style="font-size:16px;">' + (ok ? "✅" : "⬜") + '</span>'
-        + '<div style="flex:1;">'
-          + '<div style="font-size:13px;font-weight:700;color:#fff;">' + e.ordem + '. ' + esc(e.recebedor || "sem nome") + '</div>'
-          + '<div style="font-size:11px;color:#999;">' + esc(e.cidade || "") + (e.endereco && e.endereco !== "—" ? " · " + esc(e.endereco) : "") + '</div>'
-          + '<div style="font-size:11px;color:#777;">' + (e.notas || []).length + ' nota(s)</div>'
-        + '</div></div>';
+      var notas = e.notas || [];
+      // v282: o canhoto se anexa AQUI, na linha da própria parada. Antes o
+      // motorista só tinha onde anexar dentro do card da viagem finalizada,
+      // que nem sempre existe na véspera -- então na prática ele via a rota
+      // e não tinha botão nenhum. Um bloco por NOTA FISCAL, que é a regra:
+      // o mesmo recebedor pode ter 2 NF e assinar uma por nota.
+      var notasHtml = notas.map(function (n, i) {
+        var temFoto = !!n.foto;
+        var rot = n.nf ? ("NF " + esc(n.nf)) : (notas.length > 1 ? ("Nota " + (i + 1) + "/" + notas.length) : "Nota");
+        return '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:6px 0 6px 26px;border-top:1px solid #161616;">'
+          + '<span style="font-size:13px;">' + (temFoto ? "✅" : "⬜") + '</span>'
+          + '<span style="font-size:11px;color:#bbb;min-width:70px;">' + rot + '</span>'
+          + (temFoto
+              ? '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="rfCanhotoVer(\'' + n.foto + '\')">👁 ver canhoto</button>'
+                + '<button class="btn-del" style="font-size:10px;padding:3px 8px;" onclick="rfCanhotoExcluir(\'' + e.id + '\',' + i + ')" title="trocar a foto">✕</button>'
+                + '<input value="' + esc(n.ressalva || "") + '" placeholder="ressalva: avaria, parcial, recusa" style="flex:1;min-width:140px;font-size:11px;" onchange="rfEntregaSetNota(\'' + e.id + '\',' + i + ',\'ressalva\',this.value)">'
+              : '<label class="btn-gold" style="cursor:pointer;font-size:10px;padding:4px 10px;display:inline-block;">📷 Tirar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="rfCanhotoUpload(this,\'' + e.id + '\',' + i + ')"></label>'
+                + '<label class="btn-outline" style="cursor:pointer;font-size:10px;padding:4px 10px;display:inline-block;">🖼 Galeria<input type="file" accept="image/*" style="display:none" onchange="rfCanhotoUpload(this,\'' + e.id + '\',' + i + ')"></label>')
+          + '</div>';
+      }).join("");
+      var semNota = !notas.length
+        ? '<div style="padding:6px 0 6px 26px;border-top:1px solid #161616;font-size:11px;color:#C0392B;">Esta parada está sem nota cadastrada — toque em "+ nota" pra criar a linha do canhoto.</div>'
+        : "";
+      return '<div style="padding:8px 0;border-top:1px solid #1c1c1c;">'
+        + '<div style="display:flex;gap:10px;align-items:flex-start;">'
+          + '<span style="font-size:16px;">' + (ok ? "✅" : "⬜") + '</span>'
+          + '<div style="flex:1;">'
+            + '<div style="font-size:13px;font-weight:700;color:#fff;">' + e.ordem + '. ' + esc(e.recebedor || "sem nome") + '</div>'
+            + '<div style="font-size:11px;color:#999;">' + esc(e.cidade || "") + (e.endereco && e.endereco !== "—" ? " · " + esc(e.endereco) : "") + '</div>'
+            + '<div style="font-size:11px;color:' + (ok ? "#2E7D32" : "#777") + ';">' + notas.length + ' nota(s) · '
+              + notas.filter(function (n) { return !!n.foto; }).length + ' canhoto(s) anexado(s)' + (ok ? " — entregue" : "") + '</div>'
+          + '</div>'
+          + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfEntregaAddNota(\'' + e.id + '\')" title="o cliente tinha mais uma nota fiscal">+ nota</button>'
+        + '</div>'
+        + notasHtml + semNota
+        + '</div>';
     }).join("");
     return '<div style="background:#0E0E0E;border:1px solid #262626;border-left:4px solid ' + GOLD + ';border-radius:12px;padding:14px 16px;margin-bottom:12px;">'
       + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">'
         + '<div style="font-size:15px;font-weight:800;color:' + GOLD + ';">🗺️ Sua rota de ' + dataBr + '</div>'
-        + '<span style="font-size:11px;color:#ccc;">' + itens.length + ' parada(s) · ' + r.notas + ' nota(s)</span>'
+        + '<span style="font-size:11px;color:' + (r.tudoOk ? "#2E7D32" : "#ccc") + ';">' + itens.length + ' parada(s) · ' + r.canhotos + '/' + r.notas + ' canhoto(s)</span>'
       + '</div>'
-      + '<div style="font-size:11px;color:#888;margin-bottom:4px;">Confira as paradas antes de sair. As fotos dos canhotos você anexa quando iniciar a viagem.</div>'
+      + '<div style="font-size:11px;color:#888;margin-bottom:4px;">Confira as paradas antes de sair. <b style="color:#ccc;">Entregou? Anexe o canhoto ali na parada</b> — pode ser foto na hora ou da galeria, uma por nota fiscal. A parada só fica ✅ com todos os canhotos.</div>'
+      + (r.tudoOk
+          ? '<div style="font-size:11px;color:#2E7D32;margin-bottom:4px;">✓ Todos os canhotos desta rota estão anexados. Falta só a foto do KM final pra encerrar a viagem.</div>'
+          : '<div style="font-size:11px;color:#C0392B;margin-bottom:4px;">Faltam ' + (r.notas - r.canhotos) + ' canhoto(s) em ' + r.pendentes + ' parada(s).</div>')
       + paradas
       + '</div>';
   }).join("");
@@ -10932,6 +10992,33 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
     return linha;
   }).join("\n");
 
+  // v282: ENTREGAS/CANHOTOS ao vivo. Até a v281 o assistente sabia EXPLICAR a
+  // regra do canhoto mas não tinha o dado -- não conseguia responder "quem
+  // ainda não mandou canhoto hoje", que é a pergunta que a carteira faz.
+  const linhasCanhotos = (function () {
+    const libs = (state.entregas || []).filter((e) => e.liberada);
+    const grupos = {};
+    libs.forEach((e) => {
+      const d = String(e.dataPrevista || "").slice(0, 10) || "sem data";
+      const k = (e.placa || "sem placa") + "|" + d;
+      (grupos[k] = grupos[k] || []).push(e);
+    });
+    return Object.keys(grupos).sort().map((k) => {
+      const itens = grupos[k];
+      const r = rfEntregasResumoLista(itens);
+      const placa = k.split("|")[0], d = k.split("|")[1];
+      const mot = (itens.find((e) => e.motoristaNome) || {}).motoristaNome || "";
+      const faltando = itens.filter((e) => !entregaConcluida(e))
+        .map((e) => `${e.ordem}. ${e.recebedor || "sem nome"}${e.cidade ? " (" + e.cidade + ")" : ""} — ${(e.notas || []).filter((n) => !n.foto).length} canhoto(s)`);
+      const ressalvas = [];
+      itens.forEach((e) => (e.notas || []).forEach((n) => { if (n.ressalva) ressalvas.push(`${e.recebedor || "sem nome"}: ${n.ressalva}`); }));
+      let linha = `- ${placa}${mot ? " (" + mot + ")" : ""} — rota de ${d === "sem data" ? "sem data" : new Date(d + "T00:00:00").toLocaleDateString("pt-BR")}: ${r.entregas} parada(s), ${r.concluidas} entregue(s), ${r.canhotos}/${r.notas} canhoto(s) anexado(s)`;
+      linha += r.tudoOk ? ". ROTA COMPLETA — só falta a foto do KM final pra fechar a viagem" : `. FALTANDO: ${faltando.join("; ")}`;
+      if (ressalvas.length) linha += `. Ressalvas registradas: ${ressalvas.join("; ")}`;
+      return linha;
+    }).join("\n");
+  })();
+
   // v127: histórico completo — todos os meses, não só o mês ativo.
   const porMes = {};
   state.viagens.forEach((v) => {
@@ -11001,6 +11088,7 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
   // chat viraria um jeito de furar o controle de acesso da aba Usuários.
   const podeOleo = podeVerAba("oleo");
   const podeStatusDia = podeVerAba("statusdia");
+  const podeEntregasCtx = podeVerAba("statusdia") || podeVerAba("carregasuzano") || podeVerAba("conferencia");   // v282
   const podeMot = podeVerAba("motoristas");
   const podeSaldoCam = podeVerAba("saldocaminhao");
   const podeAlmox = podeVerAba("almox");
@@ -11076,7 +11164,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
-- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos.
+- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar.
 - ROTEIRIZAÇÃO ANTECIPADA DA SUZANO (v270): a nota fiscal da Suzano sai em cima da hora, mas a roteirização que a RF envia ao cliente no fim da tarde já reflete 100% a carga do dia seguinte. Por isso a aba Carregamento Suzano tem o bloco "Roteirização do dia seguinte": importa-se o MESMO arquivo .xlsx que foi mandado ao cliente e o app cria (a) a viagem PREVISTA de cada placa, com cliente Suzano, a regional, o peso somado e o KM estimado, e (b) as entregas de cada parada, com uma linha de canhoto por remessa esperando a foto. Quando a NF-e sair, o número entra na linha que já existe. O KM estimado vem da MÉDIA das viagens anteriores da mesma placa na mesma regional (e, sem histórico da placa, da média da regional) — é estimativa por histórico real, não distância calculada por endereço; o app não tem serviço de mapas com chave e não inventa distância. Reimportar a mesma placa e data substitui as entregas ainda sem canhoto e PRESERVA as já entregues, então correção de última hora não apaga trabalho feito. NADA disso aparece para o motorista até alguém da equipe clicar em "liberar para o motorista"; há também o botão de recolher. No celular do motorista, a rota da véspera é casada por PLACA + DATA (a viagem que ele abre no app não é o mesmo registro da viagem prevista), e ele só enxerga o que foi liberado.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
@@ -11339,6 +11427,9 @@ ${linhasAbastecimento || "(nenhum abastecimento lançado)"}
 
 Romaneios / Conferência de Carga (v256: cada romaneio se vincula SOZINHO à viagem aberta da mesma placa assim que é anexado — quem quiser trocar usa o seletor "Viagem vinculada" no card, e a escolha manual passa a mandar; v257: a aba NÃO mostra romaneio nenhum até a equipe escolher um motorista/placa no seletor de cima; escolhido um, ela vê todos os romaneios daquele motorista — em andamento e encerrados — e só os dele, nunca a lista de todo mundo junta. Uma linha por romaneio anexado — "clientes/entregas concluídos" é quanto já foi CONFERIDO por foto/confirmação do motorista; a previsão RECALCULADA usa o ritmo real de entregas até agora, é sempre uma estimativa que se ajusta sozinha conforme a rota avança):
 ${linhasRomaneios || "(nenhum romaneio anexado)"}
+
+Entregas e canhotos das rotas liberadas (v282 — o motorista anexa o canhoto na própria lista da rota, no celular dele, uma foto por NOTA FISCAL; a parada só fica concluída com todos os canhotos, e a viagem só fecha com todas as paradas concluídas + a foto do KM final). Use estas linhas pra responder quem já entregou, quem ainda não mandou canhoto e o que teve ressalva:
+${podeEntregasCtx ? (linhasCanhotos || "(nenhuma rota liberada para motorista no momento)") : "(sem permissão pra esta área)"}
 
 Status do Dia — viagens EM ANDAMENTO agora (já saíram, ainda não confirmaram chegada). "NUNCA atualizado pela carteira" significa que ninguém deu baixa no fim do dia:
 ${podeStatusDia ? (linhasStatusDia || "(nenhuma viagem em andamento agora)") : "(sem permissão pra esta aba)"}
