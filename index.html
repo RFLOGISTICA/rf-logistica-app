@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v308)</title>
+<title>RF Logística — Painel da Frota (v309)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4000,6 +4000,26 @@ function szSetCampo(cargaId, campo, valor) {
   c[campo] = valor; salvar();
 }
 function szAbrir(cargaId) { state.szCargaAberta = (String(state.szCargaAberta) === String(cargaId)) ? "" : cargaId; render(); }
+// v309: carga VAZIA e a que foi aberta pelo "+ Novo carregamento" e nunca
+// preenchida -- sem espelho, sem volume e sem placa. Ela nao e pendencia de
+// nada: ate a v308 essas cascas contavam como "montando" na etapa 2 e o numero
+// dava um trabalho que nao existe.
+function szCargaVazia(c) {
+  if (!c) return false;
+  var t = szTotais(c);
+  return t.espelhos === 0 && t.esperado === 0 && t.carregado === 0 && !String(c.placa || "").trim();
+}
+
+function szLimparCargasVazias() {
+  var vazias = szCargas().filter(szCargaVazia);
+  if (!vazias.length) { alert("Nenhum carregamento vazio pra limpar."); return; }
+  if (!confirm("Excluir " + vazias.length + " carregamento(s) vazio(s)? Nenhum tem espelho ou volume bipado.")) return;
+  var ids = {};
+  vazias.forEach(function (c) { ids[String(c.id)] = true; });
+  state.suzanoCargas = szCargas().filter(function (x) { return !ids[String(x.id)]; });
+  salvar(); render();
+}
+
 function szExcluirCarga(cargaId) {
   var c = szCarga(cargaId); if (!c) return;
   if (szTotais(c).carregado > 0) { alert("Esta carga já tem volumes bipados e não pode ser excluída."); return; }
@@ -5243,12 +5263,17 @@ function szEtapaSituacao() {
     }
   } catch (e) { }
   try {
-    var cargas = szCargas() || [];
+    var todas = szCargas() || [];
+    var vazias = todas.filter(szCargaVazia).length;
+    var cargas = todas.filter(function (c) { return !szCargaVazia(c); });
     var montando = cargas.filter(function (c) { return c.status !== "em_rota"; }).length;
+    r.cargasVazias = vazias;
     if (cargas.length) {
       r.conf = montando
         ? { txt: montando + " carregamento(s) montando", cor: GOLD }
         : { txt: cargas.length + " carregamento(s) em rota", cor: "#2E7D32" };
+    } else if (vazias) {
+      r.conf = { txt: vazias + " carregamento(s) vazio(s)", cor: "#777" };
     }
   } catch (e) { }
   try {
@@ -5326,12 +5351,18 @@ function szTelaEquipe() {
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
     + '<div style="font-size:12px;color:#999;max-width:760px;">Operação Suzano: eles não emitem CT-e e não homologam, então a conferência é toda da RF. '
     + 'Um espelho = uma NF = um cliente. O caminhão só é liberado quando a soma dos volumes bipados bate com a soma das notas.</div>'
-    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>';
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    + (cargas.filter(szCargaVazia).length
+        ? '<button onclick="szLimparCargasVazias()" style="font-size:11px;color:#C0392B;" title="Apaga os carregamentos abertos e nunca preenchidos — nenhum tem espelho nem volume bipado">🗑 limpar ' + cargas.filter(szCargaVazia).length + ' vazio(s)</button>'
+        : "")
+    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div></div>';
   if (!cargas.length) return h + '<div style="color:#888;padding:20px;">Nenhum carregamento lançado ainda.</div>';
   cargas.forEach(function (c) {
     var t = szTotais(c), aberta = String(state.szCargaAberta) === String(c.id);
     var bloq = szMotivoBloqueio(c);
-    var selo = c.status === "em_rota"
+    var selo = szCargaVazia(c)
+      ? '<span style="background:#444;color:#ddd;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">VAZIA</span>'
+      : c.status === "em_rota"
       ? '<span style="background:#2E7D32;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">EM ROTA</span>'
       : (bloq ? '<span style="background:#C0392B;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">MONTANDO</span>'
         : '<span style="background:' + GOLD + ';color:#000;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;">PRONTA</span>');
@@ -13040,6 +13071,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- CARREGAMENTO VAZIO (v309): carregamento aberto pelo "+ Novo carregamento" e nunca preenchido (sem espelho, sem volume e sem placa) aparece com o selo VAZIA, NAO conta como pendencia na etapa 2 e pode ser apagado de uma vez no botao "limpar vazios" do topo da etapa. Antes disso ele era contado como "montando" e inventava trabalho que nao existia. A etapa 2 (Conferencia) e tudo o que acontece ANTES da saida do caminhao: montar a carga, bipar os volumes contra a nota e liberar; depois que o caminhao sai, o que corre e a etapa 3 (Fiscal) e a 4 (Canhotos). A bolha do assistente e arrastavel e a posicao fica gravada no aparelho; se ela estiver tapando a tela, o botao ↘ no cabecalho deste chat devolve ela pro canto de baixo.
 - ABA CARREGAMENTO SUZANO EM ETAPAS (v308): a aba nao empilha mais os quatro blocos abertos ao mesmo tempo. Ela abre como o FLUXO DO DIA, com uma caixa fechada por etapa, na ordem 1 Roteirizacao (plano do dia, roteirizador da planilha e as rotas previstas pra liberar pro motorista), 2 Conferencia (os carregamentos e a bipagem dos volumes contra a nota), 3 Fiscal (CT-e, MDF-e e CIOT) e 4 Canhotos (o mutirao de fotos em lote). Cada caixa mostra a PENDENCIA dela -- rotas nao liberadas, carregamentos ainda montando, CT-e faltando importar, canhotos faltando -- com tarja verde quando esta fechada, dourada quando falta algo e vermelha quando esta atrasada. So UMA etapa fica aberta por vez, e no topo tem o quadro \"Situacao da operacao\" com rotas montadas, paradas, CT-e a importar e canhotos faltando. Nenhuma funcionalidade foi removida: cada bloco virou o conteudo de uma etapa, exatamente como era. Se a pessoa perguntar onde foi parar algum recurso da aba, diga em qual das quatro etapas ele esta.
 - ROTEIRIZAÇÃO AUTOMÁTICA (v259, bloco "📦 Roteirização: planilha da Suzano → caminhões"): a Suzano manda a planilha da carga (uma linha por remessa) e é a RF que divide por caminhão e roteiriza — antes isso era feito à mão. O sistema lê o .xlsx direto no navegador (sem IA e sem custo) e monta a divisão com estas regras, que são as mesmas que a equipe usava na mão: (1) agrupa por RECEBEDOR, nunca pelo "Nome Emissor" — as duas colunas divergem na planilha deles e quem recebe a mercadoria é o recebedor; (2) cliente NUNCA se parte entre dois caminhões; (3) cliente que sozinho enche o carro ganha o carro só pra ele; (4) lojas da mesma rede andam juntas enquanto o peso deixar; (5) as paradas saem ordenadas com as cidades de passagem primeiro e a cidade com mais entregas por último, agrupando por bairro dentro da cidade — é o roteiro "desce pra Feira".
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
@@ -13988,6 +14020,14 @@ function chatAlternarVoz() {
    Ficava fixa no canto inferior direito e cobria o botão ✕ de excluir documento.
    Guarda a posição em localStorage (é preferência do APARELHO, não do sistema --
    cada tela tem um tamanho, então não faz sentido sincronizar na nuvem). */
+// v309: a bolha e arrastavel e a posicao fica gravada no aparelho. Arrastada
+// pro canto de cima ela cobre o cabecalho da aba (foi o que aconteceu no tablet,
+// tapando o quadro "Situacao da operacao"). Este botao devolve ela pro canto
+// de baixo, que e o padrao.
+function rfBolhaVoltarCanto() {
+  try { localStorage.removeItem("rf-bolha-pos"); } catch (e) {}
+  render();
+}
 function rfBolhaPos() {
   try {
     const j = JSON.parse(localStorage.getItem("rf-bolha-pos") || "null");
@@ -14078,6 +14118,7 @@ function assistenteWidgetHTML() {
         <span>💬 Assistente RF</span>
         <div>
           <button onclick="chatAlternarVozResposta()" title="${state._chatVozAtiva === false ? "Ativar resposta por voz" : "Silenciar resposta por voz"}" style="background:none; border:none; color:#000; cursor:pointer; font-size:15px; margin-right:8px;">${state._chatVozAtiva === false ? "🔇" : "🔊"}</button>
+          <button onclick="rfBolhaVoltarCanto()" title="Devolve a bolha pro canto de baixo, se ela estiver tapando a tela" style="background:none; border:none; color:#000; cursor:pointer; font-size:15px; margin-right:8px;">↘</button>
           <button onclick="chatLimpar()" title="Limpar conversa" style="background:none; border:none; color:#000; cursor:pointer; font-size:13px; margin-right:8px;">limpar</button>
           <button onclick="toggleChatAssistente()" style="background:none; border:none; color:#000; cursor:pointer; font-size:18px; font-weight:800;">✕</button>
         </div>
