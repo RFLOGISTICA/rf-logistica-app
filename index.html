@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v320)</title>
+<title>RF Logística — Painel da Frota (v321)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5542,7 +5542,12 @@ function rfNfEspelhos() {
       if (!e) return;
       var num = String(e.nfe || "").replace(/\D/g, "").replace(/^0+/, "");
       out.push({
-        dia: rfNfDataISO(e.dataEmissao) || rfNfDataISO(c.data),
+        /* v321: o dia da NF sai SO da data de emissao do proprio espelho.
+           Antes caia no c.data da carga -- e quando o espelho e anexado pela
+           etapa 5 sem data lida, a carga nascia com a data de HOJE. Resultado:
+           nota antiga aparecia como "NF de 29/08/2026", que era so o dia em que
+           o PDF foi anexado. Data de anexo nao e data de nota. */
+        dia: rfNfDataISO(e.dataEmissao),
         placaEspelho: e.placaEspelho || c.placa || "",
         chave: String(e.chave || ""), nf: num,
         cliente: e.destinatario || e.recebedor || e.cliente || "",
@@ -5621,7 +5626,7 @@ function rfNfConferencia() {
            pendencia de importacao, nao carga sem documento. Vira aviso.
            So e grave quando o dia JA tem CT-e importado e mesmo assim aquela
            nota nao aparece em nenhum deles. */
-        if (x.dia && !diasComCte[x.dia]) r.semCteSemImport.push(x);
+        if (!x.dia || !diasComCte[x.dia]) r.semCteSemImport.push(x);   // v321: sem data lida tambem nao acusa
         else r.semCte.push(x);
         return;
       }
@@ -5682,7 +5687,9 @@ function rfNfCargaDoEspelho(placa, data) {
       && String(c.data || "") === String(data || "");
   })[0];
   if (achou) return achou;
-  var nova = { id: uid(), criadoEm: Date.now(), data: data || hojeISO(), placa: placa || "",
+  // v321: sem data no espelho, a carga nasce SEM data. Pôr hoje aqui foi o que
+  // fez nota antiga aparecer como "NF de 29/08".
+  var nova = { id: uid(), criadoEm: Date.now(), data: data || "", placa: placa || "",
                motorista: "", espelhos: [], status: "montando", criadaPeloEspelho: true };
   cargas.push(nova);
   return nova;
@@ -5716,7 +5723,7 @@ function rfNfAnexarEspelhos(input) {
         var cab = szLerEspelhoTexto(txt) || {};
         var placa = String(cab.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         var dt = String(cab.dataEmissao || "").match(/(\d{2})[.\/-](\d{2})[.\/-](\d{4})/);
-        var dataIso = dt ? (dt[3] + "-" + dt[2] + "-" + dt[1]) : hojeISO();
+        var dataIso = dt ? (dt[3] + "-" + dt[2] + "-" + dt[1]) : "";   // v321: sem data no espelho, sem data na carga
         var c = rfNfCargaDoEspelho(placa, dataIso);
         if (f._meta) c.arquivos = (c.arquivos || []).concat([f._meta]);
         var r = szAplicarArquivo(c.id, txt, "PDF na etapa 5");
@@ -5817,12 +5824,13 @@ function rfNfConfHTML() {
     + '</div>';
 
   var dataNf = function (x) {
-    return x.dia ? '<span style="color:#888;"> — NF de ' + esc(x.dia.split("-").reverse().join("/")) + (x.placaEspelho ? ' · espelho diz ' + esc(x.placaEspelho) : "") + '</span>' : "";
+    if (!x.dia) return '<span style="color:#8E7A1F;"> — data do espelho não lida, reanexe o PDF</span>';
+    return '<span style="color:#888;"> — NF de ' + esc(x.dia.split("-").reverse().join("/")) + (x.placaEspelho ? ' · espelho diz ' + esc(x.placaEspelho) : "") + '</span>';
   };
   h += linha("#C0392B", "NF no espelho e sem CT-e emitido", "O dia já tem CT-e importado e esta nota não está em nenhum deles: ou o CT-e faltou emitir, ou saiu com a nota trocada.", r.semCte, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "sem destinatário") + (x.cidade ? ' · ' + esc(x.cidade) : "") + dataNf(x) + '</div>';
   });
-  h += linha(GOLD, "NF sem CT-e — mas nenhum CT-e desse dia foi importado", "Não dá pra dizer se o CT-e existe: falta importar os XML daquele dia. Importe na etapa 3 e estas linhas se resolvem sozinhas.", r.semCteSemImport, function (x) {
+  h += linha(GOLD, "NF sem CT-e — falta o que comparar", "Não dá pra dizer se o CT-e existe: ou os XML daquele dia não foram importados, ou o espelho foi lido sem a data (reanexe o PDF). Resolvido isso, estas linhas se acertam sozinhas.", r.semCteSemImport, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "sem destinatário") + (x.cidade ? ' · ' + esc(x.cidade) : "") + dataNf(x) + '</div>';
   });
   var btnCte = function (x) {
@@ -13741,6 +13749,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- DATA DE ANEXO NAO E DATA DE NOTA (v321): apareceram notas antigas rotuladas "NF de 29/08/2026", que era so o dia em que o PDF foi anexado. Causa: o dia da NF caia na data da CARGA quando o espelho nao tinha data lida, e a carga criada pela etapa 5 nascia com a data de hoje. Agora o dia vem SO da data de emissao do proprio espelho; carga criada pelo espelho sem data nasce sem data; e nota cujo espelho foi lido sem data nao e classificada como grave -- aparece na secao dourada com o aviso "data do espelho nao lida, reanexe o PDF".
 - "SEM CT-e" SEPARADO EM DOIS (v320): a lista vermelha "NF no espelho e sem CT-e emitido" juntava duas coisas muito diferentes. Se NENHUM CT-e daquele dia foi importado, o app nao tem como saber se o CT-e foi emitido -- isso e pendencia de IMPORTACAO, nao carga sem documento, e agora vai pra uma secao dourada separada ("NF sem CT-e - mas nenhum CT-e desse dia foi importado"), que nao conta como divergencia grave. Vermelho ficou so para o caso real: o dia JA tem CT-e importado e mesmo assim a nota nao esta em nenhum deles. Alem disso, toda linha da etapa 5 passou a mostrar a DATA DA NF (vem da data de emissao do espelho, ja que a chave da NF-e so carrega mes e ano) e a placa que o espelho informou -- era o que faltava pra saber se o CT-e daquele dia ja foi tirado.
 - PLACA DO CT-e VEM DO MDF-e (v319): o CT-e 3.00 emitido pelo SimplesCTe sai SEM a tag de placa (conferido nos CT-e 26 e 27 de 12/08/2026). Quem sabe qual caminhao levou e o MDF-e, que lista as chaves dos CT-e. Agora, quando o CT-e nao traz placa, o app busca no MDF-e antes de desistir -- sem isso a linha da divergencia aparecia sem viagem e o botao "ver CT-e" abria um grupo "sem placa".
 - DA DIVERGENCIA DIRETO PRO DOCUMENTO (v318): cada linha das divergencias da etapa 5 passou a mostrar a VIAGEM (placa e data) e a ter o botao "ver CT-e", que abre a etapa 3 (Fiscal) ja com aquele grupo de viagem expandido e rola a tela ate ele. Antes a linha dizia so NF, cliente e numero do CT-e, e pra olhar o documento era preciso trocar de etapa e procurar a viagem na mao. A planilha exportada tambem passou a trazer a placa e a data na coluna de observacao.
