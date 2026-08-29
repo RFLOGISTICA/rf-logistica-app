@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v306)</title>
+<title>RF Logística — Painel da Frota (v307)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -686,12 +686,14 @@ function rfViagemCaixasHTML(lista) {
   if (aberta && aberta !== "__resumo__" && aberta !== "__todas__") {
     var r = linhas.filter(function (x) { return x.cliente === aberta; })[0];
     if (!r) {
-      html += '<div style="padding:14px 16px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:8px; margin-bottom:14px; font-size:13px; color:#999;"><b style="color:' + GOLD + '; font-size:16px;">' + esc(aberta) + '</b><div style="margin-top:6px;">Nenhuma viagem desse cliente em ' + esc(mesLabel(state.mesAtivo)) + ' com os filtros atuais.</div></div>';
+      html += '<div style="padding:14px 16px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:8px; margin-bottom:14px; font-size:13px; color:#999;"><b style="color:' + GOLD + '; font-size:16px;">' + esc(aberta) + '</b><div style="margin-top:6px;">Nenhuma viagem desse cliente em ' + esc(mesLabel(state.mesAtivo)) + ' com os filtros atuais.</div>'
+        + '<div style="margin-top:10px;"><button class="btn-gold" style="font-size:11px;" onclick="adicionarViagem(&#39;' + esc(esq(aberta)) + '&#39;)">+ Adicionar viagem</button></div></div>';
     } else {
       var corM = rfViagemCorMargem(r.margem);
       html += '<div style="padding:14px 16px; background:#0E0E0E; border:1px solid ' + GOLD + '; border-radius:8px; margin-bottom:14px;">'
         + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><span style="font-size:18px; color:' + GOLD + '; font-weight:700;">' + esc(r.cliente) + ' <span style="font-size:12px; color:#888; font-weight:400;">· ' + r.qtd + ' viagem(ns)</span></span>'
-        + '<button class="btn-outline" style="font-size:11px;" onclick="rfViagemCaixaAbrir(&#39;' + esc(esq(r.cliente)) + '&#39;)">▲ fechar</button></div>'
+        + '<div style="display:flex; gap:8px;"><button class="btn-gold" style="font-size:11px;" onclick="adicionarViagem(&#39;' + esc(esq(r.cliente)) + '&#39;)">+ Adicionar viagem</button>'
+        + '<button class="btn-outline" style="font-size:11px;" onclick="rfViagemCaixaAbrir(&#39;' + esc(esq(r.cliente)) + '&#39;)">▲ fechar</button></div></div>'
         + '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:12px;">'
         + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Faturado</div><div style="font-size:19px;font-weight:800;color:#fff;">' + fmtR(r.receita) + '</div></div>'
         + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Margem</div><div style="font-size:19px;font-weight:800;color:' + corM + ';">' + r.margem.toFixed(1) + '% <span style="font-size:12px;">(' + fmtR(r.sobra) + ')</span></div></div>'
@@ -1350,10 +1352,15 @@ function lancarComoViagem() {
   alert("Viagem lançada! Frete de " + fmtR(r.frete) + " adicionado na lista abaixo. As despesas foram calculadas pelas fórmulas do painel.");
 }
 
-function adicionarViagem() {
+// v307: a viagem nova nasce dentro da caixa do cliente de onde foi criada.
+// Sem isso (v306) o botao do topo criava uma viagem sem cliente, que caia na
+// caixa "(sem cliente)" -- e quem clicou nao sabia pra onde ela tinha ido.
+function adicionarViagem(cliente) {
   const primeiraPlaca = state.veiculos[0] ? state.veiculos[0].placa : "";
+  const cli = (cliente && (state.clientes || []).indexOf(cliente) > -1) ? cliente : "";
+  state._viagemCaixa = cli || "(sem cliente)";   // abre a caixa onde ela acabou de cair
   state.viagens.push({
-    id: uid(), placa: primeiraPlaca, cliente: "", data: dataPadraoMes(), criadoEm: Date.now(),
+    id: uid(), placa: primeiraPlaca, cliente: cli, data: dataPadraoMes(), criadoEm: Date.now(),
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
@@ -12450,7 +12457,7 @@ function render() {
       ${state.aba === "almox" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarItemAlmox()">+ Item de estoque</button><button class="btn-outline" onclick="exportarAlmoxExcel()">⬇ Exportar Excel</button>` : ""}
       ${state.aba === "operacao" ? `<button class="btn-outline" style="margin-left:auto;" onclick="exportarOperacaoExcel()">⬇ Exportar Excel</button>` : ""}
       ${state.aba === "financeiro" ? `<button class="btn-outline" style="margin-left:auto;" onclick="exportarFinanceiroExcel()">⬇ Exportar Excel</button>` : ""}
-      ${state.aba === "viagem" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarViagem()">+ Adicionar viagem</button><button class="btn-outline" onclick="exportarViagensExcel()">⬇ Exportar Excel</button>` : ""}
+      ${state.aba === "viagem" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarViagem()" title="Cria uma viagem sem cliente — ela abre na caixa (sem cliente). Pra já nascer no cliente certo, use o botão dentro da caixa dele.">+ Adicionar viagem (sem cliente)</button><button class="btn-outline" onclick="exportarViagensExcel()">⬇ Exportar Excel</button>` : ""}
       ${state.aba === "dividas" ? `<button class="btn-gold" style="margin-left:auto;" onclick="adicionarDivida()">+ Adicionar dívida</button><button class="btn-outline" onclick="exportarDividasExcel()">⬇ Exportar Excel</button>` : ""}
     </div>
 
@@ -12596,7 +12603,9 @@ function gerarContextoAssistente() {
       + "e o percentual dele no faturamento do mes -- isso e de proposito, pra tela poder ser projetada numa reuniao sem expor valor de cliente nenhum. "
       + "Ao tocar na caixa ela abre e mostra faturado, MARGEM (%, e em reais), pago, a receber e despesas daquele cliente, e a tabela de viagens dele aparece logo abaixo. "
       + "Existe ainda o botao 'Ver todas as viagens do mes' pra quem quiser a lista corrida de antes. A margem por cliente e a soma da mesma conta de sempre (calcularViagem), nao e formula nova. "
-      + "Se perguntarem onde estao os totais do mes, a resposta e: na caixa Resumo geral, no topo da aba Viagens.\n"
+      + "Se perguntarem onde estao os totais do mes, a resposta e: na caixa Resumo geral, no topo da aba Viagens. "
+      + "COMO LANCAR VIAGEM (v307): o botao '+ Adicionar viagem' fica DENTRO da caixa de cada cliente -- a viagem nasce ja com aquele cliente e a caixa dele abre sozinha, entao da pra ver onde ela caiu. "
+      + "O botao do topo da tela cria uma viagem SEM cliente, que aparece na caixa '(sem cliente)'; essa caixa tambem abre sozinha depois de criar. Se a pessoa disser que lancou uma viagem e nao sabe onde ela foi parar, mande ela olhar a caixa '(sem cliente)'.\n"
       + "SITUACAO POR CLIENTE EM " + mesLabel(state.mesAtivo) + ":\n" + (det || "- nenhuma viagem lancada neste mes");
   })();
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
