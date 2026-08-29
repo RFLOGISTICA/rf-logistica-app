@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v317)</title>
+<title>RF Logística — Painel da Frota (v318)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5509,7 +5509,7 @@ function rfNfConfExportar() {
                 ["Extraído em " + new Date().toLocaleString("pt-BR") + " — o espelho da Suzano é o gabarito"], [],
                 ["Situação", "NF", "Cliente / destinatário", "Cidade", "CT-e", "Valor espelho (R$)", "Valor CT-e (R$)", "Observação"]];
   r.semCte.forEach(function (x) { linhas.push(["SEM CT-e EMITIDO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Nota no espelho da Suzano sem CT-e — carga sem documento ou CT-e não emitido"]); });
-  r.foraDoEspelho.forEach(function (x) { linhas.push(["CT-e FORA DO ESPELHO", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e emitido com nota que não está em espelho nenhum"]); });
+  r.foraDoEspelho.forEach(function (x) { linhas.push(["CT-e FORA DO ESPELHO", x.nf, x.cliente, "", x.numeroCte, "", "", "Viagem " + [x.placa, x.dia].filter(function (y) { return y; }).join(" ") + " — CT-e emitido com nota que não está em espelho nenhum"]); });
   r.valorDif.forEach(function (x) { linhas.push(["VALOR DIVERGENTE", x.nf, x.cliente, "", x.numeroCte, x.espelho, x.cte, "Diferença de faturamento entre o espelho e o CT-e"]); });
   r.semCanhoto.forEach(function (x) { linhas.push(["SEM CANHOTO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Tem CT-e, falta o comprovante assinado"]); });
   (r.semEspelhoNoDia || []).forEach(function (x) { linhas.push(["SEM ESPELHO NO DIA (aviso)", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e de " + (x.dia || "") + " — espelho daquele dia ainda não foi anexado"]); });
@@ -5613,7 +5613,10 @@ function rfNfConferencia() {
       // valor do frete: o espelho ja diz quanto e por nota
       if (x.valorFrete > 0 && Number(cte.valor) > 0) {
         var dif = Math.abs(Number(cte.valor) - x.valorFrete);
-        if (dif >= 0.02) r.valorDif.push({ nf: x.nf, cliente: x.cliente, espelho: x.valorFrete, cte: Number(cte.valor), numeroCte: cte.numero });
+        if (dif >= 0.02) {
+          var vgv = rfNfViagemDoCte(cte) || {};
+          r.valorDif.push({ nf: x.nf, cliente: x.cliente, espelho: x.valorFrete, cte: Number(cte.valor), numeroCte: cte.numero, placa: vgv.placa || "", dia: vgv.data || "", chaveGrupo: vgv.chaveGrupo || "" });
+        }
       }
       // placa: aviso, nunca regra
       var v = rfNfViagemDaNota(x.chave, x.nf);
@@ -5640,8 +5643,9 @@ function rfNfConferencia() {
       (d.nfes || []).forEach(function (ch) {
         var n = String(parseInt(String(ch).slice(25, 34), 10));
         if (noEspelho[ch] || noEspelho["n" + n]) return;
-        if (!diasComEspelho[dia]) { r.semEspelhoNoDia.push({ nf: n, cliente: d.cliente || "", numeroCte: d.numero, dia: dia }); return; }
-        r.foraDoEspelho.push({ nf: n, chave: ch, cliente: d.cliente || "", numeroCte: d.numero, dia: dia });
+        var vg = rfNfViagemDoCte(d) || {};
+        if (!diasComEspelho[dia]) { r.semEspelhoNoDia.push({ nf: n, cliente: d.cliente || "", numeroCte: d.numero, dia: dia, placa: vg.placa || "", chaveGrupo: vg.chaveGrupo || "" }); return; }
+        r.foraDoEspelho.push({ nf: n, chave: ch, cliente: d.cliente || "", numeroCte: d.numero, dia: dia, placa: vg.placa || "", chaveGrupo: vg.chaveGrupo || "" });
       });
     });
   } catch (e) { }
@@ -5713,6 +5717,33 @@ function rfNfAnexarEspelhos(input) {
   passo(0);
 }
 
+/* v318: da divergencia direto pro documento.
+   A lista dizia "NF 195754 · MILLA · CT-e 154" e parava ai -- pra ver o CT-e era
+   preciso trocar de etapa e caçar a viagem na mao. Agora cada linha mostra a
+   VIAGEM (placa e data) e tem o botao que abre a etapa 3 ja com aquele grupo
+   expandido. */
+function rfNfIrParaCte(chaveGrupo) {
+  state._szEtapa = "fiscal";
+  state._fiscalAberto = chaveGrupo || "";
+  render();
+  setTimeout(function () {
+    if (typeof document === "undefined") return;
+    var el = document.getElementById("rf-fiscal-topo");
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 60);
+}
+
+// Placa e data da viagem de um CT-e, pelo proprio documento.
+function rfNfViagemDoCte(doc) {
+  if (!doc) return null;
+  var d = null;
+  try { d = doc.tipo === "cte" ? rfFiscalDadosDoCte(doc) : null; } catch (e) { }
+  var placa = doc.placa || (d ? d.placa : "") || "";
+  var data = String(doc.data || "").slice(0, 10);
+  if (!placa && !data) return null;
+  return { placa: placa, data: data, chaveGrupo: (placa || "sem placa") + "|" + data };
+}
+
 function rfNfConfHTML() {
   var r = rfNfConferencia();
   var linha = function (cor, titulo, ajuda, itens, fmt) {
@@ -5762,14 +5793,22 @@ function rfNfConfHTML() {
   h += linha("#C0392B", "NF no espelho e sem CT-e emitido", "Carga que saiu sem documento, ou CT-e que faltou emitir. É o mais grave da lista.", r.semCte, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "sem destinatário") + (x.cidade ? ' · ' + esc(x.cidade) : "") + '</div>';
   });
+  var btnCte = function (x) {
+    if (!x.chaveGrupo) return "";
+    return ' <button class="btn-outline" style="font-size:10px;padding:1px 6px;" onclick="rfNfIrParaCte(&#39;' + esc(x.chaveGrupo) + '&#39;)" title="Abre a etapa 3 já com essa viagem expandida">🚚 ver CT-e</button>';
+  };
+  var viagemTxt = function (x) {
+    var t = [x.placa, x.dia].filter(function (y) { return y; }).join(" · ");
+    return t ? '<span style="color:#888;"> — ' + esc(t) + '</span>' : "";
+  };
   h += linha("#C0392B", "CT-e emitido com NF que não está em espelho nenhum", "Nota trocada ou digitada errada na emissão — ou o espelho dessa viagem ainda não foi lido.", r.foraDoEspelho, function (x) {
-    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + '</div>';
+    return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + viagemTxt(x) + btnCte(x) + '</div>';
   });
   h += linha("#777", "CT-e de dia sem espelho importado", "Não é erro: é CT-e de viagem cujo espelho ainda não foi anexado — não há contra o que conferir. Anexe o espelho daquele dia e eles saem daqui.", r.semEspelhoNoDia, function (x) {
-    return '<div style="font-size:12px;color:#bbb;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + (x.dia ? ' · ' + esc(x.dia) : "") + '</div>';
+    return '<div style="font-size:12px;color:#bbb;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + viagemTxt(x) + btnCte(x) + '</div>';
   });
   h += linha(GOLD, "Valor do frete diferente do espelho", "O espelho já diz quanto vale cada nota. Diferença aqui é diferença de faturamento.", r.valorDif, function (x) {
-    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · CT-e ' + esc(x.numeroCte || "") + ' — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + '</div>';
+    return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · CT-e ' + esc(x.numeroCte || "") + ' — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + viagemTxt(x) + btnCte(x) + '</div>';
   });
   h += linha(GOLD, "NF do espelho ainda sem canhoto", "Conferido contra o espelho, não contra o CT-e.", r.semCanhoto, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + '</div>';
@@ -11097,6 +11136,7 @@ function rfFiscalAbrir(chaveGrupo) {
   render();
 }
 function rfFiscalBlocoHTML() {
+  var _ancora = '<div id="rf-fiscal-topo"></div>';   // v318: alvo do "ver CT-e" vindo da etapa 5
   var docs = rfFiscais();
   // v289: notas de CT-e que ainda não têm parada nenhuma -- é o que trava o
   // canhoto das viagens antigas.
@@ -11212,7 +11252,7 @@ function rfFiscalBlocoHTML() {
         + esc(g.ctes.map(function (c) { return "CT-e " + c.numero + " " + (c.cliente || ""); }).join(" · ").slice(0, 220)) + '</div>'
       + '</div>';
   }).join("");
-  return '<div style="background:#0E0E0E;border:1px solid #262626;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
+  return _ancora + '<div style="background:#0E0E0E;border:1px solid #262626;border-radius:12px;padding:14px 16px;margin-bottom:14px;">'
     + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">📄 CT-e, MDF-e E CIOT</div>'
     + '<div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.5;">'
       + 'Anexe os XML (ou o ZIP inteiro do emissor). O app lê e amarra a cadeia: o CT-e traz a chave de cada NF-e que transporta, '
@@ -13669,6 +13709,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- DA DIVERGENCIA DIRETO PRO DOCUMENTO (v318): cada linha das divergencias da etapa 5 passou a mostrar a VIAGEM (placa e data) e a ter o botao "ver CT-e", que abre a etapa 3 (Fiscal) ja com aquele grupo de viagem expandido e rola a tela ate ele. Antes a linha dizia so NF, cliente e numero do CT-e, e pra olhar o documento era preciso trocar de etapa e procurar a viagem na mao. A planilha exportada tambem passou a trazer a placa e a data na coluna de observacao.
 - LER A DANFE TAMBEM (v317): antes o app so sabia ler o ESPELHO DE EMISSAO; anexar o PDF da propria NF-e (DANFE) nao lia nada, porque o parser procurava "Emissao Conhecimento" e nao achava. Agora o tipo de documento e reconhecido sozinho e cada um vai pro seu leitor. Da DANFE saem chave, numero da NF, destinatario, cidade, volumes, peso e valor da mercadoria; o que ela NAO traz e o valor do FRETE, que so existe no espelho -- por isso nota que entrou por DANFE nunca aparece em "valor diferente do espelho", nao ha o que comparar. Um PDF com varias DANFEs e separado por nota. Se a mesma nota entrar pelos dois caminhos, a DANFE completa o que faltava mas NUNCA sobrescreve o frete lido do espelho. A leitura se apoia na tarja de recebimento do topo e na chave de 44 digitos (que na DANFE vem em grupos de quatro), nao em posicao de coluna.
 - BUG DE LEITURA DO ESPELHO CORRIGIDO (v316), achado com o espelho 1444415 (4 notas em 3 paginas): o app cortava o espelho por PAGINA, mas uma pagina pode ter mais de um conhecimento e um conhecimento pode atravessar a virada de pagina. Deu dois estragos: a NF 195754 foi PERDIDA (era a segunda nota da pagina) e a NF 195755 ficou com o frete de R$ 514,48, que era do conhecimento seguinte -- por isso a etapa 5 acusou "valor diferente do espelho" num CT-e que estava certo (o 153, R$ 335,92). Agora o corte e por "Emissao Conhecimento", cada bloco com o seu frete e a sua NF, e o cabecalho do documento (placa, motorista, data) e colado em cada bloco. Alem disso, reanexar o MESMO espelho passou a CORRIGIR o que ja estava lido (valor do frete, cliente, cidade e data) em vez de so pular como repetido; volumes nao sao tocados, porque pode haver etiqueta ja bipada. Quem leu espelho antes da v316 deve reanexar o PDF pra corrigir.
 - ALARME FALSO CORRIGIDO (v315): ate a v314 a etapa 5 comparava TODOS os CT-e ja importados contra os poucos espelhos lidos, e mostrava "114 CT-e emitido com NF que nao esta em espelho nenhum" numa operacao sem erro nenhum -- CT-e de viagem cujo espelho nunca foi anexado nao tem contra o que ser conferido. Agora o espelho guarda a DATA DE EMISSAO dele e a cobranca so vale para CT-e do DIA que tem espelho lido. CT-e de dia sem espelho vai para uma secao cinza chamada "CT-e de dia sem espelho importado", que e aviso e nao divergencia, nao conta na situacao da etapa e some assim que o espelho daquele dia e anexado. A tela mostra tambem quantos DIAS ja tem espelho.
