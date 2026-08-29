@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v305)</title>
+<title>RF Logística — Painel da Frota (v306)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -579,6 +579,136 @@ function toggleSecaoViagem(nome) {
   if (!state._secoesViagem) state._secoesViagem = {};
   state._secoesViagem[nome] = !state._secoesViagem[nome];
   render();
+}
+
+// v306: aba Viagens organizada em CAIXAS POR CLIENTE.
+// A caixa fechada mostra so o nome do cliente e o percentual dele no faturamento
+// do mes -- de proposito, pra tela poder ser projetada numa reuniao sem expor
+// valor de cliente nenhum. Os numeros (faturado, pago, a receber e MARGEM) so
+// aparecem quando alguem abre a caixa, e a tabela de viagens vem logo abaixo.
+function rfViagemCaixaAbrir(nome) {
+  state._viagemCaixa = (state._viagemCaixa === nome) ? null : nome;
+  render();
+}
+
+// Agrega as viagens ja filtradas (mes + placa + cliente + pagamento da tela)
+// por cliente. A margem sai da MESMA conta de sempre, calcularViagem(), somada
+// por cliente -- nao existe formula nova aqui.
+function rfViagemResumoPorCliente(lista) {
+  var mapa = {};
+  (lista || []).forEach(function (v) {
+    var nome = v.cliente || "(sem cliente)";
+    if (!mapa[nome]) mapa[nome] = { cliente: nome, qtd: 0, receita: 0, despesas: 0, pago: 0, aReceber: 0, pagMot: 0 };
+    var r = mapa[nome], val = Number(v.valorViagem) || 0;
+    r.qtd += 1;
+    r.receita += val;
+    r.despesas += calcularViagem(v).totalDesp;
+    r.pagMot += Number(v.vgPagMotorista) || 0;
+    if (v.pago) r.pago += val; else r.aReceber += val;
+  });
+  return Object.keys(mapa).map(function (k) {
+    var r = mapa[k];
+    r.sobra = r.receita - r.despesas;
+    r.margem = r.receita > 0 ? (r.sobra / r.receita * 100) : 0;
+    return r;
+  }).sort(function (a, b) { return b.receita - a.receita; });
+}
+
+function rfViagemCorMargem(pct) { return pct >= 20 ? "#2E7D32" : pct > 0 ? GOLD : "#C0392B"; }
+
+// Monta o bloco inteiro: caixa do Resumo geral + a grade de caixas por cliente
+// + o painel do cliente aberto. Substitui as linhas de totais que ficavam soltas
+// no topo da aba ate a v305.
+function rfViagemCaixasHTML(lista) {
+  var aberta = state._viagemCaixa || null;
+  var linhas = rfViagemResumoPorCliente(lista);
+  var receita = 0, despesas = 0, pago = 0, aReceber = 0, pagMot = 0;
+  linhas.forEach(function (r) { receita += r.receita; despesas += r.despesas; pago += r.pago; aReceber += r.aReceber; pagMot += r.pagMot; });
+  var sobra = receita - despesas;
+  var pctDesp = receita > 0 ? (despesas / receita * 100) : 0;
+  var pctSobra = receita > 0 ? (sobra / receita * 100) : 0;
+  var qtdPend = (lista || []).filter(function (v) { return !v.pago; }).length;
+  var qtdViagens = (lista || []).length;
+  var esq = function (t) { return String(t).replace(/'/g, "\\'"); };
+
+  // ---- caixa do resumo geral (fechada por padrao, igual as dos clientes)
+  var resumoAberto = aberta === "__resumo__";
+  var html = '<div onclick="rfViagemCaixaAbrir(&#39;__resumo__&#39;)" style="cursor:pointer; background:#0E0E0E; border:1px solid ' + GOLD + '; border-radius:10px; padding:13px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">'
+    + '<span style="font-size:17px; color:' + GOLD + '; font-weight:700;">Resumo geral <span style="font-size:12px; color:#888; font-weight:400;">· ' + qtdViagens + ' viagem(ns)</span></span>'
+    + '<span style="color:#888; font-size:13px;">' + (resumoAberto ? "▲ fechar" : "▼ abrir") + '</span>'
+    + '</div>';
+
+  if (resumoAberto) {
+    html += '<div style="margin-bottom:14px; padding:14px 16px; background:#161616; border:1px solid #2A2A2A; border-radius:8px;">'
+      + '<div style="display:flex; gap:24px; font-size:13px; color:#bbb; flex-wrap:wrap; margin-bottom:10px;">'
+      + '<span>Total recebido: <b style="color:#2E7D32;">' + fmtR(receita) + '</b></span>'
+      + '<span>Total despesas: <b style="color:#C0392B;">' + fmtR(despesas) + '</b> <span style="color:#777;font-size:11px;">(' + pctDesp.toFixed(1) + '% do recebido)</span></span>'
+      + '<span>Sobra total: <b style="color:' + (sobra >= 0 ? "#2E7D32" : "#C0392B") + ';">' + fmtR(sobra) + '</b> <span style="color:' + (sobra >= 0 ? "#2E7D32" : "#C0392B") + ';font-size:11px;font-weight:700;">(' + pctSobra.toFixed(1) + '% de margem)</span></span>'
+      + '<span>Total Pag. Mot.: <b style="color:' + GOLD + ';">' + fmtR(pagMot) + '</b></span>'
+      + '</div>'
+      + '<div style="display:flex; gap:24px; font-size:13px; color:#bbb; flex-wrap:wrap;">'
+      + '<span>✅ Já pago: <b style="color:#2E7D32;">' + fmtR(pago) + '</b></span>'
+      + '<span>💰 Pendente de pagamento: <b style="color:#C0392B;">' + fmtR(aReceber) + '</b>' + (qtdPend > 0 ? ' <span style="color:#888;">(' + qtdPend + ' viagem' + (qtdPend > 1 ? "ns" : "") + ')</span>' : "") + '</span>'
+      + '</div>'
+      + (podeVerAba("motoristas") ? '<div style="margin-top:10px; font-size:12px; color:#999;">💰 O total de Pag. Mot. é a mesma soma que aparece na aba <b style="color:' + GOLD + ';">Motoristas</b> — os dois lugares leem da mesma tabela de viagens.</div>' : "")
+      + '</div>';
+  }
+
+  // ---- grade de caixas por cliente
+  var comViagem = {};
+  linhas.forEach(function (r) { comViagem[r.cliente] = true; });
+  var semViagem = (state.clientes || []).filter(function (c) { return !comViagem[c]; });
+
+  html += '<div style="font-size:11px; color:#888; margin-bottom:8px;">Por cliente — toque na caixa para abrir os valores e as viagens. Fechada, ela mostra só o nome e a fatia do mês.</div>';
+  html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(190px,1fr)); gap:10px; margin-bottom:16px;">';
+
+  linhas.forEach(function (r) {
+    var aberto = aberta === r.cliente;
+    var cor = r.aReceber > 0 ? GOLD : "#2E7D32";
+    var pctPart = receita > 0 ? (r.receita / receita * 100) : 0;
+    html += '<div onclick="rfViagemCaixaAbrir(&#39;' + esc(esq(r.cliente)) + '&#39;)" title="' + esc(r.cliente) + '" style="cursor:pointer; background:' + (aberto ? "#1C1C1C" : "#141414") + '; border:1px solid ' + (aberto ? GOLD : "#262626") + '; border-left:4px solid ' + cor + '; border-radius:8px; padding:15px 14px; min-height:92px; display:flex; flex-direction:column; justify-content:space-between;">'
+      + '<div style="font-size:20px; color:#fff; font-weight:700; line-height:1.15; word-break:break-word;">' + esc(r.cliente) + '</div>'
+      + '<div style="font-size:11px; color:#888; margin-top:10px;">' + pctPart.toFixed(0) + '%</div>'
+      + '</div>';
+  });
+
+  semViagem.forEach(function (c) {
+    var aberto = aberta === c;
+    html += '<div onclick="rfViagemCaixaAbrir(&#39;' + esc(esq(c)) + '&#39;)" title="' + esc(c) + ' — sem viagem no mês" style="cursor:pointer; background:#101010; border:1px solid ' + (aberto ? GOLD : "#1E1E1E") + '; border-left:4px solid #555; border-radius:8px; padding:15px 14px; min-height:92px; display:flex; flex-direction:column; justify-content:space-between;">'
+      + '<div style="font-size:20px; color:#8A8A85; font-weight:700; line-height:1.15; word-break:break-word;">' + esc(c) + '</div>'
+      + '<div style="font-size:11px; color:#555; margin-top:10px;">0%</div>'
+      + '</div>';
+  });
+
+  html += '</div>';
+
+  // ---- painel do cliente aberto (valores + margem) e atalho pra ver tudo
+  if (aberta && aberta !== "__resumo__" && aberta !== "__todas__") {
+    var r = linhas.filter(function (x) { return x.cliente === aberta; })[0];
+    if (!r) {
+      html += '<div style="padding:14px 16px; background:#0E0E0E; border:1px solid #2A2A2A; border-radius:8px; margin-bottom:14px; font-size:13px; color:#999;"><b style="color:' + GOLD + '; font-size:16px;">' + esc(aberta) + '</b><div style="margin-top:6px;">Nenhuma viagem desse cliente em ' + esc(mesLabel(state.mesAtivo)) + ' com os filtros atuais.</div></div>';
+    } else {
+      var corM = rfViagemCorMargem(r.margem);
+      html += '<div style="padding:14px 16px; background:#0E0E0E; border:1px solid ' + GOLD + '; border-radius:8px; margin-bottom:14px;">'
+        + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><span style="font-size:18px; color:' + GOLD + '; font-weight:700;">' + esc(r.cliente) + ' <span style="font-size:12px; color:#888; font-weight:400;">· ' + r.qtd + ' viagem(ns)</span></span>'
+        + '<button class="btn-outline" style="font-size:11px;" onclick="rfViagemCaixaAbrir(&#39;' + esc(esq(r.cliente)) + '&#39;)">▲ fechar</button></div>'
+        + '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:12px;">'
+        + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Faturado</div><div style="font-size:19px;font-weight:800;color:#fff;">' + fmtR(r.receita) + '</div></div>'
+        + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Margem</div><div style="font-size:19px;font-weight:800;color:' + corM + ';">' + r.margem.toFixed(1) + '% <span style="font-size:12px;">(' + fmtR(r.sobra) + ')</span></div></div>'
+        + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Pago</div><div style="font-size:19px;font-weight:800;color:#2E7D32;">' + fmtR(r.pago) + '</div></div>'
+        + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">A receber</div><div style="font-size:19px;font-weight:800;color:' + (r.aReceber > 0 ? GOLD : "#666") + ';">' + fmtR(r.aReceber) + '</div></div>'
+        + '<div><div style="font-size:10px;color:#999;text-transform:uppercase;">Despesas</div><div style="font-size:19px;font-weight:800;color:#C0392B;">' + fmtR(r.despesas) + '</div></div>'
+        + '</div></div>';
+    }
+  }
+
+  if (aberta !== "__todas__") {
+    html += '<div style="margin-bottom:16px;"><button class="btn-outline-gray" style="font-size:11px;" onclick="rfViagemCaixaAbrir(&#39;__todas__&#39;)">📋 Ver todas as viagens do mês (lista corrida)</button></div>';
+  } else {
+    html += '<div style="margin-bottom:16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><span style="font-size:12px; color:' + GOLD + ';">Mostrando todas as viagens do mês.</span><button class="btn-outline" style="font-size:11px;" onclick="rfViagemCaixaAbrir(&#39;__todas__&#39;)">✕ fechar a lista</button></div>';
+  }
+
+  return html;
 }
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
@@ -12450,6 +12580,25 @@ function gerarContextoAssistente() {
   // v258: o assistente precisa saber o recorte da planilha de viagens. Ate a
   // v257 o export trazia todos os meses e isso ja gerou divergencia com o que
   // a pessoa via na tela (viagem de junho aparecendo numa conferencia de julho).
+  const blocoCaixasViagens = (function () {
+    var lista = (state.viagens || []).filter(function (v) { return v.data && v.data.slice(0, 7) === state.mesAtivo; });
+    var linhas = rfViagemResumoPorCliente(lista);
+    var receita = 0;
+    linhas.forEach(function (r) { receita += r.receita; });
+    var det = linhas.map(function (r) {
+      var pct = receita > 0 ? (r.receita / receita * 100) : 0;
+      return "- " + r.cliente + ": " + r.qtd + " viagem(ns), faturado " + fmtR(r.receita)
+        + " (" + pct.toFixed(0) + "% do mes), pago " + fmtR(r.pago) + ", a receber " + fmtR(r.aReceber)
+        + ", despesas " + fmtR(r.despesas) + ", sobra " + fmtR(r.sobra) + " (margem " + r.margem.toFixed(1) + "%)";
+    }).join("\n");
+    return "ABA VIAGENS ORGANIZADA EM CAIXAS POR CLIENTE (v306): a aba Viagens nao e mais uma lista corrida. "
+      + "Ela abre com uma CAIXA POR CLIENTE mais uma caixa de RESUMO GERAL, todas FECHADAS. A caixa fechada mostra so o nome do cliente "
+      + "e o percentual dele no faturamento do mes -- isso e de proposito, pra tela poder ser projetada numa reuniao sem expor valor de cliente nenhum. "
+      + "Ao tocar na caixa ela abre e mostra faturado, MARGEM (%, e em reais), pago, a receber e despesas daquele cliente, e a tabela de viagens dele aparece logo abaixo. "
+      + "Existe ainda o botao 'Ver todas as viagens do mes' pra quem quiser a lista corrida de antes. A margem por cliente e a soma da mesma conta de sempre (calcularViagem), nao e formula nova. "
+      + "Se perguntarem onde estao os totais do mes, a resposta e: na caixa Resumo geral, no topo da aba Viagens.\n"
+      + "SITUACAO POR CLIENTE EM " + mesLabel(state.mesAtivo) + ":\n" + (det || "- nenhuma viagem lancada neste mes");
+  })();
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   const blocoSync = _syncLigado
@@ -12916,6 +13065,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 
   return `${blocoSync}
 ${blocoTela}
+${blocoCaixasViagens}
+
 ${blocoExportViagens}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
@@ -14357,6 +14508,12 @@ function renderTabela() {
     const totalRecebidoPago = viagensFiltro.reduce((s, v) => s + (v.pago ? (Number(v.valorViagem) || 0) : 0), 0);
     const totalRecebidoPendente = viagensFiltro.reduce((s, v) => s + (!v.pago ? (Number(v.valorViagem) || 0) : 0), 0);
     const qtdPendentes = viagensFiltro.filter((v) => !v.pago).length;
+    // v306: a tabela de viagens so aparece com uma caixa de cliente aberta
+    // (ou com "ver todas"). Fechado, a aba mostra so as caixas.
+    const caixaAberta = state._viagemCaixa || null;
+    const viagensDaCaixa = !caixaAberta ? []
+      : (caixaAberta === "__todas__" ? viagensFiltro
+        : viagensFiltro.filter((v) => (v.cliente || "(sem cliente)") === caixaAberta));
 
     wrap.innerHTML = `
       <div style="margin-bottom:10px; font-size:12px; color:#999;">
@@ -14550,28 +14707,15 @@ function renderTabela() {
         </div>
       </div>`;
       })()}
-      <div style="display:flex; gap:24px; margin-bottom:14px; font-size:13px; color:#bbb; flex-wrap:wrap;">
-        <span>Total recebido: <b style="color:#2E7D32;">${fmtR(totalGeralReceita)}</b></span>
-        <span>Total despesas: <b style="color:#C0392B;">${fmtR(totalGeralDespesas)}</b> <span style="color:#777;font-size:11px;">(${pctDespesas.toFixed(1)}% do recebido)</span></span>
-        <span>Sobra total: <b style="color:${totalGeralSobra >= 0 ? "#2E7D32" : "#C0392B"};">${fmtR(totalGeralSobra)}</b> <span style="color:${totalGeralSobra >= 0 ? "#2E7D32" : "#C0392B"};font-size:11px;font-weight:700;">(${pctSobra.toFixed(1)}% de margem)</span></span>
-        <span>Total Pag. Mot.: <b style="color:${GOLD};">${fmtR(totalGeralPagMot)}</b></span>
-      </div>
-      <div style="display:flex; gap:24px; margin-bottom:18px; font-size:13px; color:#bbb; flex-wrap:wrap; padding:10px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
-        <span>✅ Já pago: <b style="color:#2E7D32;">${fmtR(totalRecebidoPago)}</b></span>
-        <span>💰 Pendente de pagamento: <b style="color:#C0392B;">${fmtR(totalRecebidoPendente)}</b>${qtdPendentes > 0 ? ` <span style="color:#888;">(${qtdPendentes} viagem${qtdPendentes > 1 ? "ns" : ""})</span>` : ""}</span>
-      </div>
+      ${rfViagemCaixasHTML(viagensFiltro)}
 
-      ${podeVerAba("motoristas") ? `<div style="background:#0E0E0E; border:1px solid #262626; border-radius:14px; padding:10px 16px; margin-bottom:18px; font-size:12px; color:#999;">
-        💰 O total de Pag. Mot. acima é a mesma soma que aparece na aba <b style="color:${GOLD};">Motoristas</b> — os dois lugares leem direto da mesma tabela de viagens, então qualquer edição aqui já reflete lá na hora. O saldo/vale de cada motorista também fica na aba Motoristas.
-      </div>` : ""}
-
-      <table style="min-width:2000px;"><thead><tr>
+      ${!caixaAberta ? "" : `<table style="min-width:2000px;"><thead><tr>
         <th>Placa</th><th>Motorista</th><th>Cliente</th><th>Data saída</th><th>Data fim</th><th>Valor Viagem</th><th>💰 Pago?</th><th>KM Saída</th><th>KM Chegada</th><th>KM</th><th>m³</th><th>Dias</th><th>Combustível (abastecimentos)</th>
         <th>Alim. Mot. (auto)</th><th>Tem Ajud.?</th><th>Alim. Ajud. (auto)</th><th>Pag. Mot.</th><th>Pag. Ajud.</th>
         <th>ADM (2,5%)</th><th>Manut. (3%)</th><th>Imposto (${impostoPctNum()}%)</th><th>Pneus (R$0,12/km)</th><th>Outros (despesas extras)</th>
         <th>Total Desp.</th><th>Sobra</th><th>🔒 Trava</th>
       </tr></thead><tbody>
-        ${viagensFiltro.map((v) => {
+        ${viagensDaCaixa.map((v) => {
           const c = calcularViagem(v);
           const itensOutros = v.outrosItens || [];
           const itensComb = v.combustivelItens || [];
@@ -14765,7 +14909,7 @@ function renderTabela() {
             </td>
           </tr>`;
         }).join("")}
-      </tbody></table>
+      </tbody></table>`}
 
       <div style="margin-top:24px;">
         <div style="font-size:13px; color:${GOLD}; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">
