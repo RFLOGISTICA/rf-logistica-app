@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v315)</title>
+<title>RF Logística — Painel da Frota (v317)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4075,9 +4075,110 @@ function szAplicarEspelho(cargaId, d, origem, silencioso) {
    Quando não acha cabeçalho nenhum mas existe mais de uma chave, cai na divisão
    por chave, que é melhor que devolver tudo grudado.
    Devolve sempre pelo menos um bloco. */
+/* ===================== v317: LER A DANFE (a NF-e em si) ======================
+   Ate a v316 o app so sabia ler o ESPELHO DE EMISSAO. A Suzano tambem manda o
+   PDF da propria NF-e (DANFE), e anexar um desses nao lia nada -- o parser
+   procurava "Emissao Conhecimento" e nao achava.
+   A DANFE e um documento diferente e melhor em uma coisa: e a nota. Ela traz
+   chave, numero, destinatario, cidade, volumes, peso e valor da mercadoria.
+   O que ela NAO traz e o valor do FRETE (esse so existe no espelho), entao a
+   conferencia de valor simplesmente nao roda para nota que entrou por DANFE --
+   nunca acusa divergencia inventada.
+   Onde a leitura se apoia: a TARJA de recebimento no topo, que vem numa linha
+   so ("... EMISSAO: 24/08/2026 VALOR TOTAL: R$ 3.378,79 DESTINATARIO: FULANO -
+   RUA X CENTRO CIDADE-BA"), e a chave de 44 digitos, que na DANFE vem em grupos
+   de quatro separados por espaco. Nada de posicao de coluna. */
+function szEhDanfe(txt) {
+  var t = String(txt || "");
+  return /DANFE|NOTA\s+FISCAL\s+ELETR/i.test(t) && /RECEBEMOS\s+DE/i.test(t) && !/Emiss[ãa]o\s+Conhecimento/i.test(t);
+}
+
+function szChaveDoTexto(txt) {
+  var t = String(txt || "");
+  var direto = t.match(/\b\d{44}\b/);
+  if (direto) return direto[0];
+  // DANFE: "2926 0816 4042 8701 ..." -- 11 grupos de 4
+  var g = t.match(/(?:\d{4}[\s.]+){10}\d{4}/);
+  return g ? g[0].replace(/\D/g, "") : "";
+}
+
+function szLerDanfeTexto(txt) {
+  txt = String(txt || "");
+  var chave = szChaveDoTexto(txt);
+  var partes = szChavePartes(chave);
+  var num = function (v) { return Number(String(v == null ? "" : v).replace(/\./g, "").replace(",", ".")) || 0; };
+  var pega = function (re) { var m = txt.match(re); return m ? String(m[1]).trim() : ""; };
+  // valor da mercadoria e destinatario saem da tarja do topo, que e uma linha so
+  var tarja = pega(/RECEBEMOS DE[\s\S]{0,400}?DESTINAT[ÁA]RIO\s*:\s*([^\n]+)/i);
+  var valorNota = num(pega(/VALOR\s+TOTAL\s*:\s*R\$\s*([\d.,]+)/i))
+    || num(pega(/V\.\s*TOTAL\s+DA\s+NOTA\s*\n\s*([\d.,]+)/i));
+  var cliente = "", cidade = "";
+  if (tarja) {
+    var m = tarja.match(/^(.*?)\s+-\s+(.*)$/);
+    cliente = (m ? m[1] : tarja).trim();
+    var resto = m ? m[2] : "";
+    var mc = resto.match(/([A-ZÁÂÃÉÊÍÓÔÕÚÇ'\s]+)-([A-Z]{2})\s*$/);
+    cidade = mc ? mc[1].trim() : "";
+  }
+  if (!cliente) cliente = pega(/DESTINAT[ÁA]RIO\s*\/\s*REMETENTE[\s\S]{0,120}?NOME\s*\/\s*RAZ[ÃA]O SOCIAL\s*\n\s*([^\n]+)/i);
+  /* v317.1: a cidade tirada da tarja vinha colada no bairro ("CENTRO ABARE"),
+     porque ali os dois ficam na mesma linha sem separador. O campo MUNICIPIO do
+     quadro do destinatario e limpo: vem sozinho e seguido de "UF". */
+  var cidadeCampo = pega(/MUNIC[ÍI]PIO\s*\n\s*([^\n]+)\s*\n\s*UF\b/i);
+  if (cidadeCampo) cidade = cidadeCampo.trim();
+  if (!cidade) cidade = pega(/MUNIC[ÍI]PIO\s*\n\s*([^\n]+)/i);
+  return {
+    numDoc: "", cFrete: "",
+    nfe: pega(/N[ºo°]\.?\s*([\d.]{9,15})/) || (partes ? String(parseInt(partes.numero, 10)) : ""),
+    chave: chave,
+    cliente: cliente,
+    cnpjCliente: (function () {
+      var todos = (txt.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g) || []).map(function (x) { return x.replace(/\D/g, ""); });
+      var emit = partes ? partes.cnpj : "";
+      var achou = todos.filter(function (c) { return c !== emit && c !== "24916554000100"; })[0];
+      return achou || "";
+    })(),
+    endereco: "", cidade: cidade, produto: "",
+    qtdVolumes: Math.round(num(pega(/QUANTIDADE\s*\n\s*([\d.,]+)/i))),
+    peso: num(pega(/PESO\s+BRUTO\s*\n\s*([\d.,]+)/i)),
+    valorMercadoria: valorNota,
+    valorFrete: 0,           // a DANFE nao diz frete -- so o espelho diz
+    placa: "", motorista: "", cpfMotorista: "",
+    dataEmissao: pega(/DATA\s+DA\s+EMISS[ÃA]O\s*\n\s*([\d\/.]{8,10})/i) || pega(/EMISS[ÃA]O\s*:?\s*\n?\s*(\d{2}\/\d{2}\/\d{4})/i),
+    origemDoc: "danfe",
+  };
+}
+
+function szDividirDanfes(txt) {
+  txt = String(txt || "");
+  var pos = [], re = /RECEBEMOS\s+DE/gi, m;
+  while ((m = re.exec(txt)) !== null) pos.push(m.index);
+  if (pos.length <= 1) return [txt];
+  return pos.map(function (p, i) { return txt.slice(p, i + 1 < pos.length ? pos[i + 1] : txt.length); });
+}
+
 function szDividirEspelhos(txt) {
   txt = String(txt || "");
   if (!txt.trim()) return [];
+  /* v316 -- BUG REAL, achado com o espelho 1444415 (4 notas em 3 paginas):
+     dividir por PAGINA ("Espelho para Emissao") esta errado, porque uma pagina
+     pode conter mais de um conhecimento e um conhecimento pode atravessar a
+     virada de pagina. Aconteceram as duas coisas: a NF 195754 foi PERDIDA (era
+     a segunda nota da pagina 2, e so a primeira era lida) e a NF 195755 saiu
+     com o frete de 514,48, que era do conhecimento seguinte -- por isso a tela
+     acusou "valor diferente do espelho" onde o CT-e estava certo.
+     O corte certo e por "Emissao Conhecimento": cada bloco tem o seu frete e a
+     sua NF, mesmo quando a nota cai na pagina de baixo. O cabecalho do
+     documento (placa, motorista, data, numero) fica antes do primeiro bloco,
+     entao ele e colado na frente de cada um. */
+  var pc = [], rec = /Emiss[ãa]o\s+Conhecimento/gi, mc;
+  while ((mc = rec.exec(txt)) !== null) pc.push(mc.index);
+  if (pc.length >= 1) {
+    var cab = txt.slice(0, pc[0]);
+    return pc.map(function (p, i) {
+      return cab + "\n" + txt.slice(p, i + 1 < pc.length ? pc[i + 1] : txt.length);
+    });
+  }
   var pos = [], re = /Espelho\s+para\s+Emiss[ãa]o/gi, m;
   while ((m = re.exec(txt)) !== null) pos.push(m.index);
   if (pos.length >= 2) {
@@ -4099,6 +4200,8 @@ function szDividirEspelhos(txt) {
 /* Aplica um arquivo inteiro: divide, lê cada bloco e devolve o resumo do que
    entrou, do que já estava e do que foi recusado — sem parar no primeiro erro. */
 function szAplicarArquivo(cargaId, txt, origem) {
+  // v317: DANFE e espelho sao documentos diferentes -- escolhe o leitor certo
+  if (szEhDanfe(txt)) return szAplicarDanfe(cargaId, txt, origem);
   var blocos = szDividirEspelhos(txt);
   var r = { total: blocos.length, entraram: 0, repetidas: 0, recusadas: 0, nfs: [], motivos: [] };
   var c = szCarga(cargaId);
@@ -4107,17 +4210,58 @@ function szAplicarArquivo(cargaId, txt, origem) {
     var d = szLerEspelhoTexto(b);
     if (!d || (!d.chave && !d.nfe)) { r.recusadas++; r.motivos.push("um trecho não parecia um espelho"); return; }
     if (d.chave && !szChaveValida(d.chave)) { r.recusadas++; r.motivos.push("NF " + (d.nfe || "?") + ": chave não passou no dígito verificador"); return; }
-    if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { r.repetidas++; return; }
+    /* v316: reanexar o MESMO espelho agora CORRIGE o que ja estava lido, em vez
+       de so pular. Sem isso, quem leu um espelho com a v314 (que pareava o frete
+       com a nota errada) ficaria preso ao valor errado pra sempre -- reimportar
+       nao adiantava nada. Volumes nao sao tocados: pode haver etiqueta bipada
+       em cima deles. */
+    var jaLido = (c.espelhos || []).filter(function (e) { return e.chave && d.chave && e.chave === d.chave; })[0];
+    if (jaLido) {
+      var mudou = false;
+      if (d.valorFrete && Number(jaLido.valorFrete) !== Number(d.valorFrete)) { jaLido.valorFrete = d.valorFrete; mudou = true; }
+      if (d.cliente && jaLido.cliente !== d.cliente) { jaLido.cliente = d.cliente; mudou = true; }
+      if (d.cidade && jaLido.cidade !== d.cidade) { jaLido.cidade = d.cidade; mudou = true; }
+      if (d.dataEmissao && !jaLido.dataEmissao) { jaLido.dataEmissao = d.dataEmissao; mudou = true; }
+      if (mudou) r.corrigidas = (r.corrigidas || 0) + 1;
+      r.repetidas++;
+      return;
+    }
     if (szAplicarEspelho(cargaId, d, origem, true)) { r.entraram++; r.nfs.push(d.nfe || "?"); }
     else r.recusadas++;
   });
   salvar(); render();
   return r;
 }
+function szAplicarDanfe(cargaId, txt, origem) {
+  var blocos = szDividirDanfes(txt);
+  var r = { total: blocos.length, entraram: 0, repetidas: 0, recusadas: 0, corrigidas: 0, nfs: [], motivos: [] };
+  var c = szCarga(cargaId);
+  if (!c) return r;
+  blocos.forEach(function (b) {
+    var d = szLerDanfeTexto(b);
+    if (!d || !d.chave) { r.recusadas++; r.motivos.push("não achei a chave de acesso nessa nota"); return; }
+    if (!szChaveValida(d.chave)) { r.recusadas++; r.motivos.push("NF " + (d.nfe || "?") + ": chave não passou no dígito verificador"); return; }
+    var ja = (c.espelhos || []).filter(function (e) { return e.chave === d.chave; })[0];
+    if (ja) {
+      var mudou = false;
+      // a DANFE nunca sobrescreve o frete lido do espelho -- ela nao sabe o frete
+      if (d.cliente && ja.cliente !== d.cliente) { ja.cliente = d.cliente; mudou = true; }
+      if (d.cidade && !ja.cidade) { ja.cidade = d.cidade; mudou = true; }
+      if (d.dataEmissao && !ja.dataEmissao) { ja.dataEmissao = d.dataEmissao; mudou = true; }
+      if (mudou) r.corrigidas++;
+      r.repetidas++;
+      return;
+    }
+    if (szAplicarEspelho(cargaId, d, origem || "DANFE", true)) { r.entraram++; r.nfs.push(d.nfe || "?"); }
+    else r.recusadas++;
+  });
+  return r;
+}
+
 function szResumoLote(r, origem) {
   var partes = [];
   if (r.entraram) partes.push("✓ " + r.entraram + " nota(s) lançada(s)");
-  if (r.repetidas) partes.push(r.repetidas + " já estava(m) na carga");
+  if (r.repetidas) partes.push(r.repetidas + " já estava(m) na carga" + (r.corrigidas ? " (" + r.corrigidas + " corrigida(s))" : ""));
   if (r.recusadas) partes.push("⚠ " + r.recusadas + " recusada(s)");
   if (!partes.length) partes.push("nada foi lançado");
   var txt = partes.join(" · ");
@@ -5589,7 +5733,7 @@ function rfNfConfHTML() {
      havia nada em cima. Empty state sem o botao e beco sem saida. */
   var barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
-    + '📎 Anexar espelho da Suzano (PDF)'
+    + '📎 Anexar espelho ou NF-e da Suzano (PDF)'
     + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
     + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez — um por viagem.</span></div>'
@@ -5601,7 +5745,7 @@ function rfNfConfHTML() {
 
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
-    + '📎 Anexar espelho da Suzano (PDF)'
+    + '📎 Anexar espelho ou NF-e da Suzano (PDF)'
     + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="rfNfConfExportar()">⬇ Exportar conferência (Excel)</button>'
@@ -13525,6 +13669,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- LER A DANFE TAMBEM (v317): antes o app so sabia ler o ESPELHO DE EMISSAO; anexar o PDF da propria NF-e (DANFE) nao lia nada, porque o parser procurava "Emissao Conhecimento" e nao achava. Agora o tipo de documento e reconhecido sozinho e cada um vai pro seu leitor. Da DANFE saem chave, numero da NF, destinatario, cidade, volumes, peso e valor da mercadoria; o que ela NAO traz e o valor do FRETE, que so existe no espelho -- por isso nota que entrou por DANFE nunca aparece em "valor diferente do espelho", nao ha o que comparar. Um PDF com varias DANFEs e separado por nota. Se a mesma nota entrar pelos dois caminhos, a DANFE completa o que faltava mas NUNCA sobrescreve o frete lido do espelho. A leitura se apoia na tarja de recebimento do topo e na chave de 44 digitos (que na DANFE vem em grupos de quatro), nao em posicao de coluna.
+- BUG DE LEITURA DO ESPELHO CORRIGIDO (v316), achado com o espelho 1444415 (4 notas em 3 paginas): o app cortava o espelho por PAGINA, mas uma pagina pode ter mais de um conhecimento e um conhecimento pode atravessar a virada de pagina. Deu dois estragos: a NF 195754 foi PERDIDA (era a segunda nota da pagina) e a NF 195755 ficou com o frete de R$ 514,48, que era do conhecimento seguinte -- por isso a etapa 5 acusou "valor diferente do espelho" num CT-e que estava certo (o 153, R$ 335,92). Agora o corte e por "Emissao Conhecimento", cada bloco com o seu frete e a sua NF, e o cabecalho do documento (placa, motorista, data) e colado em cada bloco. Alem disso, reanexar o MESMO espelho passou a CORRIGIR o que ja estava lido (valor do frete, cliente, cidade e data) em vez de so pular como repetido; volumes nao sao tocados, porque pode haver etiqueta ja bipada. Quem leu espelho antes da v316 deve reanexar o PDF pra corrigir.
 - ALARME FALSO CORRIGIDO (v315): ate a v314 a etapa 5 comparava TODOS os CT-e ja importados contra os poucos espelhos lidos, e mostrava "114 CT-e emitido com NF que nao esta em espelho nenhum" numa operacao sem erro nenhum -- CT-e de viagem cujo espelho nunca foi anexado nao tem contra o que ser conferido. Agora o espelho guarda a DATA DE EMISSAO dele e a cobranca so vale para CT-e do DIA que tem espelho lido. CT-e de dia sem espelho vai para uma secao cinza chamada "CT-e de dia sem espelho importado", que e aviso e nao divergencia, nao conta na situacao da etapa e some assim que o espelho daquele dia e anexado. A tela mostra tambem quantos DIAS ja tem espelho.
 - ONDE ANEXAR A NF DA SUZANO (v313): o espelho pode ser anexado em DOIS lugares, e os dois valem. (1) Na etapa 5 "NF da Suzano", no botao "Anexar espelho da Suzano (PDF)", que aceita VARIOS arquivos de uma vez (chega um por viagem) e nao exige carregamento aberto -- se nao existir carregamento pra aquela placa e data, o proprio espelho cria. (2) Na etapa 2 (Conferencia), dentro do carregamento, que e onde a equipe monta a carga. Isso existe porque o espelho chega ANTES da saida: sem espelho nao se averba a carga e o caminhao nao sai. Ate a v312 so havia o caminho da etapa 2, e a etapa 5 cobrava a NF sem ter onde anexar.
 - ARQUIVO ORIGINAL GUARDADO (v312): ate a v311 o app lia o espelho da Suzano e a planilha de roteirizacao e descartava o arquivo -- ficavam so os dados extraidos. Agora o original e guardado no bucket como chegou (PDF, foto ou xlsx) e aparece no bloco "Arquivos originais guardados" na etapa 1, com botao de baixar. O XML de CT-e e MDF-e ja era guardado desde a v296. No estado fica so o CAMINHO do arquivo, nunca o conteudo, pra nao inflar a caixa geral. Se o upload falhar, a LEITURA acontece do mesmo jeito -- guardar o arquivo nunca bloqueia lancar a carga. Arquivos anexados ANTES da v312 nao existem no bucket e nao tem como recuperar; so os novos ficam.
