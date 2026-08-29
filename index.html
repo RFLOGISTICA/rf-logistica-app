@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v310)</title>
+<title>RF Logística — Painel da Frota (v314)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4136,6 +4136,12 @@ function szAnexarEspelho(cargaId, input) {
   var aviso = document.getElementById("szanexo-" + cargaId);
   var diz = function (txt, cor) { if (aviso) { aviso.textContent = txt; aviso.style.color = cor || "#bbb"; } };
   input.value = "";
+  // v312: guarda o original antes de ler. Falhar aqui não impede a leitura.
+  rfArqGuardar(f, "espelhos", cargaId).then(function (meta) {
+    var c = szCarga(cargaId); if (!c) return;
+    c.arquivos = (c.arquivos || []).concat([meta]);
+    salvar();
+  }).catch(function (e) { console.warn("espelho não guardado:", e && e.message); });
   if (ehPdf) {
     diz("lendo o PDF…");
     if (typeof rfCrlvExtrairTexto !== "function") { diz("leitor de PDF indisponível — use o texto colado.", "#C0392B"); return; }
@@ -5212,6 +5218,164 @@ function szTelaRoteirizador() {
   return h + '</div>';
 }
 
+/* ===================== v312: GUARDAR O ARQUIVO ORIGINAL ======================
+   Ate a v311 o app LIA o espelho e a planilha de roteirizacao e jogava o arquivo
+   fora -- ficavam so os dados extraidos. O XML de CT-e/MDF-e ja era guardado
+   desde a v296; espelho e roteirizacao nao. Como a Suzano vai ter acesso e vai
+   querer extrair, o original tem que ficar: dado extraido serve pra conferir,
+   mas quem vale numa discussao e o papel que chegou.
+   Sobe pro mesmo bucket das fotos, e no estado fica so o CAMINHO (nunca o
+   conteudo), pra nao inflar a caixa geral que todo aparelho baixa. O arquivo e
+   materializado em memoria antes de subir -- e a licao da v192: File apoiado em
+   content:// do Android le os primeiros bytes e falha no meio do upload. */
+function rfArqGuardar(file, pasta, ref) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("Sem conexão com a nuvem — o arquivo não foi guardado.");
+    return rfDocsMaterializar(file).then(function (blob) {
+      var nome = String(file.name || "arquivo").replace(/[^A-Za-z0-9._-]/g, "_").slice(-60);
+      var path = pasta + "/" + (ref || "geral") + "/" + Date.now() + "-" + nome;
+      return sb.storage.from(RF_BUCKET).upload(path, blob, {
+        contentType: file.type || "application/octet-stream", upsert: false,
+      }).then(function (res) {
+        if (res.error) throw res.error;
+        return { nome: file.name || nome, path: path, tipo: file.type || "", tam: file.size || 0, em: Date.now() };
+      });
+    });
+  });
+}
+
+function rfArqAbrir(path) {
+  rfBaixarDoBucket(path).then(function (blob) {
+    if (!blob) { alert("Não consegui baixar esse arquivo do servidor."); return; }
+    rfBaixarBlob(blob, String(path).split("/").pop());
+  });
+}
+
+// Todos os originais guardados, de onde quer que tenham vindo.
+function rfArqTodos() {
+  var out = [];
+  (state.suzanoCargas || []).forEach(function (c) {
+    (c.arquivos || []).forEach(function (a) {
+      out.push({ origem: "Espelho", ref: (c.placa || "sem placa") + " · " + (c.data || ""), nome: a.nome, path: a.path, em: a.em });
+    });
+  });
+  (state.viagens || []).forEach(function (v) {
+    if (v.arquivoRot && v.arquivoRot.path) {
+      out.push({ origem: "Roteirização", ref: (v.placa || "") + " · " + (v.data || ""), nome: v.arquivoRot.nome, path: v.arquivoRot.path, em: v.arquivoRot.em });
+    }
+  });
+  return out.sort(function (a, b) { return (b.em || 0) - (a.em || 0); });
+}
+
+function rfArqBlocoHTML() {
+  var lista = rfArqTodos();
+  var h = '<div style="border:1px solid #2A2A2A;border-radius:8px;padding:11px 12px;margin-bottom:12px;background:#0A0A0A;">'
+    + '<div style="font-size:13px;font-weight:800;color:' + GOLD + ';">📁 Arquivos originais guardados (' + lista.length + ')</div>'
+    + '<div style="font-size:11px;color:#999;margin:3px 0 8px;">O PDF do espelho e a planilha da roteirização ficam salvos como chegaram. O dado lido serve pra conferir; numa discussão vale o arquivo.</div>';
+  if (!lista.length) {
+    return h + '<div style="font-size:12px;color:#888;">Nenhum arquivo guardado ainda. A partir da v312, todo espelho e toda planilha de roteirização que você anexar fica salva aqui.</div></div>';
+  }
+  lista.slice(0, 60).forEach(function (a) {
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #1E1E1E;flex-wrap:wrap;">'
+      + '<span style="font-size:12px;color:#ddd;"><b style="color:' + GOLD + ';">' + esc(a.origem) + '</b> · ' + esc(a.ref) + ' — ' + esc(a.nome || "") + '</span>'
+      + '<button class="btn-outline" style="font-size:10px;" onclick="rfArqAbrir(&#39;' + esc(a.path) + '&#39;)">⬇ baixar</button></div>';
+  });
+  if (lista.length > 60) h += '<div style="font-size:11px;color:#888;margin-top:5px;">e mais ' + (lista.length - 60) + '…</div>';
+  return h + '</div>';
+}
+
+/* ===================== v311: EXPORTAR CADA ETAPA =============================
+   Renato: "todos estes documentos eu quero poder extrair quando precisar, ate a
+   roteirizacao". O que ja existia era exportacao do PLANO (antes de importar) e
+   dos pacotes por viagem (PDF/ZIP de canhotos e XML). Faltava tirar da tela o
+   que ja esta DENTRO do app: a roteirizacao vigente e a conferencia contra o
+   espelho. Ambas saem em .xlsx pelo SheetJS que o projeto ja carrega. */
+function rfXlsxBaixar(wb, nome) {
+  try { XLSX.writeFile(wb, nome); return true; }
+  catch (e) { alert("Não consegui gerar a planilha: " + (e && e.message ? e.message : e)); return false; }
+}
+
+// Roteirizacao vigente = o que esta valendo no app (viagens previstas + paradas),
+// nao o rascunho do roteirizador. Mesmas tres abas do modelo que vai pra Suzano.
+function rfRotExportarPrevistas() {
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou."); return; }
+  var grupos = {};
+  (state.entregas || []).forEach(function (e) {
+    if (e.origem !== "roteirizacao") return;
+    var k = String(e.viagemId || "") + "|" + String(e.placa || "");
+    if (!grupos[k]) grupos[k] = [];
+    grupos[k].push(e);
+  });
+  var chaves = Object.keys(grupos);
+  if (!chaves.length) { alert("Não há roteirização importada para exportar."); return; }
+
+  var resumo = [["RF LOGÍSTICA — DIVISÃO DE CARGA POR VEÍCULO"],
+                ["Roteirização vigente no sistema — extraída em " + new Date().toLocaleString("pt-BR")], [],
+                ["Veículo", "Motorista", "Data", "Regional", "Roteiro", "Paradas", "Notas", "Canhotos", "Liberada", "KM est.", "Valor (R$)"]];
+  var detalhe = [["RF LOGÍSTICA — DETALHE POR CLIENTE"], [],
+                 ["Veículo", "Regional", "Ordem", "Data", "Cidade", "Recebedor", "Endereço", "Notas", "Canhotos", "Remessa(s)"]];
+  var porCidade = {};
+
+  chaves.forEach(function (k) {
+    var lista = grupos[k].slice().sort(function (a, b) { return (a.ordem || 0) - (b.ordem || 0); });
+    var v = (state.viagens || []).find(function (x) { return String(x.id) === String(lista[0].viagemId); }) || {};
+    var r = rfEntregasResumoLista(lista);
+    var cidades = [];
+    lista.forEach(function (e) { if (e.cidade && cidades.indexOf(e.cidade) < 0) cidades.push(e.cidade); });
+    var lib = lista.filter(function (e) { return e.liberada; }).length;
+    resumo.push([lista[0].placa || "", v.motoristaNaEpoca || lista[0].motoristaNome || "",
+      v.data || lista[0].dataPrevista || "", v.rota || "", cidades.join(" → "),
+      lista.length, r.notas, r.canhotos, lib ? "SIM" : "NÃO",
+      Number(v.km) || 0, Number(v.valorViagem) || 0]);
+
+    lista.forEach(function (e, i) {
+      var notas = e.notas || [];
+      var comFoto = notas.filter(function (n) { return n.foto; }).length;
+      detalhe.push([e.placa || "", v.rota || "", e.ordem || (i + 1), e.dataPrevista || v.data || "",
+        e.cidade || "", e.recebedor || "", e.endereco || "", notas.length, comFoto,
+        notas.map(function (n) { return n.remessa || n.nf || ""; }).filter(function (x) { return x; }).join(", ")]);
+      var ck = (v.rota || "") + "|" + (e.cidade || "");
+      if (!porCidade[ck]) porCidade[ck] = { regional: v.rota || "", cidade: e.cidade || "", clientes: 0, notas: 0, veiculos: [] };
+      porCidade[ck].clientes++;
+      porCidade[ck].notas += notas.length;
+      if (porCidade[ck].veiculos.indexOf(e.placa) < 0) porCidade[ck].veiculos.push(e.placa);
+    });
+  });
+
+  var carteira = [["RF LOGÍSTICA — CARTEIRA POR CIDADE"], [], ["Regional", "Cidade", "Clientes", "Notas", "Veículo(s)"]];
+  Object.keys(porCidade).sort().forEach(function (k) {
+    var c = porCidade[k];
+    carteira.push([c.regional, c.cidade, c.clientes, c.notas, c.veiculos.join(" · ")]);
+  });
+
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumo), "Resumo por Veiculo");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalhe), "Detalhe por Cliente");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(carteira), "Carteira por Cidade");
+  rfXlsxBaixar(wb, "rf-roteirizacao-vigente-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+}
+
+// Conferencia contra o espelho: uma linha por NF, com a situacao dela.
+function rfNfConfExportar() {
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou."); return; }
+  var r = rfNfConferencia();
+  if (!r.totalEspelho) { alert("Nenhum espelho lido ainda."); return; }
+  var linhas = [["RF LOGÍSTICA — CONFERÊNCIA NF DA SUZANO x CT-e x CANHOTO"],
+                ["Extraído em " + new Date().toLocaleString("pt-BR") + " — o espelho da Suzano é o gabarito"], [],
+                ["Situação", "NF", "Cliente / destinatário", "Cidade", "CT-e", "Valor espelho (R$)", "Valor CT-e (R$)", "Observação"]];
+  r.semCte.forEach(function (x) { linhas.push(["SEM CT-e EMITIDO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Nota no espelho da Suzano sem CT-e — carga sem documento ou CT-e não emitido"]); });
+  r.foraDoEspelho.forEach(function (x) { linhas.push(["CT-e FORA DO ESPELHO", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e emitido com nota que não está em espelho nenhum"]); });
+  r.valorDif.forEach(function (x) { linhas.push(["VALOR DIVERGENTE", x.nf, x.cliente, "", x.numeroCte, x.espelho, x.cte, "Diferença de faturamento entre o espelho e o CT-e"]); });
+  r.semCanhoto.forEach(function (x) { linhas.push(["SEM CANHOTO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Tem CT-e, falta o comprovante assinado"]); });
+  r.placaDif.forEach(function (x) { linhas.push(["PLACA DIVERGENTE (aviso)", x.nf, x.cliente, "", "", "", "", "Espelho diz " + x.espelho + "; a nota está na viagem do " + x.viagem + " — vale a roteirização"]); });
+  linhas.push([]);
+  linhas.push(["TOTAL DE NF NO ESPELHO", r.totalEspelho, "", "", "", "", "", ""]);
+  linhas.push(["FECHADAS (CT-e + canhoto)", r.ok, "", "", "", "", "", ""]);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(linhas), "Conferencia NF");
+  rfXlsxBaixar(wb, "rf-conferencia-nf-suzano-" + new Date().toISOString().slice(0, 10) + ".xlsx");
+}
+
 /* ===================== v310: A NF DA SUZANO E O GABARITO =====================
    Ate a v309 o canhoto era conferido contra o CT-e -- documento que a PROPRIA RF
    emite. Se a emissao sair errada (nota faltando, nota trocada, nota a mais), a
@@ -5317,6 +5481,71 @@ function rfNfConferencia() {
   return r;
 }
 
+/* v313: ANEXAR O ESPELHO NA PROPRIA ETAPA 5.
+   Falha de desenho da v310: a etapa cobrava a NF da Suzano mas nao tinha onde
+   anexar -- so dava pra fazer isso na etapa 2, dentro de um carregamento aberto.
+   O espelho chega ANTES da saida (sem ele nao se averba a carga nem o caminhao
+   sai), entao ele pode ate criar o carregamento. Continua valendo tambem o
+   botao da etapa 2, que e onde a equipe monta a carga.
+   Aceita varios PDF de uma vez, porque e assim que chega: um por viagem. */
+function rfNfCargaDoEspelho(placa, data) {
+  var cargas = szCargas();
+  var achou = cargas.filter(function (c) {
+    return String(c.placa || "").toUpperCase() === String(placa || "").toUpperCase()
+      && String(c.data || "") === String(data || "");
+  })[0];
+  if (achou) return achou;
+  var nova = { id: uid(), criadoEm: Date.now(), data: data || hojeISO(), placa: placa || "",
+               motorista: "", espelhos: [], status: "montando", criadaPeloEspelho: true };
+  cargas.push(nova);
+  return nova;
+}
+
+function rfNfAnexarEspelhos(input) {
+  var arqs = input && input.files ? Array.prototype.slice.call(input.files) : [];
+  input.value = "";
+  if (!arqs.length) return;
+  if (typeof rfCrlvExtrairTexto !== "function") { alert("O leitor de PDF não carregou. Recarregue a página."); return; }
+  var aviso = document.getElementById("rfnf-anexo");
+  var diz = function (t, cor) { if (aviso) { aviso.textContent = t; aviso.style.color = cor || "#bbb"; } };
+  diz("lendo " + arqs.length + " arquivo(s)…");
+
+  var feitos = 0, notas = 0, recusadas = 0, cargas = {};
+  var passo = function (i) {
+    if (i >= arqs.length) {
+      salvar(); render();
+      var msg = "✓ " + feitos + " espelho(s) lido(s) · " + notas + " nota(s)"
+        + (recusadas ? " · ⚠ " + recusadas + " recusada(s)" : "")
+        + (Object.keys(cargas).length ? " · carregamento(s): " + Object.keys(cargas).join(", ") : "");
+      diz(msg, recusadas ? "#C0392B" : "#2E7D32");
+      return;
+    }
+    var f = arqs[i];
+    // guarda o original (v312) -- falhar aqui nunca impede a leitura
+    rfArqGuardar(f, "espelhos", "etapa5").then(function (meta) { f._meta = meta; })
+      .catch(function (e) { console.warn("espelho não guardado:", e && e.message); })
+      .then(function () { return rfCrlvExtrairTexto(f, 60); })
+      .then(function (txt) {
+        var cab = szLerEspelhoTexto(txt) || {};
+        var placa = String(cab.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        var dt = String(cab.dataEmissao || "").match(/(\d{2})[.\/-](\d{2})[.\/-](\d{4})/);
+        var dataIso = dt ? (dt[3] + "-" + dt[2] + "-" + dt[1]) : hojeISO();
+        var c = rfNfCargaDoEspelho(placa, dataIso);
+        if (f._meta) c.arquivos = (c.arquivos || []).concat([f._meta]);
+        var r = szAplicarArquivo(c.id, txt, "PDF na etapa 5");
+        feitos++; notas += r.entraram; recusadas += r.recusadas;
+        cargas[(c.placa || "sem placa")] = true;
+        passo(i + 1);
+      })
+      .catch(function (e) {
+        recusadas++;
+        console.warn("espelho não lido:", e && e.message);
+        passo(i + 1);
+      });
+  };
+  passo(0);
+}
+
 function rfNfConfHTML() {
   var r = rfNfConferencia();
   var linha = function (cor, titulo, ajuda, itens, fmt) {
@@ -5332,10 +5561,29 @@ function rfNfConfHTML() {
     + 'O CT-e é emitido pela RF, então conferir canhoto só contra o CT-e é conferir contra o próprio trabalho. Aqui as três pontas são cruzadas pela CHAVE DE ACESSO da NF-e. '
     + '<b style="color:' + GOLD + ';">Placa e motorista do espelho não valem como regra</b> — a Suzano preenche com quem está à mão; quem vale é a roteirização.</div>';
 
+  /* v313.1: a barra de anexo precisa aparecer TAMBEM quando nao ha espelho --
+     era justamente o caso em que a tela dizia "anexe o PDF aqui em cima" e nao
+     havia nada em cima. Empty state sem o botao e beco sem saida. */
+  var barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
+    + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
+    + '📎 Anexar espelho da Suzano (PDF)'
+    + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
+    + '</label>'
+    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez — um por viagem.</span></div>'
+    + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
+
   if (!r.totalEspelho) {
-    return h + '<div style="color:#888;padding:16px;border:1px dashed #333;border-radius:8px;">Nenhum espelho lido ainda. Anexe o PDF do espelho na etapa 2 (Conferência) — o app lê o texto do arquivo, sem IA e sem custo.</div>';
+    return h + barra + '<div style="color:#888;padding:16px;border:1px dashed #333;border-radius:8px;">Nenhum espelho lido ainda. Anexe o PDF no botão acima, ou pela etapa 2 (Conferência) dentro do carregamento — dá no mesmo, é o mesmo espelho nos dois lugares. O app lê o texto do arquivo, sem IA e sem custo.</div>';
   }
 
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
+    + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
+    + '📎 Anexar espelho da Suzano (PDF)'
+    + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
+    + '</label>'
+    + '<button class="btn-outline" style="font-size:11px;" onclick="rfNfConfExportar()">⬇ Exportar conferência (Excel)</button>'
+    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez — um por viagem.</span></div>'
+    + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px;">'
     + '<div><div style="font-size:11px;color:#999;">NF no espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + r.totalEspelho + '</div></div>'
     + '<div><div style="font-size:11px;color:#999;">Fechadas</div><div style="font-size:19px;font-weight:800;color:#2E7D32;">' + r.ok + '</div></div>'
@@ -5470,7 +5718,8 @@ function szEtapaSituacao() {
 
 // Conteudo de cada etapa. So a aberta e montada.
 function szEtapaConteudo(id) {
-  if (id === "rot") return szTelaPlano() + szTelaRoteirizador() + rfRotBlocoHTML();
+  if (id === "rot") return '<div style="margin-bottom:10px;"><button class="btn-outline" style="font-size:11px;" onclick="rfRotExportarPrevistas()" title="Tira do app a roteirização que está valendo: veículos, paradas, notas e canhotos, nas três abas do modelo">⬇ Exportar roteirização vigente (Excel)</button></div>'
+    + rfArqBlocoHTML() + szTelaPlano() + szTelaRoteirizador() + rfRotBlocoHTML();
   if (id === "conf") return szTelaEquipe();
   if (id === "fiscal") return rfFiscalBlocoHTML();
   if (id === "canh") return rfCanhLoteBlocoHTML();
@@ -11871,6 +12120,15 @@ function rfRotBlocoHTML() {
 }
 
 function rfRotImportar(input) {
+  // v312: guarda a planilha como ela chegou, antes de processar
+  try {
+    var _f = input && input.files && input.files[0];
+    if (_f) {
+      rfArqGuardar(_f, "roteirizacao", (_f.name || "planilha").replace(/[^A-Za-z0-9]/g, "").slice(-24))
+        .then(function (meta) { state._rotArquivoPend = meta; })
+        .catch(function (e) { console.warn("roteirização não guardada:", e && e.message); });
+    }
+  } catch (e) { }
   var file = input.files && input.files[0];
   if (!file) return;
   if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Recarregue a página com internet e tente de novo."); return; }
@@ -12008,6 +12266,8 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
       state.viagens.push(viagem);
       viagensNovas++;
     }
+    // v312: liga a planilha guardada às viagens que ela gerou
+    if (state._rotArquivoPend) viagem.arquivoRot = state._rotArquivoPend;
 
     // 2) entregas -- preserva o que já tem canhoto
     if (motPlan[placa] && viagem.motoristaNaEpoca !== motPlan[placa]) viagem.motoristaNaEpoca = motPlan[placa];
@@ -13238,6 +13498,9 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- ONDE ANEXAR A NF DA SUZANO (v313): o espelho pode ser anexado em DOIS lugares, e os dois valem. (1) Na etapa 5 "NF da Suzano", no botao "Anexar espelho da Suzano (PDF)", que aceita VARIOS arquivos de uma vez (chega um por viagem) e nao exige carregamento aberto -- se nao existir carregamento pra aquela placa e data, o proprio espelho cria. (2) Na etapa 2 (Conferencia), dentro do carregamento, que e onde a equipe monta a carga. Isso existe porque o espelho chega ANTES da saida: sem espelho nao se averba a carga e o caminhao nao sai. Ate a v312 so havia o caminho da etapa 2, e a etapa 5 cobrava a NF sem ter onde anexar.
+- ARQUIVO ORIGINAL GUARDADO (v312): ate a v311 o app lia o espelho da Suzano e a planilha de roteirizacao e descartava o arquivo -- ficavam so os dados extraidos. Agora o original e guardado no bucket como chegou (PDF, foto ou xlsx) e aparece no bloco "Arquivos originais guardados" na etapa 1, com botao de baixar. O XML de CT-e e MDF-e ja era guardado desde a v296. No estado fica so o CAMINHO do arquivo, nunca o conteudo, pra nao inflar a caixa geral. Se o upload falhar, a LEITURA acontece do mesmo jeito -- guardar o arquivo nunca bloqueia lancar a carga. Arquivos anexados ANTES da v312 nao existem no bucket e nao tem como recuperar; so os novos ficam.
+- EXPORTAR CADA ETAPA (v311): tudo da aba Carregamento Suzano pode ser extraido quando precisar. Na etapa 1, "Exportar roteirizacao vigente (Excel)" tira do app a roteirizacao que esta valendo (nao o rascunho do roteirizador), nas tres abas do modelo: Resumo por Veiculo, Detalhe por Cliente e Carteira por Cidade, com paradas, notas, canhotos ja anexados, liberacao, KM e valor. Na etapa 5, "Exportar conferencia (Excel)" tira uma linha por NF com a situacao dela (sem CT-e, CT-e fora do espelho, valor divergente, sem canhoto, placa divergente). Isso se soma ao que ja existia: o plano do roteirizador antes de importar, e por viagem os botoes de canhotos em PDF, XML em ZIP e o pacote completo.
 - A NF DA SUZANO E O GABARITO (v310, etapa 5 "NF da Suzano" na aba Carregamento Suzano): ate a v309 o canhoto era conferido contra o CT-e, que e emitido pela propria RF -- se a emissao saisse errada, a conferencia fechava em cima do proprio erro. Agora a cadeia e NF da Suzano -> CT-e da RF -> canhoto, e o espelho de emissao que a Suzano manda (PDF com camada de texto, lido sem IA e sem custo) e o documento de fora que diz quais notas existem de verdade. A etapa aponta: NF no espelho sem CT-e emitido (o mais grave -- carga que saiu sem documento), CT-e emitido com NF que nao esta em espelho nenhum (nota trocada na emissao), valor do frete do CT-e diferente do que o espelho diz por nota (diferenca de faturamento) e NF do espelho ainda sem canhoto. O que amarra o espelho a viagem e a CHAVE DE ACESSO da NF-e, NUNCA a placa nem o motorista do cabecalho: a Suzano preenche o motorista com quem estiver a mao (o do espelho quase nunca e o real) e a placa, embora mais dificil, tambem pode vir errada. Quem vale como motorista e como placa e SEMPRE a roteirizacao -- placa divergente vira aviso, e o motorista do espelho e so registro. A Suzano nao manda XML, so PDF.
 - CARREGAMENTO VAZIO (v309): carregamento aberto pelo "+ Novo carregamento" e nunca preenchido (sem espelho, sem volume e sem placa) aparece com o selo VAZIA, NAO conta como pendencia na etapa 2 e pode ser apagado de uma vez no botao "limpar vazios" do topo da etapa. Antes disso ele era contado como "montando" e inventava trabalho que nao existia. A etapa 2 (Conferencia) e tudo o que acontece ANTES da saida do caminhao: montar a carga, bipar os volumes contra a nota e liberar; depois que o caminhao sai, o que corre e a etapa 3 (Fiscal) e a 4 (Canhotos). A bolha do assistente e arrastavel e a posicao fica gravada no aparelho; se ela estiver tapando a tela, o botao ↘ no cabecalho deste chat devolve ela pro canto de baixo.
 - ABA CARREGAMENTO SUZANO EM ETAPAS (v308): a aba nao empilha mais os quatro blocos abertos ao mesmo tempo. Ela abre como o FLUXO DO DIA, com uma caixa fechada por etapa, na ordem 1 Roteirizacao (plano do dia, roteirizador da planilha e as rotas previstas pra liberar pro motorista), 2 Conferencia (os carregamentos e a bipagem dos volumes contra a nota), 3 Fiscal (CT-e, MDF-e e CIOT) e 4 Canhotos (o mutirao de fotos em lote). Cada caixa mostra a PENDENCIA dela -- rotas nao liberadas, carregamentos ainda montando, CT-e faltando importar, canhotos faltando -- com tarja verde quando esta fechada, dourada quando falta algo e vermelha quando esta atrasada. So UMA etapa fica aberta por vez, e no topo tem o quadro \"Situacao da operacao\" com rotas montadas, paradas, CT-e a importar e canhotos faltando. Nenhuma funcionalidade foi removida: cada bloco virou o conteudo de uma etapa, exatamente como era. Se a pessoa perguntar onde foi parar algum recurso da aba, diga em qual das quatro etapas ele esta.
