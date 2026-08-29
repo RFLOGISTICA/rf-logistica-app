@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v314)</title>
+<title>RF Logística — Painel da Frota (v315)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4050,6 +4050,7 @@ function szAplicarEspelho(cargaId, d, origem, silencioso) {
     produto: d.produto, qtdVolumes: d.qtdVolumes, peso: d.peso,
     valorMercadoria: d.valorMercadoria, valorFrete: d.valorFrete,
     placaEspelho: d.placa, motoristaEspelho: d.motorista, cpfMotoristaEspelho: d.cpfMotorista,
+    dataEmissao: d.dataEmissao || "",   // v315: e por ela que se sabe QUE DIA o espelho cobre
     origemLeitura: origem || "", lidoEm: Date.now(),
     etiquetas: [], entrada: null,
   });
@@ -5367,6 +5368,7 @@ function rfNfConfExportar() {
   r.foraDoEspelho.forEach(function (x) { linhas.push(["CT-e FORA DO ESPELHO", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e emitido com nota que não está em espelho nenhum"]); });
   r.valorDif.forEach(function (x) { linhas.push(["VALOR DIVERGENTE", x.nf, x.cliente, "", x.numeroCte, x.espelho, x.cte, "Diferença de faturamento entre o espelho e o CT-e"]); });
   r.semCanhoto.forEach(function (x) { linhas.push(["SEM CANHOTO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Tem CT-e, falta o comprovante assinado"]); });
+  (r.semEspelhoNoDia || []).forEach(function (x) { linhas.push(["SEM ESPELHO NO DIA (aviso)", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e de " + (x.dia || "") + " — espelho daquele dia ainda não foi anexado"]); });
   r.placaDif.forEach(function (x) { linhas.push(["PLACA DIVERGENTE (aviso)", x.nf, x.cliente, "", "", "", "", "Espelho diz " + x.espelho + "; a nota está na viagem do " + x.viagem + " — vale a roteirização"]); });
   linhas.push([]);
   linhas.push(["TOTAL DE NF NO ESPELHO", r.totalEspelho, "", "", "", "", "", ""]);
@@ -5395,6 +5397,7 @@ function rfNfEspelhos() {
       if (!e) return;
       var num = String(e.nfe || "").replace(/\D/g, "").replace(/^0+/, "");
       out.push({
+        dia: rfNfDataISO(e.dataEmissao) || rfNfDataISO(c.data),
         chave: String(e.chave || ""), nf: num,
         cliente: e.destinatario || e.recebedor || e.cliente || "",
         cidade: e.cidade || "", valorFrete: Number(e.valorFrete) || 0,
@@ -5407,6 +5410,15 @@ function rfNfEspelhos() {
 }
 
 // Onde aquela NF esta: viagem pela parada (roteirizacao) ou pelo CT-e.
+// v315: "28.08.2026" / "28/08/2026" -> "2026-08-28". Sem isso nao da pra saber
+// qual dia cada espelho cobre.
+function rfNfDataISO(txt) {
+  var m = String(txt || "").match(/(\d{2})[.\/-](\d{2})[.\/-](\d{4})/);
+  if (m) return m[3] + "-" + m[2] + "-" + m[1];
+  var i = String(txt || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return i ? i[0] : "";
+}
+
 function rfNfViagemDaNota(chave, nf) {
   var achou = null;
   (state.entregas || []).forEach(function (e) {
@@ -5421,7 +5433,7 @@ function rfNfViagemDaNota(chave, nf) {
 }
 
 function rfNfConferencia() {
-  var r = { semCte: [], foraDoEspelho: [], semCanhoto: [], valorDif: [], placaDif: [], totalEspelho: 0, ok: 0 };
+  var r = { semCte: [], foraDoEspelho: [], semCanhoto: [], valorDif: [], placaDif: [], semEspelhoNoDia: [], diasComEspelho: [], totalEspelho: 0, ok: 0 };
   try {
     var esp = rfNfEspelhos();
     r.totalEspelho = esp.length;
@@ -5468,13 +5480,24 @@ function rfNfConferencia() {
       else r.ok++;
     });
 
-    // CT-e com nota que o espelho nao tem
+    /* CT-e com nota que o espelho nao tem.
+       v315 -- CORRECAO DE UM ALARME FALSO: ate a v314 isso comparava TODOS os
+       CT-e ja importados contra os poucos espelhos lidos, e o resultado foi
+       "114 divergencias graves" numa operacao sem erro nenhum. A causa era
+       obvia depois de ver: CT-e de viagem cujo espelho nunca foi anexado nao
+       tem contra o que ser conferido. So se cobra o CT-e de um DIA que tenha
+       espelho lido; o resto vira aviso cinza, "espelho nao importado". */
+    var diasComEspelho = {};
+    esp.forEach(function (x) { if (x.dia) diasComEspelho[x.dia] = true; });
+    r.diasComEspelho = Object.keys(diasComEspelho).sort();
     rfFiscais().forEach(function (d) {
       if (d.tipo !== "cte") return;
+      var dia = String(d.data || "").slice(0, 10);
       (d.nfes || []).forEach(function (ch) {
         var n = String(parseInt(String(ch).slice(25, 34), 10));
         if (noEspelho[ch] || noEspelho["n" + n]) return;
-        r.foraDoEspelho.push({ nf: n, chave: ch, cliente: d.cliente || "", numeroCte: d.numero });
+        if (!diasComEspelho[dia]) { r.semEspelhoNoDia.push({ nf: n, cliente: d.cliente || "", numeroCte: d.numero, dia: dia }); return; }
+        r.foraDoEspelho.push({ nf: n, chave: ch, cliente: d.cliente || "", numeroCte: d.numero, dia: dia });
       });
     });
   } catch (e) { }
@@ -5588,6 +5611,7 @@ function rfNfConfHTML() {
     + '<div><div style="font-size:11px;color:#999;">NF no espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + r.totalEspelho + '</div></div>'
     + '<div><div style="font-size:11px;color:#999;">Fechadas</div><div style="font-size:19px;font-weight:800;color:#2E7D32;">' + r.ok + '</div></div>'
     + '<div><div style="font-size:11px;color:#999;">Sem CT-e</div><div style="font-size:19px;font-weight:800;color:' + (r.semCte.length ? "#C0392B" : "#2E7D32") + ';">' + r.semCte.length + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Dias com espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + (r.diasComEspelho || []).length + '</div></div>'
     + '<div><div style="font-size:11px;color:#999;">Sem canhoto</div><div style="font-size:19px;font-weight:800;color:' + (r.semCanhoto.length ? GOLD : "#2E7D32") + ';">' + r.semCanhoto.length + '</div></div>'
     + '</div>';
 
@@ -5596,6 +5620,9 @@ function rfNfConfHTML() {
   });
   h += linha("#C0392B", "CT-e emitido com NF que não está em espelho nenhum", "Nota trocada ou digitada errada na emissão — ou o espelho dessa viagem ainda não foi lido.", r.foraDoEspelho, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + '</div>';
+  });
+  h += linha("#777", "CT-e de dia sem espelho importado", "Não é erro: é CT-e de viagem cujo espelho ainda não foi anexado — não há contra o que conferir. Anexe o espelho daquele dia e eles saem daqui.", r.semEspelhoNoDia, function (x) {
+    return '<div style="font-size:12px;color:#bbb;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + (x.dia ? ' · ' + esc(x.dia) : "") + '</div>';
   });
   h += linha(GOLD, "Valor do frete diferente do espelho", "O espelho já diz quanto vale cada nota. Diferença aqui é diferença de faturamento.", r.valorDif, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · CT-e ' + esc(x.numeroCte || "") + ' — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + '</div>';
@@ -5705,7 +5732,7 @@ function szEtapaSituacao() {
   try {
     var cf = rfNfConferencia();
     if (cf.totalEspelho) {
-      var graves = cf.semCte.length + cf.foraDoEspelho.length;
+      var graves = cf.semCte.length + cf.foraDoEspelho.length;   // v315: o cinza (sem espelho no dia) nao entra
       r.confnf = graves
         ? { txt: graves + " divergência(s) grave(s)", cor: "#C0392B" }
         : (cf.valorDif.length || cf.semCanhoto.length)
@@ -13498,6 +13525,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- ALARME FALSO CORRIGIDO (v315): ate a v314 a etapa 5 comparava TODOS os CT-e ja importados contra os poucos espelhos lidos, e mostrava "114 CT-e emitido com NF que nao esta em espelho nenhum" numa operacao sem erro nenhum -- CT-e de viagem cujo espelho nunca foi anexado nao tem contra o que ser conferido. Agora o espelho guarda a DATA DE EMISSAO dele e a cobranca so vale para CT-e do DIA que tem espelho lido. CT-e de dia sem espelho vai para uma secao cinza chamada "CT-e de dia sem espelho importado", que e aviso e nao divergencia, nao conta na situacao da etapa e some assim que o espelho daquele dia e anexado. A tela mostra tambem quantos DIAS ja tem espelho.
 - ONDE ANEXAR A NF DA SUZANO (v313): o espelho pode ser anexado em DOIS lugares, e os dois valem. (1) Na etapa 5 "NF da Suzano", no botao "Anexar espelho da Suzano (PDF)", que aceita VARIOS arquivos de uma vez (chega um por viagem) e nao exige carregamento aberto -- se nao existir carregamento pra aquela placa e data, o proprio espelho cria. (2) Na etapa 2 (Conferencia), dentro do carregamento, que e onde a equipe monta a carga. Isso existe porque o espelho chega ANTES da saida: sem espelho nao se averba a carga e o caminhao nao sai. Ate a v312 so havia o caminho da etapa 2, e a etapa 5 cobrava a NF sem ter onde anexar.
 - ARQUIVO ORIGINAL GUARDADO (v312): ate a v311 o app lia o espelho da Suzano e a planilha de roteirizacao e descartava o arquivo -- ficavam so os dados extraidos. Agora o original e guardado no bucket como chegou (PDF, foto ou xlsx) e aparece no bloco "Arquivos originais guardados" na etapa 1, com botao de baixar. O XML de CT-e e MDF-e ja era guardado desde a v296. No estado fica so o CAMINHO do arquivo, nunca o conteudo, pra nao inflar a caixa geral. Se o upload falhar, a LEITURA acontece do mesmo jeito -- guardar o arquivo nunca bloqueia lancar a carga. Arquivos anexados ANTES da v312 nao existem no bucket e nao tem como recuperar; so os novos ficam.
 - EXPORTAR CADA ETAPA (v311): tudo da aba Carregamento Suzano pode ser extraido quando precisar. Na etapa 1, "Exportar roteirizacao vigente (Excel)" tira do app a roteirizacao que esta valendo (nao o rascunho do roteirizador), nas tres abas do modelo: Resumo por Veiculo, Detalhe por Cliente e Carteira por Cidade, com paradas, notas, canhotos ja anexados, liberacao, KM e valor. Na etapa 5, "Exportar conferencia (Excel)" tira uma linha por NF com a situacao dela (sem CT-e, CT-e fora do espelho, valor divergente, sem canhoto, placa divergente). Isso se soma ao que ja existia: o plano do roteirizador antes de importar, e por viagem os botoes de canhotos em PDF, XML em ZIP e o pacote completo.
