@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v293)</title>
+<title>RF Logística — Painel da Frota (v295)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9983,16 +9983,26 @@ function rfFiscalBlocoHTML() {
   var semParada = 0;
   docs.forEach(function (d) { if (d.tipo === "cte") semParada += rfFiscalNfsSemParada(d).length; });
   var grupos = rfFiscalPorViagem();
+  // v295: uma viagem está COMPLETA quando não falta CT-e pra importar e todos os
+  // canhotos daquelas notas já estão anexados. É o que interessa fechar. O CIOT
+  // não entra nessa conta: a operação é frota própria com a Suzano como
+  // contratante e nem tem CIOT nos MDF-e antigos -- exigir isso deixaria tudo
+  // laranja pra sempre. O encerramento do MDF-e também não bloqueia o verde,
+  // ele continua aparecendo como aviso próprio.
+  var completas = 0;
   var linhas = grupos.slice(0, 30).map(function (g) {
     var semMdfe = g.ctes.length && !g.mdfes.length;
-    var semCiot = g.mdfes.length && !g.ciot;
-    var cor = (semMdfe || semCiot) ? "#E67E22" : (g.canhotos === g.nfes.length && g.nfes.length ? "#2E7D32" : GOLD);
-    return '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + cor + ';border-radius:8px;padding:9px 11px;margin-bottom:7px;">'
+    var faltaCte = (g.ctesFaltando || []).length > 0;
+    var completa = g.nfes.length > 0 && g.canhotos === g.nfes.length && !faltaCte && !semMdfe;
+    if (completa) completas++;
+    var cor = completa ? "#2E7D32" : ((semMdfe || faltaCte) ? "#E67E22" : GOLD);
+    return '<div style="background:' + (completa ? "rgba(46,125,50,.10)" : "#0A0A0A") + ';border:1px solid '
+      + (completa ? "#2E7D32" : "#222") + ';border-left:3px solid ' + cor + ';border-radius:8px;padding:9px 11px;margin-bottom:7px;">'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        + '<span style="font-size:13px;font-weight:700;color:#fff;">' + esc(g.placa) + '</span>'
-        + '<span style="font-size:11px;color:#999;">' + (g.data ? g.data.split("-").reverse().join("/") : "sem data") + '</span>'
-        + (g.motorista ? '<span style="font-size:11px;color:#999;">' + esc(g.motorista) + '</span>' : "")
-        + '<span style="font-size:11px;color:#ccc;">' + g.ctes.length + ' CT-e · ' + g.nfes.length + ' NF-e</span>'
+        + '<span style="font-size:13px;font-weight:700;color:' + (completa ? "#2E7D32" : "#fff") + ';">' + esc(g.placa) + '</span>'
+        + '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#999") + ';">' + (g.data ? g.data.split("-").reverse().join("/") : "sem data") + '</span>'
+        + (g.motorista ? '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#999") + ';">' + esc(g.motorista) + '</span>' : "")
+        + '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#ccc") + ';">' + g.ctes.length + ' CT-e · ' + g.nfes.length + ' NF-e</span>'
         + '<span style="font-size:11px;color:' + (g.mdfes.length ? "#ccc" : "#E67E22") + ';">'
           + (g.mdfes.length ? "MDF-e " + esc(g.mdfes.map(function (m) { return m.numero; }).join(", ")) : "sem MDF-e") + '</span>'
         + '<span style="font-size:11px;color:' + (g.ciot ? "#2E7D32" : "#E67E22") + ';">'
@@ -10003,9 +10013,10 @@ function rfFiscalBlocoHTML() {
             ? '<span style="font-size:10px;font-weight:800;color:#C0392B;border:1px solid #C0392B;border-radius:5px;padding:1px 6px;" title="o evento de encerramento não foi importado ou o manifesto não foi encerrado">MDF-e ' + esc(g.abertos.join(", ")) + ' em aberto</span>'
             : (g.mdfes.length ? '<span style="font-size:10px;color:#2E7D32;">encerrada</span>' : ""))
         + (g.averbacoes ? '<span style="font-size:11px;color:#2E7D32;">' + g.averbacoes + ' averbado(s)</span>' : "")
+        + (completa ? '<span style="font-size:10px;font-weight:800;color:#2E7D32;border:1px solid #2E7D32;border-radius:5px;padding:1px 6px;">✓ COMPLETA</span>' : "")
         + (g.viagem ? '' : '<span style="font-size:10px;font-weight:800;color:#E67E22;border:1px solid #E67E22;border-radius:5px;padding:1px 6px;">sem viagem no sistema</span>')
       + '</div>'
-      + '<div style="font-size:11px;color:#888;margin-top:4px;">'
+      + '<div style="font-size:11px;color:' + (completa ? "#4C9A50" : "#888") + ';margin-top:4px;">'
         + ((g.ctesFaltando || []).length
             ? '<span style="color:#E67E22;">Falta importar o XML do(s) CT-e <b>'
               + esc(g.ctesFaltando.length > 12
@@ -10035,6 +10046,10 @@ function rfFiscalBlocoHTML() {
           : "")
       + '</div>'
     + (state._fiscalMsg ? '<div style="font-size:12px;color:' + GOLD + ';margin-bottom:6px;">' + esc(state._fiscalMsg) + '</div>' : "")
+    + (grupos.length
+        ? '<div style="font-size:12px;margin-bottom:6px;"><b style="color:#2E7D32;">' + completas + ' viagem(ns) completa(s)</b>'
+          + '<span style="color:#999;"> de ' + grupos.length + ' — completa é quando não falta CT-e pra importar e todos os canhotos daquelas notas já estão anexados.</span></div>'
+        : "")
     + (linhas || '<div style="font-size:11px;color:#777;">Nenhum XML anexado ainda.</div>')
     + '</div>';
 }
@@ -10198,6 +10213,23 @@ function rfCanhNomeParecido(a, b) {
   };
   var iguais = pa.filter(function (x) { return pb.some(function (y) { return bate(x, y); }); }).length;
   return iguais >= 2 || (iguais >= 1 && Math.min(pa.length, pb.length) === 1);
+}
+// v294: a nota já está com canhoto anexado? Isso acontece o tempo todo no
+// mutirão: o mesmo canhoto entra uma vez na foto do grupo e de novo na foto
+// individual. Até a v293 a segunda cópia caía em "não achei uma parada aberta
+// que bata" -- mensagem que faz pensar em erro, quando na verdade está tudo
+// certo e é só repetição.
+function rfCanhJaAnexado(nf, chaveNfe) {
+  var achado = null;
+  (state.entregas || []).forEach(function (e) {
+    (e.notas || []).forEach(function (n, i) {
+      if (achado || !n.foto) return;
+      var bate = (chaveNfe && n.chaveNfe === chaveNfe)
+        || (nf && parseInt(String(n.nf || "").replace(/\D/g, ""), 10) === nf);
+      if (bate) achado = { e: e, idx: i, nota: n };
+    });
+  });
+  return achado;
 }
 // Casamento. Ordem, da mais forte pra mais fraca:
 //   1. alguma vaga já está com esse número de NF escrito -> é ela
@@ -10388,6 +10420,13 @@ function rfCanhLoteSelecionar(input) {
               item.detalhe = casou.alvo.e.recebedor + (casou.alvo.e.cidade ? " — " + casou.alvo.e.cidade : "")
                 + " (" + casou.via + (item.viaCte ? " · " + item.viaCte : "") + ")"
                 + (item.coletiva ? " · foto com " + chaves.length + " canhotos" : "");
+            } else if (rfCanhJaAnexado(item.nf, lido.chave)) {
+              var ja = rfCanhJaAnexado(item.nf, lido.chave);
+              item.status = "duplicado";
+              item.jaEm = ja.e.id; item.jaIdx = ja.idx; item.jaFoto = ja.nota.foto;
+              item.detalhe = "NF " + item.nf + " já está com canhoto anexado em "
+                + (ja.e.recebedor || "sem nome") + (ja.e.cidade ? " — " + ja.e.cidade : "")
+                + ". Esta foto é repetida.";
             } else {
               item.status = "pendente";
               item.detalhe = (item.esp
@@ -10430,7 +10469,17 @@ function rfCanhLoteRecasar(silencioso) {
       item.esp = rfCanhEspelhoPorNF(item.nf);
     }
     var casou = rfCanhCasar(item.nf, item.esp, item.chave);
-    if (!casou) return;
+    if (!casou) {
+      var ja = rfCanhJaAnexado(item.nf, item.chave);   // v294
+      if (ja) {
+        item.status = "duplicado";
+        item.jaEm = ja.e.id; item.jaIdx = ja.idx; item.jaFoto = ja.nota.foto;
+        item.detalhe = "NF " + item.nf + " já está com canhoto anexado em "
+          + (ja.e.recebedor || "sem nome") + (ja.e.cidade ? " — " + ja.e.cidade : "")
+          + ". Esta foto é repetida.";
+      }
+      return;
+    }
     if (!rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, item.path, item.nf)) return;
     item.entregaId = casou.alvo.e.id; item.idx = casou.alvo.idx;
     item.status = casou.duvida ? "duvida" : "ok";
@@ -10478,6 +10527,20 @@ function rfCanhLoteDesfazer(itemId) {
 // -- e a foto já subiu pro bucket, então apagar da tela sem apagar do storage
 // deixaria lixo pra sempre. Se a foto já estava aplicada numa entrega, ela sai
 // de lá primeiro e a parada volta a ficar pendente.
+// v294: às vezes a foto repetida é melhor que a que entrou (a individual contra
+// a do grupo, por exemplo). Este botão troca uma pela outra.
+function rfCanhLoteSubstituir(itemId) {
+  var item = rfCanhLote().itens.find(function (x) { return x.id === itemId; });
+  if (!item || !item.jaEm) return;
+  if (!confirm("Trocar o canhoto que já está anexado por esta foto?")) return;
+  if (!rfCanhotoAplicarPath(item.jaEm, item.jaIdx, item.path, item.nf)) {
+    alert("Não consegui trocar. Atualize a tela e tente de novo.");
+    return;
+  }
+  item.status = "ok"; item.entregaId = item.jaEm; item.idx = item.jaIdx;
+  item.detalhe = "foto trocada pela desta leitura";
+  salvar(); render();
+}
 function rfCanhLoteExcluirItem(item, silencioso) {
   if (!item) return;
   if (item.entregaId) {
@@ -10538,13 +10601,14 @@ function rfCanhLoteBlocoHTML() {
             + (v.nota.nf ? " · NF " + v.nota.nf : (v.nota.remessa ? " · remessa " + v.nota.remessa : "")))
       + '</option>';
   }).join("");
-  var cont = { ok: 0, duvida: 0, pendente: 0, erro: 0 };
+  var cont = { ok: 0, duvida: 0, pendente: 0, erro: 0, duplicado: 0 };
   L.itens.forEach(function (i) { if (cont[i.status] != null) cont[i.status]++; });
   var pendentes = L.itens.filter(function (i) { return i.status === "pendente" || i.status === "erro"; });
   var duvidas = L.itens.filter(function (i) { return i.status === "duvida"; });
+  var repetidos = L.itens.filter(function (i) { return i.status === "duplicado"; });
 
   var linhaItem = function (i, comSeletor) {
-    var cor = i.status === "ok" ? "#2E7D32" : (i.status === "duvida" ? "#E67E22" : "#C0392B");
+    var cor = i.status === "ok" ? "#2E7D32" : (i.status === "duvida" || i.status === "duplicado" ? "#E67E22" : "#C0392B");
     return '<div style="border-top:1px solid #1c1c1c;padding:7px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
       + '<span style="font-size:11px;font-weight:800;color:' + cor + ';min-width:96px;">'
         + (i.nf ? "NF " + i.nf : "sem NF") + '</span>'
@@ -10564,6 +10628,10 @@ function rfCanhLoteBlocoHTML() {
           : "")
       + (i.status === "duvida" || i.status === "ok"
           ? '<button class="btn-del" style="font-size:10px;padding:2px 7px;" onclick="rfCanhLoteDesfazer(\'' + i.id + '\')" title="tirar da entrega e apontar outra">↶ desfazer</button>'
+          : "")
+      + (i.status === "duplicado"
+          ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfCanhotoVer(\'' + i.jaFoto + '\')">👁 ver a que já está</button>'
+            + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;color:#E67E22;border-color:#E67E22;" onclick="rfCanhLoteSubstituir(\'' + i.id + '\')" title="usar esta foto no lugar da que já está anexada">↻ trocar pela esta</button>'
           : "")
       + '<button class="btn-del" style="font-size:10px;padding:2px 7px;" onclick="rfCanhLoteExcluir(\'' + i.id + '\')" title="apagar esta foto de vez">🗑</button>'
       + '</div>';
@@ -10592,11 +10660,16 @@ function rfCanhLoteBlocoHTML() {
             + '<b style="color:#2E7D32;">' + cont.ok + ' casado(s)</b> · '
             + '<b style="color:#E67E22;">' + cont.duvida + ' com dúvida</b> · '
             + '<b style="color:#C0392B;">' + (cont.pendente + cont.erro) + ' pra apontar</b>'
+            + (cont.duplicado ? ' · <b style="color:#E67E22;">' + cont.duplicado + ' repetida(s)</b>' : "")
           + '</div>'
         : "")
     + (duvidas.length
         ? '<div style="margin-top:6px;"><div style="font-size:11px;font-weight:800;color:#E67E22;">CASADOS COM DÚVIDA — confira antes de fechar</div>'
           + duvidas.map(function (i) { return linhaItem(i, false); }).join("") + '</div>'
+        : "")
+    + (repetidos.length
+        ? '<div style="margin-top:6px;"><div style="font-size:11px;font-weight:800;color:#E67E22;">REPETIDAS — a NF já tem canhoto anexado, não precisa fazer nada</div>'
+          + repetidos.map(function (i) { return linhaItem(i, false); }).join("") + '</div>'
         : "")
     + (pendentes.length
         ? '<div style="margin-top:6px;"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
@@ -12183,7 +12256,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
 - A divisão pronta é exportada em .xlsx com duas abas (resumo por veículo e detalhe por entrega, na ordem do roteiro), no mesmo formato que já foi aprovado pela Suzano.
-- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar. CANHOTOS EM LOTE (v283, bloco \"📥 CANHOTOS EM LOTE\" na aba Carregamento Suzano): pra pôr em dia o atraso de canhotos de várias viagens juntas, a equipe solta todas as fotos de uma vez. O canhoto da Suzano tem um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos) -- o app lê esse QR no próprio navegador (biblioteca jsQR, ou o leitor nativo do aparelho), confere o dígito verificador da chave, tira o número da NF e procura essa NF nos espelhos já lidos, que dizem o cliente, a cidade e a placa. Com isso acha a parada pendente e anexa. É determinístico: sem IA, sem custo de API e sem risco de número inventado; ou a chave lê certa ou não lê. O nome do destinatário impresso no canhoto NÃO serve, porque fica coberto pela assinatura à mão. v288: o app lê TODOS os QR de cada foto, não só o primeiro — dá pra enfileirar dez canhotos lado a lado e fotografar de uma vez (num teste real com ~10 tiras, 8 leram). Usa o BarcodeDetector nativo quando o aparelho tem e, com jsQR, apaga a área do QR já lido pra achar o próximo; roda em várias escalas e junta os achados, porque escalas diferentes pegam tiras diferentes. A foto sobe uma vez só e o mesmo arquivo fica ligado a cada nota reconhecida, marcado como foto coletiva; excluir um item só apaga o arquivo quando nenhuma outra nota ou item ainda aponta pra ele. O que não ler continua na lista CONFERIR pra apontar à mão. v289: PARADA CRIADA A PARTIR DO CT-e. Parada de entrega só existe pra rota que passou pela roteirização (v270 em diante), então canhoto de viagem antiga lia certo, achava o CT-e e mesmo assim não tinha onde encostar. Agora o bloco fiscal mostra quantas notas de CT-e estão sem parada e tem o botão \"📍 criar parada\", que gera a parada direto do CT-e (cliente, cidade, placa e data vêm do XML, e a nota já nasce com número e chave da NF-e). Essas paradas nascem com liberada=false de propósito: são registro histórico e nunca aparecem na tela de rota de nenhum motorista. v290: não é preciso reenviar foto nenhuma — o botão \"🔄 tentar casar de novo\" no cabeçalho da lista CONFERIR reavalia os pendentes usando a foto que já subiu e a chave que já foi lida, e isso ainda roda sozinho toda vez que se importa XML novo ou se cria paradas a partir do CT-e. A ordem pra pôr o atraso em dia é: importar os ZIP de CT-e e MDF-e, clicar em criar parada, e rodar as fotos no lote (ou o tentar casar de novo, se as fotos já subiram). v291, aprendido de um MDF-e real do SimplesCTe (nº 22, 24/08, QEN6J82, Edivaldo, 11 CT-e): (a) o app agora lê o arquivo de EVENTO DE ENCERRAMENTO (…-EncMdfe-procEvento.xml), que antes era descartado, e avisa na tela qual MDF-e ainda está em aberto — manifesto não encerrado é problema fiscal; (b) guarda o SEGURO DA CARGA que vem no MDF-e (seguradora, apólice e uma AVERBAÇÃO por CT-e), que é a prova de averbação e é o que a seguradora cobra em sinistro; (c) diz EXATAMENTE quais CT-e faltam importar, pelo número (\"falta importar o XML do CT-e 99, 100, 101\"), porque a chave que o MDF-e guarda carrega o número do CT-e nas posições 26 a 34. v293: o seletor de arquivos do bloco fiscal não filtra mais por extensão. O filtro accept=\".xml,.zip\" fazia os XML aparecerem apagados e impossíveis de marcar quando vinham do Google Drive no Android, que entrega os arquivos com outro MIME — era isso que impedia anexar os CT-e. Agora entra qualquer arquivo e a triagem é pelo conteúdo; PDF e imagem são descartados pelo nome, e se nada fiscal entrar a tela diz pra selecionar os XML (ícone < >) e não os PDF. IMPORTANTE: o que casa o canhoto com a parada é o CT-e, não o MDF-e — importar só MDF-e não faz canhoto nenhum casar, já que é o CT-e que lista as NF-e e diz o cliente. Sobre CIOT: os MDF-e antigos não têm CIOT porque a operação é frota própria com a Suzano como contratante, e a emissão de CIOT só começou em 28/08/2026 — \"sem CIOT\" nesses casos é o esperado, não é falha de importação. O que não casa sozinho não é chutado: a foto sobe igual e o canhoto aparece na lista \"CONFERIR\", onde a pessoa escolhe a parada num seletor. Casamento por cliente repetido em dias diferentes é marcado como DÚVIDA (fica com a rota mais antiga em aberto) e pode ser desfeito no botão \"↶ desfazer\". Anexar em lote preenche também o número da NF na parada, que nas entregas vindas da roteirização nasce vazio (elas só têm a remessa). v284: cada linha da lista tem 🗑 pra APAGAR a foto de vez (sai da tela e sai do bucket; se estava anexada numa entrega, o canhoto sai de lá e a parada volta a ficar pendente), mais um botão que apaga de uma vez todas as que ficaram sem parada. Serve pro canhoto que o QR não leu e que ninguém consegue identificar -- em vez de ficar entulhando a lista. \"limpar lista\" é outra coisa: só some com o histórico da tela e NÃO apaga foto nenhuma. v285: quando a NF lida não está em espelho nenhum, o app não para no beco — ele procura a NF VIZINHA (até 20 números de distância) nos espelhos e nas notas já preenchidas das entregas, porque as NF de uma mesma carga da Suzano saem em sequência (195668 e 195669 são o mesmo cliente no mesmo CT-e). A pista aparece na linha (\"🔎 a NF X é de FULANO — cidade · placa\") com um botão pra usar aquela parada. Isso NUNCA anexa sozinho e o que for aplicado assim fica marcado como DÚVIDA, porque é palpite por sequência, não certeza. v286 — CT-e, MDF-e E CIOT NO SISTEMA (bloco \"📄 CT-e, MDF-e E CIOT\" na aba Carregamento Suzano): a equipe anexa os XML (ou o ZIP inteiro do emissor) e o app lê tudo com DOMParser, sem IA e sem custo. O CT-e lista a CHAVE DE ACESSO de cada NF-e que transporta; o MDF-e lista a chave de cada CT-e e traz o CIOT e o condutor; e a chave da NF-e é exatamente a que o QR do canhoto entrega. Com isso a cadeia fecha: canhoto → NF-e → CT-e → MDF-e → CIOT → viagem (casada por placa + data). Consequências práticas: (1) o canhoto passa a encontrar a parada por CHAVE EXATA de 44 dígitos, sem depender de espelho lido nem de comparar nome de cliente; (2) importar CT-e preenche o número e a chave da NF nas paradas da roteirização, que nasciam só com a remessa; (3) cada viagem passa a mostrar CT-e, MDF-e, CIOT e quantos canhotos já vieram, com aviso de CT-e sem MDF-e, MDF-e sem CIOT e documento cuja placa+data não tem viagem cadastrada. CORREÇÃO DE SINCRONIZAÇÃO na mesma versão: até a v285 os espelhos da Suzano (suzanoCargas) NÃO subiam pra nuvem -- ficavam só no aparelho em que foram lidos, e por isso um espelho lido no tablet não existia no PC. Agora eles e os documentos fiscais sincronizam por UNIÃO por id (o que já está no aparelho nunca é apagado pelo que vem da nuvem), em vez de substituição.
+- ENTREGAS E CANHOTOS (v267): o app agora separa VIAGEM de ENTREGA. VIAGEM é o veículo saindo da base e voltando — uma placa, um motorista, uma regional, um frete. ENTREGA é cada parada num recebedor dentro dessa viagem; a viagem tem N entregas e a entrega NÃO tem frete próprio (o frete é fechado por veículo/regional). CANHOTO é a foto do comprovante assinado e é UM POR NOTA FISCAL, porque o mesmo recebedor pode ter mais de uma NF e assinar uma por nota. A cadeia de fechamento é: canhoto de todas as notas anexado → ENTREGA concluída; todas as entregas concluídas + foto do KM final → VIAGEM pode ser concluída. O botão "Concluir viagem" fica bloqueado enquanto faltar canhoto, e a foto do KM final é sempre o último passo. As entregas nascem do romaneio já conferido (botão "puxar do romaneio": cada cliente vira uma entrega e cada nota fiscal dele vira uma linha de canhoto), ou podem ser adicionadas na mão. Entrega recusada ou parcial: o motorista anexa o canhoto assinado do mesmo jeito e escreve a ressalva no campo próprio da nota — não existe status de recusa separado. Tanto o motorista (ao anexar o KM final) quanto a equipe podem concluir. Isso começou pela operação Suzano e vai ser estendido aos demais contratos. ONDE O MOTORISTA ANEXA (v282): na LISTA DA ROTA do celular dele (\"Sua rota de dd/mm\"), em cada parada, com os botões \"📷 Tirar foto\" e \"🖼 Galeria\" — um par de botões por nota fiscal. Ele pode anexar assim que entrega, sem esperar nada: a rota aparece desde a véspera, quando a equipe libera. Depois de anexado ele consegue ver a foto, trocar (✕) e escrever a ressalva daquela nota; se o cliente tiver uma nota a mais do que veio na roteirização, o botão \"+ nota\" cria a linha. O card da viagem em andamento mostra quantos canhotos faltam e manda ele pra lista da rota; a foto do KM final continua sendo o último passo. Antes da v282 não havia botão nenhum na tela da rota e o motorista ficava sem onde anexar. CANHOTOS EM LOTE (v283, bloco \"📥 CANHOTOS EM LOTE\" na aba Carregamento Suzano): pra pôr em dia o atraso de canhotos de várias viagens juntas, a equipe solta todas as fotos de uma vez. O canhoto da Suzano tem um QR CODE com a CHAVE DE ACESSO da NF-e (44 dígitos) -- o app lê esse QR no próprio navegador (biblioteca jsQR, ou o leitor nativo do aparelho), confere o dígito verificador da chave, tira o número da NF e procura essa NF nos espelhos já lidos, que dizem o cliente, a cidade e a placa. Com isso acha a parada pendente e anexa. É determinístico: sem IA, sem custo de API e sem risco de número inventado; ou a chave lê certa ou não lê. O nome do destinatário impresso no canhoto NÃO serve, porque fica coberto pela assinatura à mão. v288: o app lê TODOS os QR de cada foto, não só o primeiro — dá pra enfileirar dez canhotos lado a lado e fotografar de uma vez (num teste real com ~10 tiras, 8 leram). Usa o BarcodeDetector nativo quando o aparelho tem e, com jsQR, apaga a área do QR já lido pra achar o próximo; roda em várias escalas e junta os achados, porque escalas diferentes pegam tiras diferentes. A foto sobe uma vez só e o mesmo arquivo fica ligado a cada nota reconhecida, marcado como foto coletiva; excluir um item só apaga o arquivo quando nenhuma outra nota ou item ainda aponta pra ele. O que não ler continua na lista CONFERIR pra apontar à mão. v294: foto REPETIDA passa a ser reconhecida como tal. No mutirão o mesmo canhoto entra duas vezes (na foto do grupo e de novo na individual); até a v293 a segunda cópia caía em \"não achei uma parada aberta que bata\", mensagem que parecia erro. Agora ela vai pra seção REPETIDAS, dizendo em qual parada aquela NF já está anexada, com botão pra ver a foto que já está lá, trocar por esta (útil quando a individual ficou melhor que a do grupo) ou apagar. v289: PARADA CRIADA A PARTIR DO CT-e. Parada de entrega só existe pra rota que passou pela roteirização (v270 em diante), então canhoto de viagem antiga lia certo, achava o CT-e e mesmo assim não tinha onde encostar. Agora o bloco fiscal mostra quantas notas de CT-e estão sem parada e tem o botão \"📍 criar parada\", que gera a parada direto do CT-e (cliente, cidade, placa e data vêm do XML, e a nota já nasce com número e chave da NF-e). Essas paradas nascem com liberada=false de propósito: são registro histórico e nunca aparecem na tela de rota de nenhum motorista. v290: não é preciso reenviar foto nenhuma — o botão \"🔄 tentar casar de novo\" no cabeçalho da lista CONFERIR reavalia os pendentes usando a foto que já subiu e a chave que já foi lida, e isso ainda roda sozinho toda vez que se importa XML novo ou se cria paradas a partir do CT-e. A ordem pra pôr o atraso em dia é: importar os ZIP de CT-e e MDF-e, clicar em criar parada, e rodar as fotos no lote (ou o tentar casar de novo, se as fotos já subiram). v291, aprendido de um MDF-e real do SimplesCTe (nº 22, 24/08, QEN6J82, Edivaldo, 11 CT-e): (a) o app agora lê o arquivo de EVENTO DE ENCERRAMENTO (…-EncMdfe-procEvento.xml), que antes era descartado, e avisa na tela qual MDF-e ainda está em aberto — manifesto não encerrado é problema fiscal; (b) guarda o SEGURO DA CARGA que vem no MDF-e (seguradora, apólice e uma AVERBAÇÃO por CT-e), que é a prova de averbação e é o que a seguradora cobra em sinistro; (c) diz EXATAMENTE quais CT-e faltam importar, pelo número (\"falta importar o XML do CT-e 99, 100, 101\"), porque a chave que o MDF-e guarda carrega o número do CT-e nas posições 26 a 34. v293: o seletor de arquivos do bloco fiscal não filtra mais por extensão. O filtro accept=\".xml,.zip\" fazia os XML aparecerem apagados e impossíveis de marcar quando vinham do Google Drive no Android, que entrega os arquivos com outro MIME — era isso que impedia anexar os CT-e. Agora entra qualquer arquivo e a triagem é pelo conteúdo; PDF e imagem são descartados pelo nome, e se nada fiscal entrar a tela diz pra selecionar os XML (ícone < >) e não os PDF. v295: a linha da viagem fica INTEIRA VERDE (fundo, borda, textos e selo \"✓ COMPLETA\") quando a viagem está fechada, e o cabeçalho conta quantas viagens estão completas. Completa = não falta nenhum CT-e pra importar E todos os canhotos daquelas notas já estão anexados. O CIOT não entra nessa conta, porque a operação é frota própria com a Suzano como contratante e os MDF-e antigos não têm CIOT; o encerramento do MDF-e também não bloqueia o verde, continua como aviso próprio. IMPORTANTE: o que casa o canhoto com a parada é o CT-e, não o MDF-e — importar só MDF-e não faz canhoto nenhum casar, já que é o CT-e que lista as NF-e e diz o cliente. Sobre CIOT: os MDF-e antigos não têm CIOT porque a operação é frota própria com a Suzano como contratante, e a emissão de CIOT só começou em 28/08/2026 — \"sem CIOT\" nesses casos é o esperado, não é falha de importação. O que não casa sozinho não é chutado: a foto sobe igual e o canhoto aparece na lista \"CONFERIR\", onde a pessoa escolhe a parada num seletor. Casamento por cliente repetido em dias diferentes é marcado como DÚVIDA (fica com a rota mais antiga em aberto) e pode ser desfeito no botão \"↶ desfazer\". Anexar em lote preenche também o número da NF na parada, que nas entregas vindas da roteirização nasce vazio (elas só têm a remessa). v284: cada linha da lista tem 🗑 pra APAGAR a foto de vez (sai da tela e sai do bucket; se estava anexada numa entrega, o canhoto sai de lá e a parada volta a ficar pendente), mais um botão que apaga de uma vez todas as que ficaram sem parada. Serve pro canhoto que o QR não leu e que ninguém consegue identificar -- em vez de ficar entulhando a lista. \"limpar lista\" é outra coisa: só some com o histórico da tela e NÃO apaga foto nenhuma. v285: quando a NF lida não está em espelho nenhum, o app não para no beco — ele procura a NF VIZINHA (até 20 números de distância) nos espelhos e nas notas já preenchidas das entregas, porque as NF de uma mesma carga da Suzano saem em sequência (195668 e 195669 são o mesmo cliente no mesmo CT-e). A pista aparece na linha (\"🔎 a NF X é de FULANO — cidade · placa\") com um botão pra usar aquela parada. Isso NUNCA anexa sozinho e o que for aplicado assim fica marcado como DÚVIDA, porque é palpite por sequência, não certeza. v286 — CT-e, MDF-e E CIOT NO SISTEMA (bloco \"📄 CT-e, MDF-e E CIOT\" na aba Carregamento Suzano): a equipe anexa os XML (ou o ZIP inteiro do emissor) e o app lê tudo com DOMParser, sem IA e sem custo. O CT-e lista a CHAVE DE ACESSO de cada NF-e que transporta; o MDF-e lista a chave de cada CT-e e traz o CIOT e o condutor; e a chave da NF-e é exatamente a que o QR do canhoto entrega. Com isso a cadeia fecha: canhoto → NF-e → CT-e → MDF-e → CIOT → viagem (casada por placa + data). Consequências práticas: (1) o canhoto passa a encontrar a parada por CHAVE EXATA de 44 dígitos, sem depender de espelho lido nem de comparar nome de cliente; (2) importar CT-e preenche o número e a chave da NF nas paradas da roteirização, que nasciam só com a remessa; (3) cada viagem passa a mostrar CT-e, MDF-e, CIOT e quantos canhotos já vieram, com aviso de CT-e sem MDF-e, MDF-e sem CIOT e documento cuja placa+data não tem viagem cadastrada. CORREÇÃO DE SINCRONIZAÇÃO na mesma versão: até a v285 os espelhos da Suzano (suzanoCargas) NÃO subiam pra nuvem -- ficavam só no aparelho em que foram lidos, e por isso um espelho lido no tablet não existia no PC. Agora eles e os documentos fiscais sincronizam por UNIÃO por id (o que já está no aparelho nunca é apagado pelo que vem da nuvem), em vez de substituição.
 - ROTEIRIZAÇÃO ANTECIPADA DA SUZANO (v270): a nota fiscal da Suzano sai em cima da hora, mas a roteirização que a RF envia ao cliente no fim da tarde já reflete 100% a carga do dia seguinte. Por isso a aba Carregamento Suzano tem o bloco "Roteirização do dia seguinte": importa-se o MESMO arquivo .xlsx que foi mandado ao cliente e o app cria (a) a viagem PREVISTA de cada placa, com cliente Suzano, a regional, o peso somado e o KM estimado, e (b) as entregas de cada parada, com uma linha de canhoto por remessa esperando a foto. Quando a NF-e sair, o número entra na linha que já existe. O KM estimado vem da MÉDIA das viagens anteriores da mesma placa na mesma regional (e, sem histórico da placa, da média da regional) — é estimativa por histórico real, não distância calculada por endereço; o app não tem serviço de mapas com chave e não inventa distância. Reimportar a mesma placa e data substitui as entregas ainda sem canhoto e PRESERVA as já entregues, então correção de última hora não apaga trabalho feito. NADA disso aparece para o motorista até alguém da equipe clicar em "liberar para o motorista"; há também o botão de recolher. No celular do motorista, a rota da véspera é casada por PLACA + DATA (a viagem que ele abre no app não é o mesmo registro da viagem prevista), e ele só enxerga o que foi liberado.
 - CONFERÊNCIA DE CARGA, cruzamento do cliente (v259): quando o número do PEDIDO lido na etiqueta não existe no romaneio, o sistema NÃO conclui mais que a mercadoria não é da carga. Ele ainda tenta achar o cliente pelo nome (razão social/fantasia da etiqueta) + cidade e, por último, pelo total de volumes da etiqueta contra o volume do cliente; achando por um desses caminhos, marca o pedido do cliente na caixa pra ela contar na conferência, e avisa o motorista que o número não bateu. Isso nasceu de um caso real: etiqueta fotografada de cabeça pra baixo, a IA pegou um número curto de campo vizinho no lugar do pedido, e uma caixa que ESTAVA no romaneio foi acusada de não estar. Se alguém disser que o app acusou mercadoria fora do romaneio, a primeira coisa a checar é a posição da etiqueta na foto, não a carga.
 - Existem DOIS modelos de etiqueta na mesma carga: um com o campo "VOL x/y" e outro sem — esse segundo tem M. LOG, PROD e uma sequência tipo "S:055/055", que é sequência de separação e NÃO é volume. Etiqueta sem VOL é normal e não é erro de leitura.
