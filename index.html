@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v309)</title>
+<title>RF Logística — Painel da Frota (v310)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5212,6 +5212,159 @@ function szTelaRoteirizador() {
   return h + '</div>';
 }
 
+/* ===================== v310: A NF DA SUZANO E O GABARITO =====================
+   Ate a v309 o canhoto era conferido contra o CT-e -- documento que a PROPRIA RF
+   emite. Se a emissao sair errada (nota faltando, nota trocada, nota a mais), a
+   conferencia fecha em cima do proprio erro e ninguem ve. O espelho de emissao
+   que a Suzano manda e o documento de FORA: e ele que diz quais notas existem.
+   A cadeia passa a ser NF da Suzano -> CT-e emitido pela RF -> canhoto assinado.
+
+   O que amarra o espelho a viagem e a CHAVE DE ACESSO da NF-e, nunca a placa nem
+   o motorista do cabecalho: Renato confirmou que a Suzano preenche o motorista
+   com quem estiver a mao (o do espelho quase nunca e o real) e que a placa, mais
+   dificil, tambem pode vir errada. Quem vale e sempre a roteirizacao. Por isso
+   placa e motorista do espelho entram como AVISO e registro, nunca como regra. */
+function rfNfEspelhos() {
+  var out = [];
+  (state.suzanoCargas || []).forEach(function (c) {
+    (c.espelhos || []).forEach(function (e) {
+      if (!e) return;
+      var num = String(e.nfe || "").replace(/\D/g, "").replace(/^0+/, "");
+      out.push({
+        chave: String(e.chave || ""), nf: num,
+        cliente: e.destinatario || e.recebedor || e.cliente || "",
+        cidade: e.cidade || "", valorFrete: Number(e.valorFrete) || 0,
+        volumes: Number(e.qtdVolumes) || 0,
+        placaEspelho: c.placa || "", data: c.data || "",
+      });
+    });
+  });
+  return out;
+}
+
+// Onde aquela NF esta: viagem pela parada (roteirizacao) ou pelo CT-e.
+function rfNfViagemDaNota(chave, nf) {
+  var achou = null;
+  (state.entregas || []).forEach(function (e) {
+    (e.notas || []).forEach(function (n) {
+      if (achou) return;
+      if ((chave && n.chaveNfe === chave) || (nf && String(n.nf || "").replace(/^0+/, "") === nf)) {
+        achou = { placa: e.placa || "", data: String(e.dataPrevista || "").slice(0, 10), origem: "parada" };
+      }
+    });
+  });
+  return achou;
+}
+
+function rfNfConferencia() {
+  var r = { semCte: [], foraDoEspelho: [], semCanhoto: [], valorDif: [], placaDif: [], totalEspelho: 0, ok: 0 };
+  try {
+    var esp = rfNfEspelhos();
+    r.totalEspelho = esp.length;
+    if (!esp.length) return r;
+
+    // indice das NF que estao em CT-e importado
+    var porChave = {}, porNum = {};
+    rfFiscais().forEach(function (d) {
+      if (d.tipo !== "cte") return;
+      (d.nfes || []).forEach(function (ch) {
+        porChave[ch] = d;
+        var n = String(parseInt(String(ch).slice(25, 34), 10));
+        if (n && n !== "NaN") porNum[n] = d;
+      });
+    });
+
+    var temCanhoto = function (chave, nf) {
+      return (state.entregas || []).some(function (e) {
+        return (e.notas || []).some(function (n) {
+          return ((chave && n.chaveNfe === chave) || (nf && String(n.nf || "").replace(/^0+/, "") === nf)) && n.foto;
+        });
+      });
+    };
+
+    var noEspelho = {};
+    esp.forEach(function (x) {
+      if (x.chave) noEspelho[x.chave] = true;
+      if (x.nf) noEspelho["n" + x.nf] = true;
+
+      var cte = (x.chave && porChave[x.chave]) || (x.nf && porNum[x.nf]) || null;
+      if (!cte) { r.semCte.push(x); return; }
+
+      // valor do frete: o espelho ja diz quanto e por nota
+      if (x.valorFrete > 0 && Number(cte.valor) > 0) {
+        var dif = Math.abs(Number(cte.valor) - x.valorFrete);
+        if (dif >= 0.02) r.valorDif.push({ nf: x.nf, cliente: x.cliente, espelho: x.valorFrete, cte: Number(cte.valor), numeroCte: cte.numero });
+      }
+      // placa: aviso, nunca regra
+      var v = rfNfViagemDaNota(x.chave, x.nf);
+      if (v && v.placa && x.placaEspelho && v.placa !== x.placaEspelho) {
+        r.placaDif.push({ nf: x.nf, cliente: x.cliente, espelho: x.placaEspelho, viagem: v.placa, data: v.data });
+      }
+      if (!temCanhoto(x.chave, x.nf)) r.semCanhoto.push(x);
+      else r.ok++;
+    });
+
+    // CT-e com nota que o espelho nao tem
+    rfFiscais().forEach(function (d) {
+      if (d.tipo !== "cte") return;
+      (d.nfes || []).forEach(function (ch) {
+        var n = String(parseInt(String(ch).slice(25, 34), 10));
+        if (noEspelho[ch] || noEspelho["n" + n]) return;
+        r.foraDoEspelho.push({ nf: n, chave: ch, cliente: d.cliente || "", numeroCte: d.numero });
+      });
+    });
+  } catch (e) { }
+  return r;
+}
+
+function rfNfConfHTML() {
+  var r = rfNfConferencia();
+  var linha = function (cor, titulo, ajuda, itens, fmt) {
+    if (!itens.length) return "";
+    return '<div style="border:1px solid ' + cor + ';border-left:4px solid ' + cor + ';border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#0A0A0A;">'
+      + '<div style="font-size:13px;font-weight:800;color:' + cor + ';">' + esc(titulo) + ' (' + itens.length + ')</div>'
+      + '<div style="font-size:11px;color:#999;margin:3px 0 7px;">' + esc(ajuda) + '</div>'
+      + itens.slice(0, 40).map(fmt).join("")
+      + (itens.length > 40 ? '<div style="font-size:11px;color:#888;margin-top:4px;">e mais ' + (itens.length - 40) + '…</div>' : "")
+      + '</div>';
+  };
+  var h = '<div style="font-size:12px;color:#999;margin-bottom:10px;">A NF que a Suzano manda no espelho é o gabarito: ela diz quais notas existem de verdade. '
+    + 'O CT-e é emitido pela RF, então conferir canhoto só contra o CT-e é conferir contra o próprio trabalho. Aqui as três pontas são cruzadas pela CHAVE DE ACESSO da NF-e. '
+    + '<b style="color:' + GOLD + ';">Placa e motorista do espelho não valem como regra</b> — a Suzano preenche com quem está à mão; quem vale é a roteirização.</div>';
+
+  if (!r.totalEspelho) {
+    return h + '<div style="color:#888;padding:16px;border:1px dashed #333;border-radius:8px;">Nenhum espelho lido ainda. Anexe o PDF do espelho na etapa 2 (Conferência) — o app lê o texto do arquivo, sem IA e sem custo.</div>';
+  }
+
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px;">'
+    + '<div><div style="font-size:11px;color:#999;">NF no espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + r.totalEspelho + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Fechadas</div><div style="font-size:19px;font-weight:800;color:#2E7D32;">' + r.ok + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Sem CT-e</div><div style="font-size:19px;font-weight:800;color:' + (r.semCte.length ? "#C0392B" : "#2E7D32") + ';">' + r.semCte.length + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Sem canhoto</div><div style="font-size:19px;font-weight:800;color:' + (r.semCanhoto.length ? GOLD : "#2E7D32") + ';">' + r.semCanhoto.length + '</div></div>'
+    + '</div>';
+
+  h += linha("#C0392B", "NF no espelho e sem CT-e emitido", "Carga que saiu sem documento, ou CT-e que faltou emitir. É o mais grave da lista.", r.semCte, function (x) {
+    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "sem destinatário") + (x.cidade ? ' · ' + esc(x.cidade) : "") + '</div>';
+  });
+  h += linha("#C0392B", "CT-e emitido com NF que não está em espelho nenhum", "Nota trocada ou digitada errada na emissão — ou o espelho dessa viagem ainda não foi lido.", r.foraDoEspelho, function (x) {
+    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + '</div>';
+  });
+  h += linha(GOLD, "Valor do frete diferente do espelho", "O espelho já diz quanto vale cada nota. Diferença aqui é diferença de faturamento.", r.valorDif, function (x) {
+    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · CT-e ' + esc(x.numeroCte || "") + ' — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + '</div>';
+  });
+  h += linha(GOLD, "NF do espelho ainda sem canhoto", "Conferido contra o espelho, não contra o CT-e.", r.semCanhoto, function (x) {
+    return '<div style="font-size:12px;color:#ddd;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + '</div>';
+  });
+  h += linha("#777", "Placa do espelho diferente da viagem", "Só aviso. A Suzano às vezes põe a placa errada no espelho; quem manda é a roteirização.", r.placaDif, function (x) {
+    return '<div style="font-size:12px;color:#bbb;padding:3px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' — espelho diz ' + esc(x.espelho) + ', a nota está na viagem do ' + esc(x.viagem) + (x.data ? ' de ' + esc(x.data) : "") + '</div>';
+  });
+
+  if (!r.semCte.length && !r.foraDoEspelho.length && !r.valorDif.length && !r.semCanhoto.length) {
+    h += '<div style="border:1px solid #2E7D32;border-radius:8px;padding:12px;background:#0A140A;color:#97C459;font-size:13px;font-weight:800;">✓ Tudo o que a Suzano mandou tem CT-e e canhoto, e os valores batem.</div>';
+  }
+  return h;
+}
+
 // ===================== v308: CARREGAMENTO SUZANO EM ETAPAS =====================
 // A aba empilhava quatro blocos pesados abertos ao mesmo tempo (roteirizacao,
 // conferencia, fiscal e canhotos) -- cada um ja e uma tela inteira. Agora ela
@@ -5223,6 +5376,7 @@ var SZ_ETAPAS = [
   { id: "conf",   n: 2, nome: "Conferência" },
   { id: "fiscal", n: 3, nome: "Fiscal" },
   { id: "canh",   n: 4, nome: "Canhotos" },
+  { id: "confnf", n: 5, nome: "NF da Suzano" },
 ];
 
 function szEtapaAbrir(id) {
@@ -5238,6 +5392,7 @@ function szEtapaSituacao() {
     conf:   { txt: "nenhum carregamento",    cor: "#777" },
     fiscal: { txt: "nada importado",         cor: "#777" },
     canh:   { txt: "nada a conferir",        cor: "#777" },
+    confnf: { txt: "nenhum espelho lido",    cor: "#777" },
     rotas: 0, paradas: 0, ctesFalta: 0, canhotosFalta: 0,
   };
   try {
@@ -5299,6 +5454,17 @@ function szEtapaSituacao() {
         : { txt: ctesTot + " CT-e com canhoto", cor: "#2E7D32" };
     }
   } catch (e) { }
+  try {
+    var cf = rfNfConferencia();
+    if (cf.totalEspelho) {
+      var graves = cf.semCte.length + cf.foraDoEspelho.length;
+      r.confnf = graves
+        ? { txt: graves + " divergência(s) grave(s)", cor: "#C0392B" }
+        : (cf.valorDif.length || cf.semCanhoto.length)
+          ? { txt: (cf.valorDif.length ? cf.valorDif.length + " valor(es) diferente(s)" : cf.semCanhoto.length + " sem canhoto"), cor: GOLD }
+          : { txt: cf.totalEspelho + " NF conferidas", cor: "#2E7D32" };
+    }
+  } catch (e) { }
   return r;
 }
 
@@ -5308,6 +5474,7 @@ function szEtapaConteudo(id) {
   if (id === "conf") return szTelaEquipe();
   if (id === "fiscal") return rfFiscalBlocoHTML();
   if (id === "canh") return rfCanhLoteBlocoHTML();
+  if (id === "confnf") return rfNfConfHTML();
   return "";
 }
 
@@ -13071,6 +13238,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- A NF DA SUZANO E O GABARITO (v310, etapa 5 "NF da Suzano" na aba Carregamento Suzano): ate a v309 o canhoto era conferido contra o CT-e, que e emitido pela propria RF -- se a emissao saisse errada, a conferencia fechava em cima do proprio erro. Agora a cadeia e NF da Suzano -> CT-e da RF -> canhoto, e o espelho de emissao que a Suzano manda (PDF com camada de texto, lido sem IA e sem custo) e o documento de fora que diz quais notas existem de verdade. A etapa aponta: NF no espelho sem CT-e emitido (o mais grave -- carga que saiu sem documento), CT-e emitido com NF que nao esta em espelho nenhum (nota trocada na emissao), valor do frete do CT-e diferente do que o espelho diz por nota (diferenca de faturamento) e NF do espelho ainda sem canhoto. O que amarra o espelho a viagem e a CHAVE DE ACESSO da NF-e, NUNCA a placa nem o motorista do cabecalho: a Suzano preenche o motorista com quem estiver a mao (o do espelho quase nunca e o real) e a placa, embora mais dificil, tambem pode vir errada. Quem vale como motorista e como placa e SEMPRE a roteirizacao -- placa divergente vira aviso, e o motorista do espelho e so registro. A Suzano nao manda XML, so PDF.
 - CARREGAMENTO VAZIO (v309): carregamento aberto pelo "+ Novo carregamento" e nunca preenchido (sem espelho, sem volume e sem placa) aparece com o selo VAZIA, NAO conta como pendencia na etapa 2 e pode ser apagado de uma vez no botao "limpar vazios" do topo da etapa. Antes disso ele era contado como "montando" e inventava trabalho que nao existia. A etapa 2 (Conferencia) e tudo o que acontece ANTES da saida do caminhao: montar a carga, bipar os volumes contra a nota e liberar; depois que o caminhao sai, o que corre e a etapa 3 (Fiscal) e a 4 (Canhotos). A bolha do assistente e arrastavel e a posicao fica gravada no aparelho; se ela estiver tapando a tela, o botao ↘ no cabecalho deste chat devolve ela pro canto de baixo.
 - ABA CARREGAMENTO SUZANO EM ETAPAS (v308): a aba nao empilha mais os quatro blocos abertos ao mesmo tempo. Ela abre como o FLUXO DO DIA, com uma caixa fechada por etapa, na ordem 1 Roteirizacao (plano do dia, roteirizador da planilha e as rotas previstas pra liberar pro motorista), 2 Conferencia (os carregamentos e a bipagem dos volumes contra a nota), 3 Fiscal (CT-e, MDF-e e CIOT) e 4 Canhotos (o mutirao de fotos em lote). Cada caixa mostra a PENDENCIA dela -- rotas nao liberadas, carregamentos ainda montando, CT-e faltando importar, canhotos faltando -- com tarja verde quando esta fechada, dourada quando falta algo e vermelha quando esta atrasada. So UMA etapa fica aberta por vez, e no topo tem o quadro \"Situacao da operacao\" com rotas montadas, paradas, CT-e a importar e canhotos faltando. Nenhuma funcionalidade foi removida: cada bloco virou o conteudo de uma etapa, exatamente como era. Se a pessoa perguntar onde foi parar algum recurso da aba, diga em qual das quatro etapas ele esta.
 - ROTEIRIZAÇÃO AUTOMÁTICA (v259, bloco "📦 Roteirização: planilha da Suzano → caminhões"): a Suzano manda a planilha da carga (uma linha por remessa) e é a RF que divide por caminhão e roteiriza — antes isso era feito à mão. O sistema lê o .xlsx direto no navegador (sem IA e sem custo) e monta a divisão com estas regras, que são as mesmas que a equipe usava na mão: (1) agrupa por RECEBEDOR, nunca pelo "Nome Emissor" — as duas colunas divergem na planilha deles e quem recebe a mercadoria é o recebedor; (2) cliente NUNCA se parte entre dois caminhões; (3) cliente que sozinho enche o carro ganha o carro só pra ele; (4) lojas da mesma rede andam juntas enquanto o peso deixar; (5) as paradas saem ordenadas com as cidades de passagem primeiro e a cidade com mais entregas por último, agrupando por bairro dentro da cidade — é o roteiro "desce pra Feira".
