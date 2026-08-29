@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v307)</title>
+<title>RF Logística — Painel da Frota (v308)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5192,14 +5192,141 @@ function szTelaRoteirizador() {
   return h + '</div>';
 }
 
+// ===================== v308: CARREGAMENTO SUZANO EM ETAPAS =====================
+// A aba empilhava quatro blocos pesados abertos ao mesmo tempo (roteirizacao,
+// conferencia, fiscal e canhotos) -- cada um ja e uma tela inteira. Agora ela
+// abre como o FLUXO DO DIA: quatro caixas fechadas, cada uma dizendo a propria
+// pendencia, e so a etapa tocada e desenhada. Nada foi removido: cada bloco
+// virou o conteudo de uma etapa, igual estava.
+var SZ_ETAPAS = [
+  { id: "rot",    n: 1, nome: "Roteirização" },
+  { id: "conf",   n: 2, nome: "Conferência" },
+  { id: "fiscal", n: 3, nome: "Fiscal" },
+  { id: "canh",   n: 4, nome: "Canhotos" },
+];
+
+function szEtapaAbrir(id) {
+  state._szEtapa = (state._szEtapa === id) ? null : id;   // uma etapa por vez
+  render();
+}
+
+// Situacao de cada etapa. Tudo dentro de try/catch de proposito: um erro de
+// contagem nunca pode deixar a aba em branco (licao da v229).
+function szEtapaSituacao() {
+  var r = {
+    rot:    { txt: "sem rota montada",       cor: "#777" },
+    conf:   { txt: "nenhum carregamento",    cor: "#777" },
+    fiscal: { txt: "nada importado",         cor: "#777" },
+    canh:   { txt: "nada a conferir",        cor: "#777" },
+    rotas: 0, paradas: 0, ctesFalta: 0, canhotosFalta: 0,
+  };
+  try {
+    var grupos = {};
+    (state.entregas || []).forEach(function (e) {
+      if (e.origem !== "roteirizacao") return;
+      var k = String(e.viagemId || "") + "|" + String(e.placa || "");
+      if (!grupos[k]) grupos[k] = [];
+      grupos[k].push(e);
+    });
+    var chaves = Object.keys(grupos);
+    var naoLib = 0, paradas = 0;
+    chaves.forEach(function (k) {
+      paradas += grupos[k].length;
+      if (!grupos[k].some(function (e) { return e.liberada; })) naoLib++;
+    });
+    r.rotas = chaves.length; r.paradas = paradas;
+    if (chaves.length) {
+      r.txt = null;
+      r.rot = naoLib
+        ? { txt: chaves.length + " rota(s) · " + naoLib + " não liberada(s)", cor: GOLD }
+        : { txt: chaves.length + " rota(s) liberada(s)", cor: "#2E7D32" };
+    }
+  } catch (e) { }
+  try {
+    var cargas = szCargas() || [];
+    var montando = cargas.filter(function (c) { return c.status !== "em_rota"; }).length;
+    if (cargas.length) {
+      r.conf = montando
+        ? { txt: montando + " carregamento(s) montando", cor: GOLD }
+        : { txt: cargas.length + " carregamento(s) em rota", cor: "#2E7D32" };
+    }
+  } catch (e) { }
+  try {
+    var viagens = rfFiscalPorViagem() || [];
+    var falta = 0, abertos = 0, semCanh = 0, ctesOk = 0, ctesTot = 0;
+    viagens.forEach(function (g) {
+      falta += (g.ctesFaltando || []).length;
+      abertos += (g.abertos || []).length;
+      semCanh += (g.semCanhoto || []).length;
+      ctesOk += g.ctesOk || 0;
+      ctesTot += (g.ctes || []).length;
+    });
+    r.ctesFalta = falta; r.canhotosFalta = semCanh;
+    if (viagens.length) {
+      var pf = [];
+      if (falta) pf.push("faltam " + falta + " CT-e");
+      if (abertos) pf.push(abertos + " MDF-e em aberto");
+      r.fiscal = pf.length
+        ? { txt: pf.join(" · "), cor: falta ? GOLD : "#C0392B" }
+        : { txt: viagens.length + " viagem(ns) com XML completo", cor: "#2E7D32" };
+      r.canh = semCanh
+        ? { txt: ctesOk + "/" + ctesTot + " CT-e fechados · " + semCanh + " canhoto(s) faltando", cor: "#C0392B" }
+        : { txt: ctesTot + " CT-e com canhoto", cor: "#2E7D32" };
+    }
+  } catch (e) { }
+  return r;
+}
+
+// Conteudo de cada etapa. So a aberta e montada.
+function szEtapaConteudo(id) {
+  if (id === "rot") return szTelaPlano() + szTelaRoteirizador() + rfRotBlocoHTML();
+  if (id === "conf") return szTelaEquipe();
+  if (id === "fiscal") return rfFiscalBlocoHTML();
+  if (id === "canh") return rfCanhLoteBlocoHTML();
+  return "";
+}
+
+function szTelaEtapasHTML() {
+  var sit = szEtapaSituacao();
+  var aberta = state._szEtapa || null;
+  var h = '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:10px;padding:11px 13px;margin-bottom:12px;">'
+    + '<div style="color:#999;font-size:11px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Situação da operação</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;">'
+    + '<div><div style="font-size:11px;color:#999;">Rotas montadas</div><div style="font-size:18px;font-weight:800;color:#fff;">' + sit.rotas + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Paradas</div><div style="font-size:18px;font-weight:800;color:#fff;">' + sit.paradas + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">CT-e a importar</div><div style="font-size:18px;font-weight:800;color:' + (sit.ctesFalta ? GOLD : "#2E7D32") + ';">' + sit.ctesFalta + '</div></div>'
+    + '<div><div style="font-size:11px;color:#999;">Canhotos faltando</div><div style="font-size:18px;font-weight:800;color:' + (sit.canhotosFalta ? "#C0392B" : "#2E7D32") + ';">' + sit.canhotosFalta + '</div></div>'
+    + '</div></div>';
+
+  h += '<div style="font-size:11px;color:#888;margin-bottom:8px;">O dia segue esta ordem. Toque na etapa para abrir — uma de cada vez, pra tela não virar um paredão.</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px;">';
+  SZ_ETAPAS.forEach(function (et) {
+    var st = sit[et.id] || { txt: "", cor: "#777" };
+    var on = aberta === et.id;
+    h += '<div onclick="szEtapaAbrir(&#39;' + et.id + '&#39;)" style="cursor:pointer;background:' + (on ? "#1C1C1C" : "#141414") + ';border:1px solid ' + (on ? GOLD : "#262626") + ';border-left:4px solid ' + st.cor + ';border-radius:8px;padding:13px 12px;min-height:96px;display:flex;flex-direction:column;justify-content:space-between;">'
+      + '<div><div style="font-size:11px;color:#5F5E5A;">' + et.n + '</div>'
+      + '<div style="font-size:18px;color:#fff;font-weight:700;line-height:1.2;margin-top:2px;">' + et.nome + '</div></div>'
+      + '<div style="font-size:11px;color:' + st.cor + ';margin-top:8px;">' + esc(st.txt) + '</div>'
+      + '</div>';
+  });
+  h += '</div>';
+
+  if (aberta) {
+    var et = SZ_ETAPAS.filter(function (x) { return x.id === aberta; })[0] || { nome: "" };
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:10px 13px;background:#0E0E0E;border:1px solid ' + GOLD + ';border-radius:8px;">'
+      + '<span style="font-size:16px;color:' + GOLD + ';font-weight:800;">' + esc(et.nome) + '</span>'
+      + '<button class="btn-outline" style="font-size:11px;" onclick="szEtapaAbrir(&#39;' + aberta + '&#39;)">▲ fechar etapa</button></div>';
+    h += szEtapaConteudo(aberta);
+  }
+  return h;
+}
+
 function szTelaEquipe() {
   var cargas = szCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
     + '<div style="font-size:12px;color:#999;max-width:760px;">Operação Suzano: eles não emitem CT-e e não homologam, então a conferência é toda da RF. '
     + 'Um espelho = uma NF = um cliente. O caminhão só é liberado quando a soma dos volumes bipados bate com a soma das notas.</div>'
-    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>'
-    + szTelaPlano()
-    + szTelaRoteirizador();
+    + '<button onclick="szNovaCarga()" style="font-weight:800;">+ Novo carregamento</button></div>';
   if (!cargas.length) return h + '<div style="color:#888;padding:20px;">Nenhum carregamento lançado ainda.</div>';
   cargas.forEach(function (c) {
     var t = szTotais(c), aberta = String(state.szCargaAberta) === String(c.id);
@@ -12913,6 +13040,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- ABA CARREGAMENTO SUZANO EM ETAPAS (v308): a aba nao empilha mais os quatro blocos abertos ao mesmo tempo. Ela abre como o FLUXO DO DIA, com uma caixa fechada por etapa, na ordem 1 Roteirizacao (plano do dia, roteirizador da planilha e as rotas previstas pra liberar pro motorista), 2 Conferencia (os carregamentos e a bipagem dos volumes contra a nota), 3 Fiscal (CT-e, MDF-e e CIOT) e 4 Canhotos (o mutirao de fotos em lote). Cada caixa mostra a PENDENCIA dela -- rotas nao liberadas, carregamentos ainda montando, CT-e faltando importar, canhotos faltando -- com tarja verde quando esta fechada, dourada quando falta algo e vermelha quando esta atrasada. So UMA etapa fica aberta por vez, e no topo tem o quadro \"Situacao da operacao\" com rotas montadas, paradas, CT-e a importar e canhotos faltando. Nenhuma funcionalidade foi removida: cada bloco virou o conteudo de uma etapa, exatamente como era. Se a pessoa perguntar onde foi parar algum recurso da aba, diga em qual das quatro etapas ele esta.
 - ROTEIRIZAÇÃO AUTOMÁTICA (v259, bloco "📦 Roteirização: planilha da Suzano → caminhões"): a Suzano manda a planilha da carga (uma linha por remessa) e é a RF que divide por caminhão e roteiriza — antes isso era feito à mão. O sistema lê o .xlsx direto no navegador (sem IA e sem custo) e monta a divisão com estas regras, que são as mesmas que a equipe usava na mão: (1) agrupa por RECEBEDOR, nunca pelo "Nome Emissor" — as duas colunas divergem na planilha deles e quem recebe a mercadoria é o recebedor; (2) cliente NUNCA se parte entre dois caminhões; (3) cliente que sozinho enche o carro ganha o carro só pra ele; (4) lojas da mesma rede andam juntas enquanto o peso deixar; (5) as paradas saem ordenadas com as cidades de passagem primeiro e a cidade com mais entregas por último, agrupando por bairro dentro da cidade — é o roteiro "desce pra Feira".
 - O que fecha o caminhão NÃO é o número de paradas, é o TEMPO. Cada cliente tem tempo estimado de atendimento (automático pelo peso: acima do limite configurado vale o tempo de cliente grande, senão o tempo padrão) e dá pra fixar o tempo real de um cliente à mão. Isso existe porque atacadão é horrível de atender e pode levar o dia inteiro sozinho, enquanto oito gráficas pequenas cabem tranquilas no mesmo dia. Quando o app medir o tempo real das entregas, esse número deixa de ser chute.
 - Peso na roteirização, dois níveis: a META é 3,5 t por 3/4, que é a referência comercial com que a Suzano trabalha. Quando não dá pra fechar na meta sem partir cliente, o sistema sobe até a carga útil do CRLV do próprio caminhão (opcionalmente somando os 5% de tolerância legal de pesagem, que incidem sobre o PBT) e MARCA o carro como "acima da meta", pra exceção ficar visível em vez de silenciosa. Se nem assim couber, ele diz quais clientes ficaram sem caminhão em vez de esconder.
@@ -15198,10 +15326,7 @@ function renderTabela() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
         <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
       </div>
-      ${rfRotBlocoHTML()}
-      ${rfFiscalBlocoHTML()}
-      ${rfCanhLoteBlocoHTML()}
-      ${szTelaEquipe()}
+      ${szTelaEtapasHTML()}
     `;
     return;
   }
