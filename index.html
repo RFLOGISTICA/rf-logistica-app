@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v326)</title>
+<title>RF Logística — Painel da Frota (v327)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5818,12 +5818,25 @@ function rfNfAnexarEspelhos(input) {
       .catch(function (e) { console.warn("espelho não guardado:", e && e.message); })
       .then(function () {
         if (!ehFoto) return rfCrlvExtrairTexto(f, 60);
+        /* v327: a foto pode ser o ESPELHO ou a DANFE (a nota impressa), e sao
+           documentos diferentes. Ate a v326 so o tipo "espelho" era tentado, e
+           o prompt dele manda responder ERRO quando a imagem nao e o espelho --
+           por isso TODA foto de DANFE voltava recusada, calada.
+           Agora tenta espelho; se o servidor disser que nao e aquele documento,
+           tenta "danfe" (tipo novo, publicado na v10 da Edge Function). Duas
+           chamadas so no pior caso, e a segunda so acontece quando a primeira
+           recusou. A trava contra numero errado continua sendo a mesma: chave
+           de 44 digitos com verificador. */
         return new Promise(function (resolve, reject) {
           var manda = function (blob) {
             if (typeof rfLerFotoIA !== "function") { reject(new Error("leitura por foto indisponível")); return; }
-            rfLerFotoIA("espelho", blob, function (j) {
-              if (!j || j.erro || (!j.chave && !j.nfe)) { reject(new Error("não consegui ler a foto")); return; }
-              resolve({ _foto: true, dados: j });
+            var util = function (j) { return j && !j.erro && (j.chave || j.nfe); };
+            rfLerFotoIA("espelho", blob, function (j1) {
+              if (util(j1)) { resolve({ _foto: true, dados: j1 }); return; }
+              rfLerFotoIA("danfe", blob, function (j2) {
+                if (util(j2)) { resolve({ _foto: true, dados: j2 }); return; }
+                reject(new Error("não reconheci a foto como espelho nem como NF-e"));
+              });
             });
           };
           if (typeof rfComprimirImagem === "function") rfComprimirImagem(f).then(manda).catch(function () { manda(f); });
@@ -13916,6 +13929,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- FOTO DE DANFE PASSOU A SER LIDA (v327 do app + v10 da Edge Function ler-foto-abastecimento): a causa de "anexei as fotos e nao mudou nada" era o PROMPT, nao a foto nem o app. O tipo "espelho" da funcao de leitura termina mandando responder ERRO quando a imagem nao e o Espelho para Emissao -- e a foto era uma DANFE, entao voltava recusada calada. Foi criado o tipo "danfe" na Edge Function (v10, com os seis prompts antigos intactos), que le chave, numero da NF, destinatario, cidade, volumes, peso, valor da nota e data de emissao. A DANFE NAO tem valor de frete, entao valorFrete volta sempre 0 e essas notas nunca entram na conferencia de valor. No app, a foto anexada na etapa 5 tenta "espelho" primeiro e cai pra "danfe" se o primeiro recusar -- duas chamadas so no pior caso.
 - NOTA DUPLICADA ENTRE CARGAS (v326): a checagem de "essa NF ja esta lancada" so olhava DENTRO do mesmo carregamento. Reanexando o mesmo espelho, se ele caisse em outro carregamento (placa ou data lidas de outro jeito), a nota entrava de novo -- o total de "NF no espelho" pulou de 60 pra 118 sem nenhuma carga nova ter rodado, e a mesma NF aparecia duas vezes nas listas. Agora a chave da NF-e e procurada em TODAS as cargas: existindo, o app ATUALIZA o registro e nao insere. A contagem tambem passou a ser por chave unica. Pras duplicatas ja gravadas existe o botao "limpar notas repetidas" na etapa 5, que mantem a primeira leitura de cada NF e nunca remove uma que ja tenha etiqueta bipada ou entrada conferida.
 - GALERIA ESCONDIDA PELO accept (v325): na v324 o seletor da etapa 5 tinha accept="application/pdf,image/*" e o Android nao mostrava a galeria -- nao dava pra escolher a foto. Mesma licao da v293 com os XML vindos do Drive. O accept foi REMOVIDO dos tres botoes de anexo de espelho/NF (os dois da etapa 5 e o do carregamento na etapa 2) e a triagem passou a ser pelo conteudo: PDF vai pro leitor de texto, imagem vai pra IA de visao, arquivo de outro tipo e descartado com aviso, e arquivo sem tipo declarado (comum no Android) e tratado como foto. Regra que ja se repetiu duas vezes neste projeto: filtro accept em seletor de arquivo no Android costuma esconder justamente a origem que a pessoa quer usar -- melhor aceitar tudo e triar depois.
 - FOTO DA NOTA IMPRESSA (v324): tem dia em que o espelho nao chega e o que existe e a DANFE impressa que veio com a carga. Ate a v323 a etapa 5 so aceitava PDF e recusava a foto calada; agora imagem vai pra IA de visao (mesmo caminho que o botao da etapa 2 ja usava) e entra como nota do espelho. A trava contra erro de digito da IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa no DV e recusada em vez de virar nota fantasma. O que a foto de DANFE NAO traz e o valor do FRETE (isso so existe no espelho), entao essas notas nunca entram na conferencia de valor. Dica pratica pra quem fotografa: enquadrar a tarja do topo e a chave de acesso, que e de onde sai tudo.
