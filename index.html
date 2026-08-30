@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v325)</title>
+<title>RF Logística — Painel da Frota (v326)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4039,7 +4039,28 @@ function szAplicarEspelho(cargaId, d, origem, silencioso) {
   if (!c) return false;
   if (!d || (!d.chave && !d.nfe)) { avisa("Não reconheci um espelho da Suzano" + (origem ? " (" + origem + ")" : "") + ". Confira se o documento é o Espelho para Emissão do Conhecimento de Frete."); return false; }
   if (d.chave && !szChaveValida(d.chave)) { avisa("A chave de acesso lida não passou no dígito verificador. Não vou gravar um número que pode estar errado — confira o documento."); return false; }
-  if ((c.espelhos || []).some(function (e) { return e.chave && d.chave && e.chave === d.chave; })) { avisa("Essa NF-e já está nesta carga."); return false; }
+  /* v326: a checagem de repetido era POR CARGA. Reanexar o mesmo espelho quando
+     ele caia em outro carregamento (placa ou data lidas diferente) duplicava a
+     nota -- o total de "NF no espelho" subiu de 60 pra 118 sem nenhuma carga
+     nova ter rodado. Agora a chave e procurada em TODAS as cargas: existindo,
+     atualiza o que ja esta la e nao insere de novo. */
+  var jaEmOutra = null;
+  if (d.chave) {
+    (szCargas() || []).some(function (cx) {
+      var ach = (cx.espelhos || []).filter(function (e) { return e.chave === d.chave; })[0];
+      if (ach) { jaEmOutra = { carga: cx, esp: ach }; return true; }
+      return false;
+    });
+  }
+  if (jaEmOutra) {
+    var e0 = jaEmOutra.esp;
+    if (d.valorFrete && Number(e0.valorFrete) !== Number(d.valorFrete)) e0.valorFrete = d.valorFrete;
+    if (d.cliente && e0.cliente !== d.cliente) e0.cliente = d.cliente;
+    if (d.cidade && !e0.cidade) e0.cidade = d.cidade;
+    if (d.dataEmissao && !e0.dataEmissao) e0.dataEmissao = d.dataEmissao;
+    avisa("Essa NF-e já estava lançada" + (jaEmOutra.carga.id !== c.id ? " em outro carregamento" : "") + " — atualizei os dados em vez de duplicar.");
+    return false;
+  }
   /* v230: o espelho NÃO manda na placa nem no motorista da carga. Ele diz o que
      a Suzano emitiu; o cadastro da RF diz a verdade operacional. */
   if (!c.placa && d.placa && szPlacasFrota().indexOf(d.placa) !== -1) c.placa = d.placa;
@@ -5537,11 +5558,14 @@ function rfNfConfExportar() {
    dificil, tambem pode vir errada. Quem vale e sempre a roteirizacao. Por isso
    placa e motorista do espelho entram como AVISO e registro, nunca como regra. */
 function rfNfEspelhos() {
-  var out = [];
+  var out = [], vistas = {};   // v326: uma nota por CHAVE, mesmo repetida em duas cargas
   (state.suzanoCargas || []).forEach(function (c) {
     (c.espelhos || []).forEach(function (e) {
       if (!e) return;
       var num = String(e.nfe || "").replace(/\D/g, "").replace(/^0+/, "");
+      var _k = String(e.chave || ("nf" + num));
+      if (vistas[_k]) return;
+      vistas[_k] = true;
       out.push({
         /* v321: o dia da NF sai SO da data de emissao do proprio espelho.
            Antes caia no c.data da carga -- e quando o espelho e anexado pela
@@ -5854,6 +5878,28 @@ function rfNfAnexarEspelhos(input) {
    preciso trocar de etapa e caçar a viagem na mao. Agora cada linha mostra a
    VIAGEM (placa e data) e tem o botao que abre a etapa 3 ja com aquele grupo
    expandido. */
+/* v326: as duplicatas que ja entraram continuam gravadas. Este botao passa uma
+   vez por todas as cargas e remove a copia, mantendo a PRIMEIRA ocorrencia de
+   cada chave -- e nunca apaga uma que ja tenha etiqueta bipada ou entrada
+   conferida, porque nessa esta o trabalho de carregamento. */
+function rfNfLimparRepetidas() {
+  var vistas = {}, removidas = 0;
+  (szCargas() || []).forEach(function (c) {
+    c.espelhos = (c.espelhos || []).filter(function (e) {
+      var k = String(e.chave || "");
+      if (!k) return true;
+      var temTrabalho = (e.etiquetas || []).length > 0 || e.entrada;
+      if (!vistas[k]) { vistas[k] = true; return true; }
+      if (temTrabalho) return true;
+      removidas++;
+      return false;
+    });
+  });
+  if (!removidas) { alert("Nenhuma nota repetida encontrada."); return; }
+  salvar(); render();
+  alert("Removi " + removidas + " nota(s) repetida(s). A primeira leitura de cada NF foi mantida.");
+}
+
 function rfNfIrParaCte(chaveGrupo) {
   state._szEtapa = "fiscal";
   state._fiscalAberto = chaveGrupo || "";
@@ -5925,6 +5971,7 @@ function rfNfConfHTML() {
     + '<input type="file" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="rfNfConfExportar()">⬇ Exportar conferência (Excel)</button>'
+    + '<button class="btn-outline" style="font-size:11px;color:#C0392B;border-color:#C0392B;" onclick="rfNfLimparRepetidas()" title="Remove notas que entraram duas vezes, mantendo a primeira leitura">🧹 limpar notas repetidas</button>'
     + '<span style="font-size:11px;color:#888;">PDF ou foto — pode soltar vários de uma vez.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px;">'
@@ -13869,6 +13916,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- NOTA DUPLICADA ENTRE CARGAS (v326): a checagem de "essa NF ja esta lancada" so olhava DENTRO do mesmo carregamento. Reanexando o mesmo espelho, se ele caisse em outro carregamento (placa ou data lidas de outro jeito), a nota entrava de novo -- o total de "NF no espelho" pulou de 60 pra 118 sem nenhuma carga nova ter rodado, e a mesma NF aparecia duas vezes nas listas. Agora a chave da NF-e e procurada em TODAS as cargas: existindo, o app ATUALIZA o registro e nao insere. A contagem tambem passou a ser por chave unica. Pras duplicatas ja gravadas existe o botao "limpar notas repetidas" na etapa 5, que mantem a primeira leitura de cada NF e nunca remove uma que ja tenha etiqueta bipada ou entrada conferida.
 - GALERIA ESCONDIDA PELO accept (v325): na v324 o seletor da etapa 5 tinha accept="application/pdf,image/*" e o Android nao mostrava a galeria -- nao dava pra escolher a foto. Mesma licao da v293 com os XML vindos do Drive. O accept foi REMOVIDO dos tres botoes de anexo de espelho/NF (os dois da etapa 5 e o do carregamento na etapa 2) e a triagem passou a ser pelo conteudo: PDF vai pro leitor de texto, imagem vai pra IA de visao, arquivo de outro tipo e descartado com aviso, e arquivo sem tipo declarado (comum no Android) e tratado como foto. Regra que ja se repetiu duas vezes neste projeto: filtro accept em seletor de arquivo no Android costuma esconder justamente a origem que a pessoa quer usar -- melhor aceitar tudo e triar depois.
 - FOTO DA NOTA IMPRESSA (v324): tem dia em que o espelho nao chega e o que existe e a DANFE impressa que veio com a carga. Ate a v323 a etapa 5 so aceitava PDF e recusava a foto calada; agora imagem vai pra IA de visao (mesmo caminho que o botao da etapa 2 ja usava) e entra como nota do espelho. A trava contra erro de digito da IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa no DV e recusada em vez de virar nota fantasma. O que a foto de DANFE NAO traz e o valor do FRETE (isso so existe no espelho), entao essas notas nunca entram na conferencia de valor. Dica pratica pra quem fotografa: enquadrar a tarja do topo e a chave de acesso, que e de onde sai tudo.
 - CONFERENCIA DE VALOR CORRIGIDA (v323): a comparacao era feita NOTA A NOTA contra o total do CT-e, e acusava divergencia em todo CT-e com mais de uma nota -- caso real: CT-e 81 do OTQ9B07, R$ 3.896,84, comparado com os R$ 1.064,51 de uma unica nota. Agora e POR CT-e: soma o espelho de TODAS as notas daquele CT-e contra o valor emitido, e so compara quando todas as notas dele estao no espelho (senao a soma sairia menor e a divergencia seria falsa). A linha diz tambem o LADO do erro e o que fazer: cobrou a menos -> CT-e complementar; cobrou a mais -> CT-e de substituicao, porque nao existe complementar de menos.
