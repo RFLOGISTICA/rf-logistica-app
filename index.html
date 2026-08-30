@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v322)</title>
+<title>RF Logística — Painel da Frota (v324)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5512,7 +5512,7 @@ function rfNfConfExportar() {
   r.semCte.forEach(function (x) { linhas.push(["SEM CT-e EMITIDO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "NF de " + (x.dia || "") + " — o dia tem CT-e importado e esta nota não está em nenhum"]); });
   (r.semCteSemImport || []).forEach(function (x) { linhas.push(["SEM CT-e — FALTA IMPORTAR (aviso)", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "NF de " + (x.dia || "") + " — nenhum CT-e desse dia foi importado ainda"]); });
   r.foraDoEspelho.forEach(function (x) { linhas.push(["CT-e FORA DO ESPELHO", x.nf, x.cliente, "", x.numeroCte, "", "", "Viagem " + [x.placa, x.dia].filter(function (y) { return y; }).join(" ") + " — CT-e emitido com nota que não está em espelho nenhum"]); });
-  r.valorDif.forEach(function (x) { linhas.push(["VALOR DIVERGENTE", x.nf, x.cliente, "", x.numeroCte, x.espelho, x.cte, "Diferença de faturamento entre o espelho e o CT-e"]); });
+  r.valorDif.forEach(function (x) { linhas.push(["VALOR DIVERGENTE", x.nf, x.cliente, "", x.numeroCte, x.espelho, x.cte, (x.falta ? "Faltou faturar " : "Cobrado a mais ") + Math.abs(Number(x.cte) - Number(x.espelho)).toFixed(2) + " — soma de " + (x.notas || 1) + " nota(s) do espelho contra o total do CT-e"]); });
   r.semCanhoto.forEach(function (x) { linhas.push(["SEM CANHOTO", x.nf, x.cliente, x.cidade, "", x.valorFrete, "", "Tem CT-e, falta o comprovante assinado"]); });
   (r.semEspelhoNoDia || []).forEach(function (x) { linhas.push(["SEM ESPELHO NO DIA (aviso)", x.nf, x.cliente, "", x.numeroCte, "", "", "CT-e de " + (x.dia || "") + " — espelho daquele dia ainda não foi anexado"]); });
   r.placaDif.forEach(function (x) { linhas.push(["PLACA DIVERGENTE (aviso)", x.nf, x.cliente, "", "", "", "", "Espelho diz " + x.espelho + "; a nota está na viagem do " + x.viagem + " — vale a roteirização"]); });
@@ -5644,12 +5644,19 @@ function rfNfConferencia() {
     rfFiscais().forEach(function (d) {
       if (d.tipo === "cte" && d.data) diasComCte[String(d.data).slice(0, 10)] = true;
     });
+    var somaPorCte = {};
     var noEspelho = {};
     esp.forEach(function (x) {
       if (x.chave) noEspelho[x.chave] = true;
       if (x.nf) noEspelho["n" + x.nf] = true;
 
       var cte = (x.chave && porChave[x.chave]) || (x.nf && porNum[x.nf]) || null;
+      if (cte) {
+        var kc = cte.chave || ("n" + cte.numero);
+        if (!somaPorCte[kc]) somaPorCte[kc] = { cte: cte, soma: 0, notas: 0 };
+        somaPorCte[kc].soma += Number(x.valorFrete) || 0;
+        somaPorCte[kc].notas += 1;
+      }
       if (!cte) {
         /* v320: "sem CT-e" tem dois significados bem diferentes e ate agora os
            dois caiam juntos em vermelho. Se NENHUM CT-e daquele dia foi
@@ -5662,14 +5669,11 @@ function rfNfConferencia() {
         return;
       }
 
-      // valor do frete: o espelho ja diz quanto e por nota
-      if (x.valorFrete > 0 && Number(cte.valor) > 0) {
-        var dif = Math.abs(Number(cte.valor) - x.valorFrete);
-        if (dif >= 0.02) {
-          var vgv = rfNfViagemDoCte(cte) || {};
-          r.valorDif.push({ nf: x.nf, cliente: x.cliente, espelho: x.valorFrete, cte: Number(cte.valor), numeroCte: cte.numero, placa: vgv.placa || "", dia: vgv.data || "", chaveGrupo: vgv.chaveGrupo || "" });
-        }
-      }
+      /* v323: a conferencia de valor NAO pode ser feita nota a nota. Um CT-e
+         leva N notas e o valor dele cobre TODAS -- comparar o total do CT-e com
+         o frete de UMA nota acusava divergencia em todo CT-e com mais de uma
+         nota (caso real: CT-e 81, R$ 3.896,84, contra R$ 1.064,51 de uma nota).
+         A comparacao certa e por CT-e e esta logo depois deste laco. */
       // placa: aviso, nunca regra
       var v = rfNfViagemDaNota(x.chave, x.nf);
       if (v && v.placa && x.placaEspelho && v.placa !== x.placaEspelho) {
@@ -5677,6 +5681,25 @@ function rfNfConferencia() {
       }
       if (!temCanhoto(x.chave, x.nf)) r.semCanhoto.push(x);
       else r.ok++;
+    });
+
+    /* v323: agora sim, o valor -- por CT-e. So compara CT-e cujas notas estao
+       TODAS no espelho; faltando uma, a soma sairia menor e a divergencia seria
+       falsa. */
+    Object.keys(somaPorCte).forEach(function (k) {
+      var g = somaPorCte[k];
+      var totalCte = Number(g.cte.valor) || 0;
+      if (!totalCte || !g.soma) return;
+      if (g.notas !== (g.cte.nfes || []).length) return;
+      var difv = Math.abs(totalCte - g.soma);
+      if (difv < 0.02) return;
+      var vgv = rfNfViagemDoCte(g.cte) || {};
+      r.valorDif.push({
+        nf: "", cliente: g.cte.cliente || "", espelho: g.soma, cte: totalCte,
+        notas: g.notas, numeroCte: g.cte.numero,
+        placa: vgv.placa || "", dia: vgv.data || "", chaveGrupo: vgv.chaveGrupo || "",
+        falta: totalCte < g.soma,
+      });
     });
 
     /* CT-e com nota que o espelho nao tem.
@@ -5746,11 +5769,54 @@ function rfNfAnexarEspelhos(input) {
       return;
     }
     var f = arqs[i];
-    // guarda o original (v312) -- falhar aqui nunca impede a leitura
+    /* v324: FOTO DA NOTA IMPRESSA.
+       Tem dia em que o espelho nao chega (o Andre nao manda) e o que existe e a
+       DANFE impressa que veio com a carga. Ate a v323 a etapa 5 so aceitava PDF
+       e a foto era recusada calada. Agora imagem vai pra IA de visao, o mesmo
+       caminho que o botao da etapa 2 ja usava. A trava contra erro de digito da
+       IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa
+       no DV nao entra, entao um numero lido errado e recusado em vez de virar
+       nota fantasma. */
+    var ehFoto = /^image\//.test(f.type || "") || /\.(jpe?g|png|webp|heic)$/i.test(f.name || "");
     rfArqGuardar(f, "espelhos", "etapa5").then(function (meta) { f._meta = meta; })
       .catch(function (e) { console.warn("espelho não guardado:", e && e.message); })
-      .then(function () { return rfCrlvExtrairTexto(f, 60); })
+      .then(function () {
+        if (!ehFoto) return rfCrlvExtrairTexto(f, 60);
+        return new Promise(function (resolve, reject) {
+          var manda = function (blob) {
+            if (typeof rfLerFotoIA !== "function") { reject(new Error("leitura por foto indisponível")); return; }
+            rfLerFotoIA("espelho", blob, function (j) {
+              if (!j || j.erro || (!j.chave && !j.nfe)) { reject(new Error("não consegui ler a foto")); return; }
+              resolve({ _foto: true, dados: j });
+            });
+          };
+          if (typeof rfComprimirImagem === "function") rfComprimirImagem(f).then(manda).catch(function () { manda(f); });
+          else manda(f);
+        });
+      })
       .then(function (txt) {
+        if (txt && txt._foto) {
+          var j = txt.dados || {};
+          var d = {
+            numDoc: j.numDoc || "", cFrete: j.cFrete || "",
+            nfe: j.nfe || "", chave: String(j.chave || "").replace(/\D/g, ""),
+            cliente: j.cliente || "", cnpjCliente: String(j.cnpjCliente || "").replace(/\D/g, ""),
+            endereco: j.endereco || "", cidade: j.cidade || "", produto: j.produto || "",
+            qtdVolumes: Math.round(Number(j.qtdVolumes) || 0), peso: Number(j.peso) || 0,
+            valorMercadoria: Number(j.valorMercadoria) || 0, valorFrete: Number(j.valorFrete) || 0,
+            placa: String(j.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+            motorista: j.motorista || "", cpfMotorista: j.cpfMotorista || "",
+            dataEmissao: j.dataEmissao || "",
+          };
+          if (d.chave && !szChaveValida(d.chave)) { recusadas++; passo(i + 1); return; }
+          var cf = rfNfCargaDoEspelho(d.placa, rfNfDataISO(d.dataEmissao) || "");
+          if (f._meta) cf.arquivos = (cf.arquivos || []).concat([f._meta]);
+          if (szAplicarEspelho(cf.id, d, "foto da nota (IA)", true)) { feitos++; notas++; }
+          else recusadas++;
+          cargas[(cf.placa || "sem placa")] = true;
+          passo(i + 1);
+          return;
+        }
         var cab = szLerEspelhoTexto(txt) || {};
         var placa = String(cab.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         var dt = String(cab.dataEmissao || "").match(/(\d{2})[.\/-](\d{2})[.\/-](\d{4})/);
@@ -5829,9 +5895,9 @@ function rfNfConfHTML() {
   var barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
     + '📎 Anexar espelho ou NF-e da Suzano (PDF)'
-    + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
+    + '<input type="file" accept="application/pdf,image/*" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
-    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez — um por viagem.</span></div>'
+    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez. Sem espelho, vale a foto da nota impressa.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
 
   if (!r.totalEspelho) {
@@ -5885,8 +5951,12 @@ function rfNfConfHTML() {
   h += linha("#777", "CT-e de dia sem espelho importado", "Não é erro: é CT-e de viagem cujo espelho ainda não foi anexado — não há contra o que conferir. Anexe o espelho daquele dia e eles saem daqui.", r.semEspelhoNoDia, function (x) {
     return '<div style="font-size:12px;color:#bbb;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' · CT-e ' + esc(x.numeroCte || "") + viagemTxt(x) + btnCte(x) + '</div>';
   });
-  h += linha(GOLD, "Valor do frete diferente do espelho", "O espelho já diz quanto vale cada nota. Diferença aqui é diferença de faturamento.", r.valorDif, function (x) {
-    return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · CT-e ' + esc(x.numeroCte || "") + ' — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + viagemTxt(x) + btnCte(x) + '</div>';
+  h += linha(GOLD, "Valor do frete diferente do espelho", "Comparação por CT-e: soma o espelho de TODAS as notas dele contra o valor emitido. Cobrou a menos → complementar. Cobrou a mais → substituição.", r.valorDif, function (x) {
+    var difx = Math.abs(Number(x.cte) - Number(x.espelho));
+    var acao = x.falta
+      ? '<span style="color:#C0392B;font-weight:700;"> · faltou ' + fmtR(difx) + ' → complementar</span>'
+      : '<span style="color:#8E7A1F;font-weight:700;"> · cobrou ' + fmtR(difx) + ' a mais → substituição</span>';
+    return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">CT-e ' + esc(x.numeroCte || "") + ' · ' + esc(x.cliente || "") + ' (' + (x.notas || 1) + ' nota(s)) — espelho ' + fmtR(x.espelho) + ' · CT-e ' + fmtR(x.cte) + acao + viagemTxt(x) + btnCte(x) + '</div>';
   });
   h += linha(GOLD, "NF do espelho ainda sem canhoto", "Conferido contra o espelho, não contra o CT-e.", r.semCanhoto, function (x) {
     return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + dataNf(x) + '</div>';
@@ -13787,6 +13857,8 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- FOTO DA NOTA IMPRESSA (v324): tem dia em que o espelho nao chega e o que existe e a DANFE impressa que veio com a carga. Ate a v323 a etapa 5 so aceitava PDF e recusava a foto calada; agora imagem vai pra IA de visao (mesmo caminho que o botao da etapa 2 ja usava) e entra como nota do espelho. A trava contra erro de digito da IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa no DV e recusada em vez de virar nota fantasma. O que a foto de DANFE NAO traz e o valor do FRETE (isso so existe no espelho), entao essas notas nunca entram na conferencia de valor. Dica pratica pra quem fotografa: enquadrar a tarja do topo e a chave de acesso, que e de onde sai tudo.
+- CONFERENCIA DE VALOR CORRIGIDA (v323): a comparacao era feita NOTA A NOTA contra o total do CT-e, e acusava divergencia em todo CT-e com mais de uma nota -- caso real: CT-e 81 do OTQ9B07, R$ 3.896,84, comparado com os R$ 1.064,51 de uma unica nota. Agora e POR CT-e: soma o espelho de TODAS as notas daquele CT-e contra o valor emitido, e so compara quando todas as notas dele estao no espelho (senao a soma sairia menor e a divergencia seria falsa). A linha diz tambem o LADO do erro e o que fazer: cobrou a menos -> CT-e complementar; cobrou a mais -> CT-e de substituicao, porque nao existe complementar de menos.
 - MESMA NF EM DOIS CT-e (v322): checagem nova na etapa 5, feita CT-e contra CT-e (nao depende de espelho lido). Motivo real: em 12/08/2026 os CT-e 28 e 29 sairam os dois com a NF 194920 -- mesmo destinatario (WMS filial 0554-42), mesmo valor R$ 442,87, com 1h46 de diferenca -- enquanto a NF 194918 do mesmo dia ficou sem CT-e nenhum. Provavel erro de digitacao na emissao: repetiram a 194920 no lugar da 194918. Frete em duplicidade e problema fiscal, entao a NF duplicada conta como divergencia GRAVE na caixa da etapa. A linha mostra os numeros dos CT-e, os valores e o botao de ver o documento.
 - DATA DE ANEXO NAO E DATA DE NOTA (v321): apareceram notas antigas rotuladas "NF de 29/08/2026", que era so o dia em que o PDF foi anexado. Causa: o dia da NF caia na data da CARGA quando o espelho nao tinha data lida, e a carga criada pela etapa 5 nascia com a data de hoje. Agora o dia vem SO da data de emissao do proprio espelho; carga criada pelo espelho sem data nasce sem data; e nota cujo espelho foi lido sem data nao e classificada como grave -- aparece na secao dourada com o aviso "data do espelho nao lida, reanexe o PDF".
 - "SEM CT-e" SEPARADO EM DOIS (v320): a lista vermelha "NF no espelho e sem CT-e emitido" juntava duas coisas muito diferentes. Se NENHUM CT-e daquele dia foi importado, o app nao tem como saber se o CT-e foi emitido -- isso e pendencia de IMPORTACAO, nao carga sem documento, e agora vai pra uma secao dourada separada ("NF sem CT-e - mas nenhum CT-e desse dia foi importado"), que nao conta como divergencia grave. Vermelho ficou so para o caso real: o dia JA tem CT-e importado e mesmo assim a nota nao esta em nenhum deles. Alem disso, toda linha da etapa 5 passou a mostrar a DATA DA NF (vem da data de emissao do espelho, ja que a chave da NF-e so carrega mes e ano) e a placa que o espelho informou -- era o que faltava pra saber se o CT-e daquele dia ja foi tirado.
