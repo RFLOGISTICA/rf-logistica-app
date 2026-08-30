@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v334)</title>
+<title>RF Logística — Painel da Frota (v335)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -11245,8 +11245,66 @@ function rfFiscalDadosDoCte(cte) {
 function rfFiscalViagemDo(doc) {
   var d = rfFiscalDadosDoCte(doc.tipo === "cte" ? doc : null);
   var placa = doc.placa || (d ? d.placa : "");
-  if (!placa || !doc.data) return null;
-  return (state.viagens || []).find(function (v) { return v.placa === placa && String(v.data).slice(0, 10) === doc.data; }) || null;
+  if (placa && doc.data) {
+    var achou = (state.viagens || []).find(function (v) { return v.placa === placa && String(v.data).slice(0, 10) === doc.data; });
+    if (achou) return achou;
+  }
+  return rfFiscalViagemSemPlaca(doc);
+}
+// ===================== v335: CT-e SEM MDF-e =====================
+// A placa e o condutor de um CT-e moram no MDF-e. Sem MDF-e importado o CT-e
+// entra "sem placa", e ai o casamento por placa+data nao tem por onde procurar
+// -- a viagem podia estar cadastrada certinha e a linha continuava dizendo
+// "sem viagem no sistema". Foi o que aconteceu com o CT-e 17 (QUALIGRAF,
+// 07/08/2026), de uma viagem que existia no sistema.
+// Regra nova, deliberadamente conservadora, porque canhoto e documento fiscal
+// no lugar errado e problema de verdade:
+//   1. vinculo MANUAL (doc.viagemId) manda em tudo -- e escolha de gente;
+//   2. senao, se existir UMA UNICA viagem cadastrada naquela data no sistema
+//      inteiro, casa com ela e MARCA na tela que foi pela data;
+//   3. se houver duas ou mais, NAO chuta: mostra o seletor pra escolher.
+// Nada disso vale quando a placa ja veio do MDF-e -- ai o caminho normal ganha.
+function rfFiscalViagensNaData(data) {
+  var d = String(data || "").slice(0, 10);
+  if (!d) return [];
+  return (state.viagens || []).filter(function (v) { return String(v.data).slice(0, 10) === d; });
+}
+function rfFiscalViagemSemPlaca(doc) {
+  if (!doc) return null;
+  if (doc.viagemId) {
+    var m = (state.viagens || []).find(function (v) { return String(v.id) === String(doc.viagemId); });
+    if (m) return m;
+  }
+  var cands = rfFiscalViagensNaData(doc.data);
+  return cands.length === 1 ? cands[0] : null;
+}
+// Placa efetiva do documento: a do MDF-e quando existe; senao a da viagem
+// vinculada (manual ou pela data). E o que faz o CT-e orfao ser agrupado junto
+// da viagem certa em vez de virar uma linha "sem placa" solta.
+function rfFiscalPlacaDoDoc(d) {
+  var dados = d.tipo === "cte" ? rfFiscalDadosDoCte(d) : null;
+  var placa = d.placa || (dados ? dados.placa : "") || "";
+  if (placa) return { placa: placa, viaData: false };
+  var v = rfFiscalViagemSemPlaca(d);
+  if (v && v.placa) return { placa: v.placa, viaData: !d.viagemId, viagem: v };
+  return { placa: "", viaData: false };
+}
+// Vincula (ou desvincula) na mao todos os documentos de uma linha a uma viagem.
+function rfFiscalVincularViagem(chave, viagemId) {
+  var partes = String(chave || "").split("|");
+  var placa = partes[0], data = partes[1];
+  var n = 0;
+  rfFiscais().forEach(function (d) {
+    if (d.tipo === "evento") return;
+    if (String(d.data || "") !== String(data || "")) return;
+    var p = rfFiscalPlacaDoDoc(d);
+    var pAtual = p.placa || "sem placa";
+    // so mexe nos documentos que HOJE estao nessa linha
+    if (pAtual !== placa && !(placa === "sem placa" && !p.placa)) return;
+    if (viagemId) d.viagemId = String(viagemId); else delete d.viagemId;
+    n++;
+  });
+  if (n) { salvar(); rfCanhLoteRecasar(true); salvar(); render(); }
 }
 // ---- importação ----
 function rfFiscalZipLib() {
@@ -11450,9 +11508,13 @@ function rfFiscalPorViagem() {
   rfFiscais().forEach(function (d) {
     if (d.tipo === "evento") return;   // v291: evento não é uma viagem
     var dados = d.tipo === "cte" ? rfFiscalDadosDoCte(d) : null;
-    var placa = d.placa || (dados ? dados.placa : "") || "sem placa";
+    // v335: a placa pode vir da viagem vinculada quando nao ha MDF-e
+    var pEf = rfFiscalPlacaDoDoc(d);
+    var placa = pEf.placa || "sem placa";
     var k = placa + "|" + (d.data || "sem data");
     var g = mapa[k] || (mapa[k] = { placa: placa, data: d.data || "", ctes: [], mdfes: [], ciot: "", motorista: "", nfes: [] });
+    if (pEf.viaData) g.placaViaData = true;      // marca pra avisar na tela
+    if (pEf.viagem && !g.motorista && pEf.viagem.motorista) g.motorista = pEf.viagem.motorista;
     if (d.tipo === "cte") { g.ctes.push(d); (d.nfes || []).forEach(function (c) { g.nfes.push(c); }); }
     else {
       g.mdfes.push(d);
@@ -11533,6 +11595,15 @@ function rfFiscalPorViagem() {
       .filter(function (n) { return !!n; })
       .sort(function (x, y) { return x - y; });
     g.viagem = (state.viagens || []).find(function (v) { return v.placa === g.placa && String(v.data).slice(0, 10) === g.data; }) || null;
+    // v335: sem placa (CT-e sem MDF-e) a viagem vem do vinculo manual ou da
+    // data; e guardamos os candidatos daquele dia pro seletor da tela.
+    if (!g.viagem) {
+      var doc0 = g.ctes[0] || g.mdfes[0] || null;
+      if (doc0) g.viagem = rfFiscalViagemSemPlaca(doc0);
+      if (g.viagem) g.viagemViaData = !(doc0 && doc0.viagemId);
+    }
+    g.viagemEscolhida = (g.ctes[0] || g.mdfes[0] || {}).viagemId || "";
+    g.candidatas = (!g.mdfes.length && g.data) ? rfFiscalViagensNaData(g.data) : [];
     return g;
   });
 }
@@ -11785,8 +11856,37 @@ function rfFiscalBlocoHTML() {
             : (g.mdfes.length ? '<span style="font-size:10px;color:#2E7D32;">encerrada</span>' : ""))
         + (g.averbacoes ? '<span style="font-size:11px;color:#2E7D32;">' + g.averbacoes + ' averbado(s)</span>' : "")
         + (completa ? '<span style="font-size:10px;font-weight:800;color:#2E7D32;border:1px solid #2E7D32;border-radius:5px;padding:1px 6px;">✓ COMPLETA</span>' : "")
-        + (g.viagem ? '' : '<span style="font-size:10px;font-weight:800;color:#E67E22;border:1px solid #E67E22;border-radius:5px;padding:1px 6px;">sem viagem no sistema</span>')
+        + (g.viagem
+            ? (g.viagemViaData
+                ? '<span style="font-size:10px;font-weight:800;color:' + GOLD + ';border:1px solid ' + GOLD + ';border-radius:5px;padding:1px 6px;" title="Este CT-e nao tem MDF-e, entao nao veio placa nenhuma nele. O app casou com a unica viagem cadastrada nesta data. Confira no seletor abaixo.">🔗 casada pela data</span>'
+                : '')
+            : '<span style="font-size:10px;font-weight:800;color:#E67E22;border:1px solid #E67E22;border-radius:5px;padding:1px 6px;">sem viagem no sistema</span>')
       + '</div>'
+      // v335: quando falta o MDF-e, a linha nao tem placa nem condutor -- e o
+      // manifesto e obrigacao de quem emite o CT-e (a RF), nao da Suzano.
+      // Aqui o app cobra o documento e deixa escolher a viagem na mao.
+      + (!g.mdfes.length
+          ? '<div style="margin-top:6px;padding:6px 8px;background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.35);border-radius:6px;">'
+            + '<div style="font-size:10.5px;color:#E67E22;font-weight:700;margin-bottom:4px;">⚠ Falta o MDF-e desta viagem — quem emite o CT-e emite o manifesto. Sem ele nao vem placa nem condutor.</div>'
+            + (g.candidatas.length
+                ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:#bbb;">'
+                  + '<span>Viagem:</span>'
+                  + '<select style="font-size:10.5px;padding:2px 6px;max-width:320px;" onchange="rfFiscalVincularViagem(\'' + esc(k) + '\', this.value)">'
+                    + '<option value=""' + (g.viagemEscolhida ? '' : ' selected') + '>'
+                      + (g.viagem && g.viagemViaData ? '(pela data) ' + esc(g.viagem.placa || "") + ' — ' + esc(g.viagem.cliente || "sem cliente") : '— escolher a viagem —')
+                    + '</option>'
+                    + g.candidatas.map(function (v) {
+                        return '<option value="' + esc(String(v.id)) + '"' + (String(g.viagemEscolhida) === String(v.id) ? ' selected' : '') + '>'
+                          + esc(v.placa || "sem placa") + ' — ' + esc(v.cliente || "sem cliente")
+                          + (motoristaDaViagem(v) ? ' — ' + esc(motoristaDaViagem(v)) : "")
+                          + '</option>';
+                      }).join("")
+                  + '</select>'
+                  + (g.candidatas.length > 1 ? '<span style="color:#E67E22;">' + g.candidatas.length + ' viagens nesta data — escolha a certa, o app nao chuta</span>' : "")
+                  + '</div>'
+                : '<div style="font-size:10.5px;color:#999;">Nenhuma viagem cadastrada em ' + esc(g.data ? g.data.split("-").reverse().join("/") : "?") + '. Cadastre a viagem na aba Viagens que esta linha se amarra sozinha.</div>')
+            + '</div>'
+          : "")
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">'
         + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfFiscalAbrir(\'' + esc(k) + '\')">'
           + (aberto ? '▾ fechar as notas' : '▸ ver as ' + g.nfes.length + ' nota(s)') + '</button>'
@@ -11847,6 +11947,15 @@ function rfFiscalBlocoHTML() {
     + (grupos.length
         ? '<div style="font-size:12px;margin-bottom:6px;"><b style="color:#2E7D32;">' + completas + ' viagem(ns) completa(s)</b>'
           + '<span style="color:#999;"> de ' + grupos.length + ' — completa é quando não falta CT-e pra importar e todos os canhotos daquelas notas já estão anexados.</span></div>'
+          // v335: o MDF-e é obrigação de quem emite o CT-e (a RF). Contar aqui
+          // faz o buraco aparecer no dia, e não três semanas depois.
+          + (function () {
+              var semM = grupos.filter(function (g) { return g.ctes.length && !g.mdfes.length; });
+              if (!semM.length) return "";
+              return '<div style="font-size:12px;margin-bottom:6px;color:#E67E22;"><b>⚠ ' + semM.length + ' viagem(ns) com CT-e e sem MDF-e</b>'
+                + '<span style="color:#999;"> — ' + esc(semM.slice(0, 6).map(function (g) { return (g.data ? g.data.split("-").reverse().join("/") : "?"); }).join(" · "))
+                + (semM.length > 6 ? " e mais " + (semM.length - 6) : "") + '. O manifesto sai de quem emite o CT-e, não do embarcador.</span></div>';
+            })()
         : "")
     + (linhas || '<div style="font-size:11px;color:#777;">Nenhum XML anexado ainda.</div>')
     + '</div>';
@@ -14109,7 +14218,14 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
           + (g.mdfes.length ? ", MDF-e " + g.mdfes.map(function (m) { return m.numero; }).join(", ") : ", SEM MDF-e importado")
           + (g.ciot ? ", CIOT " + g.ciot : ", SEM CIOT")
           + ", " + g.canhotos + "/" + g.nfes.length + " canhoto(s) anexado(s)"
-          + (g.viagem ? "" : ". ATENÇÃO: não existe viagem cadastrada com essa placa e data");
+          // v335: sem MDF-e o CT-e entra sem placa; o app casa pela data quando
+          // ha uma unica viagem no dia, e marca isso. O assistente precisa saber
+          // que aquele vinculo e por data, nao por documento.
+          + (g.viagem
+              ? (g.viagemViaData ? ". Viagem casada PELA DATA (o CT-e nao trouxe placa por falta de MDF-e) — vinculo a conferir" : "")
+              : ". ATENÇÃO: não existe viagem cadastrada com essa placa e data")
+          + (g.ctes.length && !g.mdfes.length ? ". PENDENCIA FISCAL: CT-e emitido sem MDF-e — o manifesto e obrigacao de quem emite o CT-e (a RF), nao do embarcador" : "")
+          + ((g.abertos || []).length ? ". MDF-e " + g.abertos.join(", ") + " NAO ENCERRADO(S)" : "");
       }).join("\n");
     } catch (e) { return ""; }
   })();
@@ -15924,9 +16040,19 @@ function renderTabela() {
     // v306: a tabela de viagens so aparece com uma caixa de cliente aberta
     // (ou com "ver todas"). Fechado, a aba mostra so as caixas.
     const caixaAberta = state._viagemCaixa || null;
-    const viagensDaCaixa = !caixaAberta ? []
+    // v335: a lista dentro da caixa sai SEMPRE ordenada por data, da mais
+    // recente pra mais antiga. Antes ela seguia a ordem de cadastro do array,
+    // entao viagem lancada depois com data retroativa (o caso do dia 07
+    // lancado em 30/08) ia parar no fim da lista, longe do lugar dela.
+    // Desempate no mesmo dia: quem foi lancada por ultimo aparece primeiro.
+    const viagensDaCaixa = (!caixaAberta ? []
       : (caixaAberta === "__todas__" ? viagensFiltro
-        : viagensFiltro.filter((v) => (v.cliente || "(sem cliente)") === caixaAberta));
+        : viagensFiltro.filter((v) => (v.cliente || "(sem cliente)") === caixaAberta)))
+      .slice().sort((a, b) => {
+        const da = String(a.data || ""), db = String(b.data || "");
+        if (da !== db) return db.localeCompare(da);
+        return (Number(b.criadoEm) || 0) - (Number(a.criadoEm) || 0);
+      });
 
     wrap.innerHTML = `
       <div style="margin-bottom:10px; font-size:12px; color:#999;">
