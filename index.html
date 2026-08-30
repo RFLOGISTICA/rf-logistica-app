@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v328)</title>
+<title>RF Logística — Painel da Frota (v329)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5778,6 +5778,54 @@ function rfNfCargaDoEspelho(placa, data) {
    numero no meio dos contadores. */
 function rfNfFecharLote() { state._rfNfLote = null; render(); }
 
+/* v329: fila de conferencia das notas cuja CHAVE nao fechou.
+   Nada aqui esta na base ainda -- e uma sala de espera. A pessoa digita os 44
+   digitos (ou cola do QR) e so entra depois de passar no verificador. */
+function rfNfPendConfirmar(id) {
+  var lista = state._rfNfPendentes || [];
+  var it = lista.filter(function (x) { return String(x.id) === String(id); })[0];
+  if (!it) return;
+  var campo = document.getElementById("rfnf-chave-" + id);
+  var digitada = String((campo && campo.value) || "").replace(/\D/g, "");
+  if (digitada.length !== 44) { alert("A chave tem que ter 44 dígitos. Você digitou " + digitada.length + "."); return; }
+  if (!szChaveValida(digitada)) { alert("Essa chave não passou no dígito verificador. Confira os números — não vou gravar um número que não fecha."); return; }
+  var d = it.dados || {};
+  d.chave = digitada;
+  var c = rfNfCargaDoEspelho(d.placa || "", rfNfDataISO(d.dataEmissao) || "");
+  var ok = szAplicarEspelho(c.id, d, "foto da nota (chave conferida na mão)", true);
+  state._rfNfPendentes = lista.filter(function (x) { return String(x.id) !== String(id); });
+  salvar(); render();
+  alert(ok ? "NF " + (d.nfe || "") + " lançada." : "Essa NF já estava lançada — atualizei os dados.");
+}
+
+function rfNfPendDescartar(id) {
+  if (!confirm("Descartar esta leitura? A nota não entra e a foto continua guardada.")) return;
+  state._rfNfPendentes = (state._rfNfPendentes || []).filter(function (x) { return String(x.id) !== String(id); });
+  salvar(); render();
+}
+
+function rfNfPendentesHTML() {
+  var lista = state._rfNfPendentes || [];
+  if (!lista.length) return "";
+  var h = '<div style="border:2px solid ' + GOLD + ';border-radius:10px;padding:12px 14px;margin-bottom:14px;background:#0A0A0A;">'
+    + '<div style="font-size:15px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">Conferir antes de entrar (' + lista.length + ')</div>'
+    + '<div style="font-size:11px;color:#999;margin-bottom:10px;">A leitura veio boa, mas a chave de acesso não fechou o dígito verificador — é a menor letra da página. Digite os 44 dígitos (ou leia o QR da nota) e confirme. Nada entra sem chave válida.</div>';
+  lista.forEach(function (it) {
+    var d = it.dados || {};
+    h += '<div style="border-top:1px solid #1E1E1E;padding:9px 0;">'
+      + '<div style="font-size:12.5px;color:#ddd;">NF <b>' + esc(String(d.nfe || "?")) + '</b> · ' + esc(d.cliente || "sem destinatário")
+      + (d.cidade ? ' · ' + esc(d.cidade) : "") + ' · ' + (d.qtdVolumes || 0) + ' vol'
+      + (d.dataEmissao ? ' · ' + esc(d.dataEmissao) : "") + '</div>'
+      + '<div style="font-size:11px;color:#8E7A1F;margin:3px 0 6px;">chave lida (' + String(it.chaveLida || "").length + ' dígitos): ' + esc(it.chaveLida || "—") + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+      + '<input id="rfnf-chave-' + esc(it.id) + '" value="' + esc(it.chaveLida || "") + '" inputmode="numeric" placeholder="44 dígitos da chave" style="flex:1;min-width:260px;font-size:12px;padding:6px 8px;">'
+      + '<button class="btn-gold" style="font-size:11px;" onclick="rfNfPendConfirmar(&#39;' + esc(it.id) + '&#39;)">✓ confirmar</button>'
+      + '<button class="btn-outline" style="font-size:11px;" onclick="rfNfPendDescartar(&#39;' + esc(it.id) + '&#39;)">descartar</button>'
+      + '</div></div>';
+  });
+  return h + '</div>';
+}
+
 function rfNfLoteHTML() {
   var r = state._rfNfLote;
   if (!r || !r.linhas || !r.linhas.length) return "";
@@ -5873,7 +5921,8 @@ function rfNfAnexarEspelhos(input) {
               });
             });
           };
-          if (typeof rfComprimirImagem === "function") rfComprimirImagem(f).then(manda).catch(function () { manda(f); });
+          // v329: nota fiscal vai em 2600px / 1,2MB -- a chave precisa disso
+          if (typeof rfComprimirImagem === "function") rfComprimirImagem(f, 2600, 1200000).then(manda).catch(function () { manda(f); });
           else manda(f);
         });
       })
@@ -5891,9 +5940,20 @@ function rfNfAnexarEspelhos(input) {
             motorista: j.motorista || "", cpfMotorista: j.cpfMotorista || "",
             dataEmissao: j.dataEmissao || "",
           };
+          /* v329: chave errada NAO joga a leitura fora.
+             O resto da nota (numero, destinatario, cidade, volumes, peso, data)
+             costuma vir certo -- so a linha da chave, que e a menor letra da
+             pagina, e que falha. Antes isso virava "recusada" e o trabalho ia
+             embora. Agora a nota fica numa fila de CONFERENCIA, onde a pessoa
+             digita os 44 digitos ou tira outra foto so da chave. Nada entra na
+             base sem chave valida -- so espera. */
           if (d.chave && !szChaveValida(d.chave)) {
+            state._rfNfPendentes = (state._rfNfPendentes || []).concat([{
+              id: uid(), lidoEm: Date.now(), arquivo: f.name || "foto",
+              chaveLida: d.chave, dados: d,
+            }]);
             recusadas++;
-            anota(f.name, "recusada", "a chave lida não passou no dígito verificador — refaça a foto da chave de acesso", "#C0392B");
+            anota(f.name, "conferir", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + " — chave não fechou o dígito verificador, confira abaixo", GOLD);
             passo(i + 1); return;
           }
           var cf = rfNfCargaDoEspelho(d.placa, rfNfDataISO(d.dataEmissao) || "");
@@ -6019,7 +6079,7 @@ function rfNfConfHTML() {
     + '</label>'
     + '<span style="font-size:11px;color:#888;">PDF ou foto — pode soltar vários de uma vez. Sem espelho, vale a foto da nota impressa.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>'
-    + rfNfLoteHTML();
+    + rfNfLoteHTML() + rfNfPendentesHTML();
 
   if (!r.totalEspelho) {
     var dup = linha("#C0392B", "MESMA NF em mais de um CT-e", "Frete cobrado duas vezes pela mesma nota. Isso é conferido CT-e contra CT-e, sem depender de espelho.", r.nfDuplicada, function (x) {
@@ -6037,7 +6097,7 @@ function rfNfConfHTML() {
     + '<button class="btn-outline" style="font-size:11px;color:#C0392B;border-color:#C0392B;" onclick="rfNfLimparRepetidas()" title="Remove notas que entraram duas vezes, mantendo a primeira leitura">🧹 limpar notas repetidas</button>'
     + '<span style="font-size:11px;color:#888;">PDF ou foto — pode soltar vários de uma vez.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>'
-    + rfNfLoteHTML();
+    + rfNfLoteHTML() + rfNfPendentesHTML();
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px;">'
     + '<div><div style="font-size:11px;color:#999;">NF no espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + r.totalEspelho + '</div></div>'
     + '<div><div style="font-size:11px;color:#999;">Fechadas</div><div style="font-size:19px;font-weight:800;color:#2E7D32;">' + r.ok + '</div></div>'
@@ -10674,6 +10734,17 @@ function rfCanhotoUpload(input, id, idx) {
     .then(function (blob) { return rfCanhotoSubirBlob(e.placa, e.id, idx, blob); })
     .then(function (path) {
       rfCanhotoAplicarPath(e.id, idx, path, (e.notas[idx] || {}).nf);
+      /* v329: a foto do canhoto e tirada NA HORA DA ASSINATURA, dentro do
+         cliente -- é o momento mais confiável do dia pra saber onde aquele
+         cliente fica. Aproveita e grava o ponto. Usa a mesma regra da bipagem:
+         só grava se ainda não existe ponto, ou se a precisão de agora for
+         melhor que a guardada. Falta de GPS ou de permissão não atrapalha o
+         canhoto: a foto já foi anexada antes desta linha. */
+      try {
+        if (typeof szAtualizarPontoAoBipar === "function") {
+          szAtualizarPontoAoBipar(e.recebedor || e.cliente || "", e.cidade || "");
+        }
+      } catch (err) { console.warn("ponto do cliente não gravado:", err && err.message); }
       input.value = "";
       render();
     })
@@ -13980,6 +14051,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- v329, tres correcoes ligadas a foto de nota: (1) COMPRESSAO -- rfComprimirImagem passou a aceitar maxDim e limite de bytes como parametro, e a foto de NOTA FISCAL na etapa 5 vai em 2600px/1,2MB em vez de 1600px/360KB. Motivo real: a mesma foto que eu leio inteira chegava comprimida na IA e a linha da chave, que e a menor letra da pagina, perdia digito -- recusada no verificador. O padrao antigo continua valendo pros outros tipos (km, bomba, canhoto, fachada). (2) FILA DE CONFERENCIA -- chave que nao fecha o digito verificador nao joga mais a leitura fora: a nota vai pra uma lista "Conferir antes de entrar" na etapa 5, com numero, destinatario, cidade e volumes ja lidos, e a pessoa digita os 44 digitos ou cola do QR. Nada entra na base sem chave valida, mas o trabalho de leitura nao se perde. (3) GPS NO CANHOTO -- ao anexar a foto do canhoto, o app grava o ponto do cliente, porque a foto e tirada na hora da assinatura, dentro do cliente: e o momento mais confiavel do dia pra saber onde ele fica. Usa a mesma regra da bipagem (so grava se nao existe ponto ou se a precisao de agora for melhor), e falta de GPS ou de permissao nunca atrapalha o canhoto, que ja foi anexado antes.
 - RELATORIO DO LOTE (v328): depois de anexar espelhos ou fotos na etapa 5, o resultado saia numa linha so espremida entre seis contadores e nao dava pra saber o que tinha entrado. Agora aparece um PAINEL com uma linha por arquivo: "entrou" (com NF, destinatario, cidade e volumes), "ja estava" (nota ja lancada, dados atualizados sem duplicar), "recusada" (com o motivo -- chave que nao passou no digito verificador, foto nao reconhecida) ou "ignorado" (arquivo que nao e PDF nem foto). O painel fica na tela ate a pessoa fechar no X.
 - FOTO DE DANFE PASSOU A SER LIDA (v327 do app + v10 da Edge Function ler-foto-abastecimento): a causa de "anexei as fotos e nao mudou nada" era o PROMPT, nao a foto nem o app. O tipo "espelho" da funcao de leitura termina mandando responder ERRO quando a imagem nao e o Espelho para Emissao -- e a foto era uma DANFE, entao voltava recusada calada. Foi criado o tipo "danfe" na Edge Function (v10, com os seis prompts antigos intactos), que le chave, numero da NF, destinatario, cidade, volumes, peso, valor da nota e data de emissao. A DANFE NAO tem valor de frete, entao valorFrete volta sempre 0 e essas notas nunca entram na conferencia de valor. No app, a foto anexada na etapa 5 tenta "espelho" primeiro e cai pra "danfe" se o primeiro recusar -- duas chamadas so no pior caso.
 - NOTA DUPLICADA ENTRE CARGAS (v326): a checagem de "essa NF ja esta lancada" so olhava DENTRO do mesmo carregamento. Reanexando o mesmo espelho, se ele caisse em outro carregamento (placa ou data lidas de outro jeito), a nota entrava de novo -- o total de "NF no espelho" pulou de 60 pra 118 sem nenhuma carga nova ter rodado, e a mesma NF aparecia duas vezes nas listas. Agora a chave da NF-e e procurada em TODAS as cargas: existindo, o app ATUALIZA o registro e nao insere. A contagem tambem passou a ser por chave unica. Pras duplicatas ja gravadas existe o botao "limpar notas repetidas" na etapa 5, que mantem a primeira leitura de cada NF e nunca remove uma que ja tenha etiqueta bipada ou entrada conferida.
@@ -17513,23 +17585,30 @@ function rfGetClient() {
   });
 }
 
-function rfComprimirImagem(file) {
+/* v329: maxDim e limite de bytes viraram parametros.
+   Motivo real: a foto de NOTA FISCAL precisa de MUITO mais definicao que a de
+   painel de caminhao. Com 1600px e 360KB a linha da chave de acesso, que ja e
+   miuda, perdia dígito e a leitura era recusada no verificador -- a mesma foto
+   lida em tamanho cheio saia perfeita. Quem chama escolhe; o padrao continua o
+   de antes, pra nao mexer no que ja funciona (km, bomba, canhoto, fachada). */
+function rfComprimirImagem(file, maxDimArg, maxBytesArg) {
   return new Promise(function (resolve, reject) {
     var url = URL.createObjectURL(file);
     var img = new Image();
     img.onload = function () {
       URL.revokeObjectURL(url);
-      var maxDim = 1600, w = img.width, h = img.height;
+      var maxDim = Number(maxDimArg) || 1600, w = img.width, h = img.height;
       if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
       else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
       var canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
       canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-      var q = 0.72;
+      var maxBytes = Number(maxBytesArg) || 360000;
+      var q = maxBytesArg ? 0.88 : 0.72;
       (function attempt() {
         canvas.toBlob(function (blob) {
           if (!blob) { reject(new Error("falha na compressao")); return; }
-          if (blob.size > 360000 && q > 0.4) { q -= 0.1; attempt(); return; }
+          if (blob.size > maxBytes && q > 0.4) { q -= 0.06; attempt(); return; }
           resolve(blob);
         }, "image/jpeg", q);
       })();
