@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v335)</title>
+<title>RF Logística — Painel da Frota (v336)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -11278,6 +11278,31 @@ function rfFiscalViagemSemPlaca(doc) {
   var cands = rfFiscalViagensNaData(doc.data);
   return cands.length === 1 ? cands[0] : null;
 }
+// v336: PLACA INFORMADA A MAO. Quando o MDF-e nao foi emitido, a placa nao
+// existe em documento nenhum -- e escolher "a viagem do dia" nao serve, porque
+// o dia costuma ter viagem de outros clientes tambem (em 07/08 havia tres
+// viagens cadastradas e so uma era da Suzano). Entao a equipe informa a PLACA,
+// que e o dado que ela sabe de cabeca, e a viagem certa aparece sozinha pelo
+// casamento normal de placa + data.
+// Precedencia: placa do MDF-e > placa informada a mao > viagem vinculada a mao
+// > unica viagem cadastrada na data.
+function rfFiscalDefinirPlaca(chave, placa) {
+  var partes = String(chave || "").split("|");
+  var placaAtual = partes[0], data = partes[1];
+  var n = 0;
+  rfFiscais().forEach(function (d) {
+    if (d.tipo === "evento") return;
+    if (String(d.data || "") !== String(data || "")) return;
+    var p = rfFiscalPlacaDoDoc(d);
+    var pAtual = p.placa || "sem placa";
+    if (pAtual !== placaAtual) return;
+    if (rfFiscalMdfeDoCte(d.chave)) return;   // com MDF-e a placa e do documento, nao se mexe
+    if (placa) { d.placaManual = String(placa); delete d.viagemId; }
+    else { delete d.placaManual; }
+    n++;
+  });
+  if (n) { salvar(); rfCanhLoteRecasar(true); salvar(); render(); }
+}
 // Placa efetiva do documento: a do MDF-e quando existe; senao a da viagem
 // vinculada (manual ou pela data). E o que faz o CT-e orfao ser agrupado junto
 // da viagem certa em vez de virar uma linha "sem placa" solta.
@@ -11285,6 +11310,10 @@ function rfFiscalPlacaDoDoc(d) {
   var dados = d.tipo === "cte" ? rfFiscalDadosDoCte(d) : null;
   var placa = d.placa || (dados ? dados.placa : "") || "";
   if (placa) return { placa: placa, viaData: false };
+  if (d.placaManual) {
+    var vm = (state.viagens || []).find(function (v) { return v.placa === d.placaManual && String(v.data).slice(0, 10) === String(d.data || "").slice(0, 10); });
+    return { placa: d.placaManual, viaData: false, manual: true, viagem: vm || null };
+  }
   var v = rfFiscalViagemSemPlaca(d);
   if (v && v.placa) return { placa: v.placa, viaData: !d.viagemId, viagem: v };
   return { placa: "", viaData: false };
@@ -11514,6 +11543,7 @@ function rfFiscalPorViagem() {
     var k = placa + "|" + (d.data || "sem data");
     var g = mapa[k] || (mapa[k] = { placa: placa, data: d.data || "", ctes: [], mdfes: [], ciot: "", motorista: "", nfes: [] });
     if (pEf.viaData) g.placaViaData = true;      // marca pra avisar na tela
+    if (pEf.manual) g.placaManual = true;        // v336: placa informada pela equipe
     if (pEf.viagem && !g.motorista && pEf.viagem.motorista) g.motorista = pEf.viagem.motorista;
     if (d.tipo === "cte") { g.ctes.push(d); (d.nfes || []).forEach(function (c) { g.nfes.push(c); }); }
     else {
@@ -11837,6 +11867,7 @@ function rfFiscalBlocoHTML() {
       + (completa ? "#2E7D32" : "#222") + ';border-left:3px solid ' + cor + ';border-radius:8px;padding:9px 11px;margin-bottom:7px;">'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
         + '<span style="font-size:13px;font-weight:700;color:' + (completa ? "#2E7D32" : "#fff") + ';">' + esc(g.placa) + '</span>'
+        + (g.placaManual ? '<span style="font-size:9.5px;color:' + GOLD + ';border:1px solid ' + GOLD + ';border-radius:4px;padding:0 5px;" title="Placa informada pela equipe: este CT-e nao tem MDF-e, entao a placa nao veio de documento nenhum.">✍ placa informada</span>' : "")
         + '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#999") + ';">' + (g.data ? g.data.split("-").reverse().join("/") : "sem data") + '</span>'
         + (g.motorista ? '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#999") + ';">' + esc(g.motorista) + '</span>' : "")
         + '<span style="font-size:11px;color:' + (completa ? "#4C9A50" : "#ccc") + ';">' + g.ctes.length + ' CT-e · ' + g.nfes.length + ' NF-e</span>'
@@ -11870,8 +11901,16 @@ function rfFiscalBlocoHTML() {
             + '<div style="font-size:10.5px;color:#E67E22;font-weight:700;margin-bottom:4px;">⚠ Falta o MDF-e desta viagem — quem emite o CT-e emite o manifesto. Sem ele nao vem placa nem condutor.</div>'
             + (g.candidatas.length
                 ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:#bbb;">'
-                  + '<span>Viagem:</span>'
-                  + '<select style="font-size:10.5px;padding:2px 6px;max-width:320px;" onchange="rfFiscalVincularViagem(\'' + esc(k) + '\', this.value)">'
+                  + '<span>Placa:</span>'
+                  + '<select style="font-size:10.5px;padding:2px 6px;" onchange="rfFiscalDefinirPlaca(\'' + esc(k) + '\', this.value)">'
+                    + '<option value=""' + (g.placaManual ? '' : ' selected') + '>— informar a placa —</option>'
+                    + (state.veiculos || []).filter(function (vc) { return vc.placa; }).map(function (vc) {
+                        return '<option value="' + esc(vc.placa) + '"' + (g.placaManual && g.placa === vc.placa ? ' selected' : '') + '>' + esc(vc.placa) + '</option>';
+                      }).join("")
+                  + '</select>'
+                  + '<span style="color:#666;">ou</span>'
+                  + '<span>viagem:</span>'
+                  + '<select style="font-size:10.5px;padding:2px 6px;max-width:300px;" onchange="rfFiscalVincularViagem(\'' + esc(k) + '\', this.value)">'
                     + '<option value=""' + (g.viagemEscolhida ? '' : ' selected') + '>'
                       + (g.viagem && g.viagemViaData ? '(pela data) ' + esc(g.viagem.placa || "") + ' — ' + esc(g.viagem.cliente || "sem cliente") : '— escolher a viagem —')
                     + '</option>'
@@ -11882,9 +11921,18 @@ function rfFiscalBlocoHTML() {
                           + '</option>';
                       }).join("")
                   + '</select>'
-                  + (g.candidatas.length > 1 ? '<span style="color:#E67E22;">' + g.candidatas.length + ' viagens nesta data — escolha a certa, o app nao chuta</span>' : "")
+                  + (g.candidatas.length > 1 ? '<span style="color:#999;">' + g.candidatas.length + ' viagem(ns) nesta data, de clientes diferentes — o app nao chuta</span>' : "")
                   + '</div>'
-                : '<div style="font-size:10.5px;color:#999;">Nenhuma viagem cadastrada em ' + esc(g.data ? g.data.split("-").reverse().join("/") : "?") + '. Cadastre a viagem na aba Viagens que esta linha se amarra sozinha.</div>')
+                : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:#bbb;">'
+                  + '<span>Placa:</span>'
+                  + '<select style="font-size:10.5px;padding:2px 6px;" onchange="rfFiscalDefinirPlaca(\'' + esc(k) + '\', this.value)">'
+                    + '<option value=""' + (g.placaManual ? '' : ' selected') + '>— informar a placa —</option>'
+                    + (state.veiculos || []).filter(function (vc) { return vc.placa; }).map(function (vc) {
+                        return '<option value="' + esc(vc.placa) + '"' + (g.placaManual && g.placa === vc.placa ? ' selected' : '') + '>' + esc(vc.placa) + '</option>';
+                      }).join("")
+                  + '</select>'
+                  + '<span style="color:#999;">nenhuma viagem cadastrada em ' + esc(g.data ? g.data.split("-").reverse().join("/") : "?") + ' — informe a placa aqui e cadastre a viagem na aba Viagens</span>'
+                  + '</div>')
             + '</div>'
           : "")
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">'
@@ -14224,6 +14272,7 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
           + (g.viagem
               ? (g.viagemViaData ? ". Viagem casada PELA DATA (o CT-e nao trouxe placa por falta de MDF-e) — vinculo a conferir" : "")
               : ". ATENÇÃO: não existe viagem cadastrada com essa placa e data")
+          + (g.placaManual ? ". Placa INFORMADA PELA EQUIPE (nao veio de MDF-e)" : "")
           + (g.ctes.length && !g.mdfes.length ? ". PENDENCIA FISCAL: CT-e emitido sem MDF-e — o manifesto e obrigacao de quem emite o CT-e (a RF), nao do embarcador" : "")
           + ((g.abertos || []).length ? ". MDF-e " + g.abertos.join(", ") + " NAO ENCERRADO(S)" : "");
       }).join("\n");
