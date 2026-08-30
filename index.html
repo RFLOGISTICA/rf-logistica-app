@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v331)</title>
+<title>RF Logística — Painel da Frota (v332)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5705,8 +5705,42 @@ function rfNfSanear(d) {
   return avisos;
 }
 
+/* v332: ONDE a remontada difere da lida decide se da pra confiar nela.
+   Os 25 primeiros digitos (UF, ano-mes, CNPJ da Suzano, modelo, serie) e os 9
+   seguintes (numero da nota) sao FATOS conhecidos de fora da foto, nao palpite.
+   Se a remontagem so mexeu ai -- e nos digitos 35 a 43 (tpEmis+cNF) ela repetiu
+   exatamente o que foi lido -- entao nenhum digito foi inventado: so trocamos
+   numero errado por numero sabido. Isso da pra aceitar sozinho.
+   Se ela mexeu no tpEmis+cNF, ai sim tem palpite no meio e vai pra conferencia,
+   porque o DV e calculado por nos e fecharia mesmo com esses digitos errados. */
+function rfNfCorrecaoSegura(lida, montada, nfe) {
+  lida = String(lida || "").replace(/\D/g, "");
+  montada = String(montada || "").replace(/\D/g, "");
+  if (montada.length !== 44) return false;
+  if (lida.length < 43 || lida.length > 45) return false;
+
+  /* O TESTE QUE VALE: o digito verificador IMPRESSO no papel.
+     Comparar a remontada com o pedaco que ela mesma copiou da leitura era
+     circular -- batia sempre, e um erro no miolo aleatorio (tpEmis+cNF)
+     passava batido, porque o DV da remontada e calculado por nos e fecharia
+     de qualquer jeito.
+     O DV lido, nao. Ele foi impresso pela Suzano em cima da chave VERDADEIRA e
+     e um resumo de todos os 43 digitos anteriores. Se o DV que a IA leu no fim
+     da linha bate com o DV calculado sobre a chave remontada, entao o miolo
+     aleatorio tambem esta certo -- ele entra nessa conta. Duas fontes
+     independentes fechando: o que sabemos de fora e o digito do papel. */
+  var dvLido = lida.slice(-1);
+  if (dvLido !== montada.slice(43)) return false;
+
+  /* e o numero da nota precisa de duas fontes concordando: o campo "No." do
+     topo da DANFE e o pedaco de numero dentro da propria chave lida */
+  var nnf = String(nfe || "").replace(/\D/g, "").replace(/^0+/, "");
+  var naChave = String(lida.slice(25, 34) || "").replace(/^0+/, "");
+  return !!nnf && nnf === naChave;
+}
+
 /* Cruza as duas fontes e devolve o que fazer: entrar direto ou conferir. */
-function rfNfDecidirChave(lida, qr, montada) {
+function rfNfDecidirChave(lida, qr, montada, nfeLido) {
   lida = String(lida || "").replace(/\D/g, "");
   var lidaOk = lida.length === 44 && szChaveValida(lida);
   if (qr) {
@@ -5719,7 +5753,13 @@ function rfNfDecidirChave(lida, qr, montada) {
      So entra direto quando duas fontes independentes concordam. */
   if (lidaOk && montada && lida === montada) return { chave: lida, origem: "leitura + prefixo (conferem)", ok: true };
   if (lidaOk && !montada) return { chave: lida, origem: "leitura", ok: true };
-  if (!lidaOk && montada) return { ok: false, motivo: "a chave lida não fechou o dígito verificador — confira a remontada abaixo contra o papel", cands: [montada] };
+  if (!lidaOk && montada) {
+    if (rfNfCorrecaoSegura(lida, montada, nfeLido)) {
+      return { chave: montada, origem: "prefixo fixo da Suzano (nenhum dígito inventado)", ok: true,
+               obs: "a leitura errou só nos dígitos que já se sabe de fora" };
+    }
+    return { ok: false, motivo: "a chave lida não fechou o dígito verificador — confira a remontada abaixo contra o papel", cands: [montada] };
+  }
   if (lidaOk && montada && lida !== montada) return { ok: false, motivo: "a chave lida e a remontada pelo prefixo não batem", cands: [lida, montada] };
   return { ok: false, motivo: "a chave não fechou o dígito verificador e não deu pra remontar", cands: [lida].filter(Boolean) };
 }
@@ -6105,12 +6145,17 @@ function rfNfAnexarEspelhos(input) {
              -- a decisao fica com a pessoa, nunca com o palpite do modelo. */
           var _av = rfNfSanear(d);
           var _mont = rfNfChaveMontada(d.chave, d.nfe, d.dataEmissao);
-          var _dec = rfNfDecidirChave(d.chave, txt.qr || "", _mont);
+          var _dec = rfNfDecidirChave(d.chave, txt.qr || "", _mont, d.nfe);
           /* v331: campo suspeito manda pra fila igual chave suspeita. Chave
              boa com numero de nota errado grava a nota no lugar errado, que e
              tao ruim quanto chave errada. */
-          if (!_dec.ok || _av.length || !d.nfe) {
-            var _mot = _dec.ok ? _av.join(" · ") : _dec.motivo + (_av.length ? " · " + _av.join(" · ") : "");
+          /* v332: quantidade e peso improvaveis nao seguram mais a nota. Eles
+             ja foram zerados e ficam anotados; o que identifica a nota (chave e
+             numero) e que precisa estar certo. Segurar por causa de volume era
+             transformar 11 notas boas em digitacao manual. */
+          var _grave = _av.filter(function (a) { return a.indexOf("número") === 0 || a.indexOf("o número") === 0; });
+          if (!_dec.ok || _grave.length || !d.nfe) {
+            var _mot = _dec.ok ? _grave.join(" · ") : _dec.motivo + (_grave.length ? " · " + _grave.join(" · ") : "");
             if (!d.nfe && _mot.indexOf("número") === -1) _mot = "não consegui ler o número da nota" + (_mot ? " · " + _mot : "");
             state._rfNfPendentes = (state._rfNfPendentes || []).concat([{
               id: uid(), lidoEm: Date.now(), arquivo: f.name || "foto",
@@ -6127,7 +6172,8 @@ function rfNfAnexarEspelhos(input) {
           if (f._meta) cf.arquivos = (cf.arquivos || []).concat([f._meta]);
           if (szAplicarEspelho(cf.id, d, "foto da nota (IA)", true)) {
             feitos++; notas++;
-            anota(f.name, "entrou", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + (d.cidade ? " · " + d.cidade : "") + " · " + (d.qtdVolumes || 0) + " vol · chave: " + (d.origemChave || "leitura") + (_dec.obs ? " (" + _dec.obs + ")" : ""), "#2E7D32");
+            anota(f.name, "entrou", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + (d.cidade ? " · " + d.cidade : "") + " · " + (d.qtdVolumes || 0) + " vol · chave: " + (d.origemChave || "leitura")
+              + (_dec.obs ? " (" + _dec.obs + ")" : "") + (_av.length ? " · ⚠ " + _av.join(" · ") : ""), _av.length ? GOLD : "#2E7D32");
           } else {
             recusadas++;
             anota(f.name, "já estava", "NF " + (d.nfe || "?") + " já lançada — dados atualizados, sem duplicar", "#8E7A1F");
@@ -14218,6 +14264,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- ONDE A CORRECAO ACONTECE (v332): depois da v331 as 12 notas de um lote foram TODAS pra fila -- seguranca virando digitacao manual. Duas mudancas, cada uma com o seu motivo. (1) rfNfCorrecaoSegura(): a remontada e aceita SOZINHA so quando o DIGITO VERIFICADOR IMPRESSO NO PAPEL confirma ela. A primeira tentativa comparava a remontada com o pedaco que ela mesma tinha copiado da leitura -- comparacao circular, batia sempre, e erro no miolo aleatorio (tpEmis+cNF) passava batido, porque o DV da remontada e calculado por nos e fecharia de qualquer jeito (teste B pegou isso). O DV LIDO nao e circular: foi impresso pela Suzano em cima da chave verdadeira e e um resumo dos 43 digitos anteriores, miolo aleatorio incluido. Batendo o DV lido com o DV calculado sobre a remontada, duas fontes independentes fecham. Alem disso o numero da nota precisa de duas fontes concordando: o campo "No." do topo da DANFE e o pedaco de numero dentro da propria chave lida. (2) volume e peso improvaveis nao seguram mais a nota: ja sao zerados e ficam anotados na linha do relatorio em dourado; o que identifica a nota (chave e numero) e que precisa estar certo. Padrao observado no lote de 19/08: a IA gruda um "8" na frente da quantidade zero-preenchida do DANFE (00014 vira 80014, 00007 vira 80007, 00035 vira 80035).
 - SANEAMENTO DOS CAMPOS LIDOS (v331): a trava da chave nao pega erro em OUTRO campo. Caso real: a IA devolveu "NF 2099772 - 80014 vol" -- 20091772 e o CODIGO DO PRODUTO da Suzano, que fica na tabela de itens logo abaixo, e ela pegou no lugar do numero da nota; os 80014 volumes vieram do campo QUANTIDADE lido errado (a nota tinha 14). Agora rfNfSanear() confere cada campo contra o que a realidade da operacao permite: numero de NF-e da Suzano tem 6 digitos e tem SEGUNDA FONTE nos digitos 26 a 34 da propria chave (rfNfNumeroDaChave), volumes acima de 999 sao leitura errada e nao carga gigante (o maior carregamento real foi 150), peso acima de 30t nao cabe em Toco nem em 3/4. O que nao passa e ZERADO e anotado, nunca gravado como se fosse bom, e a nota vai pra fila de conferencia -- chave boa com numero de nota errado grava a nota no lugar errado, que e tao ruim quanto chave errada.
 - DUAS FONTES PRA A CHAVE (v330): a IA erra digito na linha da chave, que e a menor letra da pagina -- casos reais: 45 digitos numa nota, e 8701 lido como 8710 noutra. Agora existem duas fontes independentes que se conferem. (1) QR CODE da DANFE, lido pelo proprio navegador com BarcodeDetector a partir da foto ORIGINAL (antes de comprimir, senao o codigo perde definicao): exato, sem IA, sem custo; quando le, ele manda. (2) RECONSTRUCAO pelo prefixo fixo da Suzano: os 25 primeiros digitos de toda NF-e sao sempre os mesmos (UF 29, CNPJ 16404287012919, modelo 55, serie 001), so o AAMM muda por mes; os 9 seguintes sao o numero da nota, que a IA le bem; sobram 9 digitos (tpEmis+cNF) aproveitados da leitura, e o DV e CALCULADO, nao lido. rfNfDecidirChave() cruza as duas com a chave lida. REGRA DURA: a remontagem SOZINHA nunca entra, porque o DV dela e calculado e portanto sempre fecha -- inclusive quando a IA errou o NUMERO DA NOTA, e ai sai uma chave valida de OUTRA nota (visto em teste: NF lida como 999999 gerou chave que passava no verificador). Chave falsa com cara de boa e pior que chave nenhuma. So entra direto quando DUAS fontes independentes concordam (QR, ou leitura batendo com a remontada). Nos demais casos a nota vai pra fila de conferencia com as candidatas em botao, pra pessoa comparar digito por digito com o papel.
 - v329, tres correcoes ligadas a foto de nota: (1) COMPRESSAO -- rfComprimirImagem passou a aceitar maxDim e limite de bytes como parametro, e a foto de NOTA FISCAL na etapa 5 vai em 2600px/1,2MB em vez de 1600px/360KB. Motivo real: a mesma foto que eu leio inteira chegava comprimida na IA e a linha da chave, que e a menor letra da pagina, perdia digito -- recusada no verificador. O padrao antigo continua valendo pros outros tipos (km, bomba, canhoto, fachada). (2) FILA DE CONFERENCIA -- chave que nao fecha o digito verificador nao joga mais a leitura fora: a nota vai pra uma lista "Conferir antes de entrar" na etapa 5, com numero, destinatario, cidade e volumes ja lidos, e a pessoa digita os 44 digitos ou cola do QR. Nada entra na base sem chave valida, mas o trabalho de leitura nao se perde. (3) GPS NO CANHOTO -- ao anexar a foto do canhoto, o app grava o ponto do cliente, porque a foto e tirada na hora da assinatura, dentro do cliente: e o momento mais confiavel do dia pra saber onde ele fica. Usa a mesma regra da bipagem (so grava se nao existe ponto ou se a precisao de agora for melhor), e falta de GPS ou de permissao nunca atrapalha o canhoto, que ja foi anexado antes.
