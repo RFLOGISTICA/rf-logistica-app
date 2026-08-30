@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v324)</title>
+<title>RF Logística — Painel da Frota (v325)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5777,7 +5777,19 @@ function rfNfAnexarEspelhos(input) {
        IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa
        no DV nao entra, entao um numero lido errado e recusado em vez de virar
        nota fantasma. */
-    var ehFoto = /^image\//.test(f.type || "") || /\.(jpe?g|png|webp|heic)$/i.test(f.name || "");
+    var ehFoto = /^image\//.test(f.type || "") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name || "");
+    var ehPdf = /pdf/i.test(f.type || "") || /\.pdf$/i.test(f.name || "");
+    /* v325: sem accept no seletor, pode vir qualquer coisa. O que nao for PDF
+       nem imagem e descartado aqui, com aviso, em vez de ir pra IA e voltar
+       "nao consegui ler". Arquivo sem tipo declarado (comum no Android) e
+       tratado como foto, que e o caso mais provavel. */
+    if (!ehFoto && !ehPdf && (f.type || "").indexOf("/") > -1) {
+      recusadas++;
+      console.warn("arquivo ignorado (não é PDF nem foto):", f.name, f.type);
+      passo(i + 1);
+      return;
+    }
+    if (!ehFoto && !ehPdf) ehFoto = true;
     rfArqGuardar(f, "espelhos", "etapa5").then(function (meta) { f._meta = meta; })
       .catch(function (e) { console.warn("espelho não guardado:", e && e.message); })
       .then(function () {
@@ -5895,9 +5907,9 @@ function rfNfConfHTML() {
   var barra = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
     + '📎 Anexar espelho ou NF-e da Suzano (PDF)'
-    + '<input type="file" accept="application/pdf,image/*" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
+    + '<input type="file" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
-    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez. Sem espelho, vale a foto da nota impressa.</span></div>'
+    + '<span style="font-size:11px;color:#888;">PDF ou foto — pode soltar vários de uma vez. Sem espelho, vale a foto da nota impressa.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
 
   if (!r.totalEspelho) {
@@ -5910,10 +5922,10 @@ function rfNfConfHTML() {
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:7px 13px;border-radius:7px;cursor:pointer;">'
     + '📎 Anexar espelho ou NF-e da Suzano (PDF)'
-    + '<input type="file" accept="application/pdf" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
+    + '<input type="file" multiple style="display:none;" onchange="rfNfAnexarEspelhos(this)">'
     + '</label>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="rfNfConfExportar()">⬇ Exportar conferência (Excel)</button>'
-    + '<span style="font-size:11px;color:#888;">Pode soltar vários de uma vez — um por viagem.</span></div>'
+    + '<span style="font-size:11px;color:#888;">PDF ou foto — pode soltar vários de uma vez.</span></div>'
     + '<div id="rfnf-anexo" style="font-size:12px;font-weight:700;margin-bottom:10px;"></div>';
   h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px;">'
     + '<div><div style="font-size:11px;color:#999;">NF no espelho</div><div style="font-size:19px;font-weight:800;color:#fff;">' + r.totalEspelho + '</div></div>'
@@ -6157,7 +6169,7 @@ function szTelaEquipe() {
         + 'motorista que entrega ' + szSeletorMotorista(c) + '</span>'
         + '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;background:' + GOLD + ';color:#000;padding:6px 12px;border-radius:7px;cursor:pointer;">'
         + '📎 Anexar espelho (PDF ou foto)'
-        + '<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="szAnexarEspelho(\'' + c.id + '\',this)">'
+        + '<input type="file" style="display:none;" onchange="szAnexarEspelho(\'' + c.id + '\',this)">'
         + '</label>'
         + '<button onclick="szColarEspelho(\'' + c.id + '\')" style="font-size:11px;">ou colar o texto</button>'
         + '<button onclick="szExcluirCarga(\'' + c.id + '\')" style="font-size:11px;color:#C0392B;background:none;border:none;cursor:pointer;">✕ excluir carga</button>'
@@ -13857,6 +13869,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- GALERIA ESCONDIDA PELO accept (v325): na v324 o seletor da etapa 5 tinha accept="application/pdf,image/*" e o Android nao mostrava a galeria -- nao dava pra escolher a foto. Mesma licao da v293 com os XML vindos do Drive. O accept foi REMOVIDO dos tres botoes de anexo de espelho/NF (os dois da etapa 5 e o do carregamento na etapa 2) e a triagem passou a ser pelo conteudo: PDF vai pro leitor de texto, imagem vai pra IA de visao, arquivo de outro tipo e descartado com aviso, e arquivo sem tipo declarado (comum no Android) e tratado como foto. Regra que ja se repetiu duas vezes neste projeto: filtro accept em seletor de arquivo no Android costuma esconder justamente a origem que a pessoa quer usar -- melhor aceitar tudo e triar depois.
 - FOTO DA NOTA IMPRESSA (v324): tem dia em que o espelho nao chega e o que existe e a DANFE impressa que veio com a carga. Ate a v323 a etapa 5 so aceitava PDF e recusava a foto calada; agora imagem vai pra IA de visao (mesmo caminho que o botao da etapa 2 ja usava) e entra como nota do espelho. A trava contra erro de digito da IA e a CHAVE DE ACESSO: 44 digitos com verificador -- chave que nao passa no DV e recusada em vez de virar nota fantasma. O que a foto de DANFE NAO traz e o valor do FRETE (isso so existe no espelho), entao essas notas nunca entram na conferencia de valor. Dica pratica pra quem fotografa: enquadrar a tarja do topo e a chave de acesso, que e de onde sai tudo.
 - CONFERENCIA DE VALOR CORRIGIDA (v323): a comparacao era feita NOTA A NOTA contra o total do CT-e, e acusava divergencia em todo CT-e com mais de uma nota -- caso real: CT-e 81 do OTQ9B07, R$ 3.896,84, comparado com os R$ 1.064,51 de uma unica nota. Agora e POR CT-e: soma o espelho de TODAS as notas daquele CT-e contra o valor emitido, e so compara quando todas as notas dele estao no espelho (senao a soma sairia menor e a divergencia seria falsa). A linha diz tambem o LADO do erro e o que fazer: cobrou a menos -> CT-e complementar; cobrou a mais -> CT-e de substituicao, porque nao existe complementar de menos.
 - MESMA NF EM DOIS CT-e (v322): checagem nova na etapa 5, feita CT-e contra CT-e (nao depende de espelho lido). Motivo real: em 12/08/2026 os CT-e 28 e 29 sairam os dois com a NF 194920 -- mesmo destinatario (WMS filial 0554-42), mesmo valor R$ 442,87, com 1h46 de diferenca -- enquanto a NF 194918 do mesmo dia ficou sem CT-e nenhum. Provavel erro de digitacao na emissao: repetiram a 194920 no lugar da 194918. Frete em duplicidade e problema fiscal, entao a NF duplicada conta como divergencia GRAVE na caixa da etapa. A linha mostra os numeros dos CT-e, os valores e o botao de ver o documento.
