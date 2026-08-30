@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v329)</title>
+<title>RF Logística — Painel da Frota (v330)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5595,6 +5595,94 @@ function rfNfDataISO(txt) {
   return i ? i[0] : "";
 }
 
+/* ===================== v330: DUAS FONTES PRA A CHAVE =====================
+   A IA erra digito na linha da chave -- e a linha mais miuda da pagina. Caso
+   real: leu 45 digitos numa nota e trocou 8701 por 8710 noutra. Em vez de
+   confiar nela, agora existem DUAS fontes independentes que se conferem:
+
+   1) QR CODE da DANFE -- carrega a chave exata, lido pelo proprio navegador
+      (BarcodeDetector), sem IA e sem custo. Quando le, ELE MANDA.
+   2) RECONSTRUCAO pelo prefixo fixo -- os 25 primeiros digitos de toda NF-e da
+      Suzano sao sempre os mesmos (UF 29, CNPJ 16404287012919, modelo 55, serie
+      001), so o AAMM muda por mes; os 9 seguintes sao o numero da nota, que a
+      IA le bem. Sobram 9 digitos (tpEmis + codigo numerico) e o DV, que e
+      CALCULADO. Ou seja: mesmo com a IA errando no comeco da chave, da pra
+      remontar e validar no digito verificador.
+
+   Se as duas fontes concordam, entra direto. Se divergem, ou se nenhuma fecha,
+   a nota vai pra fila de conferencia com as duas candidatas na tela. */
+var RF_NF_SUZ_UF = "29", RF_NF_SUZ_CNPJ = "16404287012919", RF_NF_SUZ_MOD = "55", RF_NF_SUZ_SERIE = "001";
+
+function rfNfChaveDV(base43) {
+  var pesos = [2, 3, 4, 5, 6, 7, 8, 9], s = 0;
+  for (var i = 0; i < base43.length; i++) s += parseInt(base43[base43.length - 1 - i], 10) * pesos[i % 8];
+  var r = s % 11;
+  return String((r === 0 || r === 1) ? 0 : 11 - r);
+}
+
+/* Remonta a chave com o que se sabe de fora (prefixo Suzano + numero da NF +
+   mes da emissao) e so aproveita da leitura os 9 digitos que nao dao pra
+   deduzir. O DV sai calculado, nao lido. */
+function rfNfChaveMontada(chaveLida, nfe, dataEmissao) {
+  var ch = String(chaveLida || "").replace(/\D/g, "");
+  var nnf = String(nfe || "").replace(/\D/g, "").replace(/^0+/, "");
+  if (!nnf || nnf.length > 9) return "";
+  while (nnf.length < 9) nnf = "0" + nnf;
+  var iso = rfNfDataISO(dataEmissao) || "";
+  var aamm = iso ? (iso.slice(2, 4) + iso.slice(5, 7)) : (ch.length >= 6 ? ch.slice(2, 6) : "");
+  if (aamm.length !== 4) return "";
+  /* os 9 digitos de tpEmis+cNF: pega do fim da chave lida, que e onde eles
+     ficam. Chave curta ou comprida demais nao serve de base. */
+  if (ch.length < 43 || ch.length > 45) return "";
+  var resto = ch.slice(ch.length - 10, ch.length - 1);
+  if (resto.length !== 9) return "";
+  var base = RF_NF_SUZ_UF + aamm + RF_NF_SUZ_CNPJ + RF_NF_SUZ_MOD + RF_NF_SUZ_SERIE + nnf + resto;
+  if (base.length !== 43) return "";
+  var montada = base + rfNfChaveDV(base);
+  return szChaveValida(montada) ? montada : "";
+}
+
+/* QR da DANFE lido pelo navegador. Sem BarcodeDetector (iPhone antigo, browser
+   velho) devolve vazio em silencio -- o caminho continua pela IA. */
+function rfNfLerQR(arquivo) {
+  return new Promise(function (resolve) {
+    try {
+      if (typeof window.BarcodeDetector !== "function" || typeof createImageBitmap !== "function") { resolve(""); return; }
+      createImageBitmap(arquivo).then(function (bmp) {
+        var det = new window.BarcodeDetector({ formats: ["qr_code"] });
+        det.detect(bmp).then(function (cods) {
+          var ch = "";
+          (cods || []).forEach(function (c) {
+            if (ch) return;
+            var m = String(c.rawValue || "").replace(/\s/g, "").match(/(\d{44})/);
+            if (m && szChaveValida(m[1])) ch = m[1];
+          });
+          resolve(ch);
+        }).catch(function () { resolve(""); });
+      }).catch(function () { resolve(""); });
+    } catch (e) { resolve(""); }
+  });
+}
+
+/* Cruza as duas fontes e devolve o que fazer: entrar direto ou conferir. */
+function rfNfDecidirChave(lida, qr, montada) {
+  lida = String(lida || "").replace(/\D/g, "");
+  var lidaOk = lida.length === 44 && szChaveValida(lida);
+  if (qr) {
+    if (lidaOk && lida === qr) return { chave: qr, origem: "QR + leitura (conferem)", ok: true };
+    return { chave: qr, origem: "QR do papel", ok: true, obs: lidaOk ? "a leitura tinha dado outra chave — valeu o QR" : "" };
+  }
+  /* A REMONTAGEM SOZINHA NUNCA ENTRA. O DV dela e CALCULADO, entao ela sempre
+     "fecha" -- inclusive quando a IA errou o NUMERO DA NOTA, e ai sai uma chave
+     valida de OUTRA nota. Chave falsa com cara de boa e pior que chave nenhuma.
+     So entra direto quando duas fontes independentes concordam. */
+  if (lidaOk && montada && lida === montada) return { chave: lida, origem: "leitura + prefixo (conferem)", ok: true };
+  if (lidaOk && !montada) return { chave: lida, origem: "leitura", ok: true };
+  if (!lidaOk && montada) return { ok: false, motivo: "a chave lida não fechou o dígito verificador — confira a remontada abaixo contra o papel", cands: [montada] };
+  if (lidaOk && montada && lida !== montada) return { ok: false, motivo: "a chave lida e a remontada pelo prefixo não batem", cands: [lida, montada] };
+  return { ok: false, motivo: "a chave não fechou o dígito verificador e não deu pra remontar", cands: [lida].filter(Boolean) };
+}
+
 function rfNfViagemDaNota(chave, nf) {
   var achou = null;
   (state.entregas || []).forEach(function (e) {
@@ -5798,6 +5886,13 @@ function rfNfPendConfirmar(id) {
   alert(ok ? "NF " + (d.nfe || "") + " lançada." : "Essa NF já estava lançada — atualizei os dados.");
 }
 
+/* v330: preenche o campo com a candidata escolhida (nao grava sozinho -- a
+   pessoa ainda confirma). */
+function rfNfPendUsar(id, chave) {
+  var campo = document.getElementById("rfnf-chave-" + id);
+  if (campo) { campo.value = String(chave || ""); campo.focus(); }
+}
+
 function rfNfPendDescartar(id) {
   if (!confirm("Descartar esta leitura? A nota não entra e a foto continua guardada.")) return;
   state._rfNfPendentes = (state._rfNfPendentes || []).filter(function (x) { return String(x.id) !== String(id); });
@@ -5816,7 +5911,17 @@ function rfNfPendentesHTML() {
       + '<div style="font-size:12.5px;color:#ddd;">NF <b>' + esc(String(d.nfe || "?")) + '</b> · ' + esc(d.cliente || "sem destinatário")
       + (d.cidade ? ' · ' + esc(d.cidade) : "") + ' · ' + (d.qtdVolumes || 0) + ' vol'
       + (d.dataEmissao ? ' · ' + esc(d.dataEmissao) : "") + '</div>'
-      + '<div style="font-size:11px;color:#8E7A1F;margin:3px 0 6px;">chave lida (' + String(it.chaveLida || "").length + ' dígitos): ' + esc(it.chaveLida || "—") + '</div>'
+      + '<div style="font-size:11px;color:#8E7A1F;margin:3px 0 4px;">' + esc(it.motivo || "chave não conferida") + '</div>'
+      + '<div style="font-size:11px;color:#8E7A1F;margin:0 0 6px;">chave lida (' + String(it.chaveLida || "").length + ' dígitos): ' + esc(it.chaveLida || "—") + '</div>'
+      + ((it.cands || []).length
+          ? '<div style="font-size:11px;color:#999;margin-bottom:6px;">Candidata' + ((it.cands || []).length > 1 ? 's' : '') + ' — confira dígito por dígito no papel antes de usar:<br>'
+            + (it.cands || []).map(function (c) {
+                var rot = (String(c) === String(it.chaveLida || "")) ? "lida" : "remontada";
+                return '<button class="btn-outline" style="font-size:10.5px;margin:3px 4px 0 0;" onclick="rfNfPendUsar(&#39;' + esc(it.id) + '&#39;,&#39;' + esc(c) + '&#39;)">'
+                  + rot + ': ' + esc(c) + '</button>';
+              }).join("")
+            + '</div>'
+          : "")
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
       + '<input id="rfnf-chave-' + esc(it.id) + '" value="' + esc(it.chaveLida || "") + '" inputmode="numeric" placeholder="44 dígitos da chave" style="flex:1;min-width:260px;font-size:12px;padding:6px 8px;">'
       + '<button class="btn-gold" style="font-size:11px;" onclick="rfNfPendConfirmar(&#39;' + esc(it.id) + '&#39;)">✓ confirmar</button>'
@@ -5910,20 +6015,25 @@ function rfNfAnexarEspelhos(input) {
            recusou. A trava contra numero errado continua sendo a mesma: chave
            de 44 digitos com verificador. */
         return new Promise(function (resolve, reject) {
+          var qrLido = "";
           var manda = function (blob) {
             if (typeof rfLerFotoIA !== "function") { reject(new Error("leitura por foto indisponível")); return; }
             var util = function (j) { return j && !j.erro && (j.chave || j.nfe); };
             rfLerFotoIA("espelho", blob, function (j1) {
-              if (util(j1)) { resolve({ _foto: true, dados: j1 }); return; }
+              if (util(j1)) { resolve({ _foto: true, dados: j1, qr: qrLido }); return; }
               rfLerFotoIA("danfe", blob, function (j2) {
-                if (util(j2)) { resolve({ _foto: true, dados: j2 }); return; }
+                if (util(j2)) { resolve({ _foto: true, dados: j2, qr: qrLido }); return; }
                 reject(new Error("não reconheci a foto como espelho nem como NF-e"));
               });
             });
           };
-          // v329: nota fiscal vai em 2600px / 1,2MB -- a chave precisa disso
-          if (typeof rfComprimirImagem === "function") rfComprimirImagem(f, 2600, 1200000).then(manda).catch(function () { manda(f); });
-          else manda(f);
+          /* v330: o QR sai da foto ORIGINAL, antes de comprimir -- comprimida
+             o codigo perde definicao e o leitor nao acha. */
+          var seguir = function () {
+            if (typeof rfComprimirImagem === "function") rfComprimirImagem(f, 2600, 1200000).then(manda).catch(function () { manda(f); });
+            else manda(f);
+          };
+          rfNfLerQR(f).then(function (q) { qrLido = q; seguir(); }).catch(function () { seguir(); });
         });
       })
       .then(function (txt) {
@@ -5947,20 +6057,29 @@ function rfNfAnexarEspelhos(input) {
              embora. Agora a nota fica numa fila de CONFERENCIA, onde a pessoa
              digita os 44 digitos ou tira outra foto so da chave. Nada entra na
              base sem chave valida -- so espera. */
-          if (d.chave && !szChaveValida(d.chave)) {
+          /* v330: CRUZAMENTO DAS DUAS FONTES.
+             QR do papel (exato, sem IA) x chave remontada pelo prefixo fixo da
+             Suzano x chave lida pela IA. Concordando, entra. Divergindo, ou
+             nao fechando o verificador, vai pra fila com as candidatas na tela
+             -- a decisao fica com a pessoa, nunca com o palpite do modelo. */
+          var _mont = rfNfChaveMontada(d.chave, d.nfe, d.dataEmissao);
+          var _dec = rfNfDecidirChave(d.chave, txt.qr || "", _mont);
+          if (!_dec.ok) {
             state._rfNfPendentes = (state._rfNfPendentes || []).concat([{
               id: uid(), lidoEm: Date.now(), arquivo: f.name || "foto",
-              chaveLida: d.chave, dados: d,
+              chaveLida: d.chave, motivo: _dec.motivo, cands: _dec.cands || [], dados: d,
             }]);
             recusadas++;
-            anota(f.name, "conferir", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + " — chave não fechou o dígito verificador, confira abaixo", GOLD);
+            anota(f.name, "conferir", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + " — " + _dec.motivo, GOLD);
             passo(i + 1); return;
           }
+          d.chave = _dec.chave;
+          d.origemChave = _dec.origem;
           var cf = rfNfCargaDoEspelho(d.placa, rfNfDataISO(d.dataEmissao) || "");
           if (f._meta) cf.arquivos = (cf.arquivos || []).concat([f._meta]);
           if (szAplicarEspelho(cf.id, d, "foto da nota (IA)", true)) {
             feitos++; notas++;
-            anota(f.name, "entrou", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + (d.cidade ? " · " + d.cidade : "") + " · " + (d.qtdVolumes || 0) + " vol", "#2E7D32");
+            anota(f.name, "entrou", "NF " + (d.nfe || "?") + " · " + (d.cliente || "sem destinatário") + (d.cidade ? " · " + d.cidade : "") + " · " + (d.qtdVolumes || 0) + " vol · chave: " + (d.origemChave || "leitura") + (_dec.obs ? " (" + _dec.obs + ")" : ""), "#2E7D32");
           } else {
             recusadas++;
             anota(f.name, "já estava", "NF " + (d.nfe || "?") + " já lançada — dados atualizados, sem duplicar", "#8E7A1F");
@@ -14051,6 +14170,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 - Desde a v234/v235 cada cliente da carga tem botão "Como chegar", que abre o Google Maps. Ele usa a LOCALIZAÇÃO REAL salva de entregas anteriores quando existe (a mesma base da Conferência de Carga, casada por nome+cidade) e o endereço do espelho quando o cliente é novo. Coordenada de entrega anterior é melhor que endereço escrito porque pega portão de carga, rua sem número e entrada de fundos. Com a carga em rota também aparece a rota de todas as paradas que ainda faltam, saindo de Feira de Santana e tirando quem já recebeu.
 - Como o ponto do cliente se mantém atualizado: a cada entrega BIPADA o sistema lê o GPS e (1) grava, se o cliente ainda não tinha ponto; (2) REFINA, substituindo só quando a leitura de agora é mais precisa que a guardada. Não sobrescreve cego porque o motorista pode bipar dentro da cabine, longe do portão e com GPS ruim, e estragar um ponto bom. Quando o cliente MUDA de endereço, a regra automática não resolve — para isso existe o botão "📍 atualizar ponto daqui", que sobrescreve com a posição atual mediante confirmação. O endereço escrito e a cidade também são editáveis no cartão, porque o espelho às vezes traz o endereço de cobrança em vez do de entrega.
 - Se perguntarem por que uma carga não foi liberada, o motivo está na situação acima — é sempre contagem que não fechou, nota sem conferência de entrada, ou placa/motorista em branco, nunca "o sistema travou".
+- DUAS FONTES PRA A CHAVE (v330): a IA erra digito na linha da chave, que e a menor letra da pagina -- casos reais: 45 digitos numa nota, e 8701 lido como 8710 noutra. Agora existem duas fontes independentes que se conferem. (1) QR CODE da DANFE, lido pelo proprio navegador com BarcodeDetector a partir da foto ORIGINAL (antes de comprimir, senao o codigo perde definicao): exato, sem IA, sem custo; quando le, ele manda. (2) RECONSTRUCAO pelo prefixo fixo da Suzano: os 25 primeiros digitos de toda NF-e sao sempre os mesmos (UF 29, CNPJ 16404287012919, modelo 55, serie 001), so o AAMM muda por mes; os 9 seguintes sao o numero da nota, que a IA le bem; sobram 9 digitos (tpEmis+cNF) aproveitados da leitura, e o DV e CALCULADO, nao lido. rfNfDecidirChave() cruza as duas com a chave lida. REGRA DURA: a remontagem SOZINHA nunca entra, porque o DV dela e calculado e portanto sempre fecha -- inclusive quando a IA errou o NUMERO DA NOTA, e ai sai uma chave valida de OUTRA nota (visto em teste: NF lida como 999999 gerou chave que passava no verificador). Chave falsa com cara de boa e pior que chave nenhuma. So entra direto quando DUAS fontes independentes concordam (QR, ou leitura batendo com a remontada). Nos demais casos a nota vai pra fila de conferencia com as candidatas em botao, pra pessoa comparar digito por digito com o papel.
 - v329, tres correcoes ligadas a foto de nota: (1) COMPRESSAO -- rfComprimirImagem passou a aceitar maxDim e limite de bytes como parametro, e a foto de NOTA FISCAL na etapa 5 vai em 2600px/1,2MB em vez de 1600px/360KB. Motivo real: a mesma foto que eu leio inteira chegava comprimida na IA e a linha da chave, que e a menor letra da pagina, perdia digito -- recusada no verificador. O padrao antigo continua valendo pros outros tipos (km, bomba, canhoto, fachada). (2) FILA DE CONFERENCIA -- chave que nao fecha o digito verificador nao joga mais a leitura fora: a nota vai pra uma lista "Conferir antes de entrar" na etapa 5, com numero, destinatario, cidade e volumes ja lidos, e a pessoa digita os 44 digitos ou cola do QR. Nada entra na base sem chave valida, mas o trabalho de leitura nao se perde. (3) GPS NO CANHOTO -- ao anexar a foto do canhoto, o app grava o ponto do cliente, porque a foto e tirada na hora da assinatura, dentro do cliente: e o momento mais confiavel do dia pra saber onde ele fica. Usa a mesma regra da bipagem (so grava se nao existe ponto ou se a precisao de agora for melhor), e falta de GPS ou de permissao nunca atrapalha o canhoto, que ja foi anexado antes.
 - RELATORIO DO LOTE (v328): depois de anexar espelhos ou fotos na etapa 5, o resultado saia numa linha so espremida entre seis contadores e nao dava pra saber o que tinha entrado. Agora aparece um PAINEL com uma linha por arquivo: "entrou" (com NF, destinatario, cidade e volumes), "ja estava" (nota ja lancada, dados atualizados sem duplicar), "recusada" (com o motivo -- chave que nao passou no digito verificador, foto nao reconhecida) ou "ignorado" (arquivo que nao e PDF nem foto). O painel fica na tela ate a pessoa fechar no X.
 - FOTO DE DANFE PASSOU A SER LIDA (v327 do app + v10 da Edge Function ler-foto-abastecimento): a causa de "anexei as fotos e nao mudou nada" era o PROMPT, nao a foto nem o app. O tipo "espelho" da funcao de leitura termina mandando responder ERRO quando a imagem nao e o Espelho para Emissao -- e a foto era uma DANFE, entao voltava recusada calada. Foi criado o tipo "danfe" na Edge Function (v10, com os seis prompts antigos intactos), que le chave, numero da NF, destinatario, cidade, volumes, peso, valor da nota e data de emissao. A DANFE NAO tem valor de frete, entao valorFrete volta sempre 0 e essas notas nunca entram na conferencia de valor. No app, a foto anexada na etapa 5 tenta "espelho" primeiro e cai pra "danfe" se o primeiro recusar -- duas chamadas so no pior caso.
