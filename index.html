@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v348)</title>
+<title>RF Logística — Painel da Frota (v350)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,60 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v350: IMPORTACAO DA ROTEIRIZACAO QUE FALHAVA COM "Corrupted zip".
+     Sintoma real (31/08, tablet): a planilha da roteirizacao era recusada com
+     "Corrupted zip: can't find end of central directory", mesmo o arquivo sendo
+     um xlsx integro -- conferido byte a byte, com o EOCD no lugar, e abrindo
+     normal no Excel e no Python. Tres arquivos diferentes falharam igual, dois
+     deles com estruturas internas distintas (um gravado pelo LibreOffice, com
+     data descriptor, e outro pelo openpyxl, sem). Ou seja: o problema nao era o
+     arquivo, era o leitor.
+     rfRotAbrirWorkbook tinha SO DOIS caminhos -- XLSX.read type "array" e, se
+     ele estourasse, um repack com JSZip. Quando os dois falhavam, a mensagem
+     que aparecia era a do JSZip e o erro ORIGINAL do SheetJS era engolido pelo
+     catch, escondendo a causa de verdade.
+     Agora sao quatro tentativas em sequencia, e o que der certo primeiro vale:
+     (1) XLSX type "array"; (2) XLSX type "binary" montando a string byte a
+     byte -- alguns WebView do Android quebram no caminho array e passam nesse;
+     (3) XLSX type "base64"; (4) repack com JSZip, como antes. Se as quatro
+     falharem, o alerta traz a mensagem DE CADA UMA, em vez de so a ultima --
+     e da pra saber onde travou de verdade.
+     CSV TAMBEM PASSOU A SER ACEITO no mesmo botao: csv nao e zip, nao depende
+     de descompactador nenhum e por isso e a saida garantida quando o leitor de
+     xlsx do aparelho estiver ruim. O arquivo csv deve ser a aba "Detalhe por
+     Cliente" (Veiculo, Ordem, Cidade, Recebedor, Endereco, Peso, Remessa) --
+     ao ler, a planilha de uma aba so e renomeada pra "Detalhe por Cliente",
+     que e o nome que rfRotProcessarPlanilha procura. Sem a aba "Resumo por
+     Veiculo" o motorista nao vem da planilha; cai no motorista cadastrado no
+     veiculo, que ja era o comportamento previsto.
+     Nada da leitura de FOCRI, canhoto ou fiscal foi tocado. -->
+<!-- v349: ABA MANUTENCAO REORGANIZADA EM CAIXAS POR CAMINHAO + TETO MENSAL.
+     A aba era um "linguicao": uma tabela unica com TODOS os lancamentos do mes
+     misturados, e pra saber quanto um caminhao consumiu era preciso filtrar na
+     mao. Agora abre em CAIXAS -- uma por caminhao, no mesmo desenho aprovado
+     pra aba Viagens: caixa fechada mostra so a placa em destaque e o percentual
+     do teto; os valores e os lancamentos so aparecem ao ABRIR. No topo, uma
+     caixa RESUMO GERAL tambem fechada, com os baldes do mes inteiro e o painel
+     de KM atual.
+     TETO MENSAL POR CAMINHAO (pedido do Renato): cada veiculo tem `tetoManut`,
+     em R$, digitado por ele DENTRO da propria caixa. A caixa fica VERDE
+     enquanto o gasto do mes esta dentro do teto e VERMELHA quando passa.
+     Por ficar gravado no veiculo, o teto vale automaticamente nos meses
+     seguintes ate ser alterado.
+     O QUE ENTRA NA CONTA DO TETO: o CUSTO TOTAL de manutencao do veiculo no mes
+     -- gasto novo + peca faturada + peca do almoxarifado + o que ja esta em
+     divida fixa -- porque teto existe pra medir quanto o caminhao consome, e
+     peca do estoque consome igual (so foi paga antes). Investimento/benfeitoria
+     (categoria Estrutural) fica FORA do teto e aparece a parte na caixa: um bau
+     novo estouraria qualquer teto sem significar consumo do mes.
+     Funcoes novas (todas no BLOCO 1, regra da v215, porque o render() as
+     alcanca): mtGastoVeiculoMes, mtStatusTeto, mtDefinirTeto, mtToggleCaixa,
+     mtToggleResumo, adicionarManutencaoPara.
+     Assistente alimentada junto (regra permanente): bloco "TETO DE MANUTENCAO
+     POR CAMINHAO" no contexto, com teto, gasto, percentual e quem estourou; e
+     item novo no diagnostico proativo apontando os caminhoes fora do teto.
+     Nada de calculo financeiro mudou: os baldes continuam saindo de
+     calcularManutencao() e mtSomaPecas*/mtMaoObra*, sem contar nada duas vezes. -->
 <!-- v215: CORRIGE A v214, que deixou o painel numa tela preta e sem login.
      Causa: eu coloquei as funcoes da trava de KM (kmDiaMax, kmFolgaMin,
      kmDiasEntre, rfKmSuspeito, rfKmSuspeitoTexto, kmForaDaCurva) no BLOCO 3 de
@@ -2654,6 +2708,69 @@ function calcularManutencao() {
     if (!ehDivida) { if (ehInv) porPlaca[m.placa].inv += vReal; else porPlaca[m.placa].real += vReal; }
   });
   return { real, investimento, jaEmDivida, estoqueAlmox, faturado, porCategoria, porPlaca };
+}
+
+/* ===================== v349 — TETO DE MANUTENÇÃO POR CAMINHÃO =====================
+   Cada veículo tem um teto mensal em R$ (`tetoManut`), digitado pelo Renato na
+   própria caixa do caminhão na aba Manutenção. A caixa fica verde enquanto o
+   gasto do mês está dentro e vermelha quando passa.
+   O teto é comparado com o CUSTO TOTAL do veículo no mês (gasto novo + peça
+   faturada + peça do estoque + o que já está em dívida fixa) — é o que mede
+   quanto o caminhão consome de verdade. INVESTIMENTO/benfeitoria (Estrutural)
+   fica de fora, senão a compra de um baú estouraria qualquer teto.
+   Ficam no BLOCO 1 de <script> porque o render() as alcança (regra da v215). */
+function mtGastoVeiculoMes(placa, mes) {
+  const alvo = mes || state.mesAtivo;
+  const r = { novo: 0, faturado: 0, almox: 0, jaDivida: 0, invest: 0, total: 0, qtd: 0 };
+  if (!placa) return r;
+  (state.manutencoes || []).forEach(function (m) {
+    if (!m || m.placa !== placa) return;
+    if (!m.data || m.data.slice(0, 7) !== alvo) return;
+    r.qtd += 1;
+    const vAlmox = mtSomaPecasAlmox(m);
+    const vFat = mtSomaPecasFaturado(m) + mtMaoObraFaturada(m);
+    const vReal = mtSomaPecasReal(m) + mtMaoObraReal(m);
+    const ehInv = m.investimento === true || m.categoria === "Estrutural";
+    if (ehInv) { r.invest += vReal + vAlmox + vFat; return; }   // fora do teto
+    if (m.jaEmDividaFixa === true) r.jaDivida += vReal; else r.novo += vReal;
+    r.almox += vAlmox;
+    r.faturado += vFat;
+  });
+  r.total = r.novo + r.jaDivida + r.almox + r.faturado;
+  return r;
+}
+function mtStatusTeto(v, mes) {
+  const g = mtGastoVeiculoMes(v && v.placa, mes);
+  const teto = Number(v && v.tetoManut) || 0;
+  const temTeto = teto > 0;
+  return {
+    teto: teto, temTeto: temTeto, det: g, gasto: g.total, invest: g.invest, qtd: g.qtd,
+    saldo: teto - g.total,
+    pct: temTeto ? (g.total / teto) * 100 : null,
+    estourou: temTeto && g.total > teto,
+  };
+}
+function mtDefinirTeto(veiculoId, valor) {
+  const v = (state.veiculos || []).find(function (x) { return String(x.id) === String(veiculoId); });
+  if (!v) return;
+  v.tetoManut = Number(String(valor == null ? "" : valor).replace(",", ".")) || 0;
+  salvar(); render();
+}
+function mtToggleCaixa(placa) {
+  state._mtAberta = (state._mtAberta === placa) ? "" : placa;   // transitório: não sobe pra nuvem
+  render();
+}
+function mtToggleResumo() {
+  state._mtResumoAberto = !state._mtResumoAberto;
+  render();
+}
+function adicionarManutencaoPara(placa) {
+  const antes = state.mtFiltroPlaca;
+  if (placa) state.mtFiltroPlaca = placa;
+  state._mtAberta = placa || state._mtAberta;
+  adicionarManutencao();                 // já faz salvar() + render()
+  state.mtFiltroPlaca = antes;
+  render();
 }
 
 /* ===================== GRÁFICOS — VISÃO GERAL DA FROTA (v89) =====================
@@ -13891,17 +14008,67 @@ function rfRotBlocoHTML() {
    e estrito. O JSZip, que o app ja carrega pro bloco fiscal, le esse formato
    sem reclamar. Entao quando o SheetJS recusa, passamos o arquivo pelo JSZip
    e o reescrevemos limpo em memoria antes de tentar de novo. */
+function rfBytesParaBinString(bytes) {
+  // em pedaços, porque String.fromCharCode.apply com array grande estoura a pilha
+  var s = "", passo = 8192;
+  for (var i = 0; i < bytes.length; i += passo) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + passo));
+  }
+  return s;
+}
+function rfBytesParaBase64(bytes) {
+  return btoa(rfBytesParaBinString(bytes));
+}
 function rfRotAbrirWorkbook(bytes) {
+  /* v350: quatro tentativas em vez de duas. O que der certo primeiro vale; se
+     todas falharem, o erro final traz a mensagem de CADA uma, porque antes o
+     catch engolia o erro do SheetJS e só sobrava a mensagem do JSZip. */
+  var erros = [];
   try {
     return Promise.resolve(XLSX.read(bytes, { type: "array" }));
-  } catch (e1) {
-    return rfFiscalZipLib().then(function (JSZip) {
-      if (!JSZip) throw e1;
-      return JSZip.loadAsync(bytes)
-        .then(function (zip) { return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }); })
-        .then(function (limpo) { return XLSX.read(limpo, { type: "array" }); });
-    });
-  }
+  } catch (e1) { erros.push("array: " + (e1 && e1.message || e1)); }
+  try {
+    return Promise.resolve(XLSX.read(rfBytesParaBinString(bytes), { type: "binary" }));
+  } catch (e2) { erros.push("binary: " + (e2 && e2.message || e2)); }
+  try {
+    return Promise.resolve(XLSX.read(rfBytesParaBase64(bytes), { type: "base64" }));
+  } catch (e3) { erros.push("base64: " + (e3 && e3.message || e3)); }
+  return rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) throw new Error(erros.join(" | ") + " | jszip: não carregou");
+    return JSZip.loadAsync(bytes)
+      .then(function (zip) { return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }); })
+      .then(function (limpo) { return XLSX.read(limpo, { type: "array" }); })
+      .catch(function (e4) { throw new Error(erros.join(" | ") + " | jszip: " + (e4 && e4.message || e4)); });
+  });
+}
+function rfRotImportarCSV(input, file) {
+  var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
+  if (!dataPrev) { input.value = ""; return; }
+  var leitor = new FileReader();
+  leitor.onerror = function () {
+    input.value = "";
+    alert("Não consegui abrir esse arquivo no aparelho. Copie o CSV para o armazenamento interno e tente de novo.");
+  };
+  leitor.onload = function (ev) {
+    try {
+      var txt = String(ev.target.result || "");
+      if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);       // BOM do Excel
+      var wb = XLSX.read(txt, { type: "string" });
+      // o processador procura a aba pelo nome; num CSV existe uma só
+      var n0 = wb.SheetNames[0];
+      wb.Sheets["Detalhe por Cliente"] = wb.Sheets[n0];
+      wb.SheetNames = ["Detalhe por Cliente"];
+      var res = rfRotProcessarPlanilha(wb, dataPrev);
+      input.value = "";
+      render();
+      alert(res);
+    } catch (e) {
+      input.value = "";
+      alert("Não consegui ler a roteirização (CSV): " + (e && e.message || e)
+        + "\n\n(arquivo: " + (file.name || "?") + ")");
+    }
+  };
+  leitor.readAsText(file, "UTF-8");
 }
 function rfRotImportar(input) {
   var file = input.files && input.files[0];
@@ -13909,10 +14076,14 @@ function rfRotImportar(input) {
   if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Recarregue a página com internet e tente de novo."); return; }
   // v276: o seletor de arquivos do Android bloqueava .xlsx quando o accept era
   // por extensão, então o filtro ficou aberto e a checagem passou pra cá.
-  if (!/\.(xlsx|xlsm|xls)$/i.test(file.name || "")) {
-    alert("Selecione a planilha da roteirização (.xlsx). O arquivo escolhido foi: " + (file.name || "sem nome"));
+  if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name || "")) {
+    alert("Selecione a planilha da roteirização (.xlsx ou .csv). O arquivo escolhido foi: " + (file.name || "sem nome"));
     input.value = ""; return;
   }
+  // v350: CSV não é zip — não depende de descompactador nenhum, então é a saída
+  // garantida quando o leitor de xlsx do aparelho falha. Espera a aba
+  // "Detalhe por Cliente" (Veículo, Ordem, Cidade, Recebedor, Endereço, Peso, Remessa).
+  if (/\.csv$/i.test(file.name || "")) { rfRotImportarCSV(input, file); return; }
   var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
   if (!dataPrev) { input.value = ""; return; }
   var leitor = new FileReader();
@@ -15042,6 +15213,19 @@ function gerarContextoAssistente() {
 - 📦 PEÇA DO ESTOQUE: ${fmtR(mt.estoqueAlmox)} — já foi paga quando entrou no almoxarifado.
 - 🧾 FATURADO: ${fmtR(mt.faturado)} — peça ou serviço pego na conta de fornecedor que fatura o mês; essa fatura já está lançada em Dívidas Fixas.
 Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome de verdade) mas NUNCA como gasto novo — contar de novo dobraria a despesa. Se perguntarem por que a manutenção do mês parece menor que a soma dos lançamentos, é isso.`;
+  /* v349: teto de manutenção por caminhão. O assistente precisa saber o teto de
+     cada um, quanto já gastou e quem estourou -- é o que ele aponta sozinho. */
+  const linhasTetoManut = (state.veiculos || []).filter((v) => v.placa).map((v) => {
+    const st = mtStatusTeto(v);
+    if (!st.temTeto) return `- ${v.placa}: SEM teto definido — gasto de manutenção no mês ${fmtR(st.gasto)}`;
+    return `- ${v.placa}: teto ${fmtR(st.teto)}, gasto ${fmtR(st.gasto)} (${Math.round(st.pct)}%), `
+      + (st.estourou ? `ESTOUROU em ${fmtR(st.gasto - st.teto)}` : `dentro do teto, ainda cabe ${fmtR(st.saldo)}`)
+      + (st.invest > 0 ? ` · investimento à parte ${fmtR(st.invest)} (fora do teto)` : "");
+  }).join("\n");
+  const blocoTetoManut = `TETO DE MANUTENÇÃO POR CAMINHÃO (aba Manutenção — uma caixa por veículo):
+Cada caminhão tem um teto mensal em R$ que o Renato define dentro da própria caixa. A caixa fica VERDE enquanto o gasto do mês está dentro do teto e VERMELHA quando passa. O teto continua valendo nos meses seguintes até ele alterar.
+O teto é comparado com o CUSTO TOTAL de manutenção do veículo no mês: gasto novo + peça faturada + peça do almoxarifado + o que já está em dívida fixa. INVESTIMENTO/benfeitoria (categoria Estrutural) fica FORA do teto. Caminhão sem teto definido não tem cor nem alerta — se perguntarem, diga que falta definir o teto dele.
+${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   const viagensMes = state.viagens.filter((v) => v.data && v.data.slice(0, 7) === state.mesAtivo);
   const porCliente = {};
   viagensMes.forEach((v) => {
@@ -15597,6 +15781,12 @@ ${manutPorVeiculo || "(nenhuma manutenção lançada no mês ativo)"}
 
 ${blocoManutBaldes}
 
+${blocoTetoManut}
+
+${`COMO IMPORTAR A ROTEIRIZAÇÃO (aba Operação, caixa "Roteirização do dia seguinte"):
+O botão aceita .xlsx e também .csv. O que o app procura é a aba "Detalhe por Cliente", com as colunas Veículo, Ordem, Cidade, Recebedor (e, quando houver, Endereço, Peso e Remessa); o motorista vem da aba "Resumo por Veículo" quando ela existe, senão usa o motorista cadastrado no veículo.
+Se der erro de "Corrupted zip" ao importar um .xlsx, o arquivo quase sempre está bom — é o leitor de planilha do aparelho que falhou. Nesse caso importe a mesma roteirização em CSV, que não depende de descompactador. Reimportar não duplica: a viagem é única por placa + data, e as entregas que já têm canhoto são preservadas.`}
+
 Viagens do mês ativo por cliente:
 ${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
 
@@ -15764,6 +15954,15 @@ function rfDiagnosticoSistema() {
     const n = orf.reduce(function (a, x) { return a + x.arquivos.length; }, 0);
     add("alto", n + " documento(s) guardados em pasta com a placa digitada errada (" + orf.map(function (x) { return x.placa || x.pasta; }).join(", ") + ") — ficam invisíveis pro sistema. Aba Documentos tem o botão de mover.");
   }
+  // v349: caminhão que passou do teto de manutenção que o Renato definiu
+  try {
+    const foraTeto = vs.map(function (v) { return { v: v, s: mtStatusTeto(v) }; }).filter(function (x) { return x.s.estourou; });
+    if (foraTeto.length) {
+      add("medio", foraTeto.length + " caminhão(ões) passaram do teto de manutenção deste mês: "
+        + foraTeto.map(function (x) { return x.v.placa + " (" + fmtR(x.s.gasto) + " de " + fmtR(x.s.teto) + ", " + Math.round(x.s.pct) + "%)"; }).join(", ")
+        + ". Aba Manutenção, a caixa do veículo está vermelha.");
+    }
+  } catch (e) {}
   // caminhões sem nenhum documento anexado
   const idx = state._docsIndex || {};
   const semDoc = vs.filter(function (v) { return !idx[v.placa] || !idx[v.placa].length; }).map(function (v) { return v.placa; });
@@ -17907,15 +18106,19 @@ function renderTabela() {
       </div>`;
   }
 
-  if (state.aba === "mtcustos") {
+if (state.aba === "mtcustos") {
+    /* v349: a aba deixou de ser uma tabela corrida com todos os lançamentos do
+       mês e passou a abrir em CAIXAS, uma por caminhão. Caixa fechada mostra só
+       a placa e o % do teto (verde dentro / vermelha estourada); os valores e os
+       lançamentos daquele veículo só aparecem ao abrir. */
     const placasAll = state.veiculos.map((v) => v.placa).filter(Boolean);
     const mt = calcularManutencao();
     const optsPlaca = (sel, incTodas) => (incTodas ? `<option ${sel==="Todas"?"selected":""}>Todas</option>` : "") +
       placasAll.map((p) => `<option ${sel===p?"selected":""}>${esc(p)}</option>`).join("");
-    const optsCat = (sel) => MT_CATEGORIAS.map((c) => `<option ${sel===c?"selected":""}>${c}</option>`).join("");
+    const optsCat = (sel) => MT_CATEGORIAS.map((c) => `<option ${sel===c?"selected":""}>${esc(c)}</option>`).join("");
 
+    // lançamentos do mês ativo, já com os filtros de categoria e busca aplicados
     let lista = (state.manutencoes || []).filter((m) => m.data && m.data.slice(0, 7) === state.mesAtivo);
-    if (state.mtFiltroPlaca && state.mtFiltroPlaca !== "Todas") lista = lista.filter((m) => m.placa === state.mtFiltroPlaca);
     if (state.mtFiltroCat && state.mtFiltroCat !== "Todas") lista = lista.filter((m) => m.categoria === state.mtFiltroCat);
     if (state.mtBusca && state.mtBusca.trim()) {
       const q = state.mtBusca.trim().toLowerCase();
@@ -17924,44 +18127,11 @@ function renderTabela() {
         return textoItens.includes(q) || (m.oficina || "").toLowerCase().includes(q) || (m.placa || "").toLowerCase().includes(q);
       });
     }
+    const filtrando = !!((state.mtBusca && state.mtBusca.trim()) || (state.mtFiltroCat && state.mtFiltroCat !== "Todas"));
 
-    // painel hodômetro (km atual por veículo) — base dos alertas por KM
-    const hodo = placasAll.map((p) => {
-      const v = state.veiculos.find((x) => x.placa === p);
-      return `<div style="display:flex;align-items:center;gap:6px;background:#161616;border:1px solid #2A2A2A;border-radius:6px;padding:6px 8px;">
-        <span style="font-size:11px;color:#999;min-width:62px;">${esc(p)}</span>
-        <input type="number" value="${v ? (v.kmAtual||0) : 0}" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:90px;" placeholder="km atual">
-      </div>`;
-    }).join("");
-
-    wrap.innerHTML = `
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:16px;">
-        ${statCard("Manutenção real (mês)", fmtR(mt.real), "#C0392B")}
-        ${statCard("Investimento/benfeitoria", fmtR(mt.investimento), GOLD)}
-        ${statCard("Já em Dívida Fixa", fmtR(mt.jaEmDivida), "#888")}
-        ${statCard("📦 Peça do estoque (não conta 2x)", fmtR(mt.estoqueAlmox), "#888")}
-        ${statCard("🧾 Faturado (não conta 2x)", fmtR(mt.faturado), "#888")}
-        ${statCard("Preventiva", fmtR(mt.porCategoria["Preventiva"]||0), "#999")}
-        ${statCard("Corretiva", fmtR(mt.porCategoria["Corretiva"]||0), "#999")}
-        ${statCard("Pneus", fmtR(mt.porCategoria["Pneus"]||0), "#999")}
-      </div>
-
-      <div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:8px;padding:12px 14px;margin-bottom:14px;">
-        <div style="font-size:11px;color:${GOLD};text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">🚗 Km atual de cada veículo (base dos alertas)</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">${hodo || '<span style="color:#777;font-size:12px;">Cadastre veículos com placa na aba Frota.</span>'}</div>
-      </div>
-
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-        <span style="font-size:12px;color:#999;">Filtrar:</span>
-        <select style="width:150px;" onchange="state.mtFiltroPlaca=this.value; render();">${optsPlaca(state.mtFiltroPlaca, true)}</select>
-        <select style="width:150px;" onchange="state.mtFiltroCat=this.value; render();"><option ${state.mtFiltroCat==="Todas"?"selected":""}>Todas</option>${optsCat(state.mtFiltroCat)}</select>
-      </div>
-
-      <table style="min-width:1400px;"><thead><tr>
-        <th>Data</th><th>Placa</th><th>Categoria</th><th>Serviços / Peças</th><th>Oficina</th>
-        <th>Mão de obra R$</th><th>Total</th><th>Pgto</th><th>Km serv.</th><th>Intervalo / Garantia</th><th>Status</th><th>Invest.?</th><th>Já em Dívida?</th><th>Nota</th><th></th>
-      </tr></thead><tbody>
-      ${lista.length ? lista.map((m) => {
+    // markup de cada lançamento — idêntico ao que já existia, só que agora
+    // desenhado dentro da caixa do caminhão
+    const linhaHTML = (m) => {
         const al = alertaManutencao(m);
         const ehInv = m.investimento === true || m.categoria === "Estrutural";
         let colInterv;
@@ -18043,22 +18213,168 @@ function renderTabela() {
           <td style="text-align:center;">${nota}</td>
           <td><button class="btn-del" onclick="removerManutencao('${m.id}')">✕</button></td>
         </tr>`;
-      }).join("") : `<tr><td colspan="15" style="text-align:center;color:#777;padding:24px;">${(state.mtBusca && state.mtBusca.trim()) ? `Nenhum lançamento encontrado para "<b style="color:${GOLD};">${esc(state.mtBusca)}</b>".` : `Nenhum lançamento. Clique em <b style="color:${GOLD};">+ Lançar manutenção</b>.`}</td></tr>`}
-      </tbody>
-      <tfoot><tr>
-        <td colspan="5" style="font-weight:800;color:#fff;">TOTAL</td>
-        <td colspan="10" style="font-size:12px;color:#bbb;">Real (desce no lucro): <b style="color:#C0392B;">${fmtR(mt.real)}</b> &nbsp;·&nbsp; Investimento (à parte): <b style="color:${GOLD};">${fmtR(mt.investimento)}</b> &nbsp;·&nbsp; Já em Dívida Fixa (à parte): <b style="color:#888;">${fmtR(mt.jaEmDivida)}</b> &nbsp;·&nbsp; 🧾 Faturado (à parte): <b style="color:#888;">${fmtR(mt.faturado)}</b></td>
-      </tr></tfoot>
-      </table>
-      <div style="font-size:11px;color:#666;margin-top:8px;">
-        <b>Manutenção real</b> (Preventiva, Corretiva, Pneus, Garantia, Outros) desce no Lucro real da empresa no Financeiro — só a peça <b>comprada no local</b> + a mão de obra, peça <b>do estoque</b> nunca entra aqui de novo (já foi paga quando entrou no almoxarifado, via cartão/boleto/dívida fixa).
-        <b>Investimento/benfeitoria</b> (Estrutural) fica registrado à parte e <b>não derruba o mês</b>.
-        <b>Já em Dívida Fixa</b> = pra casos manuais fora do estoque (ex: pneu financiado direto, sem passar pelo almoxarifado) — marque o checkbox pra não descontar 2x do lucro.
+};
+    const tabelaDe = (arr) => `<div style="overflow-x:auto;">
+      <table style="min-width:1400px;"><thead><tr>
+        <th>Data</th><th>Placa</th><th>Categoria</th><th>Serviços / Peças</th><th>Oficina</th>
+        <th>Mão de obra R$</th><th>Total</th><th>Pgto</th><th>Km serv.</th><th>Intervalo / Garantia</th><th>Status</th><th>Invest.?</th><th>Já em Dívida?</th><th>Nota</th><th></th>
+      </tr></thead><tbody>
+      ${arr.length ? arr.map(linhaHTML).join("") : `<tr><td colspan="15" style="text-align:center;color:#777;padding:18px;">${filtrando ? "Nenhum lançamento deste caminhão bate com o filtro." : "Nenhum lançamento deste caminhão no mês."}</td></tr>`}
+      </tbody></table></div>`;
+
+    // painel de KM atual (base dos alertas) — mora dentro do resumo geral
+    const hodo = placasAll.map((p) => {
+      const v = state.veiculos.find((x) => x.placa === p);
+      return `<div style="display:flex;align-items:center;gap:6px;background:#161616;border:1px solid #2A2A2A;border-radius:6px;padding:6px 8px;">
+        <span style="font-size:11px;color:#999;min-width:62px;">${esc(p)}</span>
+        <input type="number" value="${v ? (v.kmAtual||0) : 0}" onchange="atualizarVeiculo('${v.id}','kmAtual',this.value)" style="width:90px;" placeholder="km atual">
+      </div>`;
+    }).join("");
+
+    // caminhões que entram na grade (respeitando o filtro de placa)
+    const vsCaixa = state.veiculos.filter((v) => v.placa)
+      .filter((v) => !state.mtFiltroPlaca || state.mtFiltroPlaca === "Todas" || v.placa === state.mtFiltroPlaca);
+    const stats = vsCaixa.map((v) => ({ v: v, s: mtStatusTeto(v) }));
+    const nComTeto = stats.filter((x) => x.s.temTeto).length;
+    const nFora = stats.filter((x) => x.s.estourou).length;
+    const nDentro = nComTeto - nFora;
+    const semTeto = stats.filter((x) => !x.s.temTeto).length;
+    const VERDE_MT = "#2E7D32", VERM_MT = "#C0392B";
+
+    // ---------- caixa RESUMO GERAL (fechada por padrão) ----------
+    const resumoAberto = state._mtResumoAberto === true;
+    const caixaResumo = `
+      <div style="border:2px solid ${GOLD};border-radius:12px;background:#12100A;margin-bottom:16px;overflow:hidden;">
+        <div onclick="mtToggleResumo()" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:16px 18px;">
+          <span style="color:${GOLD};font-weight:800;font-size:18px;line-height:1;">${resumoAberto ? "−" : "+"}</span>
+          <span style="color:${GOLD};font-weight:800;font-size:17px;letter-spacing:.5px;">RESUMO GERAL DO MÊS</span>
+          <span style="margin-left:auto;font-size:11px;color:#888;">${nComTeto ? `${nDentro} de ${nComTeto} caminhão(ões) dentro do teto${nFora ? ` · <b style="color:${VERM_MT};">${nFora} estourou</b>` : ""}` : "nenhum teto definido ainda"}${semTeto ? ` · ${semTeto} sem teto` : ""}</span>
+        </div>
+        ${resumoAberto ? `<div style="padding:0 18px 18px 18px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:14px;">
+            ${statCard("Manutenção real (mês)", fmtR(mt.real), "#C0392B")}
+            ${statCard("Investimento/benfeitoria", fmtR(mt.investimento), GOLD)}
+            ${statCard("Já em Dívida Fixa", fmtR(mt.jaEmDivida), "#888")}
+            ${statCard("📦 Peça do estoque (não conta 2x)", fmtR(mt.estoqueAlmox), "#888")}
+            ${statCard("🧾 Faturado (não conta 2x)", fmtR(mt.faturado), "#888")}
+            ${statCard("Preventiva", fmtR(mt.porCategoria["Preventiva"]||0), "#999")}
+            ${statCard("Corretiva", fmtR(mt.porCategoria["Corretiva"]||0), "#999")}
+            ${statCard("Pneus", fmtR(mt.porCategoria["Pneus"]||0), "#999")}
+          </div>
+          <div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:8px;padding:12px 14px;">
+            <div style="font-size:11px;color:${GOLD};text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">🚗 Km atual de cada veículo (base dos alertas)</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">${hodo || '<span style="color:#777;font-size:12px;">Cadastre veículos com placa na aba Frota.</span>'}</div>
+          </div>
+        </div>` : ""}
+      </div>`;
+
+    // ---------- caixa de cada caminhão ----------
+    const caixas = stats.map(({ v, s }) => {
+      const aberta = state._mtAberta === v.placa;
+      const cor = !s.temTeto ? "#3A3A3A" : (s.estourou ? VERM_MT : VERDE_MT);
+      const fundo = !s.temTeto ? "#111" : (s.estourou ? "#1E0C0B" : "#0B1710");
+      const pctTxt = s.temTeto ? `${Math.round(s.pct)}% do teto` : "definir teto";
+      const larg = s.temTeto ? Math.max(0, Math.min(100, s.pct)) : 0;
+
+      if (!aberta) {
+        return `<div onclick="mtToggleCaixa('${esc(v.placa)}')" title="Clique para abrir os lançamentos deste caminhão"
+          style="cursor:pointer;background:${fundo};border:2px solid ${cor};border-radius:12px;padding:12px 14px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="color:${cor === "#3A3A3A" ? "#777" : cor};font-weight:800;font-size:16px;line-height:1;">+</span>
+            <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(v.placa)}</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
+            <span style="font-size:11px;color:#777;">${esc(v.tipo || "")}${s.qtd ? ` · ${s.qtd} lanç.` : ""}</span>
+            <span style="font-size:12px;font-weight:800;color:${s.temTeto ? cor : "#777"};">${pctTxt}</span>
+          </div>
+          <div style="height:4px;border-radius:2px;background:#1E1E1E;margin-top:8px;overflow:hidden;">
+            <div style="height:4px;width:${larg}%;background:${cor};"></div>
+          </div>
+        </div>`;
+      }
+
+      // ------- caixa ABERTA (ocupa a linha inteira da grade) -------
+      const listaV = lista.filter((m) => m.placa === v.placa);
+      const d = s.det;
+      const prevItens = (typeof preventivaItens === "function" ? preventivaItens() : []).map((it) => {
+        const st = preventivaStatus(v, it);
+        if (!st) return `<span style="font-size:11px;color:#666;">${esc(it.nome)}: falta informar a última troca</span>`;
+        const venc = st.falta <= 0;
+        const perto = !venc && st.falta <= (Number(state.config && state.config.avisoPreventivaKm) || 3000);
+        const c = venc ? VERM_MT : (perto ? GOLD : "#888");
+        return `<span style="font-size:11px;color:#bbb;"><b>${esc(it.nome)}</b> <span style="color:${c};">${venc ? "vencido há " + Math.abs(st.falta).toLocaleString("pt-BR") + " km" : "faltam " + st.falta.toLocaleString("pt-BR") + " km"}</span></span>`;
+      }).join('<span style="color:#333;">|</span>');
+
+      return `<div style="grid-column:1/-1;background:#141414;border:2px solid ${cor};border-radius:14px;padding:16px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span onclick="mtToggleCaixa('${esc(v.placa)}')" style="cursor:pointer;color:${cor === "#3A3A3A" ? "#777" : cor};font-weight:800;font-size:20px;line-height:1;">−</span>
+          <span onclick="mtToggleCaixa('${esc(v.placa)}')" style="cursor:pointer;font-size:26px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(v.placa)}</span>
+          <span style="font-size:12px;color:#777;">${esc(v.tipo || "")}${v.bau ? " · " + esc(v.bau) : ""} · KM atual ${(kmAtualVeiculo(v) || 0).toLocaleString("pt-BR")}</span>
+          <button class="btn-gold" style="margin-left:auto;font-size:12px;padding:6px 12px;" onclick="adicionarManutencaoPara('${esc(v.placa)}')">+ Novo lançamento</button>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;background:${fundo};border:1px solid ${cor};border-radius:10px;padding:12px 14px;margin:14px 0;">
+          <div>
+            <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Teto mensal deste caminhão</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+              <input type="number" step="50" min="0" value="${s.temTeto ? s.teto : ""}" placeholder="0,00" onchange="mtDefinirTeto('${v.id}',this.value)" style="width:130px;font-weight:800;" title="Você define aqui quanto este caminhão pode gastar de manutenção no mês. O valor continua valendo nos meses seguintes até você alterar.">
+              <span style="font-size:10px;color:#777;">vale todo mês</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Gasto do mês</div>
+            <div style="font-size:18px;font-weight:800;color:${s.temTeto ? cor : "#fff"};margin-top:6px;">${fmtR(s.gasto)}</div>
+          </div>
+          ${s.temTeto ? `<div>
+            <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">${s.estourou ? "Passou do teto em" : "Ainda cabe"}</div>
+            <div style="font-size:18px;font-weight:800;color:${cor};margin-top:6px;">${s.estourou ? "− " + fmtR(s.gasto - s.teto) : fmtR(s.saldo)}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right;">
+            <div style="font-size:24px;font-weight:800;color:${cor};">${Math.round(s.pct)}%</div>
+            <div style="font-size:10px;color:${cor};">${s.estourou ? "estourou o teto" : "dentro do teto"}</div>
+          </div>` : `<div style="margin-left:auto;font-size:11px;color:#888;max-width:340px;text-align:right;">Sem teto definido — a caixa só ganha cor depois que você informar o valor.</div>`}
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
+          ${statCard("Gasto novo (mês)", fmtR(d.novo), GOLD)}
+          ${statCard("🧾 Faturado", fmtR(d.faturado), "#888")}
+          ${statCard("📦 Do almoxarifado", fmtR(d.almox), "#888")}
+          ${statCard("Já em dívida fixa", fmtR(d.jaDivida), "#888")}
+          ${statCard("Custo total (conta no teto)", fmtR(s.gasto), s.temTeto ? cor : "#fff")}
+          ${d.invest > 0 ? statCard("Investimento (fora do teto)", fmtR(d.invest), GOLD) : ""}
+        </div>
+
+        ${tabelaDe(listaV)}
+
+        ${prevItens ? `<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:12px;border-top:1px solid #232323;padding-top:10px;">
+          <span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Preventiva por KM:</span>${prevItens}
+        </div>` : ""}
+      </div>`;
+    }).join("");
+
+    wrap.innerHTML = `
+      ${caixaResumo}
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+        <span style="font-size:12px;color:#999;">Filtrar:</span>
+        <select style="width:150px;" onchange="state.mtFiltroPlaca=this.value; render();">${optsPlaca(state.mtFiltroPlaca, true)}</select>
+        <select style="width:150px;" onchange="state.mtFiltroCat=this.value; render();"><option ${state.mtFiltroCat==="Todas"?"selected":""}>Todas</option>${optsCat(state.mtFiltroCat)}</select>
+        <span style="font-size:11px;color:#666;margin-left:auto;">Caixa <b style="color:${VERDE_MT};">verde</b> = dentro do teto &nbsp;·&nbsp; <b style="color:${VERM_MT};">vermelha</b> = estourou &nbsp;·&nbsp; cinza = sem teto definido</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;align-items:start;">
+        ${caixas || `<div style="grid-column:1/-1;text-align:center;color:#777;padding:24px;">Nenhum caminhão com placa cadastrada. Cadastre na aba Frota.</div>`}
+      </div>
+
+      <div style="font-size:11px;color:#666;margin-top:14px;">
+        O <b>teto</b> de cada caminhão é comparado com o <b>custo total dele no mês</b> (gasto novo + peça faturada + peça do estoque + o que já está em dívida fixa) — é o que mede quanto o caminhão consome de verdade. <b>Investimento/benfeitoria</b> (Estrutural) fica de fora do teto e aparece à parte na caixa.
+        <b>Manutenção real</b> (Preventiva, Corretiva, Pneus, Garantia, Outros) é a única que desce no Lucro real no Financeiro — só a peça <b>comprada no local</b> + a mão de obra; peça <b>do estoque</b> e <b>faturada</b> nunca entram de novo (já foram pagas na entrada do almoxarifado ou estão na fatura em Dívidas Fixas).
         Os intervalos por KM e prazos de garantia são <b>auditáveis</b> (editáveis, com histórico ✎). Pneu é fixo em 40.000 km.
       </div>
     `;
   }
 
+  
   if (state.aba === "almox") {
     const todosItens = state.almoxarifado || [];
     const totalEstoque = todosItens.reduce((s, it) => s + almoxSaldo(it) * (Number(it.custoUnit) || 0), 0);
