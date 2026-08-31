@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v353)</title>
+<title>RF Logística — Painel da Frota (v354)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,24 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v354: IMPORTAR A ROTEIRIZACAO COLANDO O TEXTO -- caminho que nao passa
+     pelo seletor de arquivos do Android.
+     A v353 confirmou o diagnostico: o aviso novo ("a planilha chegou CORTADA")
+     apareceu com 9.396 bytes lidos e SEM divergencia com o tamanho declarado.
+     Ou seja, o provedor de arquivos do aparelho entrega um Blob cujo tamanho JA
+     esta errado -- e como o file.stream() nasce desse mesmo Blob, ele para no
+     mesmo ponto. Nao existe jeito, em JavaScript, de ler alem do que o Blob
+     declara: o conserto de verdade nao esta no app, esta em nao depender do
+     seletor de arquivos.
+     Por isso: botao "colar" ao lado do importar. Abre uma caixa de texto onde
+     se cola a tabela (do Excel, do bloco de notas ou da conversa) e o app monta
+     a aba "Detalhe por Cliente" a partir dela. rfRotSepararTexto detecta o
+     separador -- tabulacao (que e o que sai ao copiar do Excel), ponto e
+     virgula ou virgula -- e respeita aspas. Dai em diante o caminho e o mesmo
+     de sempre: rfRotProcessarPlanilha, uma viagem por placa+data, entregas com
+     canhoto esperando foto, reimportar nao duplica.
+     O aviso de arquivo cortado agora tambem mostra o NOME do arquivo lido, pra
+     nao restar duvida sobre qual copia o seletor entregou. -->
 <!-- v353: A CAUSA REAL DO "Corrupted zip" -- o arquivo chegava CORTADO.
      Diagnostico fechado com o erro da v352, que mostrava o que cada tentativa
      devolveu: "array: Bad compressed size: 0 != 362". O numero 362 e o tamanho
@@ -14026,9 +14044,24 @@ function rfRotBlocoHTML() {
       + '<span style="display:inline-flex;align-items:center;gap:8px;background:#111;border:1px solid ' + GOLD + ';border-radius:8px;padding:5px 10px;">'
         + '<span style="font-size:11px;font-weight:700;color:' + GOLD + ';">⬆ Importar roteirização</span>'
         + '<input type="file" accept="*/*" style="font-size:11px;max-width:210px;color:#ccc;" onchange="rfRotImportar(this)">'
+        + '<button class="btn-outline" style="font-size:11px;padding:3px 9px;" title="Colar a tabela da roteirização em vez de escolher arquivo" onclick="state._rotColar=!state._rotColar; render();">📋 colar</button>'
       + '</span>'
       + (previstas.length ? '<button class="btn-outline" style="font-size:11px;padding:4px 10px;color:#C0392B;border-color:#C0392B;" title="Apaga todas as rotas importadas de uma data" onclick="var d=prompt(&quot;Excluir todas as rotas importadas de qual data? (AAAA-MM-DD)&quot;, &quot;' + esc(previstas[0].data || "") + '&quot;); if(d) rfRotExcluirData(d);">🗑 Limpar uma data</button>' : '')
     + '</div>'
+    + (state._rotColar
+      ? '<div style="background:#0E0E0E;border:1px solid ' + GOLD + ';border-radius:8px;padding:12px;margin-bottom:12px;">'
+        + '<div style="font-size:11px;color:' + GOLD + ';font-weight:700;margin-bottom:6px;">COLAR A ROTEIRIZAÇÃO</div>'
+        + '<div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.5;">'
+        + 'Cole a tabela com uma linha por entrega e a primeira linha de cabeçalho: <b>Veículo · Regional · Ordem · Cidade · Recebedor · Endereço · Bairro · Peso · Volumes · Remessa</b>. '
+        + 'Serve o que sai ao copiar do Excel (separado por tabulação) e também texto separado por ponto e vírgula ou vírgula. Este caminho não usa o seletor de arquivos.'
+        + '</div>'
+        + '<textarea id="rotColarTxt" rows="7" style="width:100%;font-size:11px;font-family:monospace;background:#000;color:#ddd;border:1px solid #333;border-radius:6px;padding:8px;" placeholder="Veículo;Regional;Ordem;Cidade;Recebedor;Endereço;Bairro;Peso (kg);Volumes;Remessa(s)"></textarea>'
+        + '<div style="display:flex;gap:8px;margin-top:8px;">'
+          + '<button class="btn-gold" style="font-size:11px;padding:5px 12px;" onclick="rfRotImportarTexto()">Importar o texto colado</button>'
+          + '<button class="btn-outline" style="font-size:11px;padding:5px 12px;" onclick="state._rotColar=false; render();">cancelar</button>'
+        + '</div>'
+      + '</div>'
+      : "")
     + '<div style="font-size:11px;color:#888;margin-bottom:10px;line-height:1.5;">'
       + 'A nota da Suzano sai em cima da hora, mas a roteirização enviada ao cliente na véspera já reflete a carga do dia seguinte. '
       + 'Importe aqui: o app cria a viagem prevista com o KM estimado pelo histórico da rota e monta as entregas com as linhas de canhoto esperando foto. '
@@ -14290,6 +14323,51 @@ function rfZipParecCompleto(bytes) {
   }
   return false;
 }
+/* v354: import por texto colado — não passa pelo seletor de arquivos, que é
+   onde o Android entregava o arquivo cortado. Aceita tabulação (o que sai ao
+   copiar do Excel), ponto e vírgula ou vírgula. */
+function rfRotSepararTexto(txt) {
+  var linhas = String(txt || "").replace(/\r/g, "").split("\n").filter(function (l) { return l.trim() !== ""; });
+  if (!linhas.length) return [];
+  var l0 = linhas[0];
+  var conta = function (c) { return l0.split(c).length - 1; };
+  var sep = "\t";
+  if (conta("\t") === 0) sep = conta(";") >= conta(",") ? ";" : ",";
+  return linhas.map(function (l) {
+    var out = [], cur = "", aspas = false;
+    for (var i = 0; i < l.length; i++) {
+      var c = l[i];
+      if (aspas) {
+        if (c === '"' && l[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') aspas = false;
+        else cur += c;
+      } else if (c === '"') aspas = true;
+      else if (c === sep) { out.push(cur.trim()); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  });
+}
+function rfRotImportarTexto() {
+  var cx = document.getElementById("rotColarTxt");
+  var txt = cx ? cx.value : "";
+  if (!txt || !txt.trim()) { alert("Cole a tabela da roteirização na caixa antes de importar."); return; }
+  var linhas = rfRotSepararTexto(txt);
+  if (linhas.length < 2) { alert("Precisa do cabeçalho mais pelo menos uma linha de entrega."); return; }
+  var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
+  if (!dataPrev) return;
+  try {
+    var wb = { SheetNames: ["Detalhe por Cliente"], Sheets: { "Detalhe por Cliente": { __rows: linhas } }, __proprio: true };
+    var res = rfRotProcessarPlanilha(wb, dataPrev);
+    state._rotColar = false;
+    render();
+    alert(res);
+  } catch (e) {
+    alert("Não consegui ler o texto colado: " + (e && e.message || e)
+      + "\n\nConfira se a primeira linha é o cabeçalho com Veículo, Ordem, Cidade e Recebedor.");
+  }
+}
 function rfRotImportarCSV(input, file) {
   var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
   if (!dataPrev) { input.value = ""; return; }
@@ -14361,11 +14439,13 @@ function rfRotImportar(input) {
     // mesmo nome. Renomear o arquivo (nome novo, sem "(1)") resolve na hora.
     if (!rfZipParecCompleto(bytes)) {
       input.value = "";
-      alert("A planilha chegou CORTADA — vieram " + bytes.length + " bytes"
+      alert("A planilha chegou CORTADA (" + (file.name || "sem nome") + ") — vieram " + bytes.length + " bytes"
         + (declarado && declarado !== bytes.length ? " (o aparelho declarou " + declarado + ")" : "")
         + ", e o fim do arquivo não veio junto.\n\n"
-        + "Isso costuma acontecer quando existem várias cópias baixadas com o mesmo nome. "
-        + "Apague as antigas da pasta Downloads, ou salve esta com um nome novo, e importe de novo.");
+        + "Isso costuma acontecer quando existem várias cópias baixadas com o mesmo nome: o aparelho "
+        + "informa o tamanho de uma e entrega o conteúdo de outra, e não há como o app ler além disso.\n\n"
+        + "Saídas: apague as cópias antigas da pasta Downloads e baixe de novo, ou use o botão \"colar\" "
+        + "ao lado do importar e cole a tabela direto — esse caminho não passa pelo seletor de arquivos.");
       return;
     }
     // v337: guarda o original a partir dos bytes que JA estao na memoria, nunca
