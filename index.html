@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v336)</title>
+<title>RF Logística — Painel da Frota (v337)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -13060,16 +13060,22 @@ function rfRotBlocoHTML() {
     + '</div>';
 }
 
+/* v337 — "Bad compressed size: 0 != 374" ao importar a roteirizacao.
+   Nao era a planilha: era LEITURA CONCORRENTE do mesmo arquivo.
+   Desde a v312 o rfArqGuardar() era disparado logo na entrada e chamava
+   rfDocsMaterializar(), que abre o proprio FileReader no MESMO File. Enquanto
+   isso esta funcao abria um segundo FileReader no mesmo objeto. Num File
+   comum de disco os dois terminam iguais; num File do seletor do Android,
+   apoiado em content://, os dois leitores disputam o mesmo stream e um deles
+   volta CORTADO. O ZIP truncado chega no SheetJS com o tamanho comprimido
+   errado -- exatamente a mensagem que apareceu.
+   E a mesma familia do bug da v192 (File do Android que nao streama ate o
+   fim), so que agora provocado por nos mesmos.
+   Correcao: ler o arquivo UMA unica vez, processar a partir desses bytes e
+   guardar o original reconstruido em memoria a partir dos MESMOS bytes -- o
+   File do aparelho nao e mais tocado duas vezes. E guardar so depois de a
+   leitura dar certo, pra nao subir lixo pro bucket. */
 function rfRotImportar(input) {
-  // v312: guarda a planilha como ela chegou, antes de processar
-  try {
-    var _f = input && input.files && input.files[0];
-    if (_f) {
-      rfArqGuardar(_f, "roteirizacao", (_f.name || "planilha").replace(/[^A-Za-z0-9]/g, "").slice(-24))
-        .then(function (meta) { state._rotArquivoPend = meta; })
-        .catch(function (e) { console.warn("roteirização não guardada:", e && e.message); });
-    }
-  } catch (e) { }
   var file = input.files && input.files[0];
   if (!file) return;
   if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Recarregue a página com internet e tente de novo."); return; }
@@ -13082,9 +13088,44 @@ function rfRotImportar(input) {
   var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
   if (!dataPrev) { input.value = ""; return; }
   var leitor = new FileReader();
+  leitor.onerror = function () {
+    input.value = "";
+    alert("Não consegui abrir esse arquivo no aparelho. Copie a planilha para o armazenamento interno e tente de novo.");
+  };
   leitor.onload = function (ev) {
+    var bytes;
     try {
-      var wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+      bytes = new Uint8Array(ev.target.result);
+    } catch (e) { input.value = ""; alert("Não consegui ler o arquivo: " + (e.message || e)); return; }
+    // trava nova: xlsx e um ZIP, tem que comecar com "PK". Se nao comecar, o
+    // arquivo chegou cortado ou nao e planilha -- e a mensagem diz isso, em
+    // vez de deixar o erro do descompactador aparecer cru.
+    if (bytes.length < 100 || bytes[0] !== 0x50 || bytes[1] !== 0x4B) {
+      input.value = "";
+      alert("O arquivo chegou incompleto ou não é uma planilha (.xlsx).\n\n"
+        + "Tamanho lido: " + bytes.length + " bytes.\n\n"
+        + "Se ele veio do Drive ou do WhatsApp, baixe para o armazenamento do aparelho antes de selecionar.");
+      return;
+    }
+    var wb;
+    try {
+      wb = XLSX.read(bytes, { type: "array" });
+    } catch (e) {
+      input.value = "";
+      alert("Não consegui abrir a planilha (" + (e.message || e) + ").\n\n"
+        + "Normalmente é arquivo baixado pela metade. Baixe de novo e tente outra vez.");
+      return;
+    }
+    // v312: guarda a planilha como ela chegou -- mas a partir dos bytes que ja
+    // estao na memoria, nunca lendo o File do aparelho uma segunda vez.
+    try {
+      var copia = new File([bytes.slice(0)], file.name || "roteirizacao.xlsx",
+        { type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      rfArqGuardar(copia, "roteirizacao", (file.name || "planilha").replace(/[^A-Za-z0-9]/g, "").slice(-24))
+        .then(function (meta) { state._rotArquivoPend = meta; })
+        .catch(function (e) { console.warn("roteirização não guardada:", e && e.message); });
+    } catch (e) { console.warn("cópia da roteirização não criada:", e && e.message); }
+    try {
       var res = rfRotProcessarPlanilha(wb, dataPrev);
       input.value = "";
       render();
