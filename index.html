@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v345)</title>
+<title>RF Logística — Painel da Frota (v346)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6662,12 +6662,13 @@ function szEmisCadeiaDaNota(e) {
 // O que a cadeia fiscal diz sobre uma caixa inteira: placa, condutor e as notas
 // que estao no caminhao errado.
 function szEmisCadeiaDaCarga(c) {
-  var r = { placas: {}, motoristas: {}, fora: [], comCadeia: 0 };
+  var r = { placas: {}, motoristas: {}, datas: {}, fora: [], comCadeia: 0 };
   ((c || {}).espelhos || []).forEach(function (e) {
     var cd = szEmisCadeiaDaNota(e);
     if (!cd || !cd.placa) return;
     r.comCadeia++;
     r.placas[cd.placa] = (r.placas[cd.placa] || 0) + 1;
+    if (cd.mdfe && cd.mdfe.data) r.datas[String(cd.mdfe.data).slice(0, 10)] = 1;
     if (cd.motorista) r.motoristas[cd.motorista] = 1;
     if (c.placa && cd.placa !== String(c.placa).toUpperCase()) r.fora.push({ e: e, cadeia: cd });
   });
@@ -6676,14 +6677,25 @@ function szEmisCadeiaDaCarga(c) {
 /* Reconferencia em lote: percorre TODAS as cargas e realoca, pela cadeia
    fiscal, as notas que estao na caixa errada. So mexe no que tem MDF-e
    importado -- o resto fica como esta. */
+/* v346: a cadeia corrige PLACA e DATA.
+   A data que a carga herda e a de EMISSAO DO ESPELHO, e a Suzano emite o
+   espelho na vespera: o espelho 1438972 e de 27/08 e a viagem, pelo MDF-e 29,
+   e de 28/08. Resultado: as notas ficavam numa caixa de 27/08 e a caixa do dia
+   28 -- a viagem de verdade, vinda da roteirizacao -- seguia "esperando as
+   notas" pra sempre. Quem sabe a data real da viagem e o MDF-e, que foi
+   emitido no dia em que o caminhao saiu. */
 function szEmisConferirPelaCadeia() {
   var mover = [];
   szCargas().forEach(function (c) {
     (c.espelhos || []).forEach(function (e) {
       var cd = szEmisCadeiaDaNota(e);
       if (!cd || !cd.placa || !cd.mdfe) return;
-      if (String(c.placa || "").toUpperCase() === cd.placa) return;
-      mover.push({ carga: c, e: e, placa: cd.placa, mdfe: cd.mdfe, motorista: cd.motorista });
+      var dataMdfe = String(cd.mdfe.data || "").slice(0, 10);
+      var placaIgual = String(c.placa || "").toUpperCase() === cd.placa;
+      var dataIgual = !dataMdfe || String(c.data || "").slice(0, 10) === dataMdfe;
+      if (placaIgual && dataIgual) return;
+      mover.push({ carga: c, e: e, placa: cd.placa, data: dataMdfe, mdfe: cd.mdfe, motorista: cd.motorista,
+                   soData: placaIgual && !dataIgual });
     });
   });
   if (!mover.length) {
@@ -6692,16 +6704,20 @@ function szEmisConferirPelaCadeia() {
     return;
   }
   var resumo = {};
+  var br = function (d) { return d ? String(d).split("-").reverse().join("/") : "?"; };
   mover.forEach(function (m) {
-    var k = String(m.carga.placa || "sem placa") + " → " + m.placa + " (MDF-e " + (m.mdfe.numero || "?") + ")";
+    var de = String(m.carga.placa || "sem placa") + " · " + br(String(m.carga.data || "").slice(0, 10));
+    var para = m.placa + " · " + br(m.data);
+    var k = (m.soData ? "[data] " : "[caminhão] ") + de + " → " + para + " (MDF-e " + (m.mdfe.numero || "?") + ")";
     resumo[k] = (resumo[k] || 0) + 1;
   });
-  var txt = Object.keys(resumo).map(function (k) { return "• " + k + ": " + resumo[k] + " nota(s)"; }).join("\n");
-  if (!confirm("As MDF-e emitidas pela RF dizem que estas notas estão no caminhão errado:\n\n" + txt
-    + "\n\nMover para o caminhão que consta no MDF-e?")) return;
+  var txt = Object.keys(resumo).sort().map(function (k) { return "• " + k + ": " + resumo[k] + " nota(s)"; }).join("\n");
+  if (!confirm("As MDF-e emitidas pela RF apontam outro caminhão ou outra data para estas notas:\n\n" + txt
+    + "\n\n[data] = mesmo caminhão, dia diferente — o espelho sai na véspera e o MDF-e é do dia em que o carro saiu."
+    + "\n\nMover conforme o MDF-e?")) return;
   var n = 0;
   mover.forEach(function (m) {
-    var data = String(m.mdfe.data || m.carga.data || "").slice(0, 10);
+    var data = String(m.data || m.mdfe.data || m.carga.data || "").slice(0, 10);
     var alvo = szEmisCargaDaCaixa(m.placa, data);
     var i = (m.carga.espelhos || []).indexOf(m.e);
     if (i < 0) return;
@@ -6845,6 +6861,13 @@ function szEmisDivergencias(c) {
   if (c.placa && placasCadeia.length) {
     out.push("O MDF-e emitido pela RF põe " + cad.fora.length + " nota(s) desta caixa no caminhão "
       + placasCadeia.join(" / ") + ". Mova o documento — a cadeia fiscal manda, não o espelho.");
+  }
+  // v346: mesmo caminhão, dia diferente. O espelho sai na véspera.
+  var datas = Object.keys(cad.datas || {}).filter(function (x) { return x && x !== String(c.data || "").slice(0, 10); });
+  if (c.data && datas.length && !placasCadeia.length) {
+    out.push("O MDF-e desta carga é de " + datas.map(function (d) { return d.split("-").reverse().join("/"); }).join(" / ")
+      + ", não de " + String(c.data).slice(0, 10).split("-").reverse().join("/")
+      + " (o espelho é emitido na véspera). Use o botão 🔗 Conferir pelas MDF-e pra jogar na caixa do dia certo.");
   }
   if (c.placa && pl.length && pl.indexOf(c.placa) < 0 && !placasCadeia.length) {
     out.nota2 = "No espelho consta a placa " + pl.join(" / ") + "; a viagem é do " + c.placa
