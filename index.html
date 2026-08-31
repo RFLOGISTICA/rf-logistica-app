@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v346)</title>
+<title>RF Logística — Painel da Frota (v347)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4160,11 +4160,31 @@ function szLerDanfeTexto(txt) {
       return achou || "";
     })(),
     endereco: "", cidade: cidade, produto: "",
-    qtdVolumes: Math.round(num(pega(/QUANTIDADE\s*\n\s*([\d.,]+)/i))),
-    peso: num(pega(/PESO\s+BRUTO\s*\n\s*([\d.,]+)/i)),
+    /* v347: os rotulos nem sempre caem numa linha e o valor na seguinte -- no
+       PDF real "QUANTIDADE 00150" e "PESO BRUTO 3.801,724 KG" vem na MESMA
+       linha. Exigindo a quebra, os dois voltavam zerados. Agora a quebra e
+       opcional. */
+    qtdVolumes: Math.round(num(pega(/QUANTIDADE\s*\n?\s*([\d.,]+)/i))),
+    peso: num(pega(/PESO\s+BRUTO\s*\n?\s*([\d.,]+)/i)),
     valorMercadoria: valorNota,
     valorFrete: 0,           // a DANFE nao diz frete -- so o espelho diz
-    placa: "", motorista: "", cpfMotorista: "",
+    /* v347: A DANFE TEM PLACA. Ela fica no quadro TRANSPORTADOR/VOLUMES
+       TRANSPORTADOS, campo PLACA/UF -- e no caso real (NF 195231, FEIRAGRAF)
+       vem preenchida: PLE6A32. Ate aqui este campo era "" fixo, e por isso toda
+       nota lida de PDF de DANFE nascia sem caminhao e caia no balaio.
+       Duas travas, porque quem preenche esse campo tambem e a Suzano e ela erra
+       placa com frequencia: (1) so aceita placa que EXISTE na frota da RF --
+       lixo de OCR e placa de terceiro sao descartados; (2) isso e so um palpite
+       inicial, que a cadeia NF-e -> CT-e -> MDF-e sobrepoe assim que o XML
+       entrar. */
+    placa: (function () {
+      var m = txt.match(/PLACA[^\n]{0,24}\n?\s*([A-Z]{3}[\s-]?\d[A-Z0-9]\d{2})\b/i);
+      var pl = m ? String(m[1]).toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+      if (!pl) return "";
+      try { if (szPlacasFrota().indexOf(pl) < 0) return ""; } catch (x) { return ""; }
+      return pl;
+    })(),
+    motorista: "", cpfMotorista: "",
     dataEmissao: pega(/DATA\s+DA\s+EMISS[ÃA]O\s*\n\s*([\d\/.]{8,10})/i) || pega(/EMISS[ÃA]O\s*:?\s*\n?\s*(\d{2}\/\d{2}\/\d{4})/i),
     origemDoc: "danfe",
   };
@@ -6744,8 +6764,9 @@ function szEmisOrfasHTML() {
   var h = '<div style="background:#0A0A0A;border:1px solid #E67E22;border-radius:10px;padding:12px 13px;margin-bottom:12px;">'
     + '<div style="font-size:13px;font-weight:800;color:#E67E22;margin-bottom:5px;">📄 ' + orfas.length + ' NOTA(S) SEM CAMINHÃO</div>'
     + '<div style="font-size:11px;color:#999;line-height:1.5;margin-bottom:9px;">'
-    + 'Estas vieram da NF-e impressa (DANFE), que não traz placa nem valor de frete — por isso aparecem zeradas. '
-    + 'Elas não são uma viagem: são notas esperando destino. Mande cada uma para o caminhão certo, ou anexe o espelho daquela viagem, que traz o frete.'
+    + 'Estas vieram da NF-e impressa (DANFE). A DANFE traz a placa no quadro do transportador, mas nem sempre preenchida, e não traz valor de frete — '
+    + 'por isso o frete aparece zerado. Elas não são uma viagem: são notas esperando destino. '
+    + 'Mande cada uma para o caminhão certo, ou anexe o espelho daquela viagem, que traz o frete.'
     + '</div>';
   orfas.slice(0, 40).forEach(function (o) {
     h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:5px 0;border-top:1px solid #1E1E1E;">'
