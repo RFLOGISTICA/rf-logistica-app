@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v338)</title>
+<title>RF Logística — Painel da Frota (v339)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6394,10 +6394,221 @@ function rfNfConfHTML() {
 var SZ_ETAPAS = [
   { id: "rot",    n: 1, nome: "Roteirização" },
   { id: "conf",   n: 2, nome: "Conferência" },
-  { id: "fiscal", n: 3, nome: "Fiscal" },
-  { id: "canh",   n: 4, nome: "Canhotos" },
-  { id: "confnf", n: 5, nome: "NF da Suzano" },
+  { id: "emis",   n: 3, nome: "Emissão de CT-e" },
+  { id: "fiscal", n: 4, nome: "Fiscal" },
+  { id: "canh",   n: 5, nome: "Canhotos" },
+  { id: "confnf", n: 6, nome: "NF da Suzano" },
 ];
+
+/* ============ v339 — EMISSÃO DE CT-e E MDF-e (etapa 3) ======================
+   Por que esta caixa existe: transcrever o espelho da Suzano para o emissor
+   era trabalho que morava na cabeca de uma pessoa so. Quem assumir a funcao
+   precisa do roteiro pronto na tela -- na MESMA ordem em que os campos
+   aparecem no emissor -- e, principalmente, precisa herdar as REGRAS que nao
+   estao escritas em lugar nenhum:
+
+   1. PLACA E MOTORISTA NUNCA SAEM DO ESPELHO. A Suzano casa a carga por PESO e
+      VOLUME, nao por motorista; o que vem no espelho e referencia solta deles e
+      costuma vir trocada. Valem a placa e o motorista da ROTEIRIZACAO que a RF
+      mandou na vespera. A tela mostra os dois lados quando divergem, e o campo
+      que vale para emitir e sempre o da RF.
+   2. O numero da AVERBACAO sao os 40 primeiros digitos da chave do CT-e (a
+      chave inteira menos os 4 digitos finais).
+   3. Averbar TODOS os conhecimentos antes de o caminhao sair -- sem averbacao a
+      carga roda descoberta.
+   Nada aqui emite documento: o emissor continua sendo o SimplesCTe. Isto e o
+   roteiro de digitacao, montado do que ja foi lido do espelho. */
+var SZ_EMIT = {
+  cnpj: "24.916.554/0001-00", ie: "240941190",
+  razao: "RF LOGISTICA TRANSPORTES E DISTRIBUICAO LTDA",
+  rntrc: "058983277",
+};
+var SZ_REMET = {
+  razao: "SUZANO S.A.", cnpj: "16.404.287/0129-19", ie: "057.402.723",
+  endereco: "Estrada SEST/SENAT 908", municipio: "SIMOES FILHO", uf: "BA", cep: "43700-000",
+};
+var SZ_APOLICE = { seguradora: "EZZE SEGUROS S.A.", numero: "1065406004324", ramo: "RCTR-C" };
+
+function szEmisCargas() {
+  return szCargas().filter(function (c) { return (c.espelhos || []).length > 0; })
+    .sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
+}
+// Os 40 primeiros dígitos da chave: é esse o número da averbação.
+function szAverbacaoDaChave(ch) {
+  var d = String(ch || "").replace(/\D/g, "");
+  return d.length === 44 ? d.slice(0, 40) : "";
+}
+function szEmisTotais(c) {
+  var t = { ctes: 0, frete: 0, volumes: 0, peso: 0, mercadoria: 0, cidades: [] };
+  (c.espelhos || []).forEach(function (e) {
+    t.ctes++;
+    t.frete += Number(e.valorFrete) || 0;
+    t.volumes += Number(e.qtdVolumes) || 0;
+    t.peso += Number(e.peso) || 0;
+    t.mercadoria += Number(e.valorMercadoria) || 0;
+    var cid = String(e.cidade || "").trim().toUpperCase();
+    if (cid && t.cidades.indexOf(cid) < 0) t.cidades.push(cid);
+  });
+  return t;
+}
+// Divergências entre o que a Suzano escreveu no espelho e o que a RF roteirizou.
+function szEmisDivergencias(c) {
+  var out = [];
+  var placas = {}, mots = {};
+  (c.espelhos || []).forEach(function (e) {
+    if (e.placaEspelho) placas[e.placaEspelho] = 1;
+    if (e.motoristaEspelho) mots[String(e.motoristaEspelho).trim()] = 1;
+  });
+  var pl = Object.keys(placas), mo = Object.keys(mots);
+  if (c.placa && pl.length && pl.indexOf(c.placa) < 0) {
+    out.push("O espelho traz a placa " + pl.join(" / ") + ", mas a viagem é do " + c.placa + ". Emitir com " + c.placa + ".");
+  }
+  if (c.motorista && mo.length && mo.map(function (x) { return rfConfNorm(x); }).indexOf(rfConfNorm(c.motorista)) < 0) {
+    out.push("O espelho traz o motorista " + mo.join(" / ") + ", mas quem vai é " + c.motorista + ". Emitir com " + c.motorista + ".");
+  }
+  return out;
+}
+// Monta o roteiro inteiro em TEXTO — é o que o botão copia.
+function szEmisTexto(c) {
+  var t = szEmisTotais(c);
+  var L = [];
+  L.push("EMISSÃO DE CT-e — carga de " + (c.data || "sem data"));
+  L.push("");
+  L.push("== CABEÇALHO (igual em todos os conhecimentos) ==");
+  L.push("Emitente: " + SZ_EMIT.razao + " · CNPJ " + SZ_EMIT.cnpj + " · IE " + SZ_EMIT.ie + " · RNTRC " + SZ_EMIT.rntrc);
+  L.push("Tomador do serviço: " + SZ_REMET.razao + " · CNPJ " + SZ_REMET.cnpj);
+  L.push("CFOP 5353 (prestação para o tomador, operação CIF da Suzano) · ICMS conforme regime do emissor");
+  L.push("Remetente/Expedidor: " + SZ_REMET.razao + " · CNPJ " + SZ_REMET.cnpj + " · IE " + SZ_REMET.ie);
+  L.push("  " + SZ_REMET.endereco + " — " + SZ_REMET.municipio + "/" + SZ_REMET.uf + " — CEP " + SZ_REMET.cep);
+  L.push("Município de início: " + SZ_REMET.municipio + "/" + SZ_REMET.uf);
+  L.push("Placa: " + (c.placa || "— DEFINIR —") + "   (da roteirização da RF, NUNCA a do espelho)");
+  L.push("Motorista: " + (c.motorista || "— DEFINIR —"));
+  L.push("Produto predominante: PAPEL · sem pedágio, sem coleta, sem entrega, sem ajudante, sem GRIS (todos zerados)");
+  L.push("");
+  (c.espelhos || []).forEach(function (e, i) {
+    L.push("== CONHECIMENTO " + (i + 1) + " de " + t.ctes + " ==");
+    L.push("Destinatário/Recebedor: " + (e.cliente || "?") + " — " + (e.cidade || "?"));
+    L.push("CNPJ: " + (e.cnpjCliente || "?") + (e.endereco ? " · " + e.endereco : ""));
+    L.push("Valor do frete: " + fmtR(e.valorFrete));
+    L.push("NF-e nº " + (e.nfe || "?") + " série 1 · " + (e.qtdVolumes || 0) + " volume(s) · "
+      + (Number(e.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · mercadoria " + fmtR(e.valorMercadoria));
+    L.push("Chave de acesso da NF-e:");
+    L.push(String(e.chave || "").replace(/\D/g, "") || "(sem chave lida)");
+    if (e.numDoc) L.push("(documento de transporte " + e.numDoc + (e.cFrete ? " · C. Frete " + e.cFrete : "") + ")");
+    L.push("");
+  });
+  L.push("== FECHO — TOTAIS PARA O MDF-e ==");
+  L.push("Conhecimentos: " + t.ctes);
+  L.push("Soma do frete: " + fmtR(t.frete));
+  L.push("Volumes: " + t.volumes.toLocaleString("pt-BR"));
+  L.push("Peso total: " + t.peso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg");
+  L.push("Valor total da carga: " + fmtR(t.mercadoria));
+  L.push("Municípios de descarregamento (um bloco por cidade, com os CT-e que terminam nela):");
+  L.push("  " + (t.cidades.join(" · ") || "?"));
+  L.push("Seguro: " + SZ_APOLICE.seguradora + " · apólice " + SZ_APOLICE.ramo + " " + SZ_APOLICE.numero);
+  L.push("");
+  L.push("== DEPOIS DE EMITIR ==");
+  L.push("1. Averbar TODOS os conhecimentos antes de o caminhão sair — carga sem averbação roda descoberta.");
+  L.push("2. O número da averbação de cada CT-e são os 40 PRIMEIROS dígitos da chave dele (a chave sem os 4 últimos).");
+  L.push("3. Só então transmitir o MDF-e, com o CIOT e um bloco de descarregamento por cidade.");
+  var dv = szEmisDivergencias(c);
+  if (dv.length) {
+    L.push("");
+    L.push("== ATENÇÃO ==");
+    dv.forEach(function (x) { L.push("• " + x); });
+  }
+  return L.join("\n");
+}
+function szEmisCopiar(cargaId) {
+  var c = szCarga(cargaId);
+  if (!c) return;
+  var txt = szEmisTexto(c);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(function () { alert("Roteiro copiado. Cole onde precisar — ou siga direto pela tela."); })
+      .catch(function () { alert(txt); });
+  } else alert(txt);
+}
+// Ferramenta da averbação: cola as chaves dos CT-e emitidos, sai a lista dos 40 dígitos.
+function szEmisAverbar() {
+  var v = prompt("Cole as chaves dos CT-e emitidos (44 dígitos, uma por linha).\n\nDevolvo o número da averbação de cada uma — os 40 primeiros dígitos.");
+  if (!v) return;
+  var chaves = String(v).split(/[^0-9]+/).filter(function (x) { return x.length === 44; });
+  if (!chaves.length) { alert("Não achei nenhuma chave de 44 dígitos no que você colou."); return; }
+  var out = chaves.map(function (ch, i) { return (i + 1) + ") " + szAverbacaoDaChave(ch); }).join("\n");
+  var txt = "AVERBAÇÃO — " + chaves.length + " conhecimento(s)\n\n" + out;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(function () { alert(txt + "\n\n(copiado)"); }).catch(function () { alert(txt); });
+  } else alert(txt);
+}
+function szEmisBlocoHTML() {
+  var cargas = szEmisCargas();
+  var h = '<div style="background:#0A0A0A;border:1px solid #222;border-radius:10px;padding:12px 13px;margin-bottom:12px;">'
+    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">🧾 ROTEIRO DE EMISSÃO</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin-bottom:10px;">'
+    + 'Aqui fica, pronto para digitar no emissor, tudo que sai do espelho da Suzano: o cabeçalho que se repete em todos os conhecimentos, '
+    + 'um bloco por CT-e com a chave da NF-e, e o fecho com os totais do MDF-e. '
+    + '<b style="color:#E67E22;">A placa e o motorista NUNCA vêm do espelho</b> — a Suzano casa a carga por peso e volume, não por motorista, '
+    + 'e o que vem escrito lá costuma estar trocado. Vale sempre a roteirização que a RF enviou na véspera. '
+    + 'Esta tela não emite nada: o emissor continua sendo o SimplesCTe.'
+    + '</div>'
+    + '<button class="btn-outline" style="font-size:11px;" onclick="szEmisAverbar()" title="Cole as chaves dos CT-e já emitidos e receba o número da averbação de cada um">🔢 Números de averbação (40 dígitos)</button>'
+    + '</div>';
+
+  if (!cargas.length) {
+    return h + '<div style="font-size:11px;color:#777;">Nenhum espelho lido ainda. Anexe os espelhos na etapa <b>NF da Suzano</b> e eles aparecem aqui.</div>';
+  }
+
+  cargas.slice(0, 12).forEach(function (c) {
+    var t = szEmisTotais(c);
+    var dv = szEmisDivergencias(c);
+    var falta = [];
+    if (!c.placa) falta.push("placa");
+    if (!c.motorista) falta.push("motorista");
+    var semChave = (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length;
+    var aberto = state._szEmisAberto === String(c.id);
+    var cor = falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
+
+    h += '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + cor + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        + '<span style="font-size:13px;font-weight:700;color:#fff;">' + esc(c.placa || "sem placa") + '</span>'
+        + '<span style="font-size:11px;color:#999;">' + esc(c.data ? c.data.split("-").reverse().join("/") : "sem data") + '</span>'
+        + '<span style="font-size:11px;color:#bbb;">' + esc(c.motorista || "sem motorista") + '</span>'
+        + '<span style="font-size:11px;color:#ccc;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
+          + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
+        + '<span style="font-size:11px;font-weight:700;color:' + GOLD + ';margin-left:auto;">' + fmtR(t.frete) + '</span>'
+      + '</div>';
+
+    if (falta.length) {
+      h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;font-weight:700;">⛔ Falta definir ' + falta.join(" e ")
+        + ' desta carga — sai no CT-e. Defina na etapa Conferência antes de emitir.</div>';
+    }
+    dv.forEach(function (x) {
+      h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>';
+    });
+    if (semChave) {
+      h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave
+        + ' nota(s) sem chave de 44 dígitos lida — resolva na etapa NF da Suzano antes de emitir.</div>';
+    }
+
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">'
+      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="szEmisAbrir(\'' + esc(String(c.id)) + '\')">'
+        + (aberto ? "▾ fechar o roteiro" : "▸ abrir o roteiro de emissão") + '</button>'
+      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="szEmisCopiar(\'' + esc(String(c.id)) + '\')">⧉ copiar tudo</button>'
+      + '</div>';
+
+    if (aberto) {
+      h += '<pre style="margin-top:8px;padding:10px;background:#050505;border:1px solid #1E1E1E;border-radius:6px;'
+        + 'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#DDD;white-space:pre-wrap;word-break:break-word;overflow-x:auto;">'
+        + esc(szEmisTexto(c)) + '</pre>';
+    }
+    h += '</div>';
+  });
+  return h;
+}
+function szEmisAbrir(id) {
+  state._szEmisAberto = (String(state._szEmisAberto) === String(id)) ? null : String(id);
+  render();
+}
 
 function szEtapaAbrir(id) {
   state._szEtapa = (state._szEtapa === id) ? null : id;   // uma etapa por vez
@@ -6411,6 +6622,7 @@ function szEtapaSituacao() {
     rot:    { txt: "sem rota montada",       cor: "#777" },
     conf:   { txt: "nenhum carregamento",    cor: "#777" },
     fiscal: { txt: "nada importado",         cor: "#777" },
+    emis:   { txt: "nenhum espelho lido",    cor: "#777" },
     canh:   { txt: "nada a conferir",        cor: "#777" },
     confnf: { txt: "nenhum espelho lido",    cor: "#777" },
     rotas: 0, paradas: 0, ctesFalta: 0, canhotosFalta: 0,
@@ -6485,6 +6697,20 @@ function szEtapaSituacao() {
           : { txt: cf.totalEspelho + " NF conferidas", cor: "#2E7D32" };
     }
   } catch (e) { }
+  try {
+    // v339: a etapa de emissao cobra o que impede de emitir: carga sem placa
+    // ou sem motorista (os dois saem no CT-e) e nota sem chave de 44 digitos.
+    var pend = 0, prontas = 0, cgs = szEmisCargas();
+    cgs.forEach(function (c) {
+      var semChave = (c.espelhos || []).some(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; });
+      if (!c.placa || !c.motorista || semChave) pend++; else prontas++;
+    });
+    if (cgs.length) {
+      r.emis = pend
+        ? { txt: pend + " carga(s) travada(s) pra emitir", cor: "#C0392B" }
+        : { txt: prontas + " carga(s) pronta(s) pra emitir", cor: "#2E7D32" };
+    }
+  } catch (e) { }
   return r;
 }
 
@@ -6493,6 +6719,7 @@ function szEtapaConteudo(id) {
   if (id === "rot") return '<div style="margin-bottom:10px;"><button class="btn-outline" style="font-size:11px;" onclick="rfRotExportarPrevistas()" title="Tira do app a roteirização que está valendo: veículos, paradas, notas e canhotos, nas três abas do modelo">⬇ Exportar roteirização vigente (Excel)</button></div>'
     + rfArqBlocoHTML() + szTelaPlano() + szTelaRoteirizador() + rfRotBlocoHTML();
   if (id === "conf") return szTelaEquipe();
+  if (id === "emis") return szEmisBlocoHTML();
   if (id === "fiscal") return rfFiscalBlocoHTML();
   if (id === "canh") return rfCanhLoteBlocoHTML();
   if (id === "confnf") return rfNfConfHTML();
@@ -14311,6 +14538,27 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
     return linha;
   }).join("\n");
 
+  // v339: a etapa de EMISSAO no contexto do assistente -- quem assumir a
+  // funcao vai perguntar pra ele "o que falta pra emitir?" e a resposta tem
+  // que estar aqui, nao so na tela.
+  const linhasEmissao = (function () {
+    try {
+      return szEmisCargas().slice(0, 15).map(function (c) {
+        const t = szEmisTotais(c);
+        const semChave = (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length;
+        const trava = [];
+        if (!c.placa) trava.push("sem placa definida");
+        if (!c.motorista) trava.push("sem motorista definido");
+        if (semChave) trava.push(semChave + " nota(s) sem chave de 44 digitos");
+        return "- " + (c.placa || "sem placa") + " · " + (c.data || "sem data") + " · " + (c.motorista || "sem motorista")
+          + ": " + t.ctes + " CT-e a emitir, " + t.volumes + " volumes, " + t.peso.toFixed(1) + " kg, frete " + fmtR(t.frete)
+          + ", cidades " + (t.cidades.join("/") || "?")
+          + (trava.length ? ". TRAVADO PRA EMITIR: " + trava.join(" · ") : ". Pronta pra emitir")
+          + szEmisDivergencias(c).map(function (x) { return ". DIVERGENCIA: " + x; }).join("");
+      }).join("\n");
+    } catch (e) { return ""; }
+  })();
+
   // v286: CT-e / MDF-e / CIOT lidos dos XML, agrupados por viagem (placa+data).
   const linhasFiscais = (function () {
     try {
@@ -14800,6 +15048,9 @@ ${linhasRomaneios || "(nenhum romaneio anexado)"}
 
 Documentos fiscais lidos dos XML (v286) — CT-e, MDF-e e CIOT agrupados por viagem (placa + data). A cadeia é: canhoto (QR) → NF-e → CT-e → MDF-e → CIOT → viagem. Use estas linhas pra responder o que falta em cada viagem (MDF-e, CIOT, canhoto) e pra achar de quem é uma NF:
 ${podeEntregasCtx ? (linhasFiscais || "(nenhum XML de CT-e/MDF-e importado ainda)") : "(sem permissão pra esta área)"}
+
+Emissão de CT-e (v339, etapa 3 da aba Carregamento Suzano) — cargas com espelho lido esperando emissão no SimplesCTe. REGRA QUE VALE SEMPRE: a placa e o motorista NUNCA saem do espelho da Suzano (eles casam a carga por peso e volume, não por motorista, e o dado vem trocado com frequência) — valem os da roteirização que a RF enviou na véspera. O número da averbação de cada CT-e são os 40 primeiros dígitos da chave dele. Averbar todos antes de o caminhão sair:
+${podeEntregasCtx ? (linhasEmissao || "(nenhum espelho lido esperando emissão)") : "(sem permissão pra esta área)"}
 
 Entregas e canhotos das rotas liberadas (v282 — o motorista anexa o canhoto na própria lista da rota, no celular dele, uma foto por NOTA FISCAL; a parada só fica concluída com todos os canhotos, e a viagem só fecha com todas as paradas concluídas + a foto do KM final). Use estas linhas pra responder quem já entregou, quem ainda não mandou canhoto e o que teve ressalva:
 ${podeEntregasCtx ? (linhasCanhotos || "(nenhuma rota liberada para motorista no momento)") : "(sem permissão pra esta área)"}
