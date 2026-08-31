@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v344)</title>
+<title>RF Logística — Painel da Frota (v345)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6485,6 +6485,12 @@ function szEmisViagemDaCarga(c) {
 function szEmisMotorista(c) {
   var manual = String((c || {}).motorista || "").trim();
   if (manual) return { nome: manual, origem: "escolhido na mão" };
+  /* v345: depois da escolha manual, quem manda e o CONDUTOR DO MDF-e -- foi
+     ele que efetivamente saiu, e o documento e da RF. So depois vem a
+     roteirizacao (que e previsao) . */
+  var cad = szEmisCadeiaDaCarga(c);
+  var doMdfe = Object.keys(cad.motoristas || {})[0] || "";
+  if (doMdfe) return { nome: doMdfe, origem: "do MDF-e" };
   var v = szEmisViagemDaCarga(c);
   var nome = szEmisMotoristaDaViagem(v);
   if (!nome) return { nome: "", origem: "" };
@@ -6628,6 +6634,89 @@ function szEmisSeletorDestino(cargaId, numDoc, kAtual) {
       }).join("")
     + '</select>';
 }
+/* v345 — A PLACA DE VERDADE VEM DO MDF-e, NAO DO ESPELHO.
+   O espelho e papel da Suzano e eles nao tem cuidado com placa: preenchem por
+   referencia e vem trocada com frequencia (foi o que jogou o documento 1407264
+   no PKO3F40 sendo do PLE6A32). Ja o MDF-e foi emitido pela PROPRIA RF, com a
+   placa e o condutor que realmente sairam -- e para as viagens que ja rodaram
+   ele esta importado.
+   A cadeia fecha pela chave: NF-e do espelho -> CT-e que a transporta ->
+   MDF-e que carrega esse CT-e -> placa e condutor. E documento fiscal contra
+   documento fiscal, sem palpite. Quando existe, ela manda; quando nao existe
+   (viagem que ainda nao rodou), continua valendo a caixa da roteirizacao. */
+function szEmisCadeiaDaNota(e) {
+  var ch = String((e || {}).chave || "").replace(/\D/g, "");
+  if (ch.length !== 44) return null;
+  var docs = [];
+  try { docs = rfFiscais() || []; } catch (x) { return null; }
+  var cte = docs.find(function (d) { return d.tipo === "cte" && (d.nfes || []).indexOf(ch) >= 0; });
+  if (!cte) return null;
+  var mdfe = docs.find(function (d) { return d.tipo === "mdfe" && (d.ctes || []).indexOf(String(cte.chave || "")) >= 0; });
+  return {
+    cte: cte,
+    mdfe: mdfe || null,
+    placa: String((mdfe && mdfe.placa) || cte.placa || "").toUpperCase(),
+    motorista: String((mdfe && mdfe.motorista) || "").trim(),
+  };
+}
+// O que a cadeia fiscal diz sobre uma caixa inteira: placa, condutor e as notas
+// que estao no caminhao errado.
+function szEmisCadeiaDaCarga(c) {
+  var r = { placas: {}, motoristas: {}, fora: [], comCadeia: 0 };
+  ((c || {}).espelhos || []).forEach(function (e) {
+    var cd = szEmisCadeiaDaNota(e);
+    if (!cd || !cd.placa) return;
+    r.comCadeia++;
+    r.placas[cd.placa] = (r.placas[cd.placa] || 0) + 1;
+    if (cd.motorista) r.motoristas[cd.motorista] = 1;
+    if (c.placa && cd.placa !== String(c.placa).toUpperCase()) r.fora.push({ e: e, cadeia: cd });
+  });
+  return r;
+}
+/* Reconferencia em lote: percorre TODAS as cargas e realoca, pela cadeia
+   fiscal, as notas que estao na caixa errada. So mexe no que tem MDF-e
+   importado -- o resto fica como esta. */
+function szEmisConferirPelaCadeia() {
+  var mover = [];
+  szCargas().forEach(function (c) {
+    (c.espelhos || []).forEach(function (e) {
+      var cd = szEmisCadeiaDaNota(e);
+      if (!cd || !cd.placa || !cd.mdfe) return;
+      if (String(c.placa || "").toUpperCase() === cd.placa) return;
+      mover.push({ carga: c, e: e, placa: cd.placa, mdfe: cd.mdfe, motorista: cd.motorista });
+    });
+  });
+  if (!mover.length) {
+    alert("Conferi pelas MDF-e importadas: nenhuma nota está no caminhão errado.\n\n"
+      + "Notas sem MDF-e importado não entram nesta conferência — para elas vale a caixa da roteirização.");
+    return;
+  }
+  var resumo = {};
+  mover.forEach(function (m) {
+    var k = String(m.carga.placa || "sem placa") + " → " + m.placa + " (MDF-e " + (m.mdfe.numero || "?") + ")";
+    resumo[k] = (resumo[k] || 0) + 1;
+  });
+  var txt = Object.keys(resumo).map(function (k) { return "• " + k + ": " + resumo[k] + " nota(s)"; }).join("\n");
+  if (!confirm("As MDF-e emitidas pela RF dizem que estas notas estão no caminhão errado:\n\n" + txt
+    + "\n\nMover para o caminhão que consta no MDF-e?")) return;
+  var n = 0;
+  mover.forEach(function (m) {
+    var data = String(m.mdfe.data || m.carga.data || "").slice(0, 10);
+    var alvo = szEmisCargaDaCaixa(m.placa, data);
+    var i = (m.carga.espelhos || []).indexOf(m.e);
+    if (i < 0) return;
+    m.carga.espelhos.splice(i, 1);
+    alvo.espelhos = (alvo.espelhos || []).concat([m.e]);
+    // o condutor do MDF-e é o que realmente saiu: vale mais que qualquer palpite
+    if (m.motorista && !String(alvo.motorista || "").trim()) alvo.motorista = m.motorista;
+    n++;
+  });
+  state.suzanoCargas = szCargas().filter(function (x) {
+    return (x.espelhos || []).length || !(x.criadaPeloEspelho || x.criadaPelaCaixa);
+  });
+  salvar(); render();
+  alert(n + " nota(s) movida(s) conforme as MDF-e emitidas pela RF.");
+}
 function szEmisOrfasHTML() {
   var orfas = szEmisOrfas();
   if (!orfas.length) return "";
@@ -6702,6 +6791,13 @@ function szEmisConhecimentoHTML(e, i, total) {
     + szEmisCampo("Frete", fmtR(e.valorFrete), GOLD, false)
     + '<div style="font-size:10.5px;color:#777;margin-top:4px;">' + (Number(e.qtdVolumes) || 0) + ' volume(s) · mercadoria '
       + fmtR(e.valorMercadoria) + (e.numDoc ? ' · doc. transporte ' + esc(e.numDoc) : "") + '</div>'
+    + (function () {
+        var cd = szEmisCadeiaDaNota(e);
+        if (!cd) return "";
+        return '<div style="font-size:10.5px;color:#4FC3F7;margin-top:3px;">🔗 CT-e ' + esc(cd.cte.numero || "?")
+          + (cd.mdfe ? ' · MDF-e ' + esc(cd.mdfe.numero || "?") + ' · placa ' + esc(cd.placa)
+              + (cd.motorista ? ' · ' + esc(cd.motorista) : "") : ' · sem MDF-e importado') + '</div>';
+      })()
     + '</div>';
 }
 function szEmisCargas() {
@@ -6741,8 +6837,18 @@ function szEmisDivergencias(c) {
      efetivamente sai, entao o nome do espelho e informacao, nao erro. Tratar os
      dois igual deixava toda carga laranja pra sempre e tirava o sentido do
      verde. Por isso a divergencia de motorista virou NOTA. */
-  if (c.placa && pl.length && pl.indexOf(c.placa) < 0) {
-    out.push("O espelho traz a placa " + pl.join(" / ") + ", mas a viagem é do " + c.placa + ". Emitir com " + c.placa + ".");
+  /* v345: a placa do ESPELHO deixou de ser o alerta principal. Ela erra demais.
+     O alerta forte agora e a CADEIA FISCAL (NF-e -> CT-e -> MDF-e), que e
+     documento emitido pela RF. A do espelho vira nota fraca, so pra conferencia. */
+  var cad = szEmisCadeiaDaCarga(c);
+  var placasCadeia = Object.keys(cad.placas).filter(function (x) { return x && x !== String(c.placa || "").toUpperCase(); });
+  if (c.placa && placasCadeia.length) {
+    out.push("O MDF-e emitido pela RF põe " + cad.fora.length + " nota(s) desta caixa no caminhão "
+      + placasCadeia.join(" / ") + ". Mova o documento — a cadeia fiscal manda, não o espelho.");
+  }
+  if (c.placa && pl.length && pl.indexOf(c.placa) < 0 && !placasCadeia.length) {
+    out.nota2 = "No espelho consta a placa " + pl.join(" / ") + "; a viagem é do " + c.placa
+      + (cad.comCadeia ? " e as MDF-e confirmam " + c.placa + "." : ". Sem MDF-e importado pra confirmar.");
   }
   if (mt.nome && mo.length && mo.map(function (x) { return rfConfNorm(x); }).indexOf(rfConfNorm(mt.nome)) < 0) {
     out.nota = "No espelho consta " + mo.join(" / ") + "; quem sai é " + mt.nome + " (" + mt.origem + ") — emitir e averbar neste nome.";
@@ -6833,6 +6939,7 @@ function szEmisBlocoHTML() {
     + 'Esta tela não emite nada — o emissor continua sendo o SimplesCTe.'
     + '</div>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="szEmisAverbar()" title="Cole as chaves dos CT-e já emitidos e receba o número da averbação de cada um">🔢 Números de averbação (40 dígitos)</button>'
+    + ' <button class="btn-outline" style="font-size:11px;border-color:#4FC3F7;color:#4FC3F7;" onclick="szEmisConferirPelaCadeia()" title="Usa as MDF-e emitidas pela RF pra achar a placa real de cada nota, pela cadeia NF-e → CT-e → MDF-e">🔗 Conferir pelas MDF-e</button>'
     + '<div id="szemis-aviso" style="font-size:11.5px;font-weight:700;color:#888;margin-top:8px;"></div>'
     + '</div>';
 
@@ -6883,6 +6990,7 @@ function szEmisBlocoHTML() {
     }
     dv.forEach(function (x) { h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>'; });
     if (dv.nota) h += '<div style="margin-top:6px;font-size:10.5px;color:#888;">ℹ ' + esc(dv.nota) + '</div>';
+    if (dv.nota2) h += '<div style="margin-top:4px;font-size:10.5px;color:#888;">ℹ ' + esc(dv.nota2) + '</div>';
     if (semChave) h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave + ' nota(s) sem chave de 44 dígitos — resolva na etapa NF da Suzano.</div>';
 
     // anexar direto nesta caixa: o destino ja esta decidido pela placa
