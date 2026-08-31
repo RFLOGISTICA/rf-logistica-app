@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v350)</title>
+<title>RF Logística — Painel da Frota (v352)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,40 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v352: LEITOR DE XLSX PROPRIO -- resolve de vez o "Corrupted zip" da
+     roteirizacao. O app dependia de bibliotecas de terceiros pra abrir a
+     planilha (SheetJS e, se ele falhasse, JSZip). No tablet as duas recusavam
+     arquivos INTEGROS: tres planilhas diferentes, conferidas byte a byte, com
+     o fim do diretorio central no lugar e abrindo normal no Excel, davam
+     "Corrupted zip: can't find end of central directory" -- inclusive uma
+     gravada pelo LibreOffice (com data descriptor) e outra pelo openpyxl (sem).
+     Agora o app le o xlsx sozinho, em ~120 linhas e sem CDN nenhum:
+     - rfZipEntradas: acha o fim do diretorio central varrendo de tras pra
+       frente e le a lista de arquivos DALI. Isso e o que torna o leitor imune
+       ao caso que derrubava os outros: quando a entrada foi gravada com data
+       descriptor, o tamanho no cabecalho local vem zerado, mas no diretorio
+       central esta sempre certo -- e e o do diretorio central que usamos.
+     - rfZipTexto: pula o cabecalho local, corta os bytes comprimidos e
+       descompacta com DecompressionStream("deflate-raw"), que ja existe no
+       WebView; metodo 0 (guardado sem compressao) sai direto.
+     - rfSstDoXml/rfLinhasDoXml: leem sharedStrings e o XML da aba, respeitando
+       o numero da linha (r="N") pra linha vazia nao deslocar as de baixo, e a
+       letra da coluna (r="C7") pra celula vazia nao empurrar a seguinte.
+     rfRotAbrirWorkbook agora tenta nesta ordem: leitor proprio -> SheetJS
+     array -> SheetJS binary -> SheetJS base64 -> repack com JSZip; e, se tudo
+     falhar, mostra a mensagem DE CADA tentativa, em vez de so a ultima.
+     rfRotAba passou a aceitar as abas do leitor proprio (__rows) alem das do
+     SheetJS. Conferido com os arquivos reais: a roteirizacao de 01/09 e o
+     FOCRI_RF_31_08 da Suzano sao lidos corretamente pelo leitor proprio,
+     abas e cabecalhos na posicao certa. O import de CSV da v350/v351 continua
+     valendo como caminho alternativo. -->
+<!-- v351: separador do CSV decidido no codigo, nao adivinhado. O CSV em
+     portugues sai com PONTO E VIRGULA (e o que o Excel em pt-BR abre em
+     colunas; com virgula ele joga a linha inteira na coluna A) e com virgula
+     decimal no peso. rfRotImportarCSV agora conta qual separador aparece mais
+     na primeira linha -- ponto e virgula, virgula ou tab -- e passa em FS pro
+     leitor, em vez de depender do palpite dele. O peso ja era lido com
+     replace(",", ".") no processamento, entao virgula decimal nao atrapalha. -->
 <!-- v350: IMPORTACAO DA ROTEIRIZACAO QUE FALHAVA COM "Corrupted zip".
      Sintoma real (31/08, tablet): a planilha da roteirizacao era recusada com
      "Corrupted zip: can't find end of central directory", mesmo o arquivo sendo
@@ -14019,26 +14053,173 @@ function rfBytesParaBinString(bytes) {
 function rfBytesParaBase64(bytes) {
   return btoa(rfBytesParaBinString(bytes));
 }
+/* ============ v352 — LEITOR DE XLSX PRÓPRIO (sem SheetJS, sem JSZip) ============
+   Lê o zip pelo DIRETÓRIO CENTRAL (onde o tamanho de cada arquivo está sempre
+   correto, mesmo quando o cabeçalho local vem zerado por data descriptor) e
+   descompacta com DecompressionStream. É o primeiro caminho tentado ao abrir a
+   roteirização. Fica no BLOCO 1 porque o import o alcança. */
+
+function rfBytesParaTexto(b) {
+  if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8").decode(b);
+  var s = "";
+  for (var i = 0; i < b.length; i += 8192) s += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+  return decodeURIComponent(escape(s));
+}
+function rfInflarRaw(raw) {
+  if (typeof DecompressionStream === "undefined") {
+    return Promise.reject(new Error("este aparelho não tem DecompressionStream"));
+  }
+  var fluxo = new Response(raw).body.pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Response(fluxo).arrayBuffer().then(function (ab) { return new Uint8Array(ab); });
+}
+function rfZipEntradas(bytes) {
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var fim = -1, minimo = Math.max(0, bytes.length - 66000);
+  for (var i = bytes.length - 22; i >= minimo; i--) {
+    if (bytes[i] === 0x50 && bytes[i + 1] === 0x4B && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) { fim = i; break; }
+  }
+  if (fim < 0) throw new Error("não achei o fim do diretório central");
+  var qtd = dv.getUint16(fim + 10, true), ini = dv.getUint32(fim + 16, true);
+  var p = ini, out = {}, achadas = 0;
+  for (var n = 0; n < qtd; n++) {
+    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) break;
+    var ln = dv.getUint16(p + 28, true), le = dv.getUint16(p + 30, true), lc = dv.getUint16(p + 32, true);
+    out[rfBytesParaTexto(bytes.subarray(p + 46, p + 46 + ln))] = {
+      metodo: dv.getUint16(p + 10, true),
+      comp: dv.getUint32(p + 20, true),
+      tam: dv.getUint32(p + 24, true),
+      off: dv.getUint32(p + 42, true),
+    };
+    achadas++;
+    p += 46 + ln + le + lc;
+  }
+  if (!achadas) throw new Error("diretório central vazio");
+  return out;
+}
+function rfZipTexto(bytes, e) {
+  if (!e) return Promise.resolve("");
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (dv.getUint32(e.off, true) !== 0x04034b50) return Promise.reject(new Error("cabeçalho local inválido"));
+  var ln = dv.getUint16(e.off + 26, true), le = dv.getUint16(e.off + 28, true);
+  var ini = e.off + 30 + ln + le;
+  var raw = bytes.subarray(ini, ini + e.comp);
+  if (e.metodo === 0) return Promise.resolve(rfBytesParaTexto(raw));
+  if (e.metodo !== 8) return Promise.reject(new Error("compressão não suportada: " + e.metodo));
+  return rfInflarRaw(raw).then(rfBytesParaTexto);
+}
+function rfXmlTexto(s) {
+  return String(s).replace(/&#(\d+);/g, function (_, d) { return String.fromCharCode(+d); })
+    .replace(/&#x([0-9a-fA-F]+);/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+function rfColParaIndice(ref) {
+  var m = /^([A-Z]+)/.exec(String(ref || "").toUpperCase());
+  if (!m) return -1;
+  var n = 0;
+  for (var i = 0; i < m[1].length; i++) n = n * 26 + (m[1].charCodeAt(i) - 64);
+  return n - 1;
+}
+function rfSstDoXml(xml) {
+  var sst = [];
+  (xml.match(/<si>[\s\S]*?<\/si>|<si\/>/g) || []).forEach(function (si) {
+    var t = (si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(function (p) {
+      return rfXmlTexto(p.replace(/<t[^>]*>/, "").replace(/<\/t>/, ""));
+    }).join("");
+    sst.push(t);
+  });
+  return sst;
+}
+function rfLinhasDoXml(xml, sst) {
+  var linhas = [];
+  (xml.match(/<row[^>]*\/>|<row[^>]*>[\s\S]*?<\/row>/g) || []).forEach(function (row) {
+    var nr = Number((/<row[^>]*\sr="(\d+)"/.exec(row) || [])[1] || 0);
+    var linha = [];
+    (row.match(/<c[^>]*\/>|<c[^>]*>[\s\S]*?<\/c>/g) || []).forEach(function (c) {
+      var ref = (/r="([A-Z]+\d+)"/.exec(c) || [])[1];
+      var tipo = (/t="([^"]+)"/.exec(c) || [])[1] || "n";
+      var val = "";
+      if (tipo === "inlineStr") {
+        val = (c.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(function (p) {
+          return rfXmlTexto(p.replace(/<t[^>]*>/, "").replace(/<\/t>/, ""));
+        }).join("");
+      } else {
+        var v = /<v[^>]*>([\s\S]*?)<\/v>/.exec(c);
+        if (v) {
+          val = rfXmlTexto(v[1]);
+          if (tipo === "s") val = sst[+val] != null ? sst[+val] : "";
+          else if (tipo === "b") val = val === "1";
+          else if (tipo === "n" && val !== "") { var num = Number(val); if (!isNaN(num)) val = num; }
+        }
+      }
+      var i = rfColParaIndice(ref);
+      if (i < 0) i = linha.length;
+      while (linha.length < i) linha.push("");
+      linha[i] = val;
+    });
+    if (nr > 0) { while (linhas.length < nr - 1) linhas.push([]); linhas[nr - 1] = linha; }
+    else linhas.push(linha);
+  });
+  return linhas;
+}
+function rfXlsxLerProprio(bytes) {
+  return Promise.resolve().then(function () {
+    var ent = rfZipEntradas(bytes);
+    var achar = function (nome) { return ent[nome] || ent[nome.replace(/^\//, "")] || null; };
+    return Promise.all([
+      rfZipTexto(bytes, achar("xl/workbook.xml")),
+      rfZipTexto(bytes, achar("xl/_rels/workbook.xml.rels")),
+      rfZipTexto(bytes, achar("xl/sharedStrings.xml")),
+    ]).then(function (partes) {
+      var wbXml = partes[0], relsXml = partes[1], sst = rfSstDoXml(partes[2] || "");
+      if (!wbXml) throw new Error("não achei xl/workbook.xml");
+      var alvo = {};
+      (relsXml.match(/<Relationship[^>]*>/g) || []).forEach(function (r) {
+        var id = (/Id="([^"]+)"/.exec(r) || [])[1];
+        var t = (/Target="([^"]+)"/.exec(r) || [])[1];
+        if (id && t) alvo[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
+      });
+      var abas = [];
+      (wbXml.match(/<sheet\s[^>]*name="[^"]*"[^>]*>/g) || []).forEach(function (sh) {
+        var nome = rfXmlTexto((/name="([^"]*)"/.exec(sh) || [])[1] || "");
+        var rid = (/r:id="([^"]+)"/.exec(sh) || /id="([^"]+)"/.exec(sh) || [])[1];
+        var arq = alvo[rid] || "";
+        abas.push({ nome: nome, arq: arq ? "xl/" + arq : "" });
+      });
+      return Promise.all(abas.map(function (a) {
+        return a.arq ? rfZipTexto(bytes, achar(a.arq)) : Promise.resolve("");
+      })).then(function (xmls) {
+        var wb = { SheetNames: [], Sheets: {}, __proprio: true };
+        abas.forEach(function (a, i) {
+          wb.SheetNames.push(a.nome);
+          wb.Sheets[a.nome] = { __rows: rfLinhasDoXml(xmls[i] || "", sst) };
+        });
+        if (!wb.SheetNames.length) throw new Error("planilha sem abas");
+        return wb;
+      });
+    });
+  });
+}
 function rfRotAbrirWorkbook(bytes) {
-  /* v350: quatro tentativas em vez de duas. O que der certo primeiro vale; se
-     todas falharem, o erro final traz a mensagem de CADA uma, porque antes o
-     catch engolia o erro do SheetJS e só sobrava a mensagem do JSZip. */
+  /* v352: o leitor próprio vem primeiro — é o único que não depende de
+     biblioteca de fora. Se ele falhar, ainda tenta os quatro caminhos
+     anteriores, e o erro final traz a mensagem de cada tentativa. */
   var erros = [];
-  try {
-    return Promise.resolve(XLSX.read(bytes, { type: "array" }));
-  } catch (e1) { erros.push("array: " + (e1 && e1.message || e1)); }
-  try {
-    return Promise.resolve(XLSX.read(rfBytesParaBinString(bytes), { type: "binary" }));
-  } catch (e2) { erros.push("binary: " + (e2 && e2.message || e2)); }
-  try {
-    return Promise.resolve(XLSX.read(rfBytesParaBase64(bytes), { type: "base64" }));
-  } catch (e3) { erros.push("base64: " + (e3 && e3.message || e3)); }
-  return rfFiscalZipLib().then(function (JSZip) {
-    if (!JSZip) throw new Error(erros.join(" | ") + " | jszip: não carregou");
-    return JSZip.loadAsync(bytes)
-      .then(function (zip) { return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }); })
-      .then(function (limpo) { return XLSX.read(limpo, { type: "array" }); })
-      .catch(function (e4) { throw new Error(erros.join(" | ") + " | jszip: " + (e4 && e4.message || e4)); });
+  return rfXlsxLerProprio(bytes).catch(function (e0) {
+    erros.push("leitor próprio: " + (e0 && e0.message || e0));
+    try { return XLSX.read(bytes, { type: "array" }); }
+    catch (e1) { erros.push("array: " + (e1 && e1.message || e1)); }
+    try { return XLSX.read(rfBytesParaBinString(bytes), { type: "binary" }); }
+    catch (e2) { erros.push("binary: " + (e2 && e2.message || e2)); }
+    try { return XLSX.read(rfBytesParaBase64(bytes), { type: "base64" }); }
+    catch (e3) { erros.push("base64: " + (e3 && e3.message || e3)); }
+    return rfFiscalZipLib().then(function (JSZip) {
+      if (!JSZip) throw new Error(erros.join(" | ") + " | jszip: não carregou");
+      return JSZip.loadAsync(bytes)
+        .then(function (zip) { return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }); })
+        .then(function (limpo) { return XLSX.read(limpo, { type: "array" }); })
+        .catch(function (e4) { throw new Error(erros.join(" | ") + " | jszip: " + (e4 && e4.message || e4)); });
+    });
   });
 }
 function rfRotImportarCSV(input, file) {
@@ -14053,7 +14234,16 @@ function rfRotImportarCSV(input, file) {
     try {
       var txt = String(ev.target.result || "");
       if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);       // BOM do Excel
-      var wb = XLSX.read(txt, { type: "string" });
+      // v351: o separador vem DECIDIDO por nós, não adivinhado pelo leitor.
+      // CSV gerado em português sai com ponto e vírgula (é o que o Excel em
+      // pt-BR espera); o mesmo arquivo em inglês sai com vírgula. Conta qual
+      // aparece mais na primeira linha e usa esse.
+      var l0 = txt.split(/\r?\n/)[0] || "";
+      var cont = function (c) { return (l0.split(c).length - 1); };
+      var sep = ";";
+      if (cont("\t") > cont(";") && cont("\t") > cont(",")) sep = "\t";
+      else if (cont(",") > cont(";")) sep = ",";
+      var wb = XLSX.read(txt, { type: "string", FS: sep });
       // o processador procura a aba pelo nome; num CSV existe uma só
       var n0 = wb.SheetNames[0];
       wb.Sheets["Detalhe por Cliente"] = wb.Sheets[n0];
@@ -14132,7 +14322,11 @@ function rfRotImportar(input) {
 
 function rfRotAba(wb, pedaco) {
   var nome = wb.SheetNames.find(function (n) { return normTxt(n).indexOf(normTxt(pedaco)) >= 0; });
-  return nome ? XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "" }) : null;
+  if (!nome) return null;
+  var sh = wb.Sheets[nome];
+  // v352: aba vinda do leitor próprio já chega como matriz de linhas
+  if (sh && sh.__rows) return sh.__rows;
+  return XLSX.utils.sheet_to_json(sh, { header: 1, defval: "" });
 }
 // acha a linha de cabeçalho olhando pelo nome das colunas, em vez de fixar a
 // linha 3 ou 4 -- se eu mudar o título da planilha, o import continua achando
@@ -15785,7 +15979,7 @@ ${blocoTetoManut}
 
 ${`COMO IMPORTAR A ROTEIRIZAÇÃO (aba Operação, caixa "Roteirização do dia seguinte"):
 O botão aceita .xlsx e também .csv. O que o app procura é a aba "Detalhe por Cliente", com as colunas Veículo, Ordem, Cidade, Recebedor (e, quando houver, Endereço, Peso e Remessa); o motorista vem da aba "Resumo por Veículo" quando ela existe, senão usa o motorista cadastrado no veículo.
-Se der erro de "Corrupted zip" ao importar um .xlsx, o arquivo quase sempre está bom — é o leitor de planilha do aparelho que falhou. Nesse caso importe a mesma roteirização em CSV, que não depende de descompactador. Reimportar não duplica: a viagem é única por placa + data, e as entregas que já têm canhoto são preservadas.`}
+Desde a v352 o app tem leitor de xlsx próprio, que não depende de biblioteca de fora e é o primeiro caminho tentado; se ainda assim der erro, o alerta mostra o que cada tentativa devolveu, e o CSV continua funcionando como alternativa. Reimportar não duplica: a viagem é única por placa + data, e as entregas que já têm canhoto são preservadas.`}
 
 Viagens do mês ativo por cliente:
 ${linhasCliente || "(nenhuma viagem lançada no mês ativo)"}
