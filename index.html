@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v339)</title>
+<title>RF Logística — Painel da Frota (v340)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6429,6 +6429,33 @@ var SZ_REMET = {
 };
 var SZ_APOLICE = { seguradora: "EZZE SEGUROS S.A.", numero: "1065406004324", ramo: "RCTR-C" };
 
+/* v340 — DE ONDE VEM O MOTORISTA QUE SAI NO CT-e.
+   Ele mora na viagem da roteirizacao que a RF mandou na vespera -- e e de la
+   que a carga passa a herdar, em vez de exigir digitacao. Mas escala de um dia
+   pro outro muda (motorista falta, troca de carro, entra outro no lugar), e
+   quem esta na doca precisa poder corrigir na hora.
+   Regra: escolha MANUAL manda sempre; sem ela, vale o motorista da viagem
+   prevista da mesma placa e data. O herdado NUNCA e gravado na carga -- fica
+   sendo lido da viagem, entao corrigir a roteirizacao corrige aqui tambem.
+   No instante em que alguem escolhe um nome, aquilo vira o valor da carga e
+   szSetMotorista ja registra a troca com data, hora e autor -- que e o que o
+   seguro pede se houver sinistro, porque a averbacao e no nome de quem sai. */
+function szEmisViagemDaCarga(c) {
+  if (!c || !c.placa || !c.data) return null;
+  var d = String(c.data).slice(0, 10);
+  return (state.viagens || []).find(function (v) {
+    return v.placa === c.placa && String(v.data).slice(0, 10) === d;
+  }) || null;
+}
+function szEmisMotorista(c) {
+  var manual = String((c || {}).motorista || "").trim();
+  if (manual) return { nome: manual, origem: "escolhido na mão" };
+  var v = szEmisViagemDaCarga(c);
+  var nome = "";
+  try { nome = v ? String(motoristaDaViagem(v) || "").trim() : ""; } catch (e) { nome = v ? String(v.motoristaNaEpoca || "").trim() : ""; }
+  if (nome) return { nome: nome, origem: "da roteirização" };
+  return { nome: "", origem: "" };
+}
 function szEmisCargas() {
   return szCargas().filter(function (c) { return (c.espelhos || []).length > 0; })
     .sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
@@ -6460,11 +6487,12 @@ function szEmisDivergencias(c) {
     if (e.motoristaEspelho) mots[String(e.motoristaEspelho).trim()] = 1;
   });
   var pl = Object.keys(placas), mo = Object.keys(mots);
+  var mt = szEmisMotorista(c);
   if (c.placa && pl.length && pl.indexOf(c.placa) < 0) {
     out.push("O espelho traz a placa " + pl.join(" / ") + ", mas a viagem é do " + c.placa + ". Emitir com " + c.placa + ".");
   }
-  if (c.motorista && mo.length && mo.map(function (x) { return rfConfNorm(x); }).indexOf(rfConfNorm(c.motorista)) < 0) {
-    out.push("O espelho traz o motorista " + mo.join(" / ") + ", mas quem vai é " + c.motorista + ". Emitir com " + c.motorista + ".");
+  if (mt.nome && mo.length && mo.map(function (x) { return rfConfNorm(x); }).indexOf(rfConfNorm(mt.nome)) < 0) {
+    out.push("O espelho traz o motorista " + mo.join(" / ") + ", mas quem vai é " + mt.nome + " (" + mt.origem + "). Emitir com " + mt.nome + ".");
   }
   return out;
 }
@@ -6482,7 +6510,8 @@ function szEmisTexto(c) {
   L.push("  " + SZ_REMET.endereco + " — " + SZ_REMET.municipio + "/" + SZ_REMET.uf + " — CEP " + SZ_REMET.cep);
   L.push("Município de início: " + SZ_REMET.municipio + "/" + SZ_REMET.uf);
   L.push("Placa: " + (c.placa || "— DEFINIR —") + "   (da roteirização da RF, NUNCA a do espelho)");
-  L.push("Motorista: " + (c.motorista || "— DEFINIR —"));
+  var _mt = szEmisMotorista(c);
+  L.push("Motorista: " + (_mt.nome || "— DEFINIR —") + (_mt.nome ? "   (" + _mt.origem + ")" : ""));
   L.push("Produto predominante: PAPEL · sem pedágio, sem coleta, sem entrega, sem ajudante, sem GRIS (todos zerados)");
   L.push("");
   (c.espelhos || []).forEach(function (e, i) {
@@ -6561,9 +6590,10 @@ function szEmisBlocoHTML() {
   cargas.slice(0, 12).forEach(function (c) {
     var t = szEmisTotais(c);
     var dv = szEmisDivergencias(c);
+    var mt = szEmisMotorista(c);
     var falta = [];
     if (!c.placa) falta.push("placa");
-    if (!c.motorista) falta.push("motorista");
+    if (!mt.nome) falta.push("motorista");
     var semChave = (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length;
     var aberto = state._szEmisAberto === String(c.id);
     var cor = falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
@@ -6572,7 +6602,8 @@ function szEmisBlocoHTML() {
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
         + '<span style="font-size:13px;font-weight:700;color:#fff;">' + esc(c.placa || "sem placa") + '</span>'
         + '<span style="font-size:11px;color:#999;">' + esc(c.data ? c.data.split("-").reverse().join("/") : "sem data") + '</span>'
-        + '<span style="font-size:11px;color:#bbb;">' + esc(c.motorista || "sem motorista") + '</span>'
+        + '<span style="font-size:11px;color:' + (mt.nome ? "#bbb" : "#C0392B") + ';">' + esc(mt.nome || "sem motorista")
+          + (mt.nome ? ' <span style="color:#777;font-size:10px;">(' + esc(mt.origem) + ')</span>' : "") + '</span>'
         + '<span style="font-size:11px;color:#ccc;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
           + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
         + '<span style="font-size:11px;font-weight:700;color:' + GOLD + ';margin-left:auto;">' + fmtR(t.frete) + '</span>'
@@ -6580,8 +6611,17 @@ function szEmisBlocoHTML() {
 
     if (falta.length) {
       h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;font-weight:700;">⛔ Falta definir ' + falta.join(" e ")
-        + ' desta carga — sai no CT-e. Defina na etapa Conferência antes de emitir.</div>';
+        + ' desta carga — sai no CT-e.'
+        + (falta.indexOf("motorista") >= 0 && !szEmisViagemDaCarga(c) ? ' Não há viagem cadastrada nesta placa e data pra herdar o nome.' : "")
+        + '</div>';
     }
+    // v340: trocar o motorista sem sair desta tela. Escala muda de um dia pro
+    // outro e quem esta na doca precisa corrigir na hora -- a troca fica
+    // registrada com data, hora e autor pelo szSetMotorista.
+    h += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:#999;">'
+      + '<span>Motorista que sai no CT-e:</span>' + szSeletorMotorista(c)
+      + (c.motorista ? '<button class="btn-outline" style="font-size:10px;padding:1px 7px;" title="Volta a seguir o motorista da roteirização" onclick="szSetMotorista(\'' + esc(String(c.id)) + '\',\'\')">↶ voltar pro da roteirização</button>' : "")
+      + '</div>';
     dv.forEach(function (x) {
       h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>';
     });
@@ -6703,7 +6743,7 @@ function szEtapaSituacao() {
     var pend = 0, prontas = 0, cgs = szEmisCargas();
     cgs.forEach(function (c) {
       var semChave = (c.espelhos || []).some(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; });
-      if (!c.placa || !c.motorista || semChave) pend++; else prontas++;
+      if (!c.placa || !szEmisMotorista(c).nome || semChave) pend++; else prontas++;
     });
     if (cgs.length) {
       r.emis = pend
@@ -14548,9 +14588,10 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
         const semChave = (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length;
         const trava = [];
         if (!c.placa) trava.push("sem placa definida");
-        if (!c.motorista) trava.push("sem motorista definido");
+        const mt = szEmisMotorista(c);
+        if (!mt.nome) trava.push("sem motorista definido (nem na carga nem na viagem roteirizada)");
         if (semChave) trava.push(semChave + " nota(s) sem chave de 44 digitos");
-        return "- " + (c.placa || "sem placa") + " · " + (c.data || "sem data") + " · " + (c.motorista || "sem motorista")
+        return "- " + (c.placa || "sem placa") + " · " + (c.data || "sem data") + " · " + (mt.nome ? mt.nome + " (" + mt.origem + ")" : "sem motorista")
           + ": " + t.ctes + " CT-e a emitir, " + t.volumes + " volumes, " + t.peso.toFixed(1) + " kg, frete " + fmtR(t.frete)
           + ", cidades " + (t.cidades.join("/") || "?")
           + (trava.length ? ". TRAVADO PRA EMITIR: " + trava.join(" · ") : ". Pronta pra emitir")
