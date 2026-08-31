@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v347)</title>
+<title>RF Logística — Painel da Frota (v348)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6530,6 +6530,57 @@ function szEmisMotorista(c) {
    roteirizacao, que e a verdadeira.
    A lista junta as duas origens: viagens previstas da Suzano e cargas que ja
    existem com espelho. Uma placa que aparece nas duas vira uma caixa so. */
+/* v348 — A CAIXA TAMBEM LE OS CT-e JA EMITIDOS.
+   PKK1G22 e PLE6A32 de 19/08 apareciam "esperando as notas" tendo MDF-e 9 e 10
+   importados, com 5 e 1 CT-e. Nao faltava nota nenhuma: faltava o ESPELHO, e a
+   caixa so sabia olhar pra espelho. Mas o CT-e importado ja traz tudo que o
+   espelho traz -- cliente, cidade, CNPJ, chave da NF-e, peso, valor da carga e
+   o VALOR DO FRETE -- e ainda por cima e o documento definitivo, nao o rascunho.
+   Entao a caixa passa a ter duas fontes e dois estados:
+     - CT-e importado  -> a viagem JA FOI EMITIDA; a caixa vira registro;
+     - so espelho      -> ainda A EMITIR, que e o fluxo do dia.
+   Sem isso o painel mandava a pessoa procurar espelho de viagem que ja tinha
+   documento fiscal fechado. */
+function szEmisCtesDaCaixa(placa, data) {
+  var pl = String(placa || "").toUpperCase(), dt = String(data || "").slice(0, 10);
+  if (!pl) return { ctes: [], mdfes: [] };
+  var docs = [];
+  try { docs = rfFiscais() || []; } catch (e) { return { ctes: [], mdfes: [] }; }
+  var mdfes = docs.filter(function (d) {
+    return d.tipo === "mdfe" && String(d.placa || "").toUpperCase() === pl
+      && (!dt || String(d.data || "").slice(0, 10) === dt);
+  });
+  var chaves = {};
+  mdfes.forEach(function (m) { (m.ctes || []).forEach(function (k) { chaves[k] = 1; }); });
+  var ctes = docs.filter(function (d) {
+    if (d.tipo !== "cte") return false;
+    if (chaves[String(d.chave || "")]) return true;
+    // CT-e sem MDF-e ainda: casa por placa própria + data
+    return !Object.keys(chaves).length && String(d.placa || "").toUpperCase() === pl
+      && dt && String(d.data || "").slice(0, 10) === dt;
+  });
+  return { ctes: ctes, mdfes: mdfes };
+}
+// Converte o CT-e no mesmo formato de um conhecimento, pra reusar a tela.
+function szEmisCteComoNota(cte) {
+  var ch = (cte.nfes || [])[0] || "";
+  return {
+    id: "cte-" + cte.chave,
+    nfe: ch ? String(parseInt(String(ch).slice(25, 34), 10)) : "",
+    chave: ch,
+    cliente: cte.cliente || "",
+    cnpjCliente: cte.cnpjCliente || "",
+    cidade: cte.cidade || "",
+    endereco: "",
+    qtdVolumes: 0,
+    peso: Number(cte.peso) || 0,
+    valorMercadoria: Number(cte.valorCarga) || 0,
+    valorFrete: Number(cte.valor) || 0,
+    numDoc: "",
+    _cteNumero: cte.numero || "",
+    _daCadeia: true,
+  };
+}
 function szEmisCaixas() {
   var caixas = [], vistos = {};
   var chave = function (placa, data) { return String(placa || "").toUpperCase() + "|" + String(data || "").slice(0, 10); };
@@ -6554,6 +6605,18 @@ function szEmisCaixas() {
     vistos[k] = true;
     caixas.push({ k: k, carga: null, viagem: v, placa: v.placa || "", data: String(v.data || "").slice(0, 10) });
   });
+
+  // v348: viagem que só existe pelo documento fiscal (MDF-e importado) também
+  // vira caixa -- senão some do painel quem já tem CT-e emitido.
+  try {
+    (rfFiscais() || []).forEach(function (d) {
+      if (d.tipo !== "mdfe" || !d.placa) return;
+      var k = chave(d.placa, d.data);
+      if (vistos[k]) return;
+      vistos[k] = true;
+      caixas.push({ k: k, carga: null, viagem: null, placa: String(d.placa).toUpperCase(), data: String(d.data || "").slice(0, 10) });
+    });
+  } catch (e) { }
 
   return caixas.sort(function (a, b) {
     return String(b.data).localeCompare(String(a.data)) || String(a.placa).localeCompare(String(b.placa));
@@ -6995,11 +7058,20 @@ function szEmisBlocoHTML() {
 
   caixas.slice(0, 20).forEach(function (bx) {
     var c = bx.carga;
+    var emi = szEmisCtesDaCaixa(bx.placa, bx.data);      // v348: CT-e já emitidos
+    var jaEmitida = emi.ctes.length > 0;
+    var tEmi = { ctes: emi.ctes.length, frete: 0, peso: 0, cidades: [] };
+    emi.ctes.forEach(function (x) {
+      tEmi.frete += Number(x.valor) || 0;
+      tEmi.peso += Number(x.peso) || 0;
+      var cd = String(x.cidade || "").trim().toUpperCase();
+      if (cd && tEmi.cidades.indexOf(cd) < 0) tEmi.cidades.push(cd);
+    });
     var t = c ? szEmisTotais(c) : { ctes: 0, frete: 0, volumes: 0, peso: 0, mercadoria: 0, cidades: [] };
     var mt = c ? szEmisMotorista(c) : { nome: (function () { try { return bx.viagem ? String(motoristaDaViagem(bx.viagem) || "") : ""; } catch (e) { return ""; } })(), origem: "da roteirização" };
     var dv = c ? szEmisDivergencias(c) : [];
     var semChave = c ? (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length : 0;
-    var vazia = !c || !(c.espelhos || []).length;
+    var vazia = (!c || !(c.espelhos || []).length) && !jaEmitida;
     var falta = [];
     if (!bx.placa) falta.push("placa");
     if (!mt.nome) falta.push("motorista");
@@ -7010,25 +7082,31 @@ function szEmisBlocoHTML() {
        criterio nada ficava verde e o painel perdia a funcao: dizer, de relance,
        o que ja pode ser emitido sem conferir uma a uma. */
     var pronta = !vazia && !falta.length && !semChave && !dv.length;
-    var cor = vazia ? "#777" : falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
+    var cor = vazia ? "#777" : jaEmitida ? "#4FC3F7" : falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
 
     h += '<div style="background:' + (pronta ? "rgba(46,125,50,0.10)" : "#0A0A0A") + ';border:1px solid ' + (pronta ? "#2E7D32" : "#222")
       + ';border-left:4px solid ' + cor + ';border-radius:8px;padding:11px 12px;margin-bottom:8px;">'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
         + '<span style="font-size:16px;font-weight:800;color:' + (pronta ? "#2E7D32" : "#fff") + ';">' + esc(bx.placa || "sem placa") + '</span>'
-        + (pronta ? '<span style="font-size:10px;font-weight:800;color:#2E7D32;border:1px solid #2E7D32;border-radius:5px;padding:1px 7px;">✓ PRONTA PRA EMITIR</span>' : "")
+        + (jaEmitida ? '<span style="font-size:10px;font-weight:800;color:#4FC3F7;border:1px solid #4FC3F7;border-radius:5px;padding:1px 7px;" title="Já existe CT-e emitido para esta viagem — esta caixa é registro, não trabalho a fazer">✓ JÁ EMITIDA</span>'
+            : (pronta ? '<span style="font-size:10px;font-weight:800;color:#2E7D32;border:1px solid #2E7D32;border-radius:5px;padding:1px 7px;">✓ PRONTA PRA EMITIR</span>' : ""))
         + '<span style="font-size:11px;color:#999;">' + esc(bx.data ? bx.data.split("-").reverse().join("/") : "sem data") + '</span>'
         + '<span style="font-size:11px;color:' + (mt.nome ? "#bbb" : "#C0392B") + ';">' + esc(mt.nome || "sem motorista")
           + (mt.nome && mt.origem ? ' <span style="color:#777;font-size:10px;">(' + esc(mt.origem) + ')</span>' : "") + '</span>'
         + (bx.viagem && bx.viagem.rota ? '<span style="font-size:10px;color:#888;border:1px solid #333;border-radius:4px;padding:0 6px;">' + esc(bx.viagem.rota) + '</span>' : "")
         + (vazia
             ? '<span style="font-size:11px;color:#777;margin-left:auto;">esperando as notas</span>'
-            : '<span style="font-size:11px;color:#ccc;margin-left:auto;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
-              + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
-              + '<span style="font-size:13px;font-weight:800;color:' + GOLD + ';">' + fmtR(t.frete) + '</span>')
+            : (jaEmitida && !t.ctes
+                ? '<span style="font-size:11px;color:#4FC3F7;margin-left:auto;">' + tEmi.ctes + ' CT-e emitido(s)'
+                    + (emi.mdfes.length ? ' · MDF-e ' + esc(emi.mdfes.map(function (m) { return m.numero; }).join(", ")) : "")
+                    + ' · ' + tEmi.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
+                  + '<span style="font-size:13px;font-weight:800;color:' + GOLD + ';">' + fmtR(tEmi.frete) + '</span>'
+                : '<span style="font-size:11px;color:#ccc;margin-left:auto;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
+                    + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
+                  + '<span style="font-size:13px;font-weight:800;color:' + GOLD + ';">' + fmtR(t.frete) + '</span>'))
       + '</div>';
 
-    if (!vazia && falta.length) {
+    if (!vazia && falta.length && !jaEmitida) {
       h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;font-weight:700;">⛔ Falta definir ' + falta.join(" e ") + ' — sai no CT-e.'
         + (falta.indexOf("motorista") >= 0 && !bx.viagem ? ' Não há viagem cadastrada nesta placa e data pra herdar o nome.' : "") + '</div>';
     }
@@ -7043,10 +7121,10 @@ function szEmisBlocoHTML() {
       + '📎 Anexar NF neste caminhão'
       + '<input type="file" multiple style="display:none;" onchange="szEmisAnexar(this,\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">'
       + '</label>';
-    if (c) {
+    if (c || jaEmitida) {
       h += '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="szEmisAbrir(\'' + esc(bx.k) + '\')">'
-          + (aberto ? "▾ fechar" : "▸ abrir o roteiro (" + t.ctes + ")") + '</button>'
-        + '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="szEmisCopiar(\'' + esc(String(c.id)) + '\')">⧉ copiar tudo</button>';
+          + (aberto ? "▾ fechar" : "▸ abrir o roteiro (" + (t.ctes || tEmi.ctes) + ")") + '</button>';
+      if (c) h += '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="szEmisCopiar(\'' + esc(String(c.id)) + '\')">⧉ copiar tudo</button>';
     }
     h += '</div>';
 
@@ -7057,6 +7135,15 @@ function szEmisBlocoHTML() {
         + '</div>';
     }
 
+    if (aberto && !c && jaEmitida) {
+      h += '<div style="margin-top:9px;border-top:1px solid #222;padding-top:9px;">'
+        + '<div style="font-size:10.5px;color:#4FC3F7;margin-bottom:7px;">Esta viagem já tem CT-e emitido. O espelho não foi lido, mas o CT-e importado traz os mesmos dados — e é o documento definitivo.</div>';
+      emi.ctes.forEach(function (x, i) {
+        var nota = szEmisCteComoNota(x);
+        h += szEmisConhecimentoHTML(nota, i, emi.ctes.length);
+      });
+      h += '</div>';
+    }
     if (aberto && c) {
       h += '<div style="margin-top:9px;border-top:1px solid #222;padding-top:9px;">';
       h += '<div style="font-size:10.5px;color:#888;line-height:1.5;margin-bottom:7px;">'
