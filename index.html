@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v352)</title>
+<title>RF Logística — Painel da Frota (v353)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,26 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v353: A CAUSA REAL DO "Corrupted zip" -- o arquivo chegava CORTADO.
+     Diagnostico fechado com o erro da v352, que mostrava o que cada tentativa
+     devolveu: "array: Bad compressed size: 0 != 362". O numero 362 e o tamanho
+     compactado da primeira parte do xlsx QUE ESTAVA NO TABLET (13.515 bytes) --
+     mas o app tinha lido apenas 9.396 bytes, que era o tamanho de uma COPIA
+     ANTERIOR baixada com nome quase igual. Ou seja: o seletor de arquivos do
+     Android devolveu um Blob com o tamanho de uma copia velha apontando pro
+     arquivo novo, o FileReader parou nesse tamanho, e o zip chegou sem o fim do
+     diretorio central. Nenhum leitor abre um zip truncado -- nem o proprio da
+     v352 -- e por isso todas as tentativas falhavam ao mesmo tempo. O arquivo
+     nunca esteve corrompido: chegava pela metade.
+     Correcao: rfLerArquivoBytes le o conteudo em FLUXO (file.stream(), juntando
+     todos os pedacos ate o fim), que ignora o tamanho declarado no Blob; se o
+     aparelho nao tiver stream(), tenta file.arrayBuffer() e so entao cai no
+     FileReader antigo. Depois de ler, rfZipParecCompleto confere se o fim do
+     diretorio central esta presente; se nao estiver, o aviso diz que o arquivo
+     chegou cortado, mostra quantos bytes vieram contra o tamanho declarado e
+     manda renomear/rebaixar -- em vez de acusar zip corrompido.
+     Nada mais do import mudou: o leitor proprio da v352, as tentativas do
+     SheetJS/JSZip e o CSV continuam iguais. -->
 <!-- v352: LEITOR DE XLSX PROPRIO -- resolve de vez o "Corrupted zip" da
      roteirizacao. O app dependia de bibliotecas de terceiros pra abrir a
      planilha (SheetJS e, se ele falhasse, JSZip). No tablet as duas recusavam
@@ -14222,6 +14242,54 @@ function rfRotAbrirWorkbook(bytes) {
     });
   });
 }
+/* v353: lê o arquivo inteiro sem confiar no tamanho que o Android declara.
+   O seletor do aparelho às vezes entrega um Blob com o tamanho de uma cópia
+   antiga de mesmo nome; o FileReader então para nesse tamanho e o zip chega
+   truncado. Ler em fluxo resolve, porque vai até o fim de verdade. */
+function rfLerArquivoBytes(file) {
+  if (typeof file.stream === "function" && typeof ReadableStream !== "undefined") {
+    var leitorFluxo = file.stream().getReader();
+    var pedacos = [], total = 0;
+    var puxar = function () {
+      return leitorFluxo.read().then(function (r) {
+        if (r.done) {
+          var out = new Uint8Array(total), p = 0;
+          pedacos.forEach(function (c) { out.set(c, p); p += c.length; });
+          return out;
+        }
+        var c = r.value instanceof Uint8Array ? r.value : new Uint8Array(r.value);
+        pedacos.push(c); total += c.length;
+        return puxar();
+      });
+    };
+    return puxar().catch(function () { return rfLerArquivoBytesFallback(file); });
+  }
+  return rfLerArquivoBytesFallback(file);
+}
+function rfLerArquivoBytesFallback(file) {
+  if (typeof file.arrayBuffer === "function") {
+    return file.arrayBuffer().then(function (ab) { return new Uint8Array(ab); })
+      .catch(function () { return rfLerArquivoBytesFileReader(file); });
+  }
+  return rfLerArquivoBytesFileReader(file);
+}
+function rfLerArquivoBytesFileReader(file) {
+  return new Promise(function (ok, falha) {
+    var fr = new FileReader();
+    fr.onerror = function () { falha(new Error("o aparelho não deixou abrir o arquivo")); };
+    fr.onload = function (ev) { ok(new Uint8Array(ev.target.result)); };
+    fr.readAsArrayBuffer(file);
+  });
+}
+// zip completo tem o fim do diretório central nos últimos bytes; sem isso,
+// chegou cortado -- e aí a mensagem tem que dizer isso, não "zip corrompido"
+function rfZipParecCompleto(bytes) {
+  var minimo = Math.max(0, bytes.length - 66000);
+  for (var i = bytes.length - 22; i >= minimo; i--) {
+    if (bytes[i] === 0x50 && bytes[i + 1] === 0x4B && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) return true;
+  }
+  return false;
+}
 function rfRotImportarCSV(input, file) {
   var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
   if (!dataPrev) { input.value = ""; return; }
@@ -14276,16 +14344,8 @@ function rfRotImportar(input) {
   if (/\.csv$/i.test(file.name || "")) { rfRotImportarCSV(input, file); return; }
   var dataPrev = prompt("Data da viagem (dia da entrega), no formato AAAA-MM-DD:", hojeISO());
   if (!dataPrev) { input.value = ""; return; }
-  var leitor = new FileReader();
-  leitor.onerror = function () {
-    input.value = "";
-    alert("Não consegui abrir esse arquivo no aparelho. Copie a planilha para o armazenamento interno e tente de novo.");
-  };
-  leitor.onload = function (ev) {
-    var bytes;
-    try {
-      bytes = new Uint8Array(ev.target.result);
-    } catch (e) { input.value = ""; alert("Não consegui ler o arquivo: " + (e.message || e)); return; }
+  var declarado = Number(file.size) || 0;
+  rfLerArquivoBytes(file).then(function (bytes) {
     // xlsx e um ZIP: tem que comecar com "PK". Se nao comecar, chegou cortado
     // ou nao e planilha -- e a mensagem diz isso, em vez de deixar o erro do
     // descompactador aparecer cru.
@@ -14294,6 +14354,18 @@ function rfRotImportar(input) {
       alert("O arquivo chegou incompleto ou não é uma planilha (.xlsx).\n\n"
         + "Tamanho lido: " + bytes.length + " bytes.\n\n"
         + "Se ele veio do Drive ou do WhatsApp, baixe para o armazenamento do aparelho antes de selecionar.");
+      return;
+    }
+    // v353: zip sem o fim do diretório central = arquivo truncado. Acontece
+    // quando o seletor do Android entrega o tamanho de uma cópia antiga de
+    // mesmo nome. Renomear o arquivo (nome novo, sem "(1)") resolve na hora.
+    if (!rfZipParecCompleto(bytes)) {
+      input.value = "";
+      alert("A planilha chegou CORTADA — vieram " + bytes.length + " bytes"
+        + (declarado && declarado !== bytes.length ? " (o aparelho declarou " + declarado + ")" : "")
+        + ", e o fim do arquivo não veio junto.\n\n"
+        + "Isso costuma acontecer quando existem várias cópias baixadas com o mesmo nome. "
+        + "Apague as antigas da pasta Downloads, ou salve esta com um nome novo, e importe de novo.");
       return;
     }
     // v337: guarda o original a partir dos bytes que JA estao na memoria, nunca
@@ -14306,7 +14378,7 @@ function rfRotImportar(input) {
         .then(function (meta) { state._rotArquivoPend = meta; })
         .catch(function (e) { console.warn("roteirização não guardada:", e && e.message); });
     } catch (e) { console.warn("cópia da roteirização não criada:", e && e.message); }
-    rfRotAbrirWorkbook(bytes).then(function (wb) {
+    return rfRotAbrirWorkbook(bytes).then(function (wb) {
       var res = rfRotProcessarPlanilha(wb, dataPrev);
       input.value = "";
       render();
@@ -14316,8 +14388,11 @@ function rfRotImportar(input) {
       alert("Não consegui ler a roteirização: " + (e.message || e)
         + "\n\n(arquivo: " + (file.name || "?") + " · " + bytes.length + " bytes lidos)");
     });
-  };
-  leitor.readAsArrayBuffer(file);
+  }).catch(function (e) {
+    input.value = "";
+    alert("Não consegui abrir esse arquivo no aparelho: " + (e && e.message || e)
+      + "\n\nCopie a planilha para o armazenamento interno e tente de novo.");
+  });
 }
 
 function rfRotAba(wb, pedaco) {
