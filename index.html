@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v337)</title>
+<title>RF Logística — Painel da Frota (v338)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -13075,6 +13075,27 @@ function rfRotBlocoHTML() {
    guardar o original reconstruido em memoria a partir dos MESMOS bytes -- o
    File do aparelho nao e mais tocado duas vezes. E guardar so depois de a
    leitura dar certo, pra nao subir lixo pro bucket. */
+/* v338 — "Bad compressed size: 0 != N" mesmo com o arquivo inteiro.
+   O descompactador do SheetJS le o TAMANHO no cabecalho local de cada entrada
+   do ZIP. Quem gera a planilha (LibreOffice, e varios geradores de servidor)
+   escreve esse campo como 0 e poe o tamanho de verdade num "data descriptor"
+   depois dos dados -- e legal pela especificacao, mas o SheetJS para nesse 0.
+   Nao adianta pedir pra baixar de novo: o arquivo esta intacto, o leitor e que
+   e estrito. O JSZip, que o app ja carrega pro bloco fiscal, le esse formato
+   sem reclamar. Entao quando o SheetJS recusa, passamos o arquivo pelo JSZip
+   e o reescrevemos limpo em memoria antes de tentar de novo. */
+function rfRotAbrirWorkbook(bytes) {
+  try {
+    return Promise.resolve(XLSX.read(bytes, { type: "array" }));
+  } catch (e1) {
+    return rfFiscalZipLib().then(function (JSZip) {
+      if (!JSZip) throw e1;
+      return JSZip.loadAsync(bytes)
+        .then(function (zip) { return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }); })
+        .then(function (limpo) { return XLSX.read(limpo, { type: "array" }); });
+    });
+  }
+}
 function rfRotImportar(input) {
   var file = input.files && input.files[0];
   if (!file) return;
@@ -13097,9 +13118,9 @@ function rfRotImportar(input) {
     try {
       bytes = new Uint8Array(ev.target.result);
     } catch (e) { input.value = ""; alert("Não consegui ler o arquivo: " + (e.message || e)); return; }
-    // trava nova: xlsx e um ZIP, tem que comecar com "PK". Se nao comecar, o
-    // arquivo chegou cortado ou nao e planilha -- e a mensagem diz isso, em
-    // vez de deixar o erro do descompactador aparecer cru.
+    // xlsx e um ZIP: tem que comecar com "PK". Se nao comecar, chegou cortado
+    // ou nao e planilha -- e a mensagem diz isso, em vez de deixar o erro do
+    // descompactador aparecer cru.
     if (bytes.length < 100 || bytes[0] !== 0x50 || bytes[1] !== 0x4B) {
       input.value = "";
       alert("O arquivo chegou incompleto ou não é uma planilha (.xlsx).\n\n"
@@ -13107,17 +13128,9 @@ function rfRotImportar(input) {
         + "Se ele veio do Drive ou do WhatsApp, baixe para o armazenamento do aparelho antes de selecionar.");
       return;
     }
-    var wb;
-    try {
-      wb = XLSX.read(bytes, { type: "array" });
-    } catch (e) {
-      input.value = "";
-      alert("Não consegui abrir a planilha (" + (e.message || e) + ").\n\n"
-        + "Normalmente é arquivo baixado pela metade. Baixe de novo e tente outra vez.");
-      return;
-    }
-    // v312: guarda a planilha como ela chegou -- mas a partir dos bytes que ja
-    // estao na memoria, nunca lendo o File do aparelho uma segunda vez.
+    // v337: guarda o original a partir dos bytes que JA estao na memoria, nunca
+    // lendo o File do aparelho uma segunda vez (dois FileReader no mesmo File
+    // do seletor do Android podiam devolver leitura cortada).
     try {
       var copia = new File([bytes.slice(0)], file.name || "roteirizacao.xlsx",
         { type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -13125,15 +13138,16 @@ function rfRotImportar(input) {
         .then(function (meta) { state._rotArquivoPend = meta; })
         .catch(function (e) { console.warn("roteirização não guardada:", e && e.message); });
     } catch (e) { console.warn("cópia da roteirização não criada:", e && e.message); }
-    try {
+    rfRotAbrirWorkbook(bytes).then(function (wb) {
       var res = rfRotProcessarPlanilha(wb, dataPrev);
       input.value = "";
       render();
       alert(res);
-    } catch (e) {
+    }).catch(function (e) {
       input.value = "";
-      alert("Não consegui ler a roteirização: " + (e.message || e));
-    }
+      alert("Não consegui ler a roteirização: " + (e.message || e)
+        + "\n\n(arquivo: " + (file.name || "?") + " · " + bytes.length + " bytes lidos)");
+    });
   };
   leitor.readAsArrayBuffer(file);
 }
