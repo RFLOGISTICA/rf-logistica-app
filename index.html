@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v343)</title>
+<title>RF Logística — Painel da Frota (v344)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6576,6 +6576,58 @@ function szEmisMoverNota(cargaOrigemId, espelhoId, destino) {
   }
   salvar(); render();
 }
+/* v344: MOVER NOTA JA ALOCADA ENTRE CAMINHOES.
+   A v342 so sabia mover nota sem caminhao. Mas o caso comum e outro: o espelho
+   traz placa de referencia da Suzano, quase sempre trocada, e por causa dela a
+   nota entra na caixa do caminhao ERRADO -- deixando a caixa certa "esperando
+   as notas" e sem nunca ficar verde. Caso real: o espelho 1407264 (itinerario
+   Salvador-Ibicui, rota SUL) diz PKO3F40, mas quem rodou foi o PLE6A32.
+   Um espelho inteiro pertence a um caminhao so, entao a operacao util e mover
+   o DOCUMENTO DE TRANSPORTE de uma vez -- e nao nota a nota. */
+function szEmisDocsDaCarga(c) {
+  var docs = {};
+  ((c || {}).espelhos || []).forEach(function (e) {
+    var k = String(e.numDoc || "").trim() || "(sem documento)";
+    if (!docs[k]) docs[k] = { doc: k, notas: [], frete: 0, cidades: [] };
+    docs[k].notas.push(e);
+    docs[k].frete += Number(e.valorFrete) || 0;
+    var cid = String(e.cidade || "").trim().toUpperCase();
+    if (cid && docs[k].cidades.indexOf(cid) < 0) docs[k].cidades.push(cid);
+  });
+  return Object.keys(docs).map(function (k) { return docs[k]; });
+}
+function szEmisMoverDoc(cargaOrigemId, numDoc, destino) {
+  if (!destino) return;
+  var org = szCarga(cargaOrigemId); if (!org) return;
+  var alvo = (function () {
+    var partes = String(destino).split("|");
+    return szEmisCargaDaCaixa(partes[0], partes[1]);
+  })();
+  if (String(alvo.id) === String(org.id)) return;
+  var chave = String(numDoc || "").trim();
+  var levar = (org.espelhos || []).filter(function (e) {
+    return (String(e.numDoc || "").trim() || "(sem documento)") === (chave || "(sem documento)");
+  });
+  if (!levar.length) return;
+  if (!confirm("Mover " + levar.length + " nota(s) do documento " + (chave || "sem número")
+    + " para o caminhão " + alvo.placa + " de " + String(alvo.data || "").split("-").reverse().join("/") + "?")) return;
+  org.espelhos = (org.espelhos || []).filter(function (e) { return levar.indexOf(e) < 0; });
+  alvo.espelhos = (alvo.espelhos || []).concat(levar);
+  if (!(org.espelhos || []).length && (org.criadaPeloEspelho || org.criadaPelaCaixa)) {
+    state.suzanoCargas = szCargas().filter(function (x) { return String(x.id) !== String(org.id); });
+  }
+  salvar(); render();
+}
+function szEmisSeletorDestino(cargaId, numDoc, kAtual) {
+  var caixas = szEmisCaixas().filter(function (b) { return b.k !== kAtual; });
+  if (!caixas.length) return '<span style="font-size:10px;color:#777;">sem outro caminhão pra mover</span>';
+  return '<select style="font-size:10px;padding:2px 5px;" onchange="szEmisMoverDoc(\'' + esc(String(cargaId)) + '\',\'' + esc(String(numDoc)) + '\',this.value)">'
+    + '<option value="">↔ mover este documento para…</option>'
+    + caixas.map(function (b) {
+        return '<option value="' + esc(b.k) + '">' + esc(b.placa) + ' · ' + esc(b.data ? b.data.split("-").reverse().join("/") : "?") + '</option>';
+      }).join("")
+    + '</select>';
+}
 function szEmisOrfasHTML() {
   var orfas = szEmisOrfas();
   if (!orfas.length) return "";
@@ -6860,6 +6912,20 @@ function szEmisBlocoHTML() {
         + ' — tomador e remetente ' + SZ_REMET.razao + ' · CNPJ ' + SZ_REMET.cnpj + ' · IE ' + SZ_REMET.ie
         + ' — ' + SZ_REMET.endereco + ', ' + SZ_REMET.municipio + '/' + SZ_REMET.uf + ' · CEP ' + SZ_REMET.cep
         + ' — CFOP 5353 — produto predominante PAPEL, adicionais zerados.</div>';
+      // v344: um bloco por documento de transporte, com o botão de mudar de caminhão
+      var docs = szEmisDocsDaCarga(c);
+      if (docs.length) {
+        h += '<div style="margin-bottom:8px;">';
+        docs.forEach(function (d) {
+          h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:5px 8px;background:#111;border:1px solid #242424;border-radius:6px;margin-bottom:5px;">'
+            + '<span style="font-size:11px;color:#bbb;">documento <b style="color:#fff;">' + esc(d.doc) + '</b> · '
+              + d.notas.length + ' nota(s) · ' + fmtR(d.frete) + '</span>'
+            + '<span style="font-size:10px;color:#777;flex:1;min-width:120px;">' + esc(d.cidades.join(" · ")) + '</span>'
+            + szEmisSeletorDestino(c.id, d.doc, bx.k)
+            + '</div>';
+        });
+        h += '</div>';
+      }
       (c.espelhos || []).forEach(function (e, i) { h += szEmisConhecimentoHTML(e, i, t.ctes); });
       h += '<div style="border:1px solid ' + GOLD + ';border-radius:8px;padding:9px 11px;background:rgba(212,160,23,0.06);">'
         + '<div style="font-size:11px;font-weight:800;color:' + GOLD + ';margin-bottom:5px;">FECHO — TOTAIS PARA O MDF-e</div>'
