@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v340)</title>
+<title>RF Logística — Painel da Frota (v341)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -5946,6 +5946,15 @@ function rfNfConferencia() {
    botao da etapa 2, que e onde a equipe monta a carga.
    Aceita varios PDF de uma vez, porque e assim que chega: um por viagem. */
 function rfNfCargaDoEspelho(placa, data) {
+  /* v341: quando o espelho foi anexado DENTRO da caixa de um caminhao, o
+     destino ja esta decidido -- e a placa da roteirizacao, nao a que a Suzano
+     escreveu no papel. Essa era a raiz de nota cair no caminhao errado: o
+     espelho traz placa de referencia deles e ela costuma vir trocada.
+     Anexando pela caixa, quem manda e a caixa. */
+  if (state._szEmisForcarCarga) {
+    var alvo = szCarga(state._szEmisForcarCarga);
+    if (alvo) return alvo;
+  }
   var cargas = szCargas();
   var achou = cargas.filter(function (c) {
     return String(c.placa || "").toUpperCase() === String(placa || "").toUpperCase()
@@ -6456,6 +6465,98 @@ function szEmisMotorista(c) {
   if (nome) return { nome: nome, origem: "da roteirização" };
   return { nome: "", origem: "" };
 }
+/* v341 — UMA CAIXA POR CAMINHAO, vinda da roteirizacao.
+   A roteirizacao sai PRIMEIRO e ja cria a viagem prevista de cada placa. Entao
+   a etapa de emissao nao deve esperar o espelho pra existir: ela abre com uma
+   caixa por caminhao do dia, vazia, esperando as notas. Quem recebe o espelho
+   anexa DENTRO da caixa do caminhao certo -- e com isso a placa deixa de sair
+   do papel da Suzano (que vem trocada com frequencia) e passa a ser a da
+   roteirizacao, que e a verdadeira.
+   A lista junta as duas origens: viagens previstas da Suzano e cargas que ja
+   existem com espelho. Uma placa que aparece nas duas vira uma caixa so. */
+function szEmisCaixas() {
+  var caixas = [], vistos = {};
+  var chave = function (placa, data) { return String(placa || "").toUpperCase() + "|" + String(data || "").slice(0, 10); };
+
+  szEmisCargas().forEach(function (c) {
+    var k = chave(c.placa, c.data);
+    vistos[k] = true;
+    caixas.push({ k: k, carga: c, viagem: szEmisViagemDaCarga(c), placa: c.placa || "", data: String(c.data || "").slice(0, 10) });
+  });
+
+  (state.viagens || []).forEach(function (v) {
+    if (String(v.cliente || "").indexOf("Suzano") !== 0) return;
+    var k = chave(v.placa, v.data);
+    if (vistos[k]) return;
+    vistos[k] = true;
+    caixas.push({ k: k, carga: null, viagem: v, placa: v.placa || "", data: String(v.data || "").slice(0, 10) });
+  });
+
+  return caixas.sort(function (a, b) {
+    return String(b.data).localeCompare(String(a.data)) || String(a.placa).localeCompare(String(b.placa));
+  });
+}
+// Cria a carga da caixa na hora em que a primeira nota é anexada nela.
+function szEmisCargaDaCaixa(placa, data) {
+  var c = szCargas().filter(function (x) {
+    return String(x.placa || "").toUpperCase() === String(placa || "").toUpperCase()
+      && String(x.data || "").slice(0, 10) === String(data || "").slice(0, 10);
+  })[0];
+  if (c) return c;
+  c = { id: uid(), criadoEm: Date.now(), data: data || "", placa: placa || "",
+        motorista: "", espelhos: [], status: "montando", criadaPelaCaixa: true };
+  szCargas().push(c);
+  return c;
+}
+function szEmisAnexar(input, placa, data) {
+  var c = szEmisCargaDaCaixa(placa, data);
+  state._szEmisForcarCarga = String(c.id);
+  try { rfNfAnexarEspelhos(input); } finally {
+    // solta a trava depois que a leitura assíncrona termina
+    setTimeout(function () { state._szEmisForcarCarga = null; }, 60000);
+  }
+}
+/* v341 — CAMPOS QUE PRECISAM SER VISTOS E COPIADOS UM A UM.
+   Chave, peso e valor sao os tres que a pessoa digita no emissor e os tres que,
+   errados, estragam o documento. Em texto corrido dentro de um bloco cinza eles
+   sumiam. Agora cada um tem cor propria e botao de copia so dele. */
+function szEmisCopiarCampo(txt, rotulo) {
+  var v = String(txt || "");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(v).then(function () {
+      var a = document.getElementById("szemis-aviso");
+      if (a) { a.textContent = "✓ " + (rotulo || "copiado") + ": " + v; a.style.color = "#2E7D32"; }
+    }).catch(function () { prompt(rotulo || "copie:", v); });
+  } else prompt(rotulo || "copie:", v);
+}
+function szEmisCampo(rotulo, valor, cor, mono) {
+  var v = String(valor == null ? "" : valor);
+  return '<div style="display:flex;align-items:center;gap:6px;margin:3px 0;flex-wrap:wrap;">'
+    + '<span style="font-size:10px;color:#777;text-transform:uppercase;letter-spacing:0.5px;min-width:52px;">' + esc(rotulo) + '</span>'
+    + '<span style="font-size:' + (mono ? "12.5px" : "15px") + ';font-weight:800;color:' + cor + ';'
+      + (mono ? "font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all;letter-spacing:0.3px;" : "")
+      + 'background:rgba(255,255,255,0.04);padding:2px 7px;border-radius:5px;">' + esc(v) + '</span>'
+    + '<button class="btn-outline" style="font-size:10px;padding:1px 7px;border-color:' + cor + ';color:' + cor + ';"'
+      + ' onclick="szEmisCopiarCampo(\'' + esc(v).replace(/'/g, "\\'") + '\',\'' + esc(rotulo) + '\')">⧉</button>'
+    + '</div>';
+}
+// Detalhe visual de um conhecimento: é o que a pessoa olha enquanto digita.
+function szEmisConhecimentoHTML(e, i, total) {
+  var chave = String(e.chave || "").replace(/\D/g, "");
+  return '<div style="border:1px solid #262626;border-radius:8px;padding:9px 11px;margin-bottom:7px;background:#0C0C0C;">'
+    + '<div style="font-size:11px;font-weight:800;color:' + GOLD + ';margin-bottom:5px;">CONHECIMENTO ' + (i + 1) + ' de ' + total + '</div>'
+    + '<div style="font-size:12.5px;color:#fff;font-weight:700;">' + esc(e.cliente || "?") + '</div>'
+    + '<div style="font-size:11px;color:#999;margin-bottom:6px;">' + esc(e.cidade || "?")
+      + (e.cnpjCliente ? ' · CNPJ ' + esc(e.cnpjCliente) : "")
+      + (e.endereco ? ' · ' + esc(e.endereco) : "") + '</div>'
+    + szEmisCampo("NF-e", e.nfe || "?", "#FFFFFF", false)
+    + szEmisCampo("Chave", chave || "(sem chave)", "#4FC3F7", true)
+    + szEmisCampo("Peso", (Number(e.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg", "#66BB6A", false)
+    + szEmisCampo("Frete", fmtR(e.valorFrete), GOLD, false)
+    + '<div style="font-size:10.5px;color:#777;margin-top:4px;">' + (Number(e.qtdVolumes) || 0) + ' volume(s) · mercadoria '
+      + fmtR(e.valorMercadoria) + (e.numDoc ? ' · doc. transporte ' + esc(e.numDoc) : "") + '</div>'
+    + '</div>';
+}
 function szEmisCargas() {
   return szCargas().filter(function (c) { return (c.espelhos || []).length > 0; })
     .sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
@@ -6570,83 +6671,105 @@ function szEmisAverbar() {
   } else alert(txt);
 }
 function szEmisBlocoHTML() {
-  var cargas = szEmisCargas();
+  var caixas = szEmisCaixas();
   var h = '<div style="background:#0A0A0A;border:1px solid #222;border-radius:10px;padding:12px 13px;margin-bottom:12px;">'
-    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">🧾 ROTEIRO DE EMISSÃO</div>'
+    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">🧾 EMISSÃO — UMA CAIXA POR CAMINHÃO</div>'
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin-bottom:10px;">'
-    + 'Aqui fica, pronto para digitar no emissor, tudo que sai do espelho da Suzano: o cabeçalho que se repete em todos os conhecimentos, '
-    + 'um bloco por CT-e com a chave da NF-e, e o fecho com os totais do MDF-e. '
-    + '<b style="color:#E67E22;">A placa e o motorista NUNCA vêm do espelho</b> — a Suzano casa a carga por peso e volume, não por motorista, '
-    + 'e o que vem escrito lá costuma estar trocado. Vale sempre a roteirização que a RF enviou na véspera. '
-    + 'Esta tela não emite nada: o emissor continua sendo o SimplesCTe.'
+    + 'A roteirização sai primeiro e já cria a viagem de cada caminhão, então cada placa do dia abre aqui como uma caixa. '
+    + 'Anexe o espelho <b>dentro da caixa do caminhão certo</b>: assim a placa vem da roteirização e não do papel da Suzano, '
+    + 'que traz placa de referência e costuma vir trocada. Cada conhecimento mostra chave, peso e frete destacados, com cópia individual. '
+    + 'Esta tela não emite nada — o emissor continua sendo o SimplesCTe.'
     + '</div>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="szEmisAverbar()" title="Cole as chaves dos CT-e já emitidos e receba o número da averbação de cada um">🔢 Números de averbação (40 dígitos)</button>'
+    + '<div id="szemis-aviso" style="font-size:11.5px;font-weight:700;color:#888;margin-top:8px;"></div>'
     + '</div>';
 
-  if (!cargas.length) {
-    return h + '<div style="font-size:11px;color:#777;">Nenhum espelho lido ainda. Anexe os espelhos na etapa <b>NF da Suzano</b> e eles aparecem aqui.</div>';
+  if (!caixas.length) {
+    return h + '<div style="font-size:11px;color:#777;">Nenhuma viagem da Suzano roteirizada e nenhum espelho lido. Importe a roteirização na etapa 1 — as caixas dos caminhões aparecem aqui sozinhas.</div>';
   }
 
-  cargas.slice(0, 12).forEach(function (c) {
-    var t = szEmisTotais(c);
-    var dv = szEmisDivergencias(c);
-    var mt = szEmisMotorista(c);
+  caixas.slice(0, 20).forEach(function (bx) {
+    var c = bx.carga;
+    var t = c ? szEmisTotais(c) : { ctes: 0, frete: 0, volumes: 0, peso: 0, mercadoria: 0, cidades: [] };
+    var mt = c ? szEmisMotorista(c) : { nome: (function () { try { return bx.viagem ? String(motoristaDaViagem(bx.viagem) || "") : ""; } catch (e) { return ""; } })(), origem: "da roteirização" };
+    var dv = c ? szEmisDivergencias(c) : [];
+    var semChave = c ? (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length : 0;
+    var vazia = !c || !(c.espelhos || []).length;
     var falta = [];
-    if (!c.placa) falta.push("placa");
+    if (!bx.placa) falta.push("placa");
     if (!mt.nome) falta.push("motorista");
-    var semChave = (c.espelhos || []).filter(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; }).length;
-    var aberto = state._szEmisAberto === String(c.id);
-    var cor = falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
+    var aberto = state._szEmisAberto === bx.k;
+    var cor = vazia ? "#777" : falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
 
-    h += '<div style="background:#0A0A0A;border:1px solid #222;border-left:3px solid ' + cor + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;">'
+    h += '<div style="background:#0A0A0A;border:1px solid #222;border-left:4px solid ' + cor + ';border-radius:8px;padding:11px 12px;margin-bottom:8px;">'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        + '<span style="font-size:13px;font-weight:700;color:#fff;">' + esc(c.placa || "sem placa") + '</span>'
-        + '<span style="font-size:11px;color:#999;">' + esc(c.data ? c.data.split("-").reverse().join("/") : "sem data") + '</span>'
+        + '<span style="font-size:16px;font-weight:800;color:#fff;">' + esc(bx.placa || "sem placa") + '</span>'
+        + '<span style="font-size:11px;color:#999;">' + esc(bx.data ? bx.data.split("-").reverse().join("/") : "sem data") + '</span>'
         + '<span style="font-size:11px;color:' + (mt.nome ? "#bbb" : "#C0392B") + ';">' + esc(mt.nome || "sem motorista")
-          + (mt.nome ? ' <span style="color:#777;font-size:10px;">(' + esc(mt.origem) + ')</span>' : "") + '</span>'
-        + '<span style="font-size:11px;color:#ccc;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
-          + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
-        + '<span style="font-size:11px;font-weight:700;color:' + GOLD + ';margin-left:auto;">' + fmtR(t.frete) + '</span>'
+          + (mt.nome && mt.origem ? ' <span style="color:#777;font-size:10px;">(' + esc(mt.origem) + ')</span>' : "") + '</span>'
+        + (bx.viagem && bx.viagem.rota ? '<span style="font-size:10px;color:#888;border:1px solid #333;border-radius:4px;padding:0 6px;">' + esc(bx.viagem.rota) + '</span>' : "")
+        + (vazia
+            ? '<span style="font-size:11px;color:#777;margin-left:auto;">esperando as notas</span>'
+            : '<span style="font-size:11px;color:#ccc;margin-left:auto;">' + t.ctes + ' CT-e · ' + t.volumes + ' vol · '
+              + t.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + ' kg</span>'
+              + '<span style="font-size:13px;font-weight:800;color:' + GOLD + ';">' + fmtR(t.frete) + '</span>')
       + '</div>';
 
-    if (falta.length) {
-      h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;font-weight:700;">⛔ Falta definir ' + falta.join(" e ")
-        + ' desta carga — sai no CT-e.'
-        + (falta.indexOf("motorista") >= 0 && !szEmisViagemDaCarga(c) ? ' Não há viagem cadastrada nesta placa e data pra herdar o nome.' : "")
+    if (!vazia && falta.length) {
+      h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;font-weight:700;">⛔ Falta definir ' + falta.join(" e ") + ' — sai no CT-e.'
+        + (falta.indexOf("motorista") >= 0 && !bx.viagem ? ' Não há viagem cadastrada nesta placa e data pra herdar o nome.' : "") + '</div>';
+    }
+    dv.forEach(function (x) { h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>'; });
+    if (semChave) h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave + ' nota(s) sem chave de 44 dígitos — resolva na etapa NF da Suzano.</div>';
+
+    // anexar direto nesta caixa: o destino ja esta decidido pela placa
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">'
+      + '<label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;background:' + GOLD + ';color:#000;padding:5px 11px;border-radius:6px;cursor:pointer;">'
+      + '📎 Anexar NF neste caminhão'
+      + '<input type="file" multiple style="display:none;" onchange="szEmisAnexar(this,\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">'
+      + '</label>';
+    if (c) {
+      h += '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="szEmisAbrir(\'' + esc(bx.k) + '\')">'
+          + (aberto ? "▾ fechar" : "▸ abrir o roteiro (" + t.ctes + ")") + '</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:3px 9px;" onclick="szEmisCopiar(\'' + esc(String(c.id)) + '\')">⧉ copiar tudo</button>';
+    }
+    h += '</div>';
+
+    if (c) {
+      h += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:#999;">'
+        + '<span>Motorista no CT-e:</span>' + szSeletorMotorista(c)
+        + (c.motorista ? '<button class="btn-outline" style="font-size:10px;padding:1px 7px;" title="Volta a seguir o motorista da roteirização" onclick="szSetMotorista(\'' + esc(String(c.id)) + '\',\'\')">↶ voltar pro da roteirização</button>' : "")
         + '</div>';
     }
-    // v340: trocar o motorista sem sair desta tela. Escala muda de um dia pro
-    // outro e quem esta na doca precisa corrigir na hora -- a troca fica
-    // registrada com data, hora e autor pelo szSetMotorista.
-    h += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:#999;">'
-      + '<span>Motorista que sai no CT-e:</span>' + szSeletorMotorista(c)
-      + (c.motorista ? '<button class="btn-outline" style="font-size:10px;padding:1px 7px;" title="Volta a seguir o motorista da roteirização" onclick="szSetMotorista(\'' + esc(String(c.id)) + '\',\'\')">↶ voltar pro da roteirização</button>' : "")
-      + '</div>';
-    dv.forEach(function (x) {
-      h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>';
-    });
-    if (semChave) {
-      h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave
-        + ' nota(s) sem chave de 44 dígitos lida — resolva na etapa NF da Suzano antes de emitir.</div>';
-    }
 
-    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">'
-      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="szEmisAbrir(\'' + esc(String(c.id)) + '\')">'
-        + (aberto ? "▾ fechar o roteiro" : "▸ abrir o roteiro de emissão") + '</button>'
-      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="szEmisCopiar(\'' + esc(String(c.id)) + '\')">⧉ copiar tudo</button>'
-      + '</div>';
-
-    if (aberto) {
-      h += '<pre style="margin-top:8px;padding:10px;background:#050505;border:1px solid #1E1E1E;border-radius:6px;'
-        + 'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#DDD;white-space:pre-wrap;word-break:break-word;overflow-x:auto;">'
-        + esc(szEmisTexto(c)) + '</pre>';
+    if (aberto && c) {
+      h += '<div style="margin-top:9px;border-top:1px solid #222;padding-top:9px;">';
+      h += '<div style="font-size:10.5px;color:#888;line-height:1.5;margin-bottom:7px;">'
+        + '<b style="color:' + GOLD + ';">Cabeçalho (igual em todos):</b> emitente ' + SZ_EMIT.razao + ' · CNPJ ' + SZ_EMIT.cnpj + ' · IE ' + SZ_EMIT.ie + ' · RNTRC ' + SZ_EMIT.rntrc
+        + ' — tomador e remetente ' + SZ_REMET.razao + ' · CNPJ ' + SZ_REMET.cnpj + ' · IE ' + SZ_REMET.ie
+        + ' — ' + SZ_REMET.endereco + ', ' + SZ_REMET.municipio + '/' + SZ_REMET.uf + ' · CEP ' + SZ_REMET.cep
+        + ' — CFOP 5353 — produto predominante PAPEL, adicionais zerados.</div>';
+      (c.espelhos || []).forEach(function (e, i) { h += szEmisConhecimentoHTML(e, i, t.ctes); });
+      h += '<div style="border:1px solid ' + GOLD + ';border-radius:8px;padding:9px 11px;background:rgba(212,160,23,0.06);">'
+        + '<div style="font-size:11px;font-weight:800;color:' + GOLD + ';margin-bottom:5px;">FECHO — TOTAIS PARA O MDF-e</div>'
+        + szEmisCampo("CT-e", String(t.ctes), "#FFFFFF", false)
+        + szEmisCampo("Peso", t.peso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg", "#66BB6A", false)
+        + szEmisCampo("Volumes", t.volumes.toLocaleString("pt-BR"), "#FFFFFF", false)
+        + szEmisCampo("Carga", fmtR(t.mercadoria), "#4FC3F7", false)
+        + szEmisCampo("Frete", fmtR(t.frete), GOLD, false)
+        + '<div style="font-size:10.5px;color:#bbb;margin-top:6px;">Descarregamento (um bloco por cidade): <b>' + esc(t.cidades.join(" · ") || "?") + '</b></div>'
+        + '<div style="font-size:10.5px;color:#bbb;">Seguro: ' + SZ_APOLICE.seguradora + ' · apólice ' + SZ_APOLICE.ramo + ' ' + SZ_APOLICE.numero + '</div>'
+        + '<div style="font-size:10.5px;color:#E67E22;margin-top:6px;">Depois de emitir: averbar TODOS antes de o caminhão sair · o número da averbação são os 40 primeiros dígitos da chave de cada CT-e · só então transmitir o MDF-e com o CIOT.</div>'
+        + '</div>';
+      h += '</div>';
     }
     h += '</div>';
   });
   return h;
 }
-function szEmisAbrir(id) {
-  state._szEmisAberto = (String(state._szEmisAberto) === String(id)) ? null : String(id);
+function szEmisAbrir(k) {
+  // v341: a chave e "PLACA|AAAA-MM-DD" da caixa, nao mais o id da carga
+  state._szEmisAberto = (String(state._szEmisAberto) === String(k)) ? null : String(k);
   render();
 }
 
