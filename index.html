@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v341)</title>
+<title>RF Logística — Painel da Frota (v343)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -6449,21 +6449,51 @@ var SZ_APOLICE = { seguradora: "EZZE SEGUROS S.A.", numero: "1065406004324", ram
    No instante em que alguem escolhe um nome, aquilo vira o valor da carga e
    szSetMotorista ja registra a troca com data, hora e autor -- que e o que o
    seguro pede se houver sinistro, porque a averbacao e no nome de quem sai. */
+/* v343: a viagem nem sempre esta na MESMA data da carga. O espelho da Suzano e
+   emitido na vespera do carregamento, entao a carga costuma nascer com a data
+   do espelho e a viagem com a data da entrega -- um dia de diferenca. Buscar so
+   pela data exata deixava 6 das 16 cargas sem motorista, sendo que o nome ja
+   estava certo na aba Viagens.
+   Regra: data exata primeiro; senao, a viagem da MESMA PLACA mais proxima em
+   ate 2 dias, e que tenha motorista. Dois dias e o limite de proposito -- alem
+   disso vira chute (uma carga de 13/08 nao herda motorista de uma viagem do
+   dia 19). Quando o nome vem de outra data, a tela DIZ de qual data veio. */
+function szEmisMotoristaDaViagem(v) {
+  if (!v) return "";
+  try { return String(motoristaDaViagem(v) || "").trim(); }
+  catch (e) { return String(v.motoristaNaEpoca || v.motorista || "").trim(); }
+}
 function szEmisViagemDaCarga(c) {
   if (!c || !c.placa || !c.data) return null;
   var d = String(c.data).slice(0, 10);
-  return (state.viagens || []).find(function (v) {
-    return v.placa === c.placa && String(v.data).slice(0, 10) === d;
-  }) || null;
+  var mesmas = (state.viagens || []).filter(function (v) { return v.placa === c.placa; });
+  var exata = mesmas.find(function (v) { return String(v.data).slice(0, 10) === d; });
+  if (exata && szEmisMotoristaDaViagem(exata)) return exata;
+  var base = Date.parse(d + "T12:00:00");
+  var perto = null, dist = 99;
+  if (!isNaN(base)) {
+    mesmas.forEach(function (v) {
+      if (!szEmisMotoristaDaViagem(v)) return;
+      var t = Date.parse(String(v.data).slice(0, 10) + "T12:00:00");
+      if (isNaN(t)) return;
+      var dias = Math.abs((t - base) / 86400000);
+      if (dias <= 2 && dias < dist) { dist = dias; perto = v; }
+    });
+  }
+  return perto || exata || null;
 }
 function szEmisMotorista(c) {
   var manual = String((c || {}).motorista || "").trim();
   if (manual) return { nome: manual, origem: "escolhido na mão" };
   var v = szEmisViagemDaCarga(c);
-  var nome = "";
-  try { nome = v ? String(motoristaDaViagem(v) || "").trim() : ""; } catch (e) { nome = v ? String(v.motoristaNaEpoca || "").trim() : ""; }
-  if (nome) return { nome: nome, origem: "da roteirização" };
-  return { nome: "", origem: "" };
+  var nome = szEmisMotoristaDaViagem(v);
+  if (!nome) return { nome: "", origem: "" };
+  var dv = String((v || {}).data || "").slice(0, 10);
+  var dc = String((c || {}).data || "").slice(0, 10);
+  return {
+    nome: nome,
+    origem: (dv && dc && dv !== dc) ? ("da viagem de " + dv.split("-").reverse().join("/")) : "da roteirização",
+  };
 }
 /* v341 — UMA CAIXA POR CAMINHAO, vinda da roteirizacao.
    A roteirizacao sai PRIMEIRO e ja cria a viagem prevista de cada placa. Entao
@@ -6479,6 +6509,13 @@ function szEmisCaixas() {
   var chave = function (placa, data) { return String(placa || "").toUpperCase() + "|" + String(data || "").slice(0, 10); };
 
   szEmisCargas().forEach(function (c) {
+    /* v342: SEM PLACA NAO E CAMINHAO. A NF-e impressa (DANFE) nao traz placa
+       nem frete -- quem traz e o espelho. Anexando DANFE, a carga nascia sem
+       placa e a etapa desenhava isso como se fosse um caminhao do dia, com
+       0 volume, 0 kg e R$ 0,00. Foi o "carregamento do dia 29" que nao existiu.
+       Agora carga sem placa nao vira caixa: vai pra lista de NOTAS SEM
+       CAMINHAO, de onde cada nota e mandada pro caminhao certo. */
+    if (!String(c.placa || "").trim()) return;
     var k = chave(c.placa, c.data);
     vistos[k] = true;
     caixas.push({ k: k, carga: c, viagem: szEmisViagemDaCarga(c), placa: c.placa || "", data: String(c.data || "").slice(0, 10) });
@@ -6507,6 +6544,64 @@ function szEmisCargaDaCaixa(placa, data) {
         motorista: "", espelhos: [], status: "montando", criadaPelaCaixa: true };
   szCargas().push(c);
   return c;
+}
+/* v342: notas que entraram sem caminhao — tipicamente DANFE lida na etapa 5,
+   que nao tem placa nem frete. Ficam numa lista propria, e cada uma e mandada
+   pro caminhao certo pelo seletor. Mover NAO reescreve nada da nota: so muda de
+   carga, preservando chave, numero e o que ja tiver sido lido. */
+function szEmisOrfas() {
+  var out = [];
+  szCargas().forEach(function (c) {
+    if (String(c.placa || "").trim()) return;
+    (c.espelhos || []).forEach(function (e) { out.push({ carga: c, e: e }); });
+  });
+  return out.sort(function (a, b) { return String(a.e.nfe || "").localeCompare(String(b.e.nfe || "")); });
+}
+function szEmisMoverNota(cargaOrigemId, espelhoId, destino) {
+  if (!destino) return;
+  var partes = String(destino).split("|");
+  var placa = partes[0], data = partes[1];
+  var org = szCarga(cargaOrigemId); if (!org) return;
+  var i = (org.espelhos || []).findIndex(function (x) { return String(x.id) === String(espelhoId); });
+  if (i < 0) return;
+  var nota = org.espelhos[i];
+  var alvo = szEmisCargaDaCaixa(placa, data);
+  if (String(alvo.id) === String(org.id)) return;
+  org.espelhos.splice(i, 1);
+  alvo.espelhos = alvo.espelhos || [];
+  alvo.espelhos.push(nota);
+  // carga de origem que ficou sem nota nenhuma some — era só um balaio
+  if (!(org.espelhos || []).length && org.criadaPeloEspelho) {
+    state.suzanoCargas = szCargas().filter(function (x) { return String(x.id) !== String(org.id); });
+  }
+  salvar(); render();
+}
+function szEmisOrfasHTML() {
+  var orfas = szEmisOrfas();
+  if (!orfas.length) return "";
+  var caixas = szEmisCaixas();
+  var opts = '<option value="">— mandar para o caminhão —</option>'
+    + caixas.map(function (b) {
+        return '<option value="' + esc(b.k) + '">' + esc(b.placa) + ' · ' + esc(b.data ? b.data.split("-").reverse().join("/") : "?") + '</option>';
+      }).join("");
+  var h = '<div style="background:#0A0A0A;border:1px solid #E67E22;border-radius:10px;padding:12px 13px;margin-bottom:12px;">'
+    + '<div style="font-size:13px;font-weight:800;color:#E67E22;margin-bottom:5px;">📄 ' + orfas.length + ' NOTA(S) SEM CAMINHÃO</div>'
+    + '<div style="font-size:11px;color:#999;line-height:1.5;margin-bottom:9px;">'
+    + 'Estas vieram da NF-e impressa (DANFE), que não traz placa nem valor de frete — por isso aparecem zeradas. '
+    + 'Elas não são uma viagem: são notas esperando destino. Mande cada uma para o caminhão certo, ou anexe o espelho daquela viagem, que traz o frete.'
+    + '</div>';
+  orfas.slice(0, 40).forEach(function (o) {
+    h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:5px 0;border-top:1px solid #1E1E1E;">'
+      + '<span style="font-size:11.5px;color:#fff;font-weight:700;min-width:96px;">NF ' + esc(o.e.nfe || "?") + '</span>'
+      + '<span style="font-size:11px;color:#bbb;flex:1;min-width:150px;">' + esc(String(o.e.cliente || "").slice(0, 34))
+        + (o.e.cidade ? ' — ' + esc(o.e.cidade) : "") + '</span>'
+      + (caixas.length
+          ? '<select style="font-size:10.5px;padding:2px 6px;" onchange="szEmisMoverNota(\'' + esc(String(o.carga.id)) + '\',\'' + esc(String(o.e.id)) + '\',this.value)">' + opts + '</select>'
+          : '<span style="font-size:10.5px;color:#888;">nenhum caminhão roteirizado ainda</span>')
+      + '</div>';
+  });
+  if (orfas.length > 40) h += '<div style="font-size:10.5px;color:#777;margin-top:5px;">e mais ' + (orfas.length - 40) + '…</div>';
+  return h + '</div>';
 }
 function szEmisAnexar(input, placa, data) {
   var c = szEmisCargaDaCaixa(placa, data);
@@ -6589,11 +6684,16 @@ function szEmisDivergencias(c) {
   });
   var pl = Object.keys(placas), mo = Object.keys(mots);
   var mt = szEmisMotorista(c);
+  /* v343: PLACA divergente e alerta -- e o veiculo segurado e o que vai no
+     documento. MOTORISTA divergente NAO e: a averbacao e feita no nome de quem
+     efetivamente sai, entao o nome do espelho e informacao, nao erro. Tratar os
+     dois igual deixava toda carga laranja pra sempre e tirava o sentido do
+     verde. Por isso a divergencia de motorista virou NOTA. */
   if (c.placa && pl.length && pl.indexOf(c.placa) < 0) {
     out.push("O espelho traz a placa " + pl.join(" / ") + ", mas a viagem é do " + c.placa + ". Emitir com " + c.placa + ".");
   }
   if (mt.nome && mo.length && mo.map(function (x) { return rfConfNorm(x); }).indexOf(rfConfNorm(mt.nome)) < 0) {
-    out.push("O espelho traz o motorista " + mo.join(" / ") + ", mas quem vai é " + mt.nome + " (" + mt.origem + "). Emitir com " + mt.nome + ".");
+    out.nota = "No espelho consta " + mo.join(" / ") + "; quem sai é " + mt.nome + " (" + mt.origem + ") — emitir e averbar neste nome.";
   }
   return out;
 }
@@ -6684,6 +6784,8 @@ function szEmisBlocoHTML() {
     + '<div id="szemis-aviso" style="font-size:11.5px;font-weight:700;color:#888;margin-top:8px;"></div>'
     + '</div>';
 
+  h += szEmisOrfasHTML();
+
   if (!caixas.length) {
     return h + '<div style="font-size:11px;color:#777;">Nenhuma viagem da Suzano roteirizada e nenhum espelho lido. Importe a roteirização na etapa 1 — as caixas dos caminhões aparecem aqui sozinhas.</div>';
   }
@@ -6699,11 +6801,19 @@ function szEmisBlocoHTML() {
     if (!bx.placa) falta.push("placa");
     if (!mt.nome) falta.push("motorista");
     var aberto = state._szEmisAberto === bx.k;
+    /* v343: PRONTA = tem nota, tem placa, tem motorista, todas as chaves com 44
+       digitos e nenhuma divergencia de PLACA. Nome de motorista diferente do
+       espelho nao segura o verde (a averbacao e no nome de quem sai). Sem esse
+       criterio nada ficava verde e o painel perdia a funcao: dizer, de relance,
+       o que ja pode ser emitido sem conferir uma a uma. */
+    var pronta = !vazia && !falta.length && !semChave && !dv.length;
     var cor = vazia ? "#777" : falta.length ? "#C0392B" : (dv.length || semChave) ? "#E67E22" : "#2E7D32";
 
-    h += '<div style="background:#0A0A0A;border:1px solid #222;border-left:4px solid ' + cor + ';border-radius:8px;padding:11px 12px;margin-bottom:8px;">'
+    h += '<div style="background:' + (pronta ? "rgba(46,125,50,0.10)" : "#0A0A0A") + ';border:1px solid ' + (pronta ? "#2E7D32" : "#222")
+      + ';border-left:4px solid ' + cor + ';border-radius:8px;padding:11px 12px;margin-bottom:8px;">'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-        + '<span style="font-size:16px;font-weight:800;color:#fff;">' + esc(bx.placa || "sem placa") + '</span>'
+        + '<span style="font-size:16px;font-weight:800;color:' + (pronta ? "#2E7D32" : "#fff") + ';">' + esc(bx.placa || "sem placa") + '</span>'
+        + (pronta ? '<span style="font-size:10px;font-weight:800;color:#2E7D32;border:1px solid #2E7D32;border-radius:5px;padding:1px 7px;">✓ PRONTA PRA EMITIR</span>' : "")
         + '<span style="font-size:11px;color:#999;">' + esc(bx.data ? bx.data.split("-").reverse().join("/") : "sem data") + '</span>'
         + '<span style="font-size:11px;color:' + (mt.nome ? "#bbb" : "#C0392B") + ';">' + esc(mt.nome || "sem motorista")
           + (mt.nome && mt.origem ? ' <span style="color:#777;font-size:10px;">(' + esc(mt.origem) + ')</span>' : "") + '</span>'
@@ -6720,6 +6830,7 @@ function szEmisBlocoHTML() {
         + (falta.indexOf("motorista") >= 0 && !bx.viagem ? ' Não há viagem cadastrada nesta placa e data pra herdar o nome.' : "") + '</div>';
     }
     dv.forEach(function (x) { h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>'; });
+    if (dv.nota) h += '<div style="margin-top:6px;font-size:10.5px;color:#888;">ℹ ' + esc(dv.nota) + '</div>';
     if (semChave) h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave + ' nota(s) sem chave de 44 dígitos — resolva na etapa NF da Suzano.</div>';
 
     // anexar direto nesta caixa: o destino ja esta decidido pela placa
@@ -6863,10 +6974,11 @@ function szEtapaSituacao() {
   try {
     // v339: a etapa de emissao cobra o que impede de emitir: carga sem placa
     // ou sem motorista (os dois saem no CT-e) e nota sem chave de 44 digitos.
-    var pend = 0, prontas = 0, cgs = szEmisCargas();
+    var pend = 0, prontas = 0, cgs = szEmisCargas().filter(function (c) { return String(c.placa || "").trim(); });
     cgs.forEach(function (c) {
       var semChave = (c.espelhos || []).some(function (e) { return String(e.chave || "").replace(/\D/g, "").length !== 44; });
-      if (!c.placa || !szEmisMotorista(c).nome || semChave) pend++; else prontas++;
+      var dvz = szEmisDivergencias(c);
+      if (!c.placa || !szEmisMotorista(c).nome || semChave || dvz.length) pend++; else prontas++;
     });
     if (cgs.length) {
       r.emis = pend
