@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v357)</title>
+<title>RF Logística — Painel da Frota (v359)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,55 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v359: O ROTEIRIZADOR PASSA A ENTREGAR O PADRAO COMPLETO DA RF.
+     Motivo (Renato, 01/09/2026): a RF esta contratando um analista de logistica
+     para a operacao Suzano. Ele vai receber o FOCRI e NAO tem a IA do chat pra
+     montar a divisao -- entao o que hoje sai da conversa (regional, regras de
+     acesso, frete de tabela, planilha de 3 abas e o e-mail pro Andre) precisa
+     sair do proprio sistema, no mesmo formato.
+     O roteirizador ja existia (v261-v263) e resolvia bem a parte dificil: peso,
+     jornada, tempo por parada, teto de cidades e agrupamento por rede. O que
+     faltava era tudo o que vinha da minha cabeca e nao estava escrito no codigo:
+     1. REGIONAL POR CIDADE. A Suzano nao aceita um mesmo carro atendendo duas
+        regionais na mesma viagem (regra do BID). Agora a alocacao roda uma vez
+        por regional, e cada carro sai com uma so. A regional de cada cidade vem
+        do mapa aprendido -- primeiro do que ja foi usado em viagens anteriores,
+        depois da lista de cidades da propria tabela do cliente, e o que sobrar
+        a pessoa aponta uma vez e fica gravado (szRotRegionalManual).
+     2. FEIRA DE SANTANA E ALAGOINHAS SO COM 3/4. Restricao real de acesso: em
+        Feira ha trechos onde o Toco nao entra. Regional cuja carga toda cai
+        nessas cidades so recebe 3/4 na alocacao.
+     3. FRETE DA TABELA. Cada veiculo sai com o valor da regional pelo TIPO dele,
+        usando freteRotaDe -- que ja aplica a faixa VAN (carga ate 1.500 kg e
+        faturada como VAN mesmo indo em 3/4 ou Toco). Antes a planilha saia sem
+        valor nenhum, e frete e o que decide se vale a pena por mais um carro.
+     4. PLANILHA NO MODELO FIXO de 3 abas -- Resumo por Veiculo, Detalhe por
+        Cliente e Carteira por Cidade -- com as colunas exatas que o Renato usa,
+        incluindo tipo do veiculo, faixa de faturamento e frete por viagem.
+     5. E-MAIL PRONTO pro Andre, com placa, motorista, tipo de veiculo, regional,
+        valor da tabela de cada rota e os totais. Sai em uma caixa de texto pra
+        copiar; nada e enviado pelo app.
+     Nada da alocacao anterior foi trocado: szRotAlocar continua sendo o motor,
+     chamado uma vez por regional. -->
+<!-- v358: DIVIDA ENCERRADA SAI DA LISTA DO MES.
+     Reclamacao do Renato (01/09/2026): "as dividas vencidas em agosto estao
+     vindo para setembro, mesmo nao havendo cobranca". Ele estava certo na
+     descricao e o calculo estava certo tambem -- dividaStatusNoMes ja marcava
+     como encerrada e dividasDoMes ja tirava do total, entao nao havia cobranca
+     nenhuma indevida. O erro era de TELA: a aba fazia state.dividas.map() sem
+     filtro nenhum e listava tudo, para sempre, com o status escrito ao lado.
+     Uma parcela 1/1 de agosto continuava na lista de setembro e parecia conta
+     em aberto.
+     Agora a lista mostra so o que esta ATIVO no mes escolhido, e o resto vai
+     para dois blocos recolhidos: "encerradas" (ja terminaram) e "ainda nao
+     comecaram". Os dois abrem com um clique e continuam editaveis -- nada foi
+     apagado nem escondido de verdade.
+     Segunda queixa, tambem atendida: "se eu deixo de colocar algum digito ela
+     fica recorrente". E verdade -- total de parcelas em branco significa divida
+     fixa sem fim, e isso ficava discreto demais na tela. O status "Fixa (sem
+     fim)" passou a ser dourado e em destaque, com o aviso de que repete todo
+     mes ate alguem definir as parcelas. Assim a conta avulsa lancada sem
+     parcela nao vira despesa perpetua por descuido. -->
 <!-- v357: ABA CUSTO REAL POR VIAGEM (id "custoreal") -- o combustivel deixa de
      ser contado pelo que foi ABASTECIDO e passa a ser contado pelo que foi
      CONSUMIDO.
@@ -5398,6 +5447,215 @@ function szRotOrdenar(lista) {
   });
   return saida;
 }
+/* ========== v359: REGIONAL, REGRAS DE ACESSO, FRETE E ENTREGÁVEIS ==========
+   Tudo o que a divisão de carga precisa além do peso: qual regional é cada
+   cidade, quem só pode ir de 3/4, quanto vale o frete e como sai a planilha e o
+   e-mail. */
+var SZ_SO_34 = ["FEIRA DE SANTANA", "ALAGOINHAS"];   // restrição de acesso, não de peso
+
+function szRotCidadeSo34(cidade) {
+  var c = rfConfNorm(cidade || "");
+  return SZ_SO_34.some(function (x) { return c === rfConfNorm(x); });
+}
+/* A regional de uma cidade, na ordem: escolha manual gravada > o que já foi
+   usado em viagem dessa cidade > a lista de cidades da tabela do cliente. */
+function szRotRegionalDaCidade(cidade) {
+  var r = szRot();
+  var chave = rfConfNorm(cidade || "");
+  if (!chave) return "";
+  if (r.regionais && r.regionais[chave]) return r.regionais[chave];
+  // aprendido das entregas já feitas: cidade -> rota da viagem
+  var achou = "";
+  (state.entregas || []).forEach(function (e) {
+    if (achou || rfConfNorm(e.cidade) !== chave) return;
+    var vg = (state.viagens || []).find(function (v) { return String(v.id) === String(e.viagemId); });
+    if (vg && vg.rota) achou = vg.rota;
+  });
+  if (achou) return achou;
+  // lista de cidades da tabela do cliente (texto "Feira de Santana · Alagoinhas · ...")
+  var t = tarifaCliente("Suzano");
+  if (t && t.rotas) {
+    Object.keys(t.rotas).forEach(function (nome) {
+      if (achou) return;
+      var lista = String((t.rotas[nome] || {}).cidades || "").split("·");
+      if (lista.some(function (x) { return rfConfNorm(x) === chave; })) achou = nome;
+    });
+  }
+  return achou;
+}
+function szRotSetRegional(cidade, regional) {
+  var r = szRot();
+  if (!r.regionais) r.regionais = {};
+  var chave = rfConfNorm(cidade || "");
+  if (!chave) return;
+  if (regional) r.regionais[chave] = regional; else delete r.regionais[chave];
+  salvar(); render();
+}
+function szRotRegionaisDaCarteira() {
+  var grupos = {}, semRegional = [];
+  (szRot().paradas || []).forEach(function (p) {
+    var reg = szRotRegionalDaCidade(p.cidade);
+    if (!reg) { semRegional.push(p); return; }
+    (grupos[reg] = grupos[reg] || []).push(p);
+  });
+  return { grupos: grupos, semRegional: semRegional };
+}
+/* Roda a alocação UMA VEZ POR REGIONAL — a Suzano não aceita um carro atendendo
+   duas regionais na mesma viagem. Onde a regional é toda de cidade com
+   restrição, só entram 3/4. */
+function szRotAlocarPorRegional() {
+  var r = szRot();
+  var reg = szRotRegionaisDaCarteira();
+  var paradasOrig = r.paradas, placasOrig = r.placas, tipoOrig = r.cfg.tipo;
+  var saida = [], sobra = reg.semRegional.slice();
+  Object.keys(reg.grupos).sort().forEach(function (nome) {
+    var lista = reg.grupos[nome];
+    var todasSo34 = lista.every(function (p) { return szRotCidadeSo34(p.cidade); });
+    r.paradas = lista;
+    if (todasSo34) r.cfg.tipo = "3/4";
+    var a = szRotAlocar();
+    (a.carros || []).forEach(function (c) {
+      if (!c.paradas.length) return;
+      c.regional = nome;
+      c.so34 = todasSo34;
+      saida.push(c);
+    });
+    sobra = sobra.concat(a.sobra || []);
+    r.cfg.tipo = tipoOrig;
+  });
+  r.paradas = paradasOrig; r.placas = placasOrig; r.cfg.tipo = tipoOrig;
+  return { carros: saida, sobra: sobra, semRegional: reg.semRegional };
+}
+/* Frete do veículo: tabela da regional pelo TIPO dele, com a faixa VAN aplicada
+   quando a carga cabe (regra do BID: carga de VAN é faturada como VAN mesmo indo
+   num caminhão maior). */
+function szRotFreteDoCarro(c) {
+  var tipo = (c.veiculo && c.veiculo.tipo) || "";
+  var t34 = String(tipo).indexOf("3/4") >= 0;
+  var valor = freteRotaDe("Suzano", c.regional, t34 ? "3/4" : "TOCO", c.peso);
+  var motivo = freteRotaMotivo("Suzano", c.regional, t34 ? "3/4" : "TOCO", c.peso);
+  var tar = tarifaCliente("Suzano");
+  var limiteVan = Number((tar || {}).vanAteKg) || 0;
+  var comoVan = limiteVan > 0 && c.peso > 0 && c.peso <= limiteVan;
+  return { valor: valor, motivo: motivo, faixa: comoVan ? "fatura como VAN" : (t34 ? "3/4 (tabela cheia)" : "Toco (tabela cheia)"), tipo: t34 ? "3/4" : "Toco" };
+}
+function szRotRoteiroTexto(c) {
+  var cidades = [];
+  (c.paradas || []).forEach(function (p) { if (p.cidade && cidades.indexOf(p.cidade) < 0) cidades.push(p.cidade); });
+  return "Simões Filho → " + cidades.join(" → ");
+}
+/* Planilha no MODELO FIXO de 3 abas — o mesmo que a RF manda pra Suzano. */
+function szRotExportarPadrao(dataPrev) {
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou."); return; }
+  var a = szRotAlocarPorRegional();
+  if (!a.carros.length) { alert("Não há divisão para exportar. Anexe o FOCRI e confira as regionais."); return; }
+  var dt = dataPrev || szRotDataPrevista();
+  var dtBR = String(dt).split("-").reverse().join("/");
+  var resumo = [
+    ["RF LOGÍSTICA — DIVISÃO DE CARGA POR VEÍCULO"],
+    ["Carteira Suzano — carregamento em " + dtBR],
+    [],
+    ["Veículo", "Motorista", "Tipo", "Faixa de faturamento", "Regional", "Roteiro sugerido",
+     "Clientes", "Entregas", "Peso (kg)", "Volumes", "Cap. útil (kg)", "Ocupação", "Frete da viagem (R$)"],
+  ];
+  var tot = { peso: 0, vol: 0, frete: 0, ent: 0 };
+  a.carros.forEach(function (c) {
+    var f = szRotFreteDoCarro(c);
+    tot.peso += c.peso; tot.vol += c.volumes; tot.frete += f.valor; tot.ent += c.paradas.length;
+    resumo.push([c.placa, (c.veiculo && c.veiculo.motorista) || "", f.tipo, f.faixa, c.regional,
+      szRotRoteiroTexto(c), c.paradas.length, c.paradas.length,
+      Math.round(c.peso * 10) / 10, c.volumes, Math.round(c.tetoKg),
+      c.tetoKg ? Math.round(c.peso / c.tetoKg * 1000) / 10 + "%" : "", Math.round(f.valor * 100) / 100]);
+  });
+  resumo.push(["TOTAL", "", "", "", "", "", tot.ent, tot.ent, Math.round(tot.peso * 10) / 10, tot.vol, "", "", Math.round(tot.frete * 100) / 100]);
+  resumo.push([]);
+  resumo.push(["PREMISSAS E OBSERVAÇÕES"]);
+  [
+    "Frota considerada: 3/4 com limite operacional de " + szRot().cfg.metaKg + " kg e Toco pela capacidade do CRLV.",
+    "Agrupamento por recebedor: nenhum cliente foi partido entre veículos — cada remessa sai inteira.",
+    "Feira de Santana e Alagoinhas são atendidas somente com 3/4, por restrição de acesso.",
+    "Um mesmo veículo não atende duas regionais na mesma viagem (regra do BID Suzano).",
+    "Frete fechado por veículo e regional, não varia com o peso. Carga de até " + ((tarifaCliente("Suzano") || {}).vanAteKg || 1500) + " kg é faturada na faixa VAN.",
+  ].forEach(function (x) { resumo.push(["• " + x]); });
+  if (a.sobra.length) {
+    resumo.push([]);
+    resumo.push(["NÃO COUBE NA FROTA SELECIONADA — " + a.sobra.length + " parada(s)"]);
+  }
+
+  var detalhe = [["RF LOGÍSTICA — DETALHE DA CARGA POR CLIENTE"], [],
+    ["Veículo", "Regional", "Ordem", "Cidade", "Recebedor", "Endereço", "Bairro", "Peso (kg)", "Volumes", "Remessa(s)"]];
+  a.carros.forEach(function (c) {
+    szRotOrdenar(c.paradas).forEach(function (p, j) {
+      detalhe.push([c.placa, c.regional, j + 1, p.cidade, p.cliente, p.endereco, p.bairro,
+        Math.round((p.peso || 0) * 1000) / 1000, p.volumes, (p.remessas || []).join(", ")]);
+    });
+  });
+
+  var porCidade = {};
+  a.carros.forEach(function (c) {
+    (c.paradas || []).forEach(function (p) {
+      var k = (c.regional || "") + "|" + (p.cidade || "");
+      var d = porCidade[k] = porCidade[k] || { reg: c.regional, cid: p.cidade, n: 0, peso: 0, vol: 0, veic: [] };
+      d.n++; d.peso += (p.peso || 0); d.vol += (p.volumes || 0);
+      if (d.veic.indexOf(c.placa) < 0) d.veic.push(c.placa);
+    });
+  });
+  var carteira = [["RF LOGÍSTICA — CARTEIRA POR CIDADE"], [],
+    ["Regional", "Cidade", "Clientes", "Peso (kg)", "Volumes", "Veículo"]];
+  Object.keys(porCidade).forEach(function (k) {
+    var d = porCidade[k];
+    carteira.push([d.reg, d.cid, d.n, Math.round(d.peso * 1000) / 1000, d.vol, d.veic.join(" · ")]);
+  });
+
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumo), "Resumo por Veiculo");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalhe), "Detalhe por Cliente");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(carteira), "Carteira por Cidade");
+  XLSX.writeFile(wb, "RF_Suzano_Roteirizacao_" + String(dt).replace(/-/g, "") + ".xlsx");
+}
+function szRotDataPrevista() {
+  var d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+}
+/* E-MAIL pro André, no padrão que a RF manda: placa, motorista, TIPO do veículo,
+   regional, VALOR DA TABELA de cada rota e os totais. */
+function szRotEmailTexto(dataPrev) {
+  var a = szRotAlocarPorRegional();
+  var dt = dataPrev || szRotDataPrevista();
+  var dtBR = String(dt).split("-").reverse().join("/");
+  var tot = { peso: 0, vol: 0, frete: 0, ent: 0 };
+  var linhas = a.carros.map(function (c) {
+    var f = szRotFreteDoCarro(c);
+    tot.peso += c.peso; tot.vol += c.volumes; tot.frete += f.valor; tot.ent += c.paradas.length;
+    var cidades = [];
+    (c.paradas || []).forEach(function (p) { if (p.cidade && cidades.indexOf(p.cidade) < 0) cidades.push(p.cidade); });
+    return "• " + c.placa + " — " + f.tipo + " — Motorista " + ((c.veiculo && c.veiculo.motorista) || "a definir")
+      + " — " + c.regional + " — " + cidades.join(", ")
+      + " — " + c.paradas.length + " entrega(s) — " + (Math.round(c.peso * 10) / 10).toLocaleString("pt-BR") + " kg — "
+      + c.volumes + " volumes — tabela " + f.faixa + ": " + fmtR(f.valor);
+  });
+  return "Bom dia, André! Tudo bem?\n\n"
+    + "Segue a divisão de carga da RF Logística para o carregamento de " + dtBR + ".\n\n"
+    + "São " + a.carros.length + " veículo(s), " + tot.ent + " entrega(s), "
+    + (Math.round(tot.peso * 10) / 10).toLocaleString("pt-BR") + " kg e " + tot.vol + " volumes:\n\n"
+    + linhas.join("\n\n")
+    + "\n\nTotal de frete: " + fmtR(tot.frete) + "."
+    + (a.sobra.length ? "\n\nObservação: " + a.sobra.length + " parada(s) não couberam na frota disponível." : "")
+    + "\n\nA planilha anexa traz o resumo por veículo, o detalhe de cada cliente com endereço e remessa, e a carteira consolidada por cidade.\n\n"
+    + "Qualquer ajuste na programação, é só avisar.\n\nAtenciosamente,\n\n"
+    + "Renato Couto\nDiretor de Operações\nRF Logística Transportes e Distribuição Ltda\n"
+    + "(75) 99971-7578 — comercial@rflogistica.com.br";
+}
+function szRotCopiarEmail() {
+  var txt = szRotEmailTexto(state._szRotData);
+  var ok = function () { alert("E-mail copiado. Cole no Gmail e anexe a planilha."); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, function () { szRotMostrarEmail(txt); });
+  else szRotMostrarEmail(txt);
+}
+function szRotMostrarEmail(txt) {
+  state._szRotEmail = txt || szRotEmailTexto(state._szRotData);
+  render();
+}
 function szRotAlocar() {
   var r = szRot(), cfg = r.cfg;
   /* v262: quando a pessoa MARCA as placas na tela, a intenção é usar aquelas
@@ -5660,7 +5918,71 @@ function szTelaRoteirizador() {
       + a.sobra.map(function (p) { return esc(p.cliente) + " (" + esc(p.cidade) + ")"; }).join(", ")
       + ' — marque mais um caminhão acima ou aumente a jornada.</div>';
   }
-  h += '<div style="margin-top:12px;"><button onclick="szRotExportar()" class="btn-gold" style="font-weight:800;">⬇ Exportar planilha pra mandar pra Suzano</button></div>';
+  /* v359: o padrão da RF sai daqui — divisão por regional, frete de tabela,
+     planilha de 3 abas e o e-mail pro André. É o que antes só saía da conversa. */
+  var reg = szRotRegionaisDaCarteira();
+  var semReg = reg.semRegional;
+  var cidadesSemReg = [];
+  semReg.forEach(function (p) { if (p.cidade && cidadesSemReg.indexOf(p.cidade) < 0) cidadesSemReg.push(p.cidade); });
+  var rotasOpc = Object.keys(((tarifaCliente("Suzano") || {}).rotas) || {}).sort();
+  if (cidadesSemReg.length) {
+    h += '<div style="margin-top:14px;border:1px solid #E67E22;border-radius:8px;padding:10px 12px;background:#170F06;">'
+      + '<div style="font-size:12px;font-weight:800;color:#E67E22;margin-bottom:6px;">APONTE A REGIONAL DESTAS CIDADES</div>'
+      + '<div style="font-size:11px;color:#999;margin-bottom:8px;">A Suzano não deixa um caminhão atender duas regionais na mesma viagem, então a divisão só fecha com a regional de cada cidade. Você aponta uma vez e fica gravado.</div>'
+      + cidadesSemReg.map(function (cid) {
+          return '<div style="display:flex;gap:8px;align-items:center;margin:4px 0;flex-wrap:wrap;">'
+            + '<span style="font-size:12px;color:#fff;min-width:190px;">' + esc(cid) + '</span>'
+            + '<select style="font-size:11px;max-width:220px;" onchange="szRotSetRegional(\'' + esc(cid).replace(/'/g, "\\'") + '\',this.value)">'
+            + '<option value="">— escolher regional —</option>'
+            + rotasOpc.map(function (x) { return '<option>' + esc(x) + '</option>'; }).join("")
+            + '</select></div>';
+        }).join("")
+      + '</div>';
+  }
+  var ap = szRotAlocarPorRegional();
+  if (ap.carros.length) {
+    var totF = 0, totP = 0, totV = 0, totE = 0;
+    h += '<div style="margin-top:14px;"><div style="font-size:13px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">DIVISÃO NO PADRÃO RF — para aprovar</div>'
+      + '<div style="overflow-x:auto;"><table style="min-width:900px;"><thead><tr>'
+      + '<th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Regional</th><th style="text-align:right;">Peso</th>'
+      + '<th>Faixa</th><th style="text-align:right;">Entregas</th><th>Cidades</th><th style="text-align:right;">Frete</th></tr></thead><tbody>';
+    ap.carros.forEach(function (c) {
+      var f = szRotFreteDoCarro(c);
+      totF += f.valor; totP += c.peso; totV += c.volumes; totE += c.paradas.length;
+      var cids = [];
+      c.paradas.forEach(function (p) { if (p.cidade && cids.indexOf(p.cidade) < 0) cids.push(p.cidade); });
+      h += '<tr><td style="font-weight:800;">' + esc(c.placa) + '</td>'
+        + '<td>' + esc((c.veiculo && c.veiculo.motorista) || "—") + '</td>'
+        + '<td>' + esc(f.tipo) + '</td><td>' + esc(c.regional) + '</td>'
+        + '<td style="text-align:right;">' + n(c.peso, 1) + ' kg</td>'
+        + '<td style="color:' + (f.faixa.indexOf("VAN") >= 0 ? "#E67E22" : "#bbb") + ';">' + esc(f.faixa) + '</td>'
+        + '<td style="text-align:right;">' + c.paradas.length + '</td>'
+        + '<td style="font-size:11px;color:#bbb;">' + esc(cids.join(" · ")) + '</td>'
+        + '<td style="text-align:right;font-weight:800;color:' + GOLD + ';">' + fmtR(f.valor) + '</td></tr>';
+    });
+    h += '<tr style="background:#0E0E0E;font-weight:800;"><td colspan="4">TOTAL</td>'
+      + '<td style="text-align:right;">' + n(totP, 1) + ' kg</td><td></td>'
+      + '<td style="text-align:right;">' + totE + '</td><td>' + totV + ' volumes</td>'
+      + '<td style="text-align:right;color:' + GOLD + ';">' + fmtR(totF) + '</td></tr>';
+    h += '</tbody></table></div></div>';
+  }
+  h += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<span style="font-size:11px;color:#999;">Carregamento em</span>'
+    + '<input type="date" value="' + esc(state._szRotData || szRotDataPrevista()) + '" onchange="state._szRotData=this.value; render();" style="font-size:12px;">'
+    + '<button onclick="szRotExportarPadrao(state._szRotData)" class="btn-gold" style="font-weight:800;">⬇ Planilha no padrão RF (3 abas)</button>'
+    + '<button onclick="szRotMostrarEmail()" class="btn-outline" style="font-weight:800;">✉ Gerar o e-mail para a Suzano</button>'
+    + '<button onclick="szRotExportar()" class="btn-outline" style="font-size:11px;">planilha antiga (2 abas)</button>'
+    + '</div>';
+  if (state._szRotEmail) {
+    h += '<div style="margin-top:10px;border:1px solid ' + GOLD + ';border-radius:8px;padding:10px 12px;background:#0E0E0E;">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+      + '<span style="font-size:12px;font-weight:800;color:' + GOLD + ';">E-MAIL PARA O ANDRÉ</span>'
+      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="szRotCopiarEmail()">⧉ copiar</button>'
+      + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="state._szRotEmail=\'\'; render();">fechar</button>'
+      + '</div>'
+      + '<textarea rows="14" style="width:100%;font-size:11px;background:#000;color:#ddd;border:1px solid #333;border-radius:6px;padding:8px;">'
+      + esc(state._szRotEmail) + '</textarea></div>';
+  }
   return h + '</div>';
 }
 
@@ -16431,6 +16753,11 @@ ${blocoManutBaldes}
 
 ${blocoTetoManut}
 
+${`ROTEIRIZADOR NO PADRÃO DA RF (aba Carregamento Suzano, caixa "Roteirização: planilha da Suzano → caminhões", v359):
+O analista anexa o FOCRI e o app monta a divisão sozinho, no mesmo padrão que antes só saía da conversa com a IA. As regras que ele aplica: um veículo nunca atende duas regionais na mesma viagem (regra do BID); Feira de Santana e Alagoinhas só recebem 3/4, por restrição de acesso; nenhum cliente é partido entre veículos; o frete é o da tabela da regional pelo tipo do caminhão, e carga de até 1.500 kg é faturada na faixa VAN mesmo indo num veículo maior.
+A regional de cada cidade vem do que já foi usado em viagens anteriores ou da lista da tabela do cliente; cidade nova aparece numa caixa laranja para a pessoa apontar uma vez, e fica gravada.
+Saem três coisas: a tabela de aprovação na tela (veículo, motorista, tipo, regional, peso, faixa, entregas, cidades e frete), a planilha no modelo fixo de 3 abas (Resumo por Veículo, Detalhe por Cliente e Carteira por Cidade) e o e-mail pronto para o André, com placa, motorista, tipo de veículo e valor da tabela de cada rota. O e-mail é copiado para colar no Gmail; o app não envia nada.`}
+
 ${`CUSTO REAL POR VIAGEM (aba "⛽ Custo Real", criada na v357):
 O combustível de uma viagem NÃO é o que foi abastecido nela, e sim o que ela CONSUMIU: KM da viagem × custo por km do caminhão. O custo por km é o preço médio do litro dele dividido pelo consumo em km/l. A diferença entre o abastecido e o consumido é o SALDO DO TANQUE, que fica de crédito para a próxima viagem e atravessa o mês.
 O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada cobre pelo menos 80% do KM lançado, em 5 ou mais viagens com abastecimento; sem isso o app usa o padrão do tipo (TOCO 3,5 km/l e 3/4 4,0 km/l) e avisa na tela que é referência. Por isso a foto do KM final importa: cada viagem fechada direito aproxima o caminhão de ter consumo medido.
@@ -18838,6 +19165,16 @@ function renderTabela() {
   if (state.aba === "dividas") {
     const hojeMesKey = chaveMes(new Date().getFullYear(), new Date().getMonth());
     const avisoDias = (state.config && state.config.avisoBoletoDias != null) ? state.config.avisoBoletoDias : 5;
+    /* v358: a lista mostra o que está ATIVO no mês escolhido. Encerrada e futura
+       vão para blocos recolhidos — antes tudo aparecia sempre, e parcela 1/1 de
+       agosto parecia conta aberta em setembro. */
+    const ativasMes = [], encerradas = [], futuras = [];
+    (state.dividas || []).forEach(function (d) {
+      const st = dividaStatusNoMes(d, state.mesAtivo);
+      if (st.ativa) ativasMes.push(d);
+      else if (st.parcela < 1) futuras.push(d);
+      else encerradas.push(d);
+    });
     wrap.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
         <span style="font-size:13px;color:#bbb;">Total fixo mensal: <b style="color:#C0392B;font-size:16px;">${fmtR(totais.totalDividasFixas)}</b></span>
@@ -18849,7 +19186,29 @@ function renderTabela() {
         </div>
       </div>
       <table style="min-width:1000px;"><thead><tr><th>Descrição</th><th>Valor/mês</th><th>Venc. (dia)</th><th>Total parcelas</th><th>1ª parcela</th><th>Status (${mesLabel(state.mesAtivo)})</th><th>Boleto (${mesLabel(hojeMesKey)})</th><th>Observação</th><th></th></tr></thead><tbody>
-      ${state.dividas.map((d) => {
+      ${linhaDivida(ativasMes, hojeMesKey)}
+      ${encerradas.length ? `<tr><td colspan="9" style="padding:10px 4px;">
+          <span onclick="state._divVerEncerradas=!state._divVerEncerradas; render();" style="cursor:pointer;font-size:12px;font-weight:800;color:#C0392B;">
+            ${state._divVerEncerradas ? "−" : "+"} ${encerradas.length} dívida(s) já encerrada(s) antes de ${mesLabel(state.mesAtivo)}
+          </span>
+          <span style="font-size:11px;color:#666;margin-left:8px;">não entram no total nem geram boleto</span>
+        </td></tr>` : ""}
+      ${state._divVerEncerradas ? linhaDivida(encerradas, hojeMesKey) : ""}
+      ${futuras.length ? `<tr><td colspan="9" style="padding:10px 4px;">
+          <span onclick="state._divVerFuturas=!state._divVerFuturas; render();" style="cursor:pointer;font-size:12px;font-weight:800;color:${GOLD};">
+            ${state._divVerFuturas ? "−" : "+"} ${futuras.length} dívida(s) que só começam depois
+          </span>
+        </td></tr>` : ""}
+      ${state._divVerFuturas ? linhaDivida(futuras, hojeMesKey) : ""}
+      </tbody></table>
+      <div style="font-size:11px; color:#777; margin-top:10px;">
+        <b style="color:${GOLD};">Vencimento e aviso:</b> preencha o <b>dia do vencimento</b> (1 a 31) que o boleto se repete todo mês. O sistema mostra um aviso no topo quando faltar até <b>${avisoDias} dia(s)</b> ou se já estiver vencido. Clique <b>marcar pago</b> (na tabela ou no aviso) para tirar o boleto do alerta — ele volta sozinho no próximo mês.
+        <br><br><b style="color:${GOLD};">Como funciona o prazo:</b> a lista mostra só o que está ativo em ${mesLabel(state.mesAtivo)}. Dívida que terminou fica no bloco de encerradas, e a que ainda vai começar no bloco de futuras — as duas continuam editáveis ali. Para dívida com prazo, preencha <b>quantas parcelas</b> e <b>em que mês começou</b>: o sistema conta a parcela de cada mês e tira a dívida sozinho depois da última. <b style="color:#C0392B;">Total de parcelas em branco significa dívida fixa, que se repete para sempre</b> — use só para água, energia, internet, aluguel e afins.
+      </div>`;
+  }
+
+  function linhaDivida(lista, hojeMesKey) {
+    return (lista || []).map((d) => {
         const st = dividaStatusNoMes(d, state.mesAtivo);
         let statusTxt, statusCor;
         // v79: campos exibidos/editados são os VIGENTES no mês ativo (não o valor "atual" cru) —
@@ -18859,7 +19218,9 @@ function renderTabela() {
         const parcelasMes = campoDividaNoMes(d, "parcelasTotal", state.mesAtivo);
         const mesInicioMes = campoDividaNoMes(d, "mesInicio", state.mesAtivo);
         const obsMes = campoDividaNoMes(d, "obs", state.mesAtivo);
-        if (!st.comPrazo) { statusTxt = "Fixa (sem fim)"; statusCor = "#888"; }
+        // v358: dourado e explícito. Em cinza passava despercebido, e conta avulsa
+        // lançada sem parcela virava despesa perpétua sem ninguém notar.
+        if (!st.comPrazo) { statusTxt = "FIXA — repete todo mês"; statusCor = GOLD; }
         else if (st.ativa) { statusTxt = "Parcela " + st.parcela + "/" + st.total; statusCor = "#2E7D32"; }
         else if (st.parcela < 1) { statusTxt = "Começa em " + mesLabel(mesInicioMes); statusCor = GOLD; }
         else { statusTxt = "Encerrada ✓"; statusCor = "#C0392B"; }
@@ -18883,12 +19244,7 @@ function renderTabela() {
         <td><input value="${esc(obsMes)}" placeholder="—" title="Vale a partir de ${mesLabel(state.mesAtivo)}." onchange="atualizarDivida('${d.id}','obs',this.value)"></td>
         <td><button class="btn-del" onclick="removerDivida('${d.id}')">✕</button></td>
       </tr>`;
-      }).join("")}
-      </tbody></table>
-      <div style="font-size:11px; color:#777; margin-top:10px;">
-        <b style="color:${GOLD};">Vencimento e aviso:</b> preencha o <b>dia do vencimento</b> (1 a 31) que o boleto se repete todo mês. O sistema mostra um aviso no topo quando faltar até <b>${avisoDias} dia(s)</b> ou se já estiver vencido. Clique <b>marcar pago</b> (na tabela ou no aviso) para tirar o boleto do alerta — ele volta sozinho no próximo mês.
-        <br><br><b style="color:${GOLD};">Como funciona o prazo:</b> deixe <b>Total parcelas</b> e <b>1ª parcela</b> em branco para dívidas fixas que rodam pra sempre (galpão, água, internet). Para dívidas com prazo (G Lux, Pneus...), preencha quantas parcelas tem e em que mês começou — o sistema mostra a parcela de cada mês e <b>tira a dívida sozinho</b> depois da última.
-      </div>`;
+    }).join("");
   }
 
 if (state.aba === "mtcustos") {
