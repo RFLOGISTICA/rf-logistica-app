@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v356)</title>
+<title>RF Logística — Painel da Frota (v357)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,37 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v357: ABA CUSTO REAL POR VIAGEM (id "custoreal") -- o combustivel deixa de
+     ser contado pelo que foi ABASTECIDO e passa a ser contado pelo que foi
+     CONSUMIDO.
+     O problema, nas palavras do Renato (01/09/2026): "coloco 1000 reais de
+     combustivel e a viagem rodou 100 km; o custo dela nao foi 1000, foi o custo
+     dos 100 km -- e aquele valor vai se refletir em outras viagens sem eu saber".
+     Ele esta certo: diesel que entra no tanque nao e despesa daquela viagem, e
+     estoque. Ate aqui, viagem que enchia o tanque aparecia no prejuizo e a
+     seguinte, que saia cheia, aparecia lucrativa demais.
+     COMO A CONTA PASSA A SER FEITA:
+     - consumido na viagem = KM da viagem x custo por km do caminhao;
+     - custo por km = preco medio do litro DELE / consumo dele em km/l;
+     - saldo do tanque = abastecido - consumido, acumulado desde sempre. Sobra e
+       credito pra proxima viagem, e o saldo ATRAVESSA O MES (decisao do Renato).
+     DE ONDE VEM O CONSUMO (km/l): do historico do proprio caminhao, mas SO
+     quando ele tem hodometro pra sustentar -- KM de saida e chegada cobrindo ao
+     menos 80% do KM lancado, em 5 ou mais viagens com abastecimento. Sem isso,
+     usa o padrao do tipo (TOCO 3,5 e 3/4 4,0 km/l) e ESCREVE NA TELA que e
+     referencia, nao medicao.
+     Por que essa trava existe: a primeira tentativa dividiu KM da viagem pelos
+     litros abastecidos NELA e deu absurdos -- QDE8C12 com 1,77 km/l e PKO3F40
+     com 70 km/l. O erro e o mesmo que a aba conserta: o diesel da viagem nao e
+     o diesel queimado nela. Hoje so o QDH7D61 tem hodometro completo, e ele deu
+     3,65 km/l -- praticamente o 3,5 que o Renato ja usava de cabeca.
+     A tela segue o desenho ja aprovado das outras abas: caixa de RESUMO GERAL
+     fechada no topo, uma caixa por placa (fechada mostra R$/km e saldo do
+     tanque, verde com saldo e vermelha no negativo) e, ao abrir, os quatro
+     baldes do mes mais a viagem linha a linha com KM, abastecido, consumido,
+     saldo do tanque, outros custos, CUSTO REAL, frete, lucro e a media km/l
+     daquela viagem. Nada dos calculos existentes foi alterado: calcularViagem()
+     e o Financeiro continuam como estavam. -->
 <!-- v356: DATA DO CANHOTO e RESGATE DE NF COM DIGITO FALTANDO.
      (1) DATA. Pedido do Renato: a data que vale e a que o recebedor escreveu no
      canhoto, nao a data prevista da rota. O caso do Augusto Carlos (NF 195661)
@@ -8386,6 +8417,7 @@ var ABAS_DEF = [
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
   { id: "custos", label: "Análise de Custos 📊", grupo: "FINANCEIRO" },
   { id: "graficos", label: "📈 Gráficos", grupo: "FINANCEIRO" },
+  { id: "custoreal", label: "⛽ Custo Real", grupo: "FINANCEIRO" },   // v357
   { id: "saldocaminhao", label: "🚚 Saldo por Caminhão", grupo: "FINANCEIRO" },
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
@@ -8398,6 +8430,7 @@ var TAB_DESCRICOES = {
   almox: "Estoque de peças e materiais",
   operacao: "Alocação dos veículos por cliente/contrato",
   viagem: "Lançamento das despesas de cada viagem",
+  custoreal: "Custo real de cada viagem pelo diesel consumido, não pelo abastecido",
   abastecimento: "Abastecimentos lançados pelos motoristas (fotos de KM e da bomba) — aguardando confirmação",
   conferencia: "Conferência de carga por foto: motorista fotografa cada caixa, o sistema confere pedido a pedido até fechar o cliente",
   carregasuzano: "Operação Suzano: conferência de entrada por contagem cega, etiqueta e bipagem de cada volume que sobe no caminhão, e acompanhamento das entregas em tempo real",
@@ -8411,7 +8444,7 @@ var TAB_DESCRICOES = {
   documentos: "Documentos da empresa e da frota",
   usuarios: "Acessos e permissões de cada usuário",
 };
-var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos"];
+var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos", "custoreal"];
 
 function garantirAcesso() {
   garantirConfig();
@@ -14415,6 +14448,110 @@ function rfXlsxLerProprio(bytes) {
     });
   });
 }
+/* ================= v357 — CUSTO REAL POR VIAGEM (tanque virtual) =================
+   Regra: a viagem consome KM × custo/km, não o que foi abastecido. O que sobra
+   fica no tanque do caminhão e vale para a próxima viagem, inclusive virando o
+   mês. Ficam no BLOCO 1 porque o render() as alcança. */
+var CR_PADRAO_KML = { "TOCO": 3.5, "3/4": 4.0 };
+var CR_LITRO_PADRAO = 6.90;
+
+function crNum(x) { var n = Number(String(x == null ? "" : x).replace(",", ".")); return isNaN(n) ? 0 : n; }
+function crViagensDo(placa) {
+  return (state.viagens || []).filter(function (v) { return v.placa === placa; })
+    .sort(function (a, b) { return String(a.data || "").localeCompare(String(b.data || "")); });
+}
+function crAbastecidoDa(v) {
+  return (v.combustivelItens || []).reduce(function (t, i) { return t + crNum(i.valor); }, 0);
+}
+function crLitrosDa(v) {
+  return (v.combustivelItens || []).reduce(function (t, i) { return t + crNum(i.litros); }, 0);
+}
+function crOutrosDa(v) {
+  return (v.outrosItens || []).reduce(function (t, i) { return t + crNum(i.valor); }, 0);
+}
+function crTipoDe(placa) {
+  var vv = (state.veiculos || []).find(function (x) { return x.placa === placa; });
+  var t = String((vv && vv.tipo) || "").toUpperCase();
+  return t.indexOf("3/4") >= 0 ? "3/4" : "TOCO";
+}
+/* Preço do litro do próprio caminhão (mediana dos abastecimentos, pra um preço
+   digitado errado não puxar tudo). Sem dado, usa o padrão. */
+function crPrecoLitro(placa) {
+  var precos = [];
+  crViagensDo(placa).forEach(function (v) {
+    (v.combustivelItens || []).forEach(function (i) {
+      var val = crNum(i.valor), lt = crNum(i.litros);
+      if (val > 0 && lt > 0) { var p = val / lt; if (p >= 4 && p <= 12) precos.push(p); }
+    });
+  });
+  if (!precos.length) return CR_LITRO_PADRAO;
+  precos.sort(function (a, b) { return a - b; });
+  var m = Math.floor(precos.length / 2);
+  return precos.length % 2 ? precos[m] : (precos[m - 1] + precos[m]) / 2;
+}
+/* CONSUMO: só é do caminhão quando há hodômetro sustentando. Sem isso, padrão do
+   tipo — e a tela diz que é referência. A trava existe porque dividir KM da
+   viagem pelos litros abastecidos NELA dá absurdo (ver comentário da v357). */
+function crConsumoDe(placa) {
+  var kmLanc = 0, kmHodo = 0, litros = 0, nAbast = 0;
+  crViagensDo(placa).forEach(function (v) {
+    var lt = crLitrosDa(v);
+    kmLanc += crNum(v.km);
+    var ks = crNum(v.kmSaida), kc = crNum(v.kmChegada);
+    if (kc > ks && (kc - ks) < 5000) kmHodo += (kc - ks);
+    if (lt > 0) { litros += lt; nAbast += 1; }
+  });
+  var cobertura = kmLanc > 0 ? kmHodo / kmLanc : 0;
+  var tipo = crTipoDe(placa);
+  if (cobertura >= 0.8 && nAbast >= 5 && litros > 0) {
+    var kml = kmHodo / litros;
+    if (kml >= 1.5 && kml <= 8) {
+      return { kml: kml, medido: true, cobertura: cobertura, viagens: nAbast, tipo: tipo };
+    }
+  }
+  return { kml: CR_PADRAO_KML[tipo], medido: false, cobertura: cobertura, viagens: nAbast, tipo: tipo };
+}
+function crCustoKm(placa) {
+  var c = crConsumoDe(placa);
+  return { rsKm: crPrecoLitro(placa) / c.kml, litro: crPrecoLitro(placa), consumo: c };
+}
+/* Uma linha por viagem, com o consumido, o saldo do tanque e o custo real. */
+function crLinhasDo(placa, mes) {
+  var base = crCustoKm(placa);
+  var saldo = 0, out = [];
+  crViagensDo(placa).forEach(function (v) {
+    var km = crNum(v.km);
+    var abast = crAbastecidoDa(v), litros = crLitrosDa(v), outros = crOutrosDa(v);
+    var consumido = km * base.rsKm;
+    saldo += abast - consumido;                       // acumula e atravessa o mês
+    var mao = crNum(v.vgPagMotorista) + (v.temAjudante ? crNum(v.vgPagAjudante) : 0);
+    var custoReal = consumido + outros + mao;
+    var frete = crNum(v.valorViagem);
+    out.push({
+      v: v, data: v.data || "", rota: v.rota || "", km: km,
+      abastecido: abast, litros: litros, consumido: consumido,
+      delta: abast - consumido, saldoAcum: saldo,
+      outros: outros, mao: mao, custoReal: custoReal,
+      frete: frete, lucro: frete - custoReal,
+      kmlViagem: litros > 0 ? km / litros : 0,       // média daquela viagem, informativa
+      doMes: !mes || String(v.data || "").slice(0, 7) === mes,
+    });
+  });
+  return { base: base, linhas: out, saldoFinal: saldo };
+}
+function crResumoPlaca(placa, mes) {
+  var r = crLinhasDo(placa, mes);
+  var doMes = r.linhas.filter(function (l) { return l.doMes; });
+  var soma = function (campo) { return doMes.reduce(function (t, l) { return t + l[campo]; }, 0); };
+  return {
+    base: r.base, linhas: doMes, todas: r.linhas, saldo: r.saldoFinal,
+    viagens: doMes.length, km: soma("km"), abastecido: soma("abastecido"),
+    litros: soma("litros"), consumido: soma("consumido"), outros: soma("outros"),
+    mao: soma("mao"), custoReal: soma("custoReal"), frete: soma("frete"), lucro: soma("lucro"),
+  };
+}
+function crToggleCaixa(placa) { state._crAberta = (state._crAberta === placa) ? "" : placa; render(); }
+function crToggleResumo() { state._crResumoAberto = !state._crResumoAberto; render(); }
 function rfRotAbrirWorkbook(bytes) {
   /* v352: o leitor próprio vem primeiro — é o único que não depende de
      biblioteca de fora. Se ele falhar, ainda tenta os quatro caminhos
@@ -16293,6 +16430,11 @@ ${manutPorVeiculo || "(nenhuma manutenção lançada no mês ativo)"}
 ${blocoManutBaldes}
 
 ${blocoTetoManut}
+
+${`CUSTO REAL POR VIAGEM (aba "⛽ Custo Real", criada na v357):
+O combustível de uma viagem NÃO é o que foi abastecido nela, e sim o que ela CONSUMIU: KM da viagem × custo por km do caminhão. O custo por km é o preço médio do litro dele dividido pelo consumo em km/l. A diferença entre o abastecido e o consumido é o SALDO DO TANQUE, que fica de crédito para a próxima viagem e atravessa o mês.
+O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada cobre pelo menos 80% do KM lançado, em 5 ou mais viagens com abastecimento; sem isso o app usa o padrão do tipo (TOCO 3,5 km/l e 3/4 4,0 km/l) e avisa na tela que é referência. Por isso a foto do KM final importa: cada viagem fechada direito aproxima o caminhão de ter consumo medido.
+Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.`}
 
 ${`COMO IMPORTAR A ROTEIRIZAÇÃO (aba Operação, caixa "Roteirização do dia seguinte"):
 O botão aceita .xlsx e também .csv. O que o app procura é a aba "Detalhe por Cliente", com as colunas Veículo, Ordem, Cidade, Recebedor (e, quando houver, Endereço, Peso e Remessa); o motorista vem da aba "Resumo por Veículo" quando ela existe, senão usa o motorista cadastrado no veículo.
@@ -18430,6 +18572,138 @@ function renderTabela() {
         </tr>`).join("")}
       </tbody></table>
       `}
+    `;
+  }
+
+  if (state.aba === "custoreal") {
+    /* v357: o combustível da viagem é o CONSUMIDO (KM × custo/km), não o
+       abastecido. O que sobra fica no tanque do caminhão e atravessa o mês. */
+    const placas = state.veiculos.map((v) => v.placa).filter(Boolean);
+    const dados = placas.map((p) => ({ placa: p, r: crResumoPlaca(p, state.mesAtivo) }))
+      .filter((x) => x.r.todas.length);
+    const somaG = (c) => dados.reduce((t, x) => t + x.r[c], 0);
+    const emTanque = dados.reduce((t, x) => t + x.r.saldo, 0);
+    const medidos = dados.filter((x) => x.r.base.consumo.medido).length;
+    const resumoAberto = state._crResumoAberto === true;
+    const VERDE_CR = "#2E7D32", VERM_CR = "#C0392B";
+
+    const caixaResumo = `
+      <div style="border:2px solid ${GOLD};border-radius:12px;background:#12100A;margin-bottom:16px;overflow:hidden;">
+        <div onclick="crToggleResumo()" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:16px 18px;">
+          <span style="color:${GOLD};font-weight:800;font-size:18px;line-height:1;">${resumoAberto ? "−" : "+"}</span>
+          <span style="color:${GOLD};font-weight:800;font-size:17px;letter-spacing:.5px;">RESUMO GERAL DO MÊS</span>
+          <span style="margin-left:auto;font-size:11px;color:#888;">${somaG("viagens")} viagem(ns) · abastecido ${fmtR(somaG("abastecido"))} · consumido ${fmtR(somaG("consumido"))} · ${fmtR(emTanque)} em tanque</span>
+        </div>
+        ${resumoAberto ? `<div style="padding:0 18px 18px 18px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:12px;">
+            ${statCard("Diesel abastecido", fmtR(somaG("abastecido")), "#888")}
+            ${statCard("Diesel consumido (real)", fmtR(somaG("consumido")), GOLD)}
+            ${statCard("Saldo em tanque (acumulado)", fmtR(emTanque), emTanque >= 0 ? VERDE_CR : VERM_CR)}
+            ${statCard("Outros custos de viagem", fmtR(somaG("outros")), "#888")}
+            ${statCard("Motorista e ajudante", fmtR(somaG("mao")), "#888")}
+            ${statCard("Custo real do mês", fmtR(somaG("custoReal")), "#fff")}
+            ${statCard("Frete faturado", fmtR(somaG("frete")), "#888")}
+            ${statCard("Lucro pelo custo real", fmtR(somaG("lucro")), somaG("lucro") >= 0 ? VERDE_CR : VERM_CR)}
+          </div>
+          <div style="font-size:11px;color:#888;line-height:1.6;">
+            <b style="color:#bbb;">${medidos} de ${dados.length}</b> caminhão(ões) já têm consumo MEDIDO pelo próprio hodômetro; os demais usam o padrão do tipo (TOCO 3,5 km/l · 3/4 4,0 km/l) até acumularem KM de saída e chegada em pelo menos 5 viagens.
+          </div>
+        </div>` : ""}
+      </div>`;
+
+    const caixas = dados.map(({ placa, r }) => {
+      const aberta = state._crAberta === placa;
+      const ok = r.saldo >= 0;
+      const cor = ok ? VERDE_CR : VERM_CR, fundo = ok ? "#0B1710" : "#1E0C0B";
+      if (!aberta) {
+        return `<div onclick="crToggleCaixa('${esc(placa)}')" title="Clique para ver viagem por viagem"
+          style="cursor:pointer;background:${fundo};border:2px solid ${cor};border-radius:12px;padding:12px 14px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="color:${cor};font-weight:800;font-size:16px;line-height:1;">+</span>
+            <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(placa)}</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
+            <span style="font-size:11px;color:#777;">${esc(r.base.consumo.tipo)} · ${fmtR(r.base.rsKm)}/km</span>
+            <span style="font-size:12px;font-weight:800;color:${cor};">tanque ${fmtR(r.saldo)}</span>
+          </div>
+          <div style="font-size:10px;color:${r.base.consumo.medido ? "#4C9A50" : "#8a6a10"};margin-top:6px;">
+            ${r.base.consumo.medido ? "consumo medido: " + r.base.consumo.kml.toFixed(2) + " km/l" : "padrão do tipo: " + r.base.consumo.kml.toFixed(2) + " km/l"}
+          </div>
+        </div>`;
+      }
+      const c = r.base.consumo;
+      const linhas = r.linhas.map((l) => `<tr>
+          <td>${esc(String(l.data).split("-").reverse().join("/"))}</td>
+          <td>${esc(l.rota || "—")}</td>
+          <td style="text-align:right;">${Math.round(l.km).toLocaleString("pt-BR")}</td>
+          <td style="text-align:right;color:#999;">${fmtR(l.abastecido)}</td>
+          <td style="text-align:right;color:${GOLD};font-weight:700;">${fmtR(l.consumido)}</td>
+          <td style="text-align:right;color:${l.delta >= 0 ? VERDE_CR : VERM_CR};">${(l.delta >= 0 ? "+" : "") + fmtR(l.delta)}</td>
+          <td style="text-align:right;color:#999;">${fmtR(l.outros + l.mao)}</td>
+          <td style="text-align:right;font-weight:800;">${fmtR(l.custoReal)}</td>
+          <td style="text-align:right;color:#999;">${fmtR(l.frete)}</td>
+          <td style="text-align:right;font-weight:800;color:${l.lucro >= 0 ? VERDE_CR : VERM_CR};">${fmtR(l.lucro)}</td>
+          <td style="text-align:right;color:#888;" title="média desta viagem: KM dividido pelos litros abastecidos nela — só é comparável quando o tanque sai e volta parecido">${l.kmlViagem ? l.kmlViagem.toFixed(2) : "—"}</td>
+        </tr>`).join("");
+      return `<div style="grid-column:1/-1;background:#141414;border:2px solid ${cor};border-radius:14px;padding:16px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span onclick="crToggleCaixa('${esc(placa)}')" style="cursor:pointer;color:${cor};font-weight:800;font-size:20px;line-height:1;">−</span>
+          <span onclick="crToggleCaixa('${esc(placa)}')" style="cursor:pointer;font-size:26px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(placa)}</span>
+          <span style="font-size:12px;color:#777;">${esc(c.tipo)} · ${c.kml.toFixed(2)} km/l · diesel ${fmtR(r.base.litro)}/l · <b style="color:#bbb;">${fmtR(r.base.rsKm)} por km</b></span>
+          <span style="font-size:10px;font-weight:800;color:${c.medido ? "#2E7D32" : GOLD};border:1px solid ${c.medido ? "#2E7D32" : GOLD};border-radius:5px;padding:1px 7px;">
+            ${c.medido ? "CONSUMO MEDIDO NO CAMINHÃO" : "PADRÃO DO TIPO — falta hodômetro"}</span>
+        </div>
+        ${!c.medido ? `<div style="font-size:11px;color:#888;margin-top:6px;">
+          O KM de saída e chegada cobre só ${Math.round(c.cobertura * 100)}% do KM lançado. Com 80% ou mais, em 5 viagens com abastecimento, o app passa a usar o consumo real deste caminhão.
+        </div>` : ""}
+
+        <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;background:${fundo};border:1px solid ${cor};border-radius:10px;padding:12px 14px;margin:14px 0;">
+          ${[["Abastecido no mês", fmtR(r.abastecido), "#fff"],
+             ["Consumido nas viagens", fmtR(r.consumido), GOLD],
+             ["Saldo do tanque (acumulado)", fmtR(r.saldo), cor],
+             ["Equivale a", (r.base.litro > 0 ? Math.round(r.saldo / r.base.litro) : 0) + " litros", cor]]
+            .map(([rot, val, cr]) => `<div>
+              <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">${rot}</div>
+              <div style="font-size:17px;font-weight:800;color:${cr};margin-top:5px;">${val}</div>
+            </div>`).join("")}
+        </div>
+
+        <div style="overflow-x:auto;">
+          <table style="min-width:1080px;"><thead><tr>
+            <th>Data</th><th>Rota</th><th style="text-align:right;">KM</th>
+            <th style="text-align:right;">Abastecido</th><th style="text-align:right;">Consumido</th>
+            <th style="text-align:right;">Saldo tanque</th><th style="text-align:right;">Outros + mão de obra</th>
+            <th style="text-align:right;">Custo real</th><th style="text-align:right;">Frete</th>
+            <th style="text-align:right;">Lucro real</th><th style="text-align:right;">km/l da viagem</th>
+          </tr></thead><tbody>
+            ${linhas || `<tr><td colspan="11" style="text-align:center;color:#777;padding:16px;">Nenhuma viagem deste caminhão no mês.</td></tr>`}
+            ${r.linhas.length ? `<tr style="background:#0E0E0E;font-weight:800;">
+              <td colspan="2">TOTAL</td>
+              <td style="text-align:right;">${Math.round(r.km).toLocaleString("pt-BR")}</td>
+              <td style="text-align:right;color:#999;">${fmtR(r.abastecido)}</td>
+              <td style="text-align:right;color:${GOLD};">${fmtR(r.consumido)}</td>
+              <td style="text-align:right;color:${(r.abastecido - r.consumido) >= 0 ? VERDE_CR : VERM_CR};">${fmtR(r.abastecido - r.consumido)}</td>
+              <td style="text-align:right;color:#999;">${fmtR(r.outros + r.mao)}</td>
+              <td style="text-align:right;">${fmtR(r.custoReal)}</td>
+              <td style="text-align:right;color:#999;">${fmtR(r.frete)}</td>
+              <td style="text-align:right;color:${r.lucro >= 0 ? VERDE_CR : VERM_CR};">${fmtR(r.lucro)}</td>
+              <td></td></tr>` : ""}
+          </tbody></table>
+        </div>
+      </div>`;
+    }).join("");
+
+    wrap.innerHTML = `
+      ${caixaResumo}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+        <span style="font-size:11px;color:#666;">Caixa <b style="color:${VERDE_CR};">verde</b> = tanque com saldo &nbsp;·&nbsp; <b style="color:${VERM_CR};">vermelha</b> = tanque negativo, sinal de abastecimento não lançado ou consumo pior que a média</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;align-items:start;">
+        ${caixas || `<div style="grid-column:1/-1;text-align:center;color:#777;padding:24px;">Nenhuma viagem lançada ainda.</div>`}
+      </div>
+      <div style="font-size:11px;color:#666;margin-top:14px;line-height:1.6;">
+        <b style="color:#bbb;">Como a conta é feita.</b> O consumido da viagem é o KM dela multiplicado pelo custo por km do caminhão (preço médio do litro dele dividido pelo consumo em km/l). O saldo do tanque é o abastecido menos o consumido, acumulado desde a primeira viagem — sobra vira crédito para a próxima e <b style="color:#bbb;">atravessa o mês</b>; negativo significa que a viagem rodou com diesel pago antes. A coluna km/l da viagem é a média daquela viagem isolada (KM ÷ litros abastecidos nela) e serve de conferência, não de custo: viagem que enche o tanque distorce esse número, e é justamente por isso que o custo não é calculado assim.
+      </div>
     `;
   }
 
