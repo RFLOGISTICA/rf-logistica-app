@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v354)</title>
+<title>RF Logística — Painel da Frota (v355)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,29 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v355: CANHOTO POR IA -- falha de chamada deixou de virar "a IA nao achou".
+     Caso real (01/09): quatro canhotos vieram com "Nenhum QR foi lido e a IA
+     tambem nao achou o numero da nota", mas o numero estava perfeitamente
+     legivel nas fotos (NF 195872 da EMGRAF e NF 195801 da DISLAM foram lidas a
+     olho sem esforco). Ao conferir o codigo, o motivo apareceu: rfLerFotoIA
+     entrega null quando a chamada FALHA -- sem sessao, sem rede, funcao fora do
+     ar, cota estourada -- e rfCanhLerNfPorIA transformava esse null na mesma
+     lista vazia de quando a IA respondeu e nao encontrou nada. Ou seja, erro de
+     chamada e "nao achou" eram indistinguiveis na tela, e a pessoa ia apontar
+     na mao 38 canhotos por causa de uma falha de rede.
+     O que mudou:
+     - rfLerFotoIA passa o erro adiante (aoTerminar(null, motivo)) em vez de
+       engolir; rfCanhLerNfPorIA devolve {ok, lidos, erro}.
+     - Quando a chamada falha, o item fica em ERRO, com o motivo escrito, e
+       ganha botao "tentar de novo" que reprocessa so aquela foto. Nao mistura
+       mais com o caso de foto ilegivel.
+     - Quando a chamada da certo e volta vazia, o app GIRA a imagem 90 graus e
+       tenta uma segunda vez antes de desistir. Canhoto e uma tira estreita e
+       comprida, quase sempre fotografada de lado (foi o caso das duas fotos de
+       01/09), e modelo de visao erra mais com texto girado.
+     As tres travas da v305 continuam iguais: numero limpo antes de comparar, so
+     casa contra NF de CT-e importado ou espelho lido, CNPJ do carimbo conferido
+     -- e o que passa entra como DUVIDA, nunca como casado. -->
 <!-- v354: IMPORTAR A ROTEIRIZACAO COLANDO O TEXTO -- caminho que nao passa
      pelo seletor de arquivos do Android.
      A v353 confirmou o diagnostico: o aviso novo ("a planilha chegou CORTADA")
@@ -13378,20 +13401,35 @@ function rfCanhotoAplicarPath(entregaId, idx, path, nf) {
 // E o que passa pelas três ainda entra como DÚVIDA, nunca como casado: fica na
 // seção laranja pra Renato conferir, com o ↶ desfazer do lado. Só o QR fecha
 // sozinho.
-function rfCanhLerNfPorIA(blob) {
+function rfCanhIaUmaVez(blob) {
   return new Promise(function (resolve) {
     try {
-      rfLerFotoIA("canhoto", blob, function (j) {
+      rfLerFotoIA("canhoto", blob, function (j, motivo) {
+        if (!j) { resolve({ ok: false, lidos: [], erro: motivo || "a IA não respondeu" }); return; }
         var lista = (j && Array.isArray(j.canhotos)) ? j.canhotos : [];
-        resolve(lista.map(function (c) {
+        resolve({ ok: true, erro: "", lidos: lista.map(function (c) {
           return {
             nf: parseInt(String((c && c.nf) || "").replace(/\D/g, ""), 10) || 0,
             cnpj: String((c && c.cnpj) || "").replace(/\D/g, ""),
             cliente: String((c && c.cliente) || "").trim(),
           };
-        }).filter(function (c) { return c.nf > 0; }));
+        }).filter(function (c) { return c.nf > 0; }) });
       });
-    } catch (e) { resolve([]); }
+    } catch (e) { resolve({ ok: false, lidos: [], erro: (e && e.message) || "falha ao chamar a IA" }); }
+  });
+}
+/* v355: devolve {ok, lidos, erro}. Se a chamada deu certo e veio vazio, gira a
+   foto 90° e tenta a segunda vez — o canhoto quase sempre é fotografado de lado. */
+function rfCanhLerNfPorIA(blob) {
+  return rfCanhIaUmaVez(blob).then(function (r1) {
+    if (!r1.ok || r1.lidos.length) return r1;
+    return rfGirarImagem(blob, 90).then(function (girada) {
+      if (girada === blob) return r1;
+      return rfCanhIaUmaVez(girada).then(function (r2) {
+        if (r2.ok && r2.lidos.length) { r2.girada = true; return r2; }
+        return r1;
+      });
+    });
   });
 }
 // Confere o carimbo contra o destinatário do CT-e/espelho.
@@ -13474,6 +13512,30 @@ function rfCanhLoteAplicarIA(item, lido, qtdNaFoto) {
     + (confere === true ? " · CNPJ do carimbo confere" : "") + ") — CONFIRA" + sufixo;
 }
 // ---- o lote em si ----
+/* v355: reprocessa UMA foto pela IA, sem refazer o lote inteiro. Usa o blob que
+   ficou guardado no item, então não depende de escolher o arquivo de novo. */
+function rfCanhLoteTentarIA(id) {
+  var L = rfCanhLote();
+  var it = L.itens.find(function (x) { return x.id === id; });
+  if (!it || !it.blobIA) { alert("A foto não está mais na memória desta sessão. Selecione o arquivo de novo."); return; }
+  it.status = "lendo";
+  it.detalhe = "Tentando de novo pela IA...";
+  render();
+  rfCanhLerNfPorIA(it.blobIA).then(function (r) {
+    var lidos = r.lidos || [];
+    if (!r.ok) {
+      it.status = "erro";
+      it.detalhe = "A leitura por IA falhou de novo: " + (r.erro || "sem resposta");
+    } else if (!lidos.length) {
+      it.status = "pendente";
+      it.detalhe = "A IA respondeu mas não achou o número (tentei com a foto girada também) — aponte a parada na mão";
+    } else {
+      rfCanhLoteAplicarIA(it, lidos[0], lidos.length);
+      if (r.girada) it.detalhe += " · lida com a foto girada";
+    }
+    salvar(); render();
+  });
+}
 function rfCanhLoteSelecionar(input) {
   var arqs = Array.prototype.slice.call((input && input.files) || []);
   if (!arqs.length) return;
@@ -13502,12 +13564,24 @@ function rfCanhLoteSelecionar(input) {
               detalhe: "Nenhum QR foi lido — lendo o número impresso por IA..." };
             L.itens.push(item0);
             render();
-            return rfCanhLerNfPorIA(blob).then(function (lidos) {
-              if (!lidos.length) {
-                item0.status = "pendente";
-                item0.detalhe = "Nenhum QR foi lido e a IA também não achou o número da nota — aponte a parada na mão";
+            return rfCanhLerNfPorIA(blob).then(function (r) {
+              var lidos = r.lidos || [];
+              if (!r.ok) {
+                // v355: a chamada NEM ACONTECEU. Isso não é foto ilegível — e
+                // dizer que a IA "não achou" faria a pessoa digitar à toa.
+                item0.status = "erro";
+                item0.blobIA = blob;
+                item0.detalhe = "A leitura por IA falhou: " + (r.erro || "sem resposta")
+                  + " — a foto está guardada, é só tentar de novo";
                 return;
               }
+              if (!lidos.length) {
+                item0.status = "pendente";
+                item0.blobIA = blob;
+                item0.detalhe = "Nenhum QR foi lido e a IA não achou o número da nota (tentei também com a foto girada) — aponte a parada na mão";
+                return;
+              }
+              if (r.girada) item0.detalheGiro = " · lida com a foto girada";
               rfCanhLoteAplicarIA(item0, lidos[0], lidos.length);
               for (var k = 1; k < lidos.length; k++) {
                 var extra = { id: "cl-" + Date.now() + "-" + i + "-ia" + k, nome: nome, nf: null, chave: "",
@@ -13772,6 +13846,12 @@ function rfCanhLoteBlocoHTML() {
                 : "");
         })()
       + (i.path ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfCanhotoVer(\'' + i.path + '\')">👁 ver</button>' : "")
+      // v355: só aparece quando a foto ainda está na memória e a leitura por IA
+      // falhou ou voltou vazia — evita apontar 38 canhotos na mão por uma queda
+      // de rede
+      + ((i.blobIA && (i.status === "erro" || i.status === "pendente"))
+          ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;color:' + GOLD + ';border-color:' + GOLD + ';" onclick="rfCanhLoteTentarIA(\'' + i.id + '\')" title="chamar a IA de novo para esta foto">🤖 tentar de novo</button>'
+          : "")
       + (comSeletor && i.path
           ? '<select style="font-size:11px;max-width:280px;" onchange="rfCanhLoteAplicarManual(\'' + i.id + '\',this.value)">'
             + '<option value="">— apontar a parada —</option>' + opcoes + '</select>'
@@ -20674,26 +20754,64 @@ function rfAbastUpload(input, abastId, tipo) {
 // digital de bomba, painel sujo/com reflexo e nota fiscal amassada. Custa
 // uma fração de centavo por foto. Helper compartilhado pelas 3.
 function rfLerFotoIA(tipo, blob, aoTerminar) {
+  /* v355: o segundo argumento diz POR QUE não veio resposta. Antes tudo virava
+     null, e quem chamava não sabia diferenciar "a IA respondeu e não achou" de
+     "a chamada nem aconteceu" — foi o que fez 4 canhotos legíveis aparecerem
+     como ilegíveis em 01/09. */
   var reader = new FileReader();
   reader.onload = function () {
     var base64 = String(reader.result || "").split(",")[1] || "";
-    if (!base64) { aoTerminar(null); return; }
+    if (!base64) { aoTerminar(null, "não consegui ler o arquivo da foto"); return; }
     rfGetClient().then(function (sb) {
-      if (!sb) { aoTerminar(null); return; }
+      if (!sb) { aoTerminar(null, "sem conexão com o servidor"); return; }
       sb.auth.getSession().then(function (res) {
         var token = res.data && res.data.session && res.data.session.access_token;
-        if (!token) { aoTerminar(null); return; }
+        if (!token) { aoTerminar(null, "sessão expirada — saia e entre de novo"); return; }
         fetch(RF_SB_URL + "/functions/v1/ler-foto-abastecimento", {
           method: "POST",
           headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ imagemBase64: base64, mimeType: blob.type || "image/jpeg", tipo: tipo }),
-        }).then(function (r) { return r.json(); }).then(function (j) { aoTerminar(j); })
-          .catch(function () { aoTerminar(null); });
-      });
-    });
+        }).then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error((j && (j.erro || j.error)) || ("servidor respondeu " + r.status));
+            return j;
+          });
+        }).then(function (j) {
+          if (j && (j.erro || j.error)) { aoTerminar(null, String(j.erro || j.error)); return; }
+          aoTerminar(j, "");
+        }).catch(function (e) { aoTerminar(null, (e && e.message) || "a IA não respondeu"); });
+      }).catch(function (e) { aoTerminar(null, (e && e.message) || "não consegui validar a sessão"); });
+    }).catch(function (e) { aoTerminar(null, (e && e.message) || "sem conexão"); });
   };
-  reader.onerror = function () { aoTerminar(null); };
+  reader.onerror = function () { aoTerminar(null, "não consegui abrir a foto no aparelho"); };
   reader.readAsDataURL(blob);
+}
+/* v355: canhoto é uma tira estreita e comprida, quase sempre fotografada de
+   lado. Modelo de visão erra bem mais com o texto girado, então quando a
+   primeira leitura volta vazia o app gira 90° e tenta de novo antes de desistir. */
+function rfGirarImagem(blob, graus) {
+  return new Promise(function (resolve) {
+    try {
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var cv = document.createElement("canvas");
+          var vira = (graus === 90 || graus === 270);
+          cv.width = vira ? img.height : img.width;
+          cv.height = vira ? img.width : img.height;
+          var ctx = cv.getContext("2d");
+          ctx.translate(cv.width / 2, cv.height / 2);
+          ctx.rotate(graus * Math.PI / 180);
+          ctx.drawImage(img, -img.width / 2, -img.height / 2);
+          URL.revokeObjectURL(url);
+          cv.toBlob(function (b) { resolve(b || blob); }, "image/jpeg", 0.92);
+        } catch (e) { URL.revokeObjectURL(url); resolve(blob); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(blob); };
+      img.src = url;
+    } catch (e) { resolve(blob); }
+  });
 }
 // v179: comprovante de pagamento (pix feito pra o posto) -- lê o valor pago e o
 // CNPJ/chave de DESTINO do comprovante, pra cruzar com a foto do Pix do posto
