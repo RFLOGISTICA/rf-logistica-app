@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v361)</title>
+<title>RF Logística — Painel da Frota (v362)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -15116,6 +15116,30 @@ function crCustoKm(placa) {
   return { rsKm: crPrecoLitro(placa) / c.kml, litro: crPrecoLitro(placa), consumo: c };
 }
 /* Uma linha por viagem, com o consumido, o saldo do tanque e o custo real. */
+/* v362: a aba mostrava só a MARGEM DA VIAGEM (frete − diesel − outros − mão de
+   obra) e chamava isso de "lucro real", o que dava um número bem acima do que
+   sobra de fato. Faltavam ADM, manutenção, imposto, pneus e alimentação, que a
+   aba Viagens já desconta. Agora as duas contas aparecem lado a lado.
+   O diesel continua sendo o CONSUMIDO desta aba (KM × custo/km), não o da aba
+   Viagens — é o número melhor, e é o motivo desta aba existir. O que vem de
+   calcularViagem() são só os itens que faltavam, mais a mão de obra já
+   corrigida pelo regime (caminhão CLT entra pelo rateio da folha, não pelo
+   valor digitado). */
+function crIndiretosDa(v) {
+  var vazio = { mao: 0, adm: 0, manutencao: 0, imposto: 0, pneus: 0, alim: 0, indiretos: 0, ehCLT: false };
+  if (typeof calcularViagem !== "function") return vazio;
+  var c;
+  try { c = calcularViagem(v); } catch (e) { return vazio; }
+  if (!c) return vazio;
+  var alim = (Number(c.alimMotorista) || 0) + (Number(c.alimAjudante) || 0);
+  return {
+    mao: (Number(c.pagMotorista) || 0) + (Number(c.pagAjudante) || 0),
+    adm: Number(c.adm) || 0, manutencao: Number(c.manutencao) || 0,
+    imposto: Number(c.imposto) || 0, pneus: Number(c.pneus) || 0, alim: alim,
+    indiretos: (Number(c.adm) || 0) + (Number(c.manutencao) || 0) + (Number(c.imposto) || 0) + (Number(c.pneus) || 0) + alim,
+    ehCLT: !!c.ehCLT,
+  };
+}
 function crLinhasDo(placa, mes) {
   var base = crCustoKm(placa);
   var saldo = 0, out = [];
@@ -15127,11 +15151,16 @@ function crLinhasDo(placa, mes) {
     var mao = crNum(v.vgPagMotorista) + (v.temAjudante ? crNum(v.vgPagAjudante) : 0);
     var custoReal = consumido + outros + mao;
     var frete = crNum(v.valorViagem);
+    var ind = crIndiretosDa(v);
+    var maoReal = ind.mao > 0 ? ind.mao : mao;          // CLT entra pelo rateio da folha
+    var custoTotal = consumido + outros + maoReal + ind.indiretos;
     out.push({
       v: v, data: v.data || "", rota: v.rota || "", km: km,
       abastecido: abast, litros: litros, consumido: consumido,
       delta: abast - consumido, saldoAcum: saldo,
       outros: outros, mao: mao, custoReal: custoReal,
+      maoReal: maoReal, indiretos: ind.indiretos, detalheInd: ind,
+      custoTotal: custoTotal, sobra: frete - custoTotal,
       frete: frete, lucro: frete - custoReal,
       kmlViagem: litros > 0 ? km / litros : 0,       // média daquela viagem, informativa
       doMes: !mes || String(v.data || "").slice(0, 7) === mes,
@@ -15148,6 +15177,7 @@ function crResumoPlaca(placa, mes) {
     viagens: doMes.length, km: soma("km"), abastecido: soma("abastecido"),
     litros: soma("litros"), consumido: soma("consumido"), outros: soma("outros"),
     mao: soma("mao"), custoReal: soma("custoReal"), frete: soma("frete"), lucro: soma("lucro"),
+    maoReal: soma("maoReal"), indiretos: soma("indiretos"), custoTotal: soma("custoTotal"), sobra: soma("sobra"),
   };
 }
 function crToggleCaixa(placa) { state._crAberta = (state._crAberta === placa) ? "" : placa; render(); }
@@ -17039,7 +17069,8 @@ Saem três coisas: a tabela de aprovação na tela (veículo, motorista, tipo, r
 ${`CUSTO REAL POR VIAGEM (aba "⛽ Custo Real", criada na v357):
 O combustível de uma viagem NÃO é o que foi abastecido nela, e sim o que ela CONSUMIU: KM da viagem × custo por km do caminhão. O custo por km é o preço médio do litro dele dividido pelo consumo em km/l. A diferença entre o abastecido e o consumido é o SALDO DO TANQUE, que fica de crédito para a próxima viagem e atravessa o mês.
 O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada cobre pelo menos 80% do KM lançado, em 5 ou mais viagens com abastecimento; sem isso o app usa o padrão do tipo (TOCO 3,5 km/l e 3/4 4,0 km/l) e avisa na tela que é referência. Por isso a foto do KM final importa: cada viagem fechada direito aproxima o caminhão de ter consumo medido.
-Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.`}
+Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.
+A aba mostra DOIS resultados por viagem, e não podem ser confundidos. MARGEM DA VIAGEM = frete − diesel consumido − outros − mão de obra; é só o que a viagem gastou na estrada. SOBRA REAL = a margem menos ADM, manutenção, imposto, pneus e alimentação, nos mesmos percentuais da aba Viagens, com a mão de obra corrigida pelo regime (CLT pelo rateio da folha). Nunca chamar a margem da viagem de lucro. E nem a sobra real é o que sobrou no mês: ela é antes das dívidas fixas (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma e só entram no Financeiro. Se perguntarem quanto sobrou, dar os três níveis — margem, sobra real e resultado do Financeiro — em vez de um número só.`}
 
 ${(function () {
   // v360: tanque ao vivo das viagens em andamento -- o mesmo número que o
@@ -19230,9 +19261,15 @@ function renderTabela() {
             ${statCard("Saldo em tanque (acumulado)", fmtR(emTanque), emTanque >= 0 ? VERDE_CR : VERM_CR)}
             ${statCard("Outros custos de viagem", fmtR(somaG("outros")), "#888")}
             ${statCard("Motorista e ajudante", fmtR(somaG("mao")), "#888")}
-            ${statCard("Custo real do mês", fmtR(somaG("custoReal")), "#fff")}
+            ${statCard("Custo direto do mês", fmtR(somaG("custoReal")), "#fff")}
             ${statCard("Frete faturado", fmtR(somaG("frete")), "#888")}
-            ${statCard("Lucro pelo custo real", fmtR(somaG("lucro")), somaG("lucro") >= 0 ? VERDE_CR : VERM_CR)}
+            ${statCard("Margem da viagem", fmtR(somaG("lucro")), somaG("lucro") >= 0 ? VERDE_CR : VERM_CR)}
+            ${statCard("Custos indiretos", fmtR(somaG("indiretos")), "#C0392B")}
+            ${statCard("SOBRA REAL", fmtR(somaG("sobra")), somaG("sobra") >= 0 ? VERDE_CR : VERM_CR)}
+          </div>
+          <div style="background:#0A0A0A;border:1px solid #C0392B;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:#ccc;line-height:1.6;">
+            <b style="color:#C0392B;">Margem da viagem não é lucro.</b> Ela desconta só diesel consumido, outros lançamentos e mão de obra. A <b style="color:#bbb;">SOBRA REAL</b> desconta também ADM, manutenção, imposto, pneus e alimentação — os mesmos parâmetros da aba Viagens. Neste mês a diferença entre as duas é de <b style="color:#C0392B;">${fmtR(somaG("indiretos"))}</b>.
+            E mesmo a sobra real é <b style="color:#bbb;">antes das dívidas fixas</b> (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma — o resultado que fecha o mês está no Financeiro.
           </div>
           <div style="font-size:11px;color:#888;line-height:1.6;">
             <b style="color:#bbb;">${medidos} de ${dados.length}</b> caminhão(ões) já têm consumo MEDIDO pelo próprio hodômetro; os demais usam o padrão do tipo (TOCO 3,5 km/l · 3/4 4,0 km/l) até acumularem KM de saída e chegada em pelo menos 5 viagens.
@@ -19271,7 +19308,9 @@ function renderTabela() {
           <td style="text-align:right;color:#999;">${fmtR(l.outros + l.mao)}</td>
           <td style="text-align:right;font-weight:800;">${fmtR(l.custoReal)}</td>
           <td style="text-align:right;color:#999;">${fmtR(l.frete)}</td>
-          <td style="text-align:right;font-weight:800;color:${l.lucro >= 0 ? VERDE_CR : VERM_CR};">${fmtR(l.lucro)}</td>
+          <td style="text-align:right;color:${l.lucro >= 0 ? VERDE_CR : VERM_CR};">${fmtR(l.lucro)}</td>
+          <td style="text-align:right;color:#C0392B;" title="ADM ${fmtR(l.detalheInd.adm)} · manutenção ${fmtR(l.detalheInd.manutencao)} · imposto ${fmtR(l.detalheInd.imposto)} · pneus ${fmtR(l.detalheInd.pneus)} · alimentação ${fmtR(l.detalheInd.alim)}">${fmtR(l.indiretos)}</td>
+          <td style="text-align:right;font-weight:800;color:${l.sobra >= 0 ? VERDE_CR : VERM_CR};">${fmtR(l.sobra)}</td>
           <td style="text-align:right;color:#888;" title="média desta viagem: KM dividido pelos litros abastecidos nela — só é comparável quando o tanque sai e volta parecido">${l.kmlViagem ? l.kmlViagem.toFixed(2) : "—"}</td>
         </tr>`).join("");
       return `<div style="grid-column:1/-1;background:#141414;border:2px solid ${cor};border-radius:14px;padding:16px 18px;">
@@ -19298,14 +19337,17 @@ function renderTabela() {
         </div>
 
         <div style="overflow-x:auto;">
-          <table style="min-width:1080px;"><thead><tr>
+          <table style="min-width:1260px;"><thead><tr>
             <th>Data</th><th>Rota</th><th style="text-align:right;">KM</th>
             <th style="text-align:right;">Abastecido</th><th style="text-align:right;">Consumido</th>
             <th style="text-align:right;">Saldo tanque</th><th style="text-align:right;">Outros + mão de obra</th>
-            <th style="text-align:right;">Custo real</th><th style="text-align:right;">Frete</th>
-            <th style="text-align:right;">Lucro real</th><th style="text-align:right;">km/l da viagem</th>
+            <th style="text-align:right;">Custo direto</th><th style="text-align:right;">Frete</th>
+            <th style="text-align:right;" title="frete menos diesel consumido, outros e mão de obra">Margem da viagem</th>
+            <th style="text-align:right;" title="ADM, manutenção, imposto, pneus e alimentação">Indiretos</th>
+            <th style="text-align:right;" title="frete menos TUDO que pertence à viagem. Ainda antes das dívidas fixas.">Sobra real</th>
+            <th style="text-align:right;">km/l da viagem</th>
           </tr></thead><tbody>
-            ${linhas || `<tr><td colspan="11" style="text-align:center;color:#777;padding:16px;">Nenhuma viagem deste caminhão no mês.</td></tr>`}
+            ${linhas || `<tr><td colspan="13" style="text-align:center;color:#777;padding:16px;">Nenhuma viagem deste caminhão no mês.</td></tr>`}
             ${r.linhas.length ? `<tr style="background:#0E0E0E;font-weight:800;">
               <td colspan="2">TOTAL</td>
               <td style="text-align:right;">${Math.round(r.km).toLocaleString("pt-BR")}</td>
@@ -19316,6 +19358,8 @@ function renderTabela() {
               <td style="text-align:right;">${fmtR(r.custoReal)}</td>
               <td style="text-align:right;color:#999;">${fmtR(r.frete)}</td>
               <td style="text-align:right;color:${r.lucro >= 0 ? VERDE_CR : VERM_CR};">${fmtR(r.lucro)}</td>
+              <td style="text-align:right;color:#C0392B;">${fmtR(r.indiretos)}</td>
+              <td style="text-align:right;color:${r.sobra >= 0 ? VERDE_CR : VERM_CR};">${fmtR(r.sobra)}</td>
               <td></td></tr>` : ""}
           </tbody></table>
         </div>
@@ -19332,6 +19376,7 @@ function renderTabela() {
       </div>
       <div style="font-size:11px;color:#666;margin-top:14px;line-height:1.6;">
         <b style="color:#bbb;">Como a conta é feita.</b> O consumido da viagem é o KM dela multiplicado pelo custo por km do caminhão (preço médio do litro dele dividido pelo consumo em km/l). O saldo do tanque é o abastecido menos o consumido, acumulado desde a primeira viagem — sobra vira crédito para a próxima e <b style="color:#bbb;">atravessa o mês</b>; negativo significa que a viagem rodou com diesel pago antes. A coluna km/l da viagem é a média daquela viagem isolada (KM ÷ litros abastecidos nela) e serve de conferência, não de custo: viagem que enche o tanque distorce esse número, e é justamente por isso que o custo não é calculado assim.
+        <br><br><b style="color:#bbb;">Margem da viagem x Sobra real.</b> A margem desconta o que a viagem gastou na estrada: diesel consumido, outros lançamentos e mão de obra. A sobra real desconta também o que a viagem custa à empresa mas não sai do bolso do motorista — ADM, manutenção, imposto, pneus e alimentação — nos mesmos percentuais da aba Viagens, e usa a mão de obra corrigida pelo regime do caminhão (CLT entra pelo rateio da folha, não pelo valor digitado). <b style="color:#bbb;">Nenhuma das duas desconta as dívidas fixas</b>: financiamento, seguro e folha da administração não pertencem a viagem nenhuma e só aparecem no Financeiro. Ou seja, nem a sobra real é o dinheiro que sobrou no mês — é o quanto as viagens contribuíram para pagar o que é fixo.
       </div>
     `;
   }
