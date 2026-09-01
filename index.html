@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v355)</title>
+<title>RF Logística — Painel da Frota (v356)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -95,6 +95,23 @@
         antigo nunca e apagado: se nao bate com login, continua na lista marcado.
      Diagnostico e assistente atualizados junto: viagem esperando revisao (com
      dias) e nome que nao bate com login. -->
+<!-- v356: DATA DO CANHOTO e RESGATE DE NF COM DIGITO FALTANDO.
+     (1) DATA. Pedido do Renato: a data que vale e a que o recebedor escreveu no
+     canhoto, nao a data prevista da rota. O caso do Augusto Carlos (NF 195661)
+     mostrou a diferenca: previsto 28/08, recebido de fato 01/09, depois de duas
+     tentativas com o local fechado. A Edge Function ler-foto-abastecimento foi
+     pra v11 e o tipo "canhoto" passou a devolver o campo "data", ja normalizado
+     em DD/MM/AAAA (aceita 01-09-2026, 01/09/26, e recusa dia>31 ou mes>12 em vez
+     de inventar). Aqui o app grava essa data na nota e mostra na tela; quando a
+     IA nao acha data, continua caindo na data prevista, como antes.
+     (2) NF COM DIGITO FALTANDO. Caso real de 01/09: o canhoto da DISLAM e a NF
+     195801 e a IA devolveu 95801 -- comeu o primeiro digito. A NF nao existia em
+     CT-e nenhum e a foto caiu em "aponte na mao", mesmo o numero estando na
+     tela. Agora, quando a NF lida nao existe, o app procura uma NF CONHECIDA
+     (de CT-e importado ou espelho lido) que TERMINE com os digitos lidos e
+     tenha no maximo 2 digitos a mais. Se achar UMA so, oferece como palpite --
+     sempre em DUVIDA e com o texto dizendo o que foi lido e o que ele acha que
+     e, nunca casando sozinho. Duas ou mais candidatas: nao arrisca. -->
 <!-- v355: CANHOTO POR IA -- falha de chamada deixou de virar "a IA nao achou".
      Caso real (01/09): quatro canhotos vieram com "Nenhum QR foi lido e a IA
      tambem nao achou o numero da nota", mas o numero estava perfeitamente
@@ -13345,7 +13362,7 @@ function rfCanhLoteUsarPista(itemId) {
   if (!pista || !pista.alvo) { alert("A pista não aponta mais pra uma parada livre. Escolha no seletor."); return; }
   if (!confirm("Anexar este canhoto (NF " + item.nf + ") na parada de " + pista.quem + "?\n\n"
     + "Isso é um palpite baseado na NF vizinha " + pista.nfVizinha + ", não uma certeza. Vai ficar marcado como DÚVIDA pra você conferir.")) return;
-  if (!rfCanhotoAplicarPath(pista.alvo.e.id, pista.alvo.idx, item.path, item.nf)) {
+  if (!rfCanhotoAplicarPath(pista.alvo.e.id, pista.alvo.idx, item.path, item.nf, item.dataLida)) {
     alert("Não consegui aplicar nessa parada. Atualize a tela e tente pelo seletor.");
     return;
   }
@@ -13370,11 +13387,14 @@ function rfCanhotoSubirBlob(placa, ref, idx, blob) {
     });
   });
 }
-function rfCanhotoAplicarPath(entregaId, idx, path, nf) {
+function rfCanhotoAplicarPath(entregaId, idx, path, nf, dataCanhoto) {
   var e = (state.entregas || []).find(function (x) { return String(x.id) === String(entregaId); });
   if (!e || !e.notas || !e.notas[idx]) return false;
   e.notas[idx].foto = path;
   if (nf && !e.notas[idx].nf) e.notas[idx].nf = String(nf);
+  // v356: a data escrita no canhoto vale mais que a data prevista da rota — é
+  // ela que prova QUANDO a mercadoria foi entregue. Sobrescreve a prevista.
+  if (dataCanhoto) e.notas[idx].data = String(dataCanhoto).slice(0, 10);
   if (!e.notas[idx].data) e.notas[idx].data = String(e.dataPrevista || "").slice(0, 10) || hojeISO();
   rfEntregaAtualizarStatus(e);
   rfEntregaSalvar(e);
@@ -13449,11 +13469,60 @@ function rfCanhCnpjFmt(c) {
 }
 // Trata UM número lido pela IA: acha o CT-e/espelho, aplica as travas e, se
 // passar, encosta na parada como DÚVIDA.
+/* v356: a data que o recebedor escreveu no canhoto chega em DD/MM/AAAA da Edge
+   Function e é guardada em AAAA-MM-DD, que é o formato das datas do sistema. */
+function rfCanhDataParaISO(txt) {
+  var m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(txt || "").trim());
+  if (!m) return "";
+  // confere aqui também, e não só na Edge Function: data impossível vira canhoto
+  // com data errada, que é discussão com o cliente depois
+  var d = +m[1], mes = +m[2], ano = +m[3];
+  if (!d || !mes || d > 31 || mes > 12 || ano < 2020 || ano > 2100) return "";
+  return m[3] + "-" + m[2] + "-" + m[1];
+}
+/* v356: RESGATE DE NF COM DÍGITO FALTANDO. A IA às vezes perde o primeiro
+   dígito do número impresso (leu 95801 no canhoto da NF 195801, em 01/09).
+   Procura entre as NF que o sistema JÁ CONHECE — de CT-e importado ou espelho
+   lido — uma que termine com os dígitos lidos e tenha no máximo 2 dígitos a
+   mais. Só devolve palpite quando existe UMA candidata: com duas, o risco de
+   anexar canhoto na nota errada é maior que o trabalho de apontar na mão. */
+function rfCanhNfPorSufixo(nfLida) {
+  var lida = String(nfLida || "").replace(/\D/g, "");
+  if (lida.length < 5) return null;                  // curto demais: qualquer coisa casaria
+  var achados = {};
+  var considera = function (num, cte, esp) {
+    var n = String(num || "").replace(/\D/g, "").replace(/^0+/, "");
+    if (!n || n === lida) return;
+    if (n.length <= lida.length || n.length > lida.length + 2) return;
+    if (n.slice(-lida.length) !== lida) return;
+    if (!achados[n]) achados[n] = { nf: n, cte: cte || null, esp: esp || null, lida: lida };
+  };
+  (state.fiscais || []).forEach(function (d) {
+    if (!d || d.tipo !== "cte") return;
+    (d.nfes || []).forEach(function (ch) {
+      var num = String(ch || "").length === 44 ? String(parseInt(String(ch).slice(25, 34), 10)) : "";
+      if (num) considera(num, d, null);
+    });
+  });
+  (state.suzanoCargas || []).forEach(function (c) {
+    ((c || {}).espelhos || []).forEach(function (e) { considera(e.nfe, null, e); });
+  });
+  var chaves = Object.keys(achados);
+  if (chaves.length !== 1) return null;
+  var r = achados[chaves[0]];
+  if (r.cte) {
+    var dd = rfFiscalDadosDoCte(r.cte);
+    r.esp = { cliente: r.cte.cliente, cidade: r.cte.cidade, cnpjCliente: r.cte.cnpjCliente || "",
+      placa: (dd && dd.placa) || r.cte.placa || "" };
+  }
+  return r.esp ? r : null;
+}
 function rfCanhLoteAplicarIA(item, lido, qtdNaFoto) {
   item.nf = lido.nf;
   item.viaIA = true;
   item.cnpjLido = lido.cnpj || "";
   item.clienteLido = lido.cliente || "";
+  item.dataLida = rfCanhDataParaISO(lido.data || "");   // v356: data escrita no canhoto
   if (qtdNaFoto > 1) item.coletiva = true;
   var sufixo = item.coletiva ? " · foto com " + qtdNaFoto + " canhotos" : "";
   var cte = rfFiscalCtePorNumeroNfe(lido.nf);
@@ -13478,11 +13547,22 @@ function rfCanhLoteAplicarIA(item, lido, qtdNaFoto) {
   }
   // TRAVA 2: NF que não é de viagem nenhuma não vira palpite.
   if (!item.esp) {
-    item.status = "pendente";
-    item.detalhe = "🤖 IA leu a NF " + item.nf + ", mas ela não está em nenhum CT-e nem espelho do sistema"
-      + (item.clienteLido ? " (carimbo: " + item.clienteLido + ")" : "")
-      + " — confira o número na foto e aponte a parada." + sufixo;
-    return;
+    // v356: antes de desistir, tenta o resgate por sufixo. A IA às vezes come o
+    // primeiro dígito (95801 no lugar de 195801), e o número está ali na foto.
+    var resgate = rfCanhNfPorSufixo(item.nf);
+    if (resgate) {
+      item.nfLidaBruta = item.nf;
+      item.nf = resgate.nf;
+      item.esp = resgate.esp;
+      if (resgate.cte) { item.cte = resgate.cte; item.viaCte = "CT-e " + (resgate.cte.numero || ""); }
+      item.detalheResgate = " · a IA leu " + resgate.lida + " e a nota do sistema é " + resgate.nf;
+    } else {
+      item.status = "pendente";
+      item.detalhe = "🤖 IA leu a NF " + item.nf + ", mas ela não está em nenhum CT-e nem espelho do sistema"
+        + (item.clienteLido ? " (carimbo: " + item.clienteLido + ")" : "")
+        + " — confira o número na foto e aponte a parada." + sufixo;
+      return;
+    }
   }
   // TRAVA 3: o carimbo tem que ser do mesmo CNPJ do destinatário.
   var confere = rfCanhCnpjConfere(item.cnpjLido, item.esp);
@@ -13500,7 +13580,7 @@ function rfCanhLoteAplicarIA(item, lido, qtdNaFoto) {
       + (item.viaCte ? " (" + item.viaCte + ")" : "") + ", mas não achei uma parada aberta que bata." + sufixo;
     return;
   }
-  if (!rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, item.path, item.nf)) {
+  if (!rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, item.path, item.nf, item.dataLida)) {
     item.status = "pendente";
     item.detalhe = "🤖 IA leu a NF " + item.nf + ", mas não consegui gravar na parada. Aponte à mão." + sufixo;
     return;
@@ -13509,7 +13589,9 @@ function rfCanhLoteAplicarIA(item, lido, qtdNaFoto) {
   item.status = "duvida";                    // IA nunca fecha sozinha
   item.detalhe = "🤖 " + casou.alvo.e.recebedor + (casou.alvo.e.cidade ? " — " + casou.alvo.e.cidade : "")
     + " (NF " + item.nf + " lida por IA, sem QR" + (item.viaCte ? " · " + item.viaCte : "")
-    + (confere === true ? " · CNPJ do carimbo confere" : "") + ") — CONFIRA" + sufixo;
+    + (confere === true ? " · CNPJ do carimbo confere" : "")
+    + (item.dataLida ? " · recebido em " + item.dataLida.split("-").reverse().join("/") : "")
+    + (item.detalheResgate || "") + ") — CONFIRA" + sufixo;
 }
 // ---- o lote em si ----
 /* v355: reprocessa UMA foto pela IA, sem refazer o lote inteiro. Usa o blob que
@@ -13613,7 +13695,7 @@ function rfCanhLoteSelecionar(input) {
             }
             var casou = rfCanhCasar(lido.nf, item.esp, lido.chave);
             if (casou) {
-              rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, path, item.nf);
+              rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, path, item.nf, item.dataLida);
               item.entregaId = casou.alvo.e.id; item.idx = casou.alvo.idx;
               item.status = casou.duvida ? "duvida" : "ok";
               item.detalhe = casou.alvo.e.recebedor + (casou.alvo.e.cidade ? " — " + casou.alvo.e.cidade : "")
@@ -13679,7 +13761,7 @@ function rfCanhLoteRecasar(silencioso) {
       }
       return;
     }
-    if (!rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, item.path, item.nf)) return;
+    if (!rfCanhotoAplicarPath(casou.alvo.e.id, casou.alvo.idx, item.path, item.nf, item.dataLida)) return;
     item.entregaId = casou.alvo.e.id; item.idx = casou.alvo.idx;
     // v305: o que veio da IA nunca vira "casado" no recasar — continua dúvida.
     item.status = (casou.duvida || item.viaIA) ? "duvida" : "ok";
@@ -13700,7 +13782,7 @@ function rfCanhLoteAplicarManual(itemId, valor) {
   var item = L.itens.find(function (x) { return x.id === itemId; });
   if (!item || !valor) return;
   var partes = String(valor).split("|");
-  if (!rfCanhotoAplicarPath(partes[0], Number(partes[1]), item.path, item.nf)) {
+  if (!rfCanhotoAplicarPath(partes[0], Number(partes[1]), item.path, item.nf, item.dataLida)) {
     alert("Não consegui aplicar nessa parada — ela pode ter sido alterada. Atualize a tela.");
     return;
   }
@@ -13734,7 +13816,7 @@ function rfCanhLoteSubstituir(itemId) {
   var item = rfCanhLote().itens.find(function (x) { return x.id === itemId; });
   if (!item || !item.jaEm) return;
   if (!confirm("Trocar o canhoto que já está anexado por esta foto?")) return;
-  if (!rfCanhotoAplicarPath(item.jaEm, item.jaIdx, item.path, item.nf)) {
+  if (!rfCanhotoAplicarPath(item.jaEm, item.jaIdx, item.path, item.nf, item.dataLida)) {
     alert("Não consegui trocar. Atualize a tela e tente de novo.");
     return;
   }
