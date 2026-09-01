@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v359)</title>
+<title>RF Logística — Painel da Frota (v361)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1730,10 +1730,25 @@ function impostoDoMes(mes) {
    momento. O que sobra fica disponível pra próxima viagem daquele veículo.
    Itens antigos sem "litros" preenchido continuam contando como despesa
    direta (compatibilidade com lançamentos anteriores ao v69). */
+/* v361: caminhao SEM km/L cadastrado nao cai mais num 3,5 chapado pra frota
+   inteira -- cai no padrao do TIPO dele. Numeros informados por Renato como a
+   referencia da operacao. Quem tem o campo preenchido na aba Frota continua
+   mandando: o padrao so vale pra campo vazio.
+   Por que isso importou: a medicao de km/L pelos dados atuais nao presta --
+   litro entra todo dia, mas o KM real so entra quando as duas fotos fecham, e
+   ai o litro fica no numerador com o KM fora do denominador. Deu 3,22 num 3/4
+   sem NENHUMA viagem medida e 114 km/L no PKO3F40 (hodometro lido errado).
+   Enquanto a cobertura de foto nao fechar, referencia por tipo e mais honesta
+   que media calculada em cima de KM digitado no olho. */
+const KML_PADRAO_TIPO = { "3/4": 5.0, "Toco": 3.5 };
+function kmPorLitroPadraoTipo(tipo) {
+  const t = String(tipo || "").trim();
+  return KML_PADRAO_TIPO[t] > 0 ? KML_PADRAO_TIPO[t] : 3.5;
+}
 function kmPorLitroDoVeiculo(placa) {
   const v = state.veiculos.find((x) => x.placa === placa);
   const kml = v ? Number(v.kmPorLitro) : 0;
-  return kml > 0 ? kml : 3.5;
+  return kml > 0 ? kml : kmPorLitroPadraoTipo(v ? v.tipo : "");
 }
 let _tanqueCacheVer = null;
 let _tanqueCacheVal = null;
@@ -1780,6 +1795,185 @@ function calcularTanques() {
   _tanqueCacheVer = window.__rfVerSalvo;
   _tanqueCacheVal = { porViagem, saldoPorPlaca: porPlaca };
   return _tanqueCacheVal;
+}
+
+/* ===================== v360 — TANQUE VIRTUAL DO MOTORISTA =====================
+   O tanque virtual (v69) já existia por placa, mas ele só BAIXA quando a viagem
+   é encerrada — a conta é KM da viagem ÷ km/L, e KM da viagem só existe depois
+   da foto de chegada. No meio da rota ele mostra diesel que já foi queimado,
+   o que não serve pro motorista: ele precisa saber AGORA quanto tem e quanto
+   falta pôr pra terminar.
+
+   A conta ao vivo é:
+     litros agora = tanque na saída + litros abastecidos na viagem
+                    − (KM da última foto − KM da saída) ÷ km/L
+
+   O KM vem da foto do painel, que o motorista já manda hoje (abastecimento e
+   fotos de início/fim) — nada novo pra ele fazer.
+
+   O celular do motorista NUNCA baixa a caixa geral (painel_dados), então o
+   tanque na saída vem pronto da RPC motorista_tanque_virtual(), mesma regra de
+   segurança do confirmar início/fim. Estas funções ficam no BLOCO 1 de <script>
+   porque o render() as alcança (regra da v215). */
+
+const RF_FATOR_ESTRADA = 1.30;   // linha reta -> estrada
+// Coordenadas aproximadas das cidades atendidas. Servem só pra ESTIMAR o KM
+// previsto quando a equipe não informou. Nunca entram em cobrança.
+const RF_CIDADES_COORD = {
+  "feira de santana": [-12.2664, -38.9663], "salvador": [-12.9777, -38.5016],
+  "simoes filho": [-12.7847, -38.4053], "camacari": [-12.6996, -38.3242],
+  "lauro de freitas": [-12.8944, -38.3272], "candeias": [-12.6714, -38.5472],
+  "santo amaro": [-12.5467, -38.7119], "alagoinhas": [-12.1355, -38.4192],
+  "catu": [-12.3547, -38.3783], "pojuca": [-12.4247, -38.3389],
+  "entre rios": [-11.9414, -38.0839], "serrinha": [-11.6644, -39.0072],
+  "conceicao do coite": [-11.5647, -39.2811], "valente": [-11.4108, -39.4581],
+  "santaluz": [-11.2553, -39.3781], "riachao do jacuipe": [-11.8064, -39.3844],
+  "ipira": [-12.1583, -39.7375], "jacobina": [-11.1811, -40.5136],
+  "saude": [-10.9436, -40.4139], "filadelfia": [-10.7397, -40.1381],
+  "senhor do bonfim": [-10.4614, -40.1897], "juazeiro": [-9.4111, -40.4986],
+  "abare": [-8.7217, -39.1150], "paulo afonso": [-9.3986, -38.2164],
+  "euclides da cunha": [-10.5083, -39.0158], "ribeira do pombal": [-10.8353, -38.5361],
+  "cicero dantas": [-10.6003, -38.3856], "tucano": [-10.9631, -38.7864],
+  "irece": [-11.3042, -41.8558], "xique xique": [-10.8250, -42.7286],
+  "seabra": [-12.4178, -41.7708], "bonito": [-11.9678, -41.2678],
+  "morro do chapeu": [-11.5486, -41.1567], "capim grosso": [-11.3811, -40.0128],
+  "miguel calmon": [-11.4283, -40.5978], "piritiba": [-11.7297, -40.5578],
+  "ruy barbosa": [-12.2839, -40.4922], "itaberaba": [-12.5275, -40.3061],
+  "cruz das almas": [-12.6706, -39.1017], "santo antonio de jesus": [-12.9689, -39.2614],
+  "amargosa": [-13.0294, -39.6047], "jequie": [-13.8578, -40.0839],
+  "vitoria da conquista": [-14.8619, -40.8444], "brumado": [-14.2036, -41.6653],
+  "guanambi": [-14.2233, -42.7808], "bom jesus da lapa": [-13.2550, -43.4181],
+  "barreiras": [-12.1528, -45.0000], "luis eduardo magalhaes": [-12.0919, -45.7972],
+  "itabuna": [-14.7856, -39.2803], "ilheus": [-14.7889, -39.0394],
+  "eunapolis": [-16.3719, -39.5806], "porto seguro": [-16.4497, -39.0647],
+  "itamaraju": [-17.0386, -39.5311], "teixeira de freitas": [-17.5397, -39.7425],
+  "mucuri": [-18.0864, -39.5508], "itabela": [-16.5744, -39.5544],
+  "aracaju": [-10.9472, -37.0731], "petrolina": [-9.3891, -40.5030],
+  "recife": [-8.0476, -34.8770], "maceio": [-9.6658, -35.7353],
+};
+function rfNormCidade(t) {
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+}
+function rfCidadeCoord(nome) {
+  const c = RF_CIDADES_COORD[rfNormCidade(nome)];
+  return c ? { lat: c[0], lng: c[1] } : null;
+}
+function rfHaversineKm(a, b) {
+  if (!a || !b) return 0;
+  const R = 6371;
+  const rad = function (x) { return (x * Math.PI) / 180; };
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+          + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function rfBaseCidade() { return (state.config && state.config.cidadeBase) || "Feira de Santana"; }
+
+/* Cidades da rota, na ordem: primeiro as entregas da viagem (v267); se não
+   houver, o romaneio vinculado. Cidade repetida em seguida não conta duas vezes. */
+function rfCidadesDaViagem(v) {
+  const out = [];
+  const push = function (c) {
+    const n = rfNormCidade(c);
+    if (n && rfNormCidade(out[out.length - 1]) !== n) out.push(c);
+  };
+  const ents = (state.entregas || []).filter(function (e) { return String(e.viagemId) === String(v.id); })
+    .slice().sort(function (a, b) { return (Number(a.ordem) || 0) - (Number(b.ordem) || 0); });
+  if (ents.length) { ents.forEach(function (e) { push(e.cidade); }); return out; }
+  const rom = (state.romaneios || []).find(function (r) { return String(r.viagemId) === String(v.id); });
+  if (rom) (rom.clientes || []).forEach(function (c) { push(c.cidade); });
+  return out;
+}
+
+/* KM previsto da viagem. 1º o que a equipe informou; 2º estimativa pela rota
+   (base -> cidades na ordem -> base, em linha reta x fator de estrada).
+   Estimativa é estimativa: serve pro motorista se planejar, nunca pra cobrança. */
+function kmPrevistoViagem(v) {
+  const manual = Number(v && v.kmPrevisto) || 0;
+  if (manual > 0) return { km: manual, origem: "informado pela equipe", auto: false };
+  const cidades = rfCidadesDaViagem(v || {});
+  if (!cidades.length) return { km: 0, origem: "sem rota cadastrada", auto: false };
+  const base = rfCidadeCoord(rfBaseCidade());
+  const pontos = [];
+  let semCoord = 0;
+  cidades.forEach(function (c) {
+    const p = rfCidadeCoord(c);
+    if (p) pontos.push(p); else semCoord++;
+  });
+  if (!base || !pontos.length) return { km: 0, origem: "cidades da rota sem coordenada", auto: false };
+  let total = 0, ant = base;
+  pontos.forEach(function (p) { total += rfHaversineKm(ant, p); ant = p; });
+  total += rfHaversineKm(ant, base);
+  return {
+    km: Math.round(total * RF_FATOR_ESTRADA), auto: true,
+    origem: "estimado pela rota (" + cidades.length + " cidade" + (cidades.length === 1 ? "" : "s")
+            + (semCoord ? ", " + semCoord + " sem coordenada" : "") + ")",
+  };
+}
+
+/* A conta ao vivo, pura: recebe números e devolve o quadro. É a MESMA função
+   usada pela tela do motorista e pelo lado da equipe, pra os dois nunca
+   mostrarem contas diferentes. */
+function tanqueAoVivoCalc(o) {
+  const kml = Number(o.kmPorLitro) > 0 ? Number(o.kmPorLitro) : 3.5;
+  const kmSaida = Number(o.kmSaida) || 0;
+  const kmAtual = Math.max(kmSaida, Number(o.kmAtual) || 0);
+  const rodado = Math.max(0, kmAtual - kmSaida);
+  const pend = Number(o.litrosPendentes) || 0;
+  const consumido = rodado / kml;
+  const litros = Math.max(0, (Number(o.tanqueLitros) || 0) + pend - consumido);
+  const kmPrevisto = Number(o.kmPrevisto) || 0;
+  const falta = kmPrevisto > 0 ? Math.max(0, kmPrevisto - rodado) : 0;
+  const litrosFalta = kmPrevisto > 0 ? falta / kml : 0;
+  const reserva = 1 + ((state.config && Number(state.config.reservaCombustivel)) || 0.10);
+  return {
+    kml: kml, kmSaida: kmSaida, kmAtual: kmAtual, rodado: rodado,
+    litros: litros, autonomia: litros * kml, consumido: consumido, litrosPendentes: pend,
+    kmPrevisto: kmPrevisto, falta: falta, litrosFalta: litrosFalta,
+    passouPrevisto: kmPrevisto > 0 && rodado >= kmPrevisto,
+    abastecer: kmPrevisto > 0 ? Math.max(0, litrosFalta * reserva - litros) : 0,
+    sobraNoFim: kmPrevisto > 0 ? litros - litrosFalta : null,
+  };
+}
+
+/* Lado da EQUIPE: monta os números a partir do estado completo. */
+function tanqueAoVivoViagem(v) {
+  if (!v || !v.placa) return null;
+  const saldo = calcularTanques().saldoPorPlaca[v.placa] || { litros: 0, valor: 0 };
+  const pend = (state.abastecimentos || []).filter(function (a) {
+    return a.placa === v.placa && a.status === "pendente";
+  }).reduce(function (t, a) { return t + (Number(a.litros) || 0); }, 0);
+  const veic = (state.veiculos || []).find(function (x) { return x.placa === v.placa; }) || {};
+  const info = kmAtualInfo(veic);
+  const prev = kmPrevistoViagem(v);
+  const r = tanqueAoVivoCalc({
+    kmPorLitro: kmPorLitroDoVeiculo(v.placa), kmSaida: v.kmSaida,
+    kmAtual: info && info.km ? info.km : (Number(v.kmSaida) || 0),
+    tanqueLitros: saldo.litros, litrosPendentes: pend, kmPrevisto: prev.km,
+  });
+  r.origemKmPrevisto = prev.origem;
+  return r;
+}
+
+/* Coluna KM previsto na aba Viagens. Quando a equipe não digita, mostra a
+   estimativa da rota — que é o que o motorista vai ver no celular. */
+function viagemKmPrevistoHTML(v) {
+  const prev = kmPrevistoViagem(v);
+  return '<div style="margin-top:4px;display:flex;align-items:center;gap:4px;">'
+    + '<span style="font-size:9px;color:#888;">prev.</span>'
+    + '<input type="number" value="' + (Number(v.kmPrevisto) || "") + '" placeholder="'
+    + (prev.auto ? prev.km : "km") + '" title="KM previsto da viagem inteira (ida e volta). É o que o motorista vê pra saber quanto falta e quanto abastecer. Em branco, o app estima pela rota."'
+    + ' onchange="setViagemKmPrevisto(\'' + v.id + '\',this.value)" style="width:62px;font-size:11px;"></div>'
+    + (prev.km > 0 && prev.auto
+        ? '<div style="font-size:9px;color:#888;margin-top:1px;">≈ ' + prev.km.toLocaleString("pt-BR") + ' km ' + esc(prev.origem) + '</div>'
+        : "");
+}
+function setViagemKmPrevisto(id, valor) {
+  const v = (state.viagens || []).find(function (x) { return String(x.id) === String(id); });
+  if (!v) return;
+  v.kmPrevisto = Number(String(valor).replace(",", ".")) || 0;
+  salvar(); render();
 }
 
 // v76: além dos custos de viagem, traz também a receita recorrente do mês (aluguel fixo — ex: caminhões
@@ -11903,8 +12097,91 @@ function motoristaCarregarViagensAtivas() {
       });
       render();
       motoristaAvisarFimPendente(); // v227
+      motoristaCarregarTanque();    // v360
     });
   });
+}
+/* v360: o tanque do motorista vem PRONTO da RPC — o celular dele não baixa a
+   caixa geral (painel_dados), então a conta do tanque na saída é feita no
+   servidor, igual ao confirmar início/fim. Aqui só chega o número. */
+function motoristaCarregarTanque() {
+  if (!ehMotorista()) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.rpc("motorista_tanque_virtual").then(function (res) {
+      if (res.error) { console.warn("motorista_tanque_virtual:", res.error.message); return; }
+      var mapa = {};
+      (res.data || []).forEach(function (r) {
+        mapa[String(r.viagem_id)] = {
+          placa: r.placa || "",
+          kmSaida: Number(r.km_saida) || 0,
+          kmPrevisto: Number(r.km_previsto) || 0,
+          kmPorLitro: Number(r.km_por_litro) || 3.5,
+          tanqueLitros: Number(r.tanque_litros) || 0,
+          litrosPendentes: Number(r.litros_pendentes) || 0,
+          kmUltimo: Number(r.km_ultimo) || 0,
+        };
+      });
+      state._tanqueMotorista = mapa;
+      render();
+    });
+  });
+}
+/* Cartão do tanque na tela do motorista. Só litros e autonomia — sem valor em
+   dinheiro, por decisão do Renato. */
+function motoristaTanqueCardHTML(vg) {
+  var base = (state._tanqueMotorista || {})[String(vg.id)];
+  if (!base) return "";
+  if (vg.status === "aguardando_motorista") {
+    return '<div style="background:#0A0A0A;border:1px solid #2A2A2A;border-radius:8px;padding:10px 12px;margin-bottom:10px;">'
+      + '<div style="font-size:11px;color:#999;margin-bottom:3px;">⛽ Tanque do ' + esc(base.placa) + ' antes de sair</div>'
+      + '<div style="font-size:16px;font-weight:800;color:' + GOLD + ';">' + base.tanqueLitros.toFixed(0) + ' L'
+      + ' <span style="font-size:12px;color:#999;font-weight:400;">≈ ' + Math.round(base.tanqueLitros * base.kmPorLitro).toLocaleString("pt-BR") + ' km</span></div>'
+      + '<div style="font-size:10px;color:#777;margin-top:4px;">A conta começa a rodar quando você mandar a foto do KM inicial.</div>'
+      + '</div>';
+  }
+  // KM mais recente que ESTE celular conhece: o do servidor ou um abastecimento
+  // recém-lançado que ainda não foi aprovado. Leitura fora da faixa da viagem é
+  // ignorada (hodômetro lido errado não pode zerar o tanque do motorista).
+  var kmLocal = base.kmUltimo;
+  (state.abastecimentos || []).forEach(function (a) {
+    if (a.placa !== base.placa || a.status === "rejeitado") return;
+    var k = Number(a.kmAtual) || 0;
+    if (k >= base.kmSaida && k <= base.kmSaida + 3000 && k > kmLocal) kmLocal = k;
+  });
+  var t = tanqueAoVivoCalc({
+    kmPorLitro: base.kmPorLitro, kmSaida: base.kmSaida, kmAtual: kmLocal,
+    tanqueLitros: base.tanqueLitros, litrosPendentes: base.litrosPendentes, kmPrevisto: base.kmPrevisto,
+  });
+  var apertado = t.kmPrevisto > 0 && t.sobraNoFim !== null && t.sobraNoFim < 0;
+  var cor = apertado ? "#C0392B" : (t.litros > 0 ? GOLD : "#C0392B");
+  return '<div style="background:#0A0A0A;border:1px solid ' + cor + ';border-radius:8px;padding:12px;margin-bottom:10px;">'
+    + '<div style="font-size:11px;color:#999;margin-bottom:6px;">⛽ Seu tanque agora — ' + esc(base.placa) + '</div>'
+    + '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px;">'
+    +   '<div><div style="font-size:26px;font-weight:800;color:' + cor + ';line-height:1;">' + t.litros.toFixed(0) + ' L</div>'
+    +   '<div style="font-size:10px;color:#777;margin-top:2px;">no tanque</div></div>'
+    +   '<div><div style="font-size:18px;font-weight:800;color:#ddd;line-height:1;">' + Math.round(t.autonomia).toLocaleString("pt-BR") + ' km</div>'
+    +   '<div style="font-size:10px;color:#777;margin-top:2px;">dá pra rodar</div></div>'
+    +   (t.kmPrevisto > 0
+          ? '<div><div style="font-size:18px;font-weight:800;color:#ddd;line-height:1;">' + Math.round(t.falta).toLocaleString("pt-BR") + ' km</div>'
+            + '<div style="font-size:10px;color:#777;margin-top:2px;">faltam pra terminar</div></div>'
+          : "")
+    + '</div>'
+    + (t.kmPrevisto > 0
+        ? (t.abastecer > 0.5
+            ? '<div style="background:rgba(192,57,43,.15);border:1px solid #C0392B;border-radius:6px;padding:8px 10px;font-size:12px;color:#ddd;">'
+              + '<b style="color:#C0392B;">Abasteça pelo menos ' + Math.ceil(t.abastecer) + ' litros</b> pra terminar a viagem com folga.</div>'
+            : (t.passouPrevisto
+                ? '<div style="background:rgba(212,160,23,.12);border:1px solid ' + GOLD + ';border-radius:6px;padding:8px 10px;font-size:12px;color:#ddd;">'
+                  + 'Você já passou dos ' + t.kmPrevisto.toLocaleString("pt-BR") + ' km previstos pra esta viagem. Vá pelo que o tanque aguenta: <b style="color:' + GOLD + ';">' + Math.round(t.autonomia).toLocaleString("pt-BR") + ' km</b>.</div>'
+                : '<div style="background:rgba(46,125,50,.14);border:1px solid #2E7D32;border-radius:6px;padding:8px 10px;font-size:12px;color:#2E7D32;">'
+                  + '✓ Dá pra terminar a viagem com o que tem no tanque.</div>'))
+        : '<div style="font-size:11px;color:#777;">A equipe ainda não informou o KM previsto desta viagem, então não dá pra dizer quanto falta abastecer.</div>')
+    + '<div style="font-size:10px;color:#666;margin-top:8px;line-height:1.5;">'
+    +   'Rodados ' + Math.round(t.rodado).toLocaleString("pt-BR") + ' km desde a saída · consumo de referência ' + t.kml.toFixed(1) + ' km/L'
+    +   (t.litrosPendentes > 0 ? ' · inclui ' + t.litrosPendentes.toFixed(0) + ' L aguardando aprovação da equipe' : "")
+    +   '<br>Pra atualizar, é só mandar a foto do painel no próximo abastecimento.'
+    + '</div></div>';
 }
 function motoristaUploadEConfirmar(input, viagemId, tipo) {
   var vg = (state._minhasViagensAtivas || []).find(function (x) { return String(x.id) === String(viagemId); });
@@ -12076,6 +12353,7 @@ function motoristaViagemCard(vg) {
       <span style="font-size:13px; color:#ccc;">${vg.cliente ? esc(vg.cliente) : "(sem cliente definido)"}</span>
       <span style="font-size:12px; color:#999;">${vg.data ? new Date(vg.data + "T00:00:00").toLocaleDateString("pt-BR") : ""}</span>
     </div>
+    ${motoristaTanqueCardHTML(vg)}
     ${vg.status === "aguardando_motorista" ? `<div>
       <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM inicial (obrigatória para confirmar início)</div>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -16763,6 +17041,30 @@ O combustível de uma viagem NÃO é o que foi abastecido nela, e sim o que ela 
 O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada cobre pelo menos 80% do KM lançado, em 5 ou mais viagens com abastecimento; sem isso o app usa o padrão do tipo (TOCO 3,5 km/l e 3/4 4,0 km/l) e avisa na tela que é referência. Por isso a foto do KM final importa: cada viagem fechada direito aproxima o caminhão de ter consumo medido.
 Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.`}
 
+${(function () {
+  // v360: tanque ao vivo das viagens em andamento -- o mesmo número que o
+  // motorista está vendo no celular dele.
+  const ativas = (state.viagens || []).filter((v) => ["aguardando_motorista", "em_andamento"].includes(v.statusMotorista));
+  const linhas = ativas.map((v) => {
+    const t = tanqueAoVivoViagem(v);
+    if (!t) return "";
+    return `- ${v.placa} (${v.motoristaNaEpoca || "sem motorista"}, ${v.cliente || "sem cliente"}): ${t.litros.toFixed(0)} L no tanque, autonomia ${Math.round(t.autonomia)} km, rodou ${Math.round(t.rodado)} km desde a saída`
+      + (t.kmPrevisto > 0
+          ? `; previsto ${t.kmPrevisto} km (${t.origemKmPrevisto}), faltam ${Math.round(t.falta)} km`
+            + (t.abastecer > 0.5 ? `, PRECISA ABASTECER ~${Math.ceil(t.abastecer)} L` : ", dá pra terminar sem abastecer")
+          : "; KM previsto não informado pela equipe")
+      + `; km/L usado ${t.kml.toFixed(1)}`;
+  }).filter(Boolean).join("\n");
+  return `TANQUE VIRTUAL DO MOTORISTA (v360, km/L por tipo na v361):
+Cada motorista vê no celular dele quanto tem no tanque do caminhão, quantos km isso dá, quanto falta pra terminar a viagem e quantos litros precisa pôr. A conta é: tanque na saída + litros abastecidos na viagem − (KM da última foto do painel − KM da saída) ÷ km/L. Ele não faz nada de novo: o KM vem da foto que ele já manda no abastecimento.
+O km/L usado é o do CADASTRO DA FROTA (aba Frota). Caminhão sem esse campo preenchido cai no padrão do TIPO dele: 3/4 = 5,0 km/L e Toco = 3,5 km/L, referências informadas por Renato. Se o consumo real de um caminhão for outro, o tanque que o motorista vê fica errado na mesma proporção — quando alguém perguntar por que o número não bate, essa é a primeira coisa a conferir.
+NÃO calcular km/L médio dividindo litros por KM das viagens e apresentar como consumo do caminhão. Os dados atuais não sustentam isso: litro entra todo dia, mas o KM real só entra quando as fotos de saída e chegada fecham, então o resultado sai muito abaixo do real. Caminhão com poucas viagens medidas dá número sem sentido (o PKO3F40 dá 114 km/L por causa de um hodômetro lido errado). Se perguntarem o consumo real de um caminhão, dizer quantas viagens dele têm KM medido por foto antes de dar qualquer número.
+O KM previsto vem do campo "prev." da aba Viagens; em branco, o app estima pela rota (base → cidades das entregas → base, em linha reta × 1,30). Sem rota cadastrada e sem campo preenchido, o motorista vê só o tanque e a autonomia, sem o "quanto falta abastecer".
+Leitura de hodômetro fora da faixa da viagem (menor que a saída ou mais de 3.000 km acima dela) é ignorada, pra foto lida errado não zerar o tanque do motorista.
+Situação agora:
+${linhas || "(nenhuma viagem em andamento)"}`;
+})()}
+
 ${`COMO IMPORTAR A ROTEIRIZAÇÃO (aba Operação, caixa "Roteirização do dia seguinte"):
 O botão aceita .xlsx e também .csv. O que o app procura é a aba "Detalhe por Cliente", com as colunas Veículo, Ordem, Cidade, Recebedor (e, quando houver, Endereço, Peso e Remessa); o motorista vem da aba "Resumo por Veículo" quando ela existe, senão usa o motorista cadastrado no veículo.
 Desde a v352 o app tem leitor de xlsx próprio, que não depende de biblioteca de fora e é o primeiro caminho tentado; se ainda assim der erro, o alerta mostra o que cada tentativa devolveu, e o CSV continua funcionando como alternativa. Reimportar não duplica: a viagem é única por placa + data, e as entregas que já têm canhoto são preservadas.`}
@@ -18484,7 +18786,7 @@ function renderTabela() {
               </div>
             </td>
             <td>
-              <input type="number" value="${v.km || 0}" onchange="setViagemKm('${v.id}',this.value)" style="width:70px;${viagemKmMedido(v) !== null ? "border-color:" + GOLD + ";" : ""}" title="${viagemKmMedido(v) !== null ? "Medido: KM de chegada menos KM de saída. Pra mudar, corrija uma das duas pontas." : "Estimativa da saída — vira medido quando a viagem tiver KM de chegada."}">${(function () {
+              <input type="number" value="${v.km || 0}" onchange="setViagemKm('${v.id}',this.value)" style="width:70px;${viagemKmMedido(v) !== null ? "border-color:" + GOLD + ";" : ""}" title="${viagemKmMedido(v) !== null ? "Medido: KM de chegada menos KM de saída. Pra mudar, corrija uma das duas pontas." : "Estimativa da saída — vira medido quando a viagem tiver KM de chegada."}">${viagemKmPrevistoHTML(v)}${(function () {
                 // v217: de onde veio o KM rodado, e o que foi estimado antes
                 const medido = viagemKmMedido(v);
                 if (medido === null) return `<div style="font-size:9px;color:#666;margin-top:2px;">estimado</div>`;
