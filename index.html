@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v362)</title>
+<title>RF Logística — Painel da Frota (v363)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3474,9 +3474,55 @@ function dividasDoMes(mes) {
     if (!st.ativa) return;
     const valor = valorDividaNoMes(d, mes);
     total += valor;
-    itens.push({ descricao: campoDividaNoMes(d, "descricao", mes), valor, comPrazo: st.comPrazo, parcela: st.parcela, totalParc: st.total, obs: campoDividaNoMes(d, "obs", mes) });
+    itens.push({ id: d.id, descricao: campoDividaNoMes(d, "descricao", mes), valor, comPrazo: st.comPrazo, parcela: st.parcela, totalParc: st.total, obs: campoDividaNoMes(d, "obs", mes), placa: campoDividaNoMes(d, "placa", mes) || "" });
   });
   return { itens, total };
+}
+
+/* ============ v363 — DÍVIDA FIXA POR CAMINHÃO E LÍQUIDO DO MÊS ============
+   A pergunta que o sistema não respondia: quanto CADA CAMINHÃO deixa líquido
+   no mês. Faltava o elo -- as dívidas fixas não pertenciam a caminhão nenhum,
+   e o campo manual de alocação estava zerado nos 22.
+   Agora cada dívida fixa tem um campo "caminhão". As que são de um veículo
+   (molas, pneus, elétrica, rastreador, financiamento, seguro) vão DIRETO para
+   ele. O que fica sem caminhão é despesa da empresa (galpão, luz, internet,
+   IPTU) e é rateada em PARTES IGUAIS entre os caminhões que rodaram no mês --
+   critério definido por Renato. Caminhão parado no mês não recebe rateio, mas
+   continua carregando o que é dele por natureza (uma peça trocada nele é dele,
+   tenha rodado ou não) -- senão o valor sumiria e a soma dos caminhões não
+   fecharia com o Financeiro.
+   Ficam no BLOCO 1 porque o render() as alcança (regra da v215). */
+var _fixasCacheVer = null, _fixasCacheMes = null, _fixasCacheVal = null;
+function fixasPorCaminhaoDoMes(mes) {
+  if (_fixasCacheVer === window.__rfVerSalvo && _fixasCacheMes === mes && _fixasCacheVal) return _fixasCacheVal;
+  var dm = dividasDoMes(mes);
+  var diretas = {}, empresa = 0, itensEmpresa = [];
+  dm.itens.forEach(function (i) {
+    var pl = String(i.placa || "").trim();
+    if (pl) diretas[pl] = (diretas[pl] || 0) + (Number(i.valor) || 0);
+    else { empresa += (Number(i.valor) || 0); itensEmpresa.push(i); }
+  });
+  var rodou = {};
+  (state.viagens || []).forEach(function (v) {
+    if (v.placa && String(v.data || "").slice(0, 7) === mes) rodou[v.placa] = true;
+  });
+  var placasRodaram = Object.keys(rodou);
+  var cota = placasRodaram.length ? empresa / placasRodaram.length : 0;
+  var todas = {};
+  Object.keys(diretas).forEach(function (x) { todas[x] = true; });
+  placasRodaram.forEach(function (x) { todas[x] = true; });
+  var porPlaca = {};
+  Object.keys(todas).forEach(function (x) {
+    var dir = diretas[x] || 0, rat = rodou[x] ? cota : 0;
+    porPlaca[x] = { direta: dir, rateada: rat, total: dir + rat, rodou: !!rodou[x] };
+  });
+  _fixasCacheVer = window.__rfVerSalvo; _fixasCacheMes = mes;
+  _fixasCacheVal = { porPlaca: porPlaca, empresa: empresa, cota: cota, nRodaram: placasRodaram.length,
+                     totalFixas: dm.total, diretasTotal: dm.total - empresa, itensEmpresa: itensEmpresa };
+  return _fixasCacheVal;
+}
+function fixasDaPlaca(placa, mes) {
+  return fixasPorCaminhaoDoMes(mes).porPlaca[placa] || { direta: 0, rateada: 0, total: 0, rodou: false };
 }
 
 // ===== Alerta de vencimento de boletos (v48) =====
@@ -15171,6 +15217,7 @@ function crLinhasDo(placa, mes) {
 function crResumoPlaca(placa, mes) {
   var r = crLinhasDo(placa, mes);
   var doMes = r.linhas.filter(function (l) { return l.doMes; });
+  var fx = fixasDaPlaca(placa, mes);
   var soma = function (campo) { return doMes.reduce(function (t, l) { return t + l[campo]; }, 0); };
   return {
     base: r.base, linhas: doMes, todas: r.linhas, saldo: r.saldoFinal,
@@ -15178,6 +15225,7 @@ function crResumoPlaca(placa, mes) {
     litros: soma("litros"), consumido: soma("consumido"), outros: soma("outros"),
     mao: soma("mao"), custoReal: soma("custoReal"), frete: soma("frete"), lucro: soma("lucro"),
     maoReal: soma("maoReal"), indiretos: soma("indiretos"), custoTotal: soma("custoTotal"), sobra: soma("sobra"),
+    fixas: fx, liquido: soma("sobra") - fx.total,
   };
 }
 function crToggleCaixa(placa) { state._crAberta = (state._crAberta === placa) ? "" : placa; render(); }
@@ -17070,7 +17118,8 @@ ${`CUSTO REAL POR VIAGEM (aba "⛽ Custo Real", criada na v357):
 O combustível de uma viagem NÃO é o que foi abastecido nela, e sim o que ela CONSUMIU: KM da viagem × custo por km do caminhão. O custo por km é o preço médio do litro dele dividido pelo consumo em km/l. A diferença entre o abastecido e o consumido é o SALDO DO TANQUE, que fica de crédito para a próxima viagem e atravessa o mês.
 O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada cobre pelo menos 80% do KM lançado, em 5 ou mais viagens com abastecimento; sem isso o app usa o padrão do tipo (TOCO 3,5 km/l e 3/4 4,0 km/l) e avisa na tela que é referência. Por isso a foto do KM final importa: cada viagem fechada direito aproxima o caminhão de ter consumo medido.
 Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.
-A aba mostra DOIS resultados por viagem, e não podem ser confundidos. MARGEM DA VIAGEM = frete − diesel consumido − outros − mão de obra; é só o que a viagem gastou na estrada. SOBRA REAL = a margem menos ADM, manutenção, imposto, pneus e alimentação, nos mesmos percentuais da aba Viagens, com a mão de obra corrigida pelo regime (CLT pelo rateio da folha). Nunca chamar a margem da viagem de lucro. E nem a sobra real é o que sobrou no mês: ela é antes das dívidas fixas (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma e só entram no Financeiro. Se perguntarem quanto sobrou, dar os três níveis — margem, sobra real e resultado do Financeiro — em vez de um número só.`}
+A aba mostra DOIS resultados por viagem, e não podem ser confundidos. MARGEM DA VIAGEM = frete − diesel consumido − outros − mão de obra; é só o que a viagem gastou na estrada. SOBRA REAL = a margem menos ADM, manutenção, imposto, pneus e alimentação, nos mesmos percentuais da aba Viagens, com a mão de obra corrigida pelo regime (CLT pelo rateio da folha). Nunca chamar a margem da viagem de lucro. E nem a sobra real é o que sobrou no mês: ela é antes das dívidas fixas (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma e só entram no Financeiro. A partir da v363 existe o número que responde "quanto este caminhão deixou no mês": LÍQUIDO DO MÊS = sobra das viagens do caminhão menos a parte das dívidas fixas que cabe a ele. É esse o número a dar quando perguntarem o resultado de um caminhão; margem e sobra são etapas do caminho.
+Como as fixas são divididas: cada dívida fixa tem um campo "caminhão" na aba Dívidas Fixas. Marcada, vai direto para aquele veículo (molas, pneus, elétrica, rastreador, financiamento, seguro são desse tipo). Em branco, é despesa da empresa (galpão, luz, internet, IPTU) e é rateada em PARTES IGUAIS entre os caminhões que rodaram no mês — caminhão parado não recebe rateio, mas continua carregando o que é dele. Se a maior parte das fixas ainda estiver sem caminhão marcado, avisar: peça de um caminhão específico estará sendo dividida entre todos e o líquido de cada um sai errado.`}
 
 ${(function () {
   // v360: tanque ao vivo das viagens em andamento -- o mesmo número que o
@@ -19242,6 +19291,7 @@ function renderTabela() {
     const dados = placas.map((p) => ({ placa: p, r: crResumoPlaca(p, state.mesAtivo) }))
       .filter((x) => x.r.todas.length);
     const somaG = (c) => dados.reduce((t, x) => t + x.r[c], 0);
+    const fxMes = fixasPorCaminhaoDoMes(state.mesAtivo);
     const emTanque = dados.reduce((t, x) => t + x.r.saldo, 0);
     const medidos = dados.filter((x) => x.r.base.consumo.medido).length;
     const resumoAberto = state._crResumoAberto === true;
@@ -19265,11 +19315,14 @@ function renderTabela() {
             ${statCard("Frete faturado", fmtR(somaG("frete")), "#888")}
             ${statCard("Margem da viagem", fmtR(somaG("lucro")), somaG("lucro") >= 0 ? VERDE_CR : VERM_CR)}
             ${statCard("Custos indiretos", fmtR(somaG("indiretos")), "#C0392B")}
-            ${statCard("SOBRA REAL", fmtR(somaG("sobra")), somaG("sobra") >= 0 ? VERDE_CR : VERM_CR)}
+            ${statCard("Sobra das viagens", fmtR(somaG("sobra")), somaG("sobra") >= 0 ? VERDE_CR : VERM_CR)}
+            ${statCard("Dívidas fixas do mês", fmtR(fxMes.totalFixas), "#C0392B")}
+            ${statCard("LÍQUIDO DA FROTA", fmtR(somaG("liquido")), somaG("liquido") >= 0 ? VERDE_CR : VERM_CR)}
           </div>
           <div style="background:#0A0A0A;border:1px solid #C0392B;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:#ccc;line-height:1.6;">
-            <b style="color:#C0392B;">Margem da viagem não é lucro.</b> Ela desconta só diesel consumido, outros lançamentos e mão de obra. A <b style="color:#bbb;">SOBRA REAL</b> desconta também ADM, manutenção, imposto, pneus e alimentação — os mesmos parâmetros da aba Viagens. Neste mês a diferença entre as duas é de <b style="color:#C0392B;">${fmtR(somaG("indiretos"))}</b>.
-            E mesmo a sobra real é <b style="color:#bbb;">antes das dívidas fixas</b> (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma — o resultado que fecha o mês está no Financeiro.
+            <b style="color:#bbb;">O número que responde "quanto este caminhão deixou" é o LÍQUIDO DO MÊS.</b> Ele é a sobra das viagens menos a parte das dívidas fixas que cabe ao caminhão. Margem da viagem e sobra das viagens são etapas do caminho, não resultado.
+            <br>Das ${fmtR(fxMes.totalFixas)} de dívidas fixas deste mês, <b style="color:#bbb;">${fmtR(fxMes.diretasTotal)}</b> estão marcadas com o caminhão dono e vão direto para ele; <b style="color:#bbb;">${fmtR(fxMes.empresa)}</b> ficaram sem caminhão, são tratadas como despesa da empresa e rateadas em partes iguais entre os ${fxMes.nRodaram} caminhão(ões) que rodaram — ${fmtR(fxMes.cota)} para cada.
+            ${fxMes.empresa > fxMes.diretasTotal ? `<br><span style="color:#C0392B;">⚠ A maior parte das fixas ainda está sem caminhão marcado. Enquanto isso, molas, pneus e peças de um caminhão específico estão sendo divididos entre todos — marque o caminhão de cada uma na aba <b>Dívidas Fixas</b> para o líquido ficar certo.</span>` : ""}
           </div>
           <div style="font-size:11px;color:#888;line-height:1.6;">
             <b style="color:#bbb;">${medidos} de ${dados.length}</b> caminhão(ões) já têm consumo MEDIDO pelo próprio hodômetro; os demais usam o padrão do tipo (TOCO 3,5 km/l · 3/4 4,0 km/l) até acumularem KM de saída e chegada em pelo menos 5 viagens.
@@ -19287,6 +19340,11 @@ function renderTabela() {
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:${cor};font-weight:800;font-size:16px;line-height:1;">+</span>
             <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(placa)}</span>
+          </div>
+          <div style="margin-top:8px;padding:8px 10px;background:#000;border:1px solid ${r.liquido >= 0 ? VERDE_CR : VERM_CR};border-radius:8px;">
+            <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Líquido do mês</div>
+            <div style="font-size:20px;font-weight:800;color:${r.liquido >= 0 ? VERDE_CR : VERM_CR};line-height:1.1;">${fmtR(r.liquido)}</div>
+            <div style="font-size:9px;color:#777;margin-top:2px;">sobra ${fmtR(r.sobra)} − fixas ${fmtR(r.fixas.total)}</div>
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
             <span style="font-size:11px;color:#777;">${esc(r.base.consumo.tipo)} · ${fmtR(r.base.rsKm)}/km</span>
@@ -19334,6 +19392,15 @@ function renderTabela() {
               <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;">${rot}</div>
               <div style="font-size:17px;font-weight:800;color:${cr};margin-top:5px;">${val}</div>
             </div>`).join("")}
+        </div>
+
+        <div style="background:#000;border:2px solid ${r.liquido >= 0 ? VERDE_CR : VERM_CR};border-radius:12px;padding:14px 16px;margin:14px 0;">
+          <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Líquido do mês — ${esc(placa)}</div>
+          <div style="font-size:30px;font-weight:800;color:${r.liquido >= 0 ? VERDE_CR : VERM_CR};line-height:1;">${fmtR(r.liquido)}</div>
+          <div style="font-size:12px;color:#bbb;margin-top:10px;line-height:1.8;">
+            Frete ${fmtR(r.frete)} − custos da viagem ${fmtR(r.custoTotal)} = sobra <b style="color:#bbb;">${fmtR(r.sobra)}</b><br>
+            Dívidas fixas do caminhão: ${fmtR(r.fixas.direta)} próprias${r.fixas.rodou ? " + " + fmtR(r.fixas.rateada) + " de rateio da empresa" : " (não rodou no mês — sem rateio)"} = <b style="color:#C0392B;">${fmtR(r.fixas.total)}</b>
+          </div>
         </div>
 
         <div style="overflow-x:auto;">
@@ -19532,9 +19599,9 @@ function renderTabela() {
           <span style="font-size:12px; color:#bbb;">dias de antecedência</span>
         </div>
       </div>
-      <table style="min-width:1000px;"><thead><tr><th>Descrição</th><th>Valor/mês</th><th>Venc. (dia)</th><th>Total parcelas</th><th>1ª parcela</th><th>Status (${mesLabel(state.mesAtivo)})</th><th>Boleto (${mesLabel(hojeMesKey)})</th><th>Observação</th><th></th></tr></thead><tbody>
+      <table style="min-width:1130px;"><thead><tr><th>Descrição</th><th title="De qual caminhão é esta conta. Em branco = despesa da empresa, rateada entre os caminhões que rodaram.">Caminhão</th><th>Valor/mês</th><th>Venc. (dia)</th><th>Total parcelas</th><th>1ª parcela</th><th>Status (${mesLabel(state.mesAtivo)})</th><th>Boleto (${mesLabel(hojeMesKey)})</th><th>Observação</th><th></th></tr></thead><tbody>
       ${linhaDivida(ativasMes, hojeMesKey)}
-      ${encerradas.length ? `<tr><td colspan="9" style="padding:10px 4px;">
+      ${encerradas.length ? `<tr><td colspan="10" style="padding:10px 4px;">
           <span onclick="state._divVerEncerradas=!state._divVerEncerradas; render();" style="cursor:pointer;font-size:12px;font-weight:800;color:#C0392B;">
             ${state._divVerEncerradas ? "−" : "+"} ${encerradas.length} dívida(s) já encerrada(s) antes de ${mesLabel(state.mesAtivo)}
           </span>
@@ -19582,6 +19649,10 @@ function renderTabela() {
         else pagoCell = `<button onclick="marcarBoletoPago('${d.id}','${hojeMesKey}',true)" style="background:#000;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;">marcar pago</button>`;
         return `<tr>
         <td><input value="${esc(descricaoMes)}" placeholder="Ex: JVM, Galpão..." title="Vale a partir de ${mesLabel(state.mesAtivo)}. Meses anteriores ficam como estavam." onchange="atualizarDivida('${d.id}','descricao',this.value)"></td>
+        <td><select title="De qual caminhão é esta conta. Em branco = despesa da empresa (galpão, luz, internet), rateada em partes iguais entre os caminhões que rodaram no mês." onchange="atualizarDivida('${d.id}','placa',this.value)" style="width:110px;font-size:11px;">
+          <option value="">— empresa —</option>
+          ${(state.veiculos || []).filter((vc) => vc.placa).map((vc) => `<option value="${esc(vc.placa)}" ${campoDividaNoMes(d, "placa", state.mesAtivo) === vc.placa ? "selected" : ""}>${esc(vc.placa)}</option>`).join("")}
+        </select></td>
         <td><input type="number" value="${valorDividaNoMes(d, state.mesAtivo)}" title="Valor vigente em ${mesLabel(state.mesAtivo)}. Alterar aqui só muda a partir deste mês — meses anteriores ficam como estavam." onchange="atualizarValorDivida('${d.id}',this.value)">${Array.isArray(d.historicoValor) && d.historicoValor.length ? `<div style="font-size:9px;color:${GOLD};margin-top:2px;" title="${d.historicoValor.map(h=>(h.desde==='0000-00'?'antes':mesLabel(h.desde))+': '+fmtR(h.valor)).join(' · ')}">✎ ${d.historicoValor.length} vigência(s)</div>` : ""}</td>
         <td><input type="number" min="1" max="31" value="${esc(diaVencMes || "")}" placeholder="—" title="Dia do mês em que o boleto vence (1 a 31). Vale a partir de ${mesLabel(state.mesAtivo)}." onchange="atualizarDivida('${d.id}','diaVencimento',this.value)" style="width:70px;"></td>
         <td><input type="number" min="1" value="${esc(parcelasMes || "")}" placeholder="—" title="Quantas parcelas no total. Vazio = dívida fixa sem fim. Vale a partir de ${mesLabel(state.mesAtivo)}." onchange="atualizarDivida('${d.id}','parcelasTotal',this.value)" style="width:80px;"></td>
