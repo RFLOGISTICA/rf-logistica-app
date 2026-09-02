@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v365)</title>
+<title>RF Logística — Painel da Frota (v366)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -10003,11 +10003,20 @@ function bgNorm(t) {
   return String(t == null ? "" : t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 function bgDig(t) { return String(t == null ? "" : t).replace(/\D/g, ""); }
+/* v366: zero à esquerda não pode mudar o resultado. A NF sai "000195754" no
+   espelho e na chave de acesso, mas "195754" no canhoto e na entrega -- quem
+   digitava do jeito do documento perdia registro. Agora os dois lados são
+   comparados também sem os zeros da frente. */
+function bgSemZeros(d) { return String(d || "").replace(/^0+/, ""); }
 function bgBate(campo, termoNorm, termoDig) {
   if (campo == null || campo === "") return false;
   if (termoDig.length >= 3) {
     var d = bgDig(campo);
-    if (d && d.indexOf(termoDig) > -1) return true;
+    if (d) {
+      if (d.indexOf(termoDig) > -1) return true;
+      var td = bgSemZeros(termoDig);
+      if (td.length >= 3 && (d.indexOf(td) > -1 || bgSemZeros(d).indexOf(td) > -1)) return true;
+    }
   }
   if (termoNorm.length >= 3) {
     if (bgNorm(campo).indexOf(termoNorm) > -1) return true;
@@ -10083,7 +10092,10 @@ function buscaGlobal(termo) {
                    "Carga de " + (c.data || "sem data") + (c.placa ? " · placa " + c.placa : " · placa não definida") + " · status " + (c.status || "—")],
         chave: e.chave, aba: "suzano",
         arquivos: (c.arquivos || []).filter(function (a) {
-            return e.chave && String(a.nome || "").indexOf(e.chave) > -1;
+            var nomeDig = bgDig(a.nome);
+            if (e.chave && String(a.nome || "").indexOf(e.chave) > -1) return true;
+            var nn = bgSemZeros(bgDig(e.nfe));
+            return nn.length >= 5 && nomeDig.indexOf(nn) > -1;
           }).map(function (a) {
             return { path: a.path, nome: "NFe-" + (e.nfe || "sn") + ".pdf", rotulo: "PDF da nota" };
           }) });
