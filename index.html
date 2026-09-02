@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v368)</title>
+<title>RF Logística — Painel da Frota (v369)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -16139,10 +16139,19 @@ function motoristaNavegarMes(dir) {
 // v96: painel simplificado do motorista — resumo do mes (viagens, pagas, a
 // pagar, km) baseado na placa vinculada ao perfil dele + o modulo de
 // abastecimento (que ja existia). Nao usa nada do painel completo da frota.
+// v369: casa pelo MOTORISTA (uid do login ou nome gravado na viagem), não pela
+// placa. Com dois motoristas revezando o mesmo caminhão, o filtro por placa
+// mostrava a viagem de um no resumo do outro.
 function viagensDoMotoristaNoMes() {
-  const placa = (state.sessao && state.sessao.placa_motorista) || "";
-  if (!placa) return [];
-  return state.viagens.filter((v) => v.placa === placa && (v.data || "").slice(0, 7) === state.mesAtivo);
+  const uid = (state.sessao && state.sessao.uid) || "";
+  const meuNome = normTxt((state.sessao && state.sessao.nome) || "");
+  if (!uid && !meuNome) return [];
+  return state.viagens.filter(function (v) {
+    if ((v.data || "").slice(0, 7) !== state.mesAtivo) return false;
+    if (uid && String(v.motoristaDesignadoUid || "") === uid) return true;
+    if (meuNome && normTxt(v.motoristaNaEpoca || "") === meuNome) return true;
+    return false;
+  });
 }
 // v120: painel do cliente (ex: JT/Mateus) — só as próprias viagens, já
 // calculadas no banco (server-side), nunca a caixa geral da empresa.
@@ -16211,18 +16220,28 @@ function painelClienteHTML() {
 // não havia onde mostrar e liberar não surtia efeito nenhum.
 // v282: o mesmo recorte é usado em dois lugares (a lista da rota e o aviso
 // dentro do card da viagem), então virou função.
+// v369 — REGRA FIXA (02/09): a rota é do MOTORISTA, nunca da placa.
+// Trocou de caminhão, leva as viagens dele no login dele. O caminhão registra
+// quantas viagens fez, mas a parada de um motorista NUNCA pode aparecer no
+// login de outro. Até a v368 havia um fallback por placa: quem assumia um
+// caminhão herdava a rota aberta de quem estava nele antes (foi o caso do
+// Luciano vendo a parada do Diego no PLE6A32 em 02/09). Esse fallback caiu.
+// Entrega sem dono identificado não aparece para ninguém -- ela entra no
+// diagnóstico da equipe (rfDiagnosticoSistema) para ser atribuída na mão.
+function rfEntregaSemDono(e) {
+  return !(e && (e.motoristaUid || String(e.motoristaNome || "").trim()));
+}
 function rfMinhasEntregasLiberadas() {
-  var placa = (state.sessao && state.sessao.placa_motorista) || "";
   var uid = (state.sessao && state.sessao.uid) || "";
   var meuNome = normTxt((state.sessao && state.sessao.nome) || "");
   // v281: casar por NOME também. O motorista pode ir num caminhão diferente do
   // que está no cadastro dele — foi o que aconteceu com o Werlone, cadastrado
-  // no OTQ9B07 e escalado no QEN6J82. Só por placa a rota nunca aparecia.
+  // no OTQ9B07 e escalado no QEN6J82.
   return (state.entregas || []).filter(function (e) {
     if (!e.liberada) return false;
     if (uid && e.motoristaUid === uid) return true;
     if (meuNome && normTxt(e.motoristaNome || "") === meuNome) return true;
-    return e.placa === placa;
+    return false;
   });
 }
 // v282: canhotos que faltam na viagem que o motorista tem aberta. Casa por
@@ -16840,6 +16859,23 @@ function rfArrastarParaRolar() {
 try { rfArrastarParaRolar(); } catch (e) { console.error("[arrastar]", e); }
 
 function gerarContextoAssistente() {
+  // v369: REGRA FIXA de a quem pertence a rota. Alimentado aqui conforme a
+  // regra permanente de nunca entregar versao sem ligar o dado novo no
+  // assistente.
+  const blocoDonoDaRota = (function () {
+    var t = "REGRA DE QUEM VE A ROTA (v369): a viagem e a rota pertencem ao MOTORISTA, nunca a placa. "
+      + "O aplicativo do motorista mostra uma parada quando o UID do login dele bate com o dono da entrega, "
+      + "ou quando o nome do login e igual ao nome gravado na entrega. Nao existe mais o casamento por placa: "
+      + "quem assume um caminhao NAO herda a rota aberta de quem estava nele antes. "
+      + "Entrega liberada sem dono definido nao aparece para ninguem e entra no diagnostico da equipe. "
+      + "O romaneio e a conferencia de carga (aba Carregamento) ainda casam por PLACA -- se a mesma placa estiver "
+      + "em dois logins, esses dois motoristas veem a mesma carga; isso tambem entra no diagnostico.";
+    try {
+      var semDono = (state.entregas || []).filter(function (e) { return e.liberada && rfEntregaSemDono(e) && e.status !== "concluida"; });
+      if (semDono.length) t += " AGORA: " + semDono.length + " parada(s) liberada(s) estao sem motorista e invisiveis para todos.";
+    } catch (e) {}
+    return t;
+  })();
   // v247: estado da sincronizacao da caixa geral. Se estiver desligada, tudo o
   // que a pessoa edita fica SO no aparelho e os numeros na tela podem estar
   // velhos -- o assistente precisa saber disso antes de responder qualquer
@@ -17407,6 +17443,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 
   return `${blocoSync}
 ${blocoTela}
+${blocoDonoDaRota}
 ${blocoCaixasViagens}
 
 ${blocoExportViagens}
@@ -17732,6 +17769,33 @@ function rfDiagnosticoSistema() {
         + (maisAntiga ? ", a mais antiga há " + maisAntiga + " dia(s)" : "")
         + ": " + revisar.map(function (v) { return v.placa + " (" + (v.data || "sem data") + ")"; }).join(", ")
         + ". Aba Viagens, botões ✓ Aprovar / ✕ Devolver ao lado do selo.");
+    }
+  } catch (e) {}
+  // v369: entrega liberada e sem dono. Desde a v369 a rota casa só pelo
+  // motorista, então uma parada sem uid e sem nome não aparece pra ninguém --
+  // antes ela caía no colo de quem estivesse na placa, que é justamente o que
+  // não pode acontecer.
+  try {
+    const semDono = (state.entregas || []).filter(function (e) { return e.liberada && rfEntregaSemDono(e) && e.status !== "concluida"; });
+    if (semDono.length) {
+      const porPlaca = {};
+      semDono.forEach(function (e) { const k = e.placa || "sem placa"; porPlaca[k] = (porPlaca[k] || 0) + 1; });
+      add("alto", semDono.length + " parada(s) liberada(s) SEM MOTORISTA definido ("
+        + Object.keys(porPlaca).map(function (k) { return k + ": " + porPlaca[k]; }).join(", ")
+        + "). Elas não aparecem no aplicativo de ninguém, porque a rota agora é do motorista e não da placa. Abra a rota e defina o motorista de cada parada.");
+    }
+  } catch (e) {}
+  // v369: mesma placa em mais de um login de motorista. Não quebra mais a rota
+  // (que casa pelo motorista), mas ainda embaralha romaneio e conferência.
+  try {
+    const porPlaca = {};
+    (state._perfis || []).filter(function (p) { return p.papel === "motorista" && p.ativo !== false && (p.placa_motorista || "").trim(); })
+      .forEach(function (p) { const k = p.placa_motorista; (porPlaca[k] = porPlaca[k] || []).push(p.nome || p.id); });
+    const repetidas = Object.keys(porPlaca).filter(function (k) { return porPlaca[k].length > 1; });
+    if (repetidas.length) {
+      add("medio", repetidas.length + " placa(s) cadastrada(s) em mais de um login de motorista: "
+        + repetidas.map(function (k) { return k + " (" + porPlaca[k].join(", ") + ")"; }).join("; ")
+        + ". O romaneio e a conferência de carga ainda casam por placa, então esses motoristas vão ver a carga um do outro. Aba Usuários, campo 'Placa que ele roda'.");
     }
   } catch (e) {}
   // v216: motorista cujo nome não bate com nenhum login -- ele não vê as viagens dele
