@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v366)</title>
+<title>RF Logística — Painel da Frota (v367)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1154,6 +1154,38 @@ function mesV(v) {
   if (!state.frotaMes[mes][v.id]) state.frotaMes[mes][v.id] = blankMesRec();
   return state.frotaMes[mes][v.id];
 }
+/* ============ v367 — VIAGENS E KM DO MÊS SAEM SOZINHOS ============
+   Até a v366 as colunas "Viagens/mês" e "KM/mês" da aba Operação eram dois
+   campos DIGITADOS À MÃO no cadastro do veículo. Ninguém digitava, então os
+   23 caminhões ficavam em zero e a tela não acompanhava nada -- inclusive o
+   painel e o Excel, que somavam os mesmos zeros.
+   O dado sempre existiu: está nas viagens lançadas. Agora ele é somado
+   direto de lá, e a tela se atualiza a cada viagem, sem ninguém digitar.
+   São medidos DOIS KM diferentes, de propósito:
+     kmTotal  = soma do KM da viagem (medido por foto quando as duas pontas
+                fecham; senão o estimado que a equipe lançou)
+     kmMedido = só o que tem KM de saída E de chegada por foto
+   A diferença entre os dois mostra quanto da operação ainda está no olho --
+   é o mesmo problema que estragou a medição de km/L na v361. */
+var _opAutoVer = null, _opAutoMes = null, _opAutoVal = null;
+function operacaoAutoDoMes(mes) {
+  if (_opAutoVer === window.__rfVerSalvo && _opAutoMes === mes && _opAutoVal) return _opAutoVal;
+  var out = {};
+  (state.viagens || []).forEach(function (v) {
+    if (!v.placa || String(v.data || "").slice(0, 7) !== mes) return;
+    var r = out[v.placa];
+    if (!r) { r = out[v.placa] = { viagens: 0, kmTotal: 0, kmMedido: 0, medidas: 0 }; }
+    r.viagens += 1;
+    r.kmTotal += Number(v.km) || 0;
+    var ks = Number(v.kmSaida) || 0, kc = Number(v.kmChegada) || 0;
+    if (ks > 0 && kc > ks) { r.kmMedido += (kc - ks); r.medidas += 1; }
+  });
+  _opAutoVer = window.__rfVerSalvo; _opAutoMes = mes; _opAutoVal = out;
+  return out;
+}
+function operacaoAutoDaPlaca(placa, mes) {
+  return operacaoAutoDoMes(mes)[placa] || { viagens: 0, kmTotal: 0, kmMedido: 0, medidas: 0 };
+}
 // Veículos com os campos do mês ativo já mesclados (para render/cálculos/exports)
 function veiculosComMes() {
   return state.veiculos.map((v) => {
@@ -1162,6 +1194,13 @@ function veiculosComMes() {
     CAMPOS_MES.forEach((c) => { o[c] = rec[c]; }); // só os campos do mês são sobrepostos
     if (rec.receitaMes != null) o.receitaMes = rec.receitaMes; // v47: override manual por mês
     if (rec.custoMes   != null) o.custoMes   = rec.custoMes;
+    /* v367: viagens e KM do mês vêm das viagens lançadas, não do que foi
+       digitado. Sobrepõe DEPOIS dos campos do mês de propósito. */
+    const auto = operacaoAutoDaPlaca(v.placa, state.mesAtivo);
+    o.viagensMes = auto.viagens;
+    o.kmMes = auto.kmTotal;
+    o.kmMedidoMes = auto.kmMedido;
+    o.viagensMedidasMes = auto.medidas;
     return o;
   });
 }
@@ -2717,7 +2756,7 @@ function exportarManutencaoExcel() {
 }
 function exportarOperacaoExcel() {
   const cab = ["Placa","Motorista","Status","Viagens Mes","KM Mes"];
-  const linhas = veiculosComMes().map((v) => [v.placa, v.motorista, v.statusOp, v.viagensMes || 0, v.kmMes || 0]);
+  const linhas = veiculosComMes().map((v) => [v.placa, v.motorista, v.statusOp, v.viagensMes || 0, v.kmMes || 0, v.kmMedidoMes || 0]);
   exportarCSV("rf-frota-operacao-" + new Date().toISOString().slice(0,10) + ".csv", cab, linhas);
 }
 function exportarFinanceiroExcel() {
@@ -17285,6 +17324,7 @@ Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} 
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
 Margem da frota (manual): ${fmtR(t.margem)} (${t.margemPct.toFixed(1)}%)
 Viagens do mês: ${t.viagensMes} — receita ${fmtR(t.viagensReceita)}, despesa ${fmtR(t.viagensDespesa)}, resultado ${fmtR(t.viagensSobra)}
+ABA OPERAÇÃO (v367): as colunas Viagens/mês e KM/mês eram digitadas à mão e ficaram zeradas nos 23 caminhões desde sempre. Agora são somadas automaticamente das viagens lançadas no mês ativo e se atualizam sozinhas. A aba também mostra KM MEDIDO (só viagens com foto de saída E de chegada) e a cobertura em %. Se alguém perguntar por que a aba Operação vivia zerada, é essa a resposta. Cobertura baixa significa que consumo e custo por KM estão saindo de KM estimado, não medido.
 Viagens acumulado (todos os meses): receita ${fmtR(t.viagensReceitaAcum)}, resultado ${fmtR(t.viagensSobraAcum)} (margem ${t.margemViagensAcumPct.toFixed(1)}%)
 Manutenção real do mês: ${fmtR(t.manutencaoReal)}
 Investimento/benfeitoria do mês: ${fmtR(t.investimento)}
@@ -18516,17 +18556,40 @@ function renderTabela() {
   }
 
   if (state.aba === "operacao") {
+    const kmMedidoTot = vs.reduce((s, v) => s + (Number(v.kmMedidoMes) || 0), 0);
+    const viagensMedTot = vs.reduce((s, v) => s + (Number(v.viagensMedidasMes) || 0), 0);
+    const cob = totais.viagensMes ? Math.round(viagensMedTot * 100 / totais.viagensMes) : 0;
+    const rodaram = vs.filter((v) => (Number(v.viagensMes) || 0) > 0);
     wrap.innerHTML = `
-      <div style="display:flex; gap:24px; margin-bottom:14px; font-size:13px; color:#bbb;">
-        <span>Total de viagens no mês: <b style="color:${GOLD};">${totais.viagensMes}</b></span>
-        <span>Total de KM no mês: <b style="color:${GOLD};">${totais.kmMes.toLocaleString("pt-BR")}</b></span>
+      <div style="display:flex; gap:24px; margin-bottom:6px; font-size:13px; color:#bbb; flex-wrap:wrap;">
+        <span>Viagens no mês: <b style="color:${GOLD};">${totais.viagensMes}</b></span>
+        <span>KM no mês: <b style="color:${GOLD};">${totais.kmMes.toLocaleString("pt-BR")}</b></span>
+        <span>KM medido por foto: <b style="color:${cob >= 80 ? "#2E7D32" : "#C0392B"};">${kmMedidoTot.toLocaleString("pt-BR")}</b> (${cob}% das viagens)</span>
+        <span>Caminhões que rodaram: <b style="color:${GOLD};">${rodaram.length}</b> de ${vs.length}</span>
       </div>
-      <table style="min-width:800px;"><thead><tr><th>Placa</th><th>Motorista</th><th>Status</th><th>Viagens/mês</th><th>KM/mês</th></tr></thead><tbody>
-      ${vs.map((v) => `<tr>
+      <div style="font-size:11px;color:#777;margin-bottom:12px;line-height:1.6;">
+        Viagens e KM são somados das viagens lançadas em ${mesLabel(state.mesAtivo)} e se atualizam sozinhos — não há nada para digitar aqui.
+        <b style="color:#bbb;">KM medido</b> é só o que tem foto de saída E de chegada; o resto é o KM estimado pela equipe.
+        ${cob < 80 ? `<br><span style="color:#C0392B;">⚠ Só ${cob}% das viagens têm as duas fotos. Enquanto isso, consumo e custo por KM saem de estimativa, não de medição.</span>` : ""}
+      </div>
+      <table style="min-width:920px;"><thead><tr>
+        <th>Placa</th><th>Motorista</th><th>Status</th>
+        <th style="text-align:right;">Viagens/mês</th>
+        <th style="text-align:right;" title="KM da viagem: medido quando as duas fotos fecham, senão o estimado">KM/mês</th>
+        <th style="text-align:right;" title="Só o KM com foto de saída e de chegada">KM medido</th>
+        <th style="text-align:right;" title="Quantas viagens do mês têm as duas fotos">Cobertura</th>
+      </tr></thead><tbody>
+      ${vs.map((v) => {
+        const nv = Number(v.viagensMes) || 0, nm = Number(v.viagensMedidasMes) || 0;
+        const pct = nv ? Math.round(nm * 100 / nv) : 0;
+        const parado = nv === 0;
+        return `<tr style="${parado ? "opacity:.45;" : ""}">
         <td>${esc(v.placa) || "—"}</td><td>${esc(v.motorista) || "—"}</td><td>${v.statusOp}</td>
-        <td><input type="number" value="${v.viagensMes}" onchange="atualizarVeiculo('${v.id}','viagensMes',this.value)"></td>
-        <td><input type="number" value="${v.kmMes}" onchange="atualizarVeiculo('${v.id}','kmMes',this.value)"></td>
-      </tr>`).join("")}
+        <td style="text-align:right;font-weight:700;">${nv || "—"}</td>
+        <td style="text-align:right;">${(Number(v.kmMes) || 0).toLocaleString("pt-BR")}</td>
+        <td style="text-align:right;color:#888;">${(Number(v.kmMedidoMes) || 0).toLocaleString("pt-BR")}</td>
+        <td style="text-align:right;color:${parado ? "#666" : pct >= 80 ? "#2E7D32" : "#C0392B"};">${parado ? "—" : pct + "%"}</td>
+      </tr>`; }).join("")}
       </tbody></table>`;
   }
 
