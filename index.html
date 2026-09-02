@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v364)</title>
+<title>RF Logística — Painel da Frota (v365)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -10055,8 +10055,11 @@ function buscaGlobal(termo) {
     } else {
       det.push("⚠ Este CT-e NÃO está em nenhum MDF-e importado.");
     }
+    var arqCte = [];
+    if (f.xmlPath) arqCte.push({ path: f.xmlPath, nome: "CTe-" + (f.numero || "sn") + ".xml", rotulo: "XML do CT-e" });
+    if (mdfe && mdfe.xmlPath) arqCte.push({ path: mdfe.xmlPath, nome: "MDFe-" + (mdfe.numero || "sn") + ".xml", rotulo: "XML do MDF-e" });
     hits.push({ tipo: "CT-e", cor: GOLD, titulo: "CT-e nº " + (f.numero || "—") + (porNf ? "  (achado pela NF-e)" : ""),
-                detalhes: det, chave: f.chave, aba: "fiscal" });
+                detalhes: det, chave: f.chave, aba: "fiscal", arquivos: arqCte });
   });
 
   // 2) MDF-e
@@ -10066,7 +10069,8 @@ function buscaGlobal(termo) {
       detalhes: ["Placa " + (f.placa || "—") + " · motorista " + (f.motorista || "—"),
                  (Array.isArray(f.ctes) ? f.ctes.length : 0) + " CT-e · " + (Number(f.peso) || 0).toLocaleString("pt-BR") + " kg · " + (f.data ? String(f.data).split("-").reverse().join("/") : "—"),
                  f.ciot ? "CIOT " + f.ciot : "sem CIOT registrado"],
-      chave: f.chave, aba: "fiscal" });
+      chave: f.chave, aba: "fiscal",
+      arquivos: f.xmlPath ? [{ path: f.xmlPath, nome: "MDFe-" + (f.numero || "sn") + ".xml", rotulo: "XML do MDF-e" }] : [] });
   });
 
   // 3) DANFE / espelho importado na carga da Suzano
@@ -10077,7 +10081,12 @@ function buscaGlobal(termo) {
         detalhes: ["Destinatário: " + (e.cliente || "—") + (e.cidade ? " — " + e.cidade : ""),
                    "Mercadoria " + fmtR(Number(e.valorMercadoria) || 0) + (e.qtdVolumes ? " · " + e.qtdVolumes + " volume(s)" : "") + (e.peso ? " · " + e.peso + " kg" : ""),
                    "Carga de " + (c.data || "sem data") + (c.placa ? " · placa " + c.placa : " · placa não definida") + " · status " + (c.status || "—")],
-        chave: e.chave, aba: "suzano" });
+        chave: e.chave, aba: "suzano",
+        arquivos: (c.arquivos || []).filter(function (a) {
+            return e.chave && String(a.nome || "").indexOf(e.chave) > -1;
+          }).map(function (a) {
+            return { path: a.path, nome: "NFe-" + (e.nfe || "sn") + ".pdf", rotulo: "PDF da nota" };
+          }) });
     });
   });
 
@@ -10092,7 +10101,11 @@ function buscaGlobal(termo) {
       detalhes: ["Notas: " + (notas.map(function (n) { return n.nf; }).filter(Boolean).join(", ") || "—"),
                  comFoto + " de " + notas.length + " canhoto(s) anexado(s)" + (comFoto < notas.length ? "  ⚠ falta canhoto" : "  ✓"),
                  "Placa " + (en.placa || "—") + (vg ? " · viagem " + (vg.cliente || "") + " de " + String(vg.data || "").split("-").reverse().join("/") : "")],
-      aba: "entregas" });
+      aba: "entregas",
+      arquivos: notas.filter(function (n) { return !!n.foto; }).map(function (n) {
+        return { path: n.foto, nome: "canhoto-" + (n.nf || "sn") + "-" + bgNorm(en.recebedor).replace(/[^a-z0-9]+/g, "-").slice(0, 28) + ".jpg",
+                 rotulo: "Canhoto NF " + (n.nf || "—") };
+      }) });
   });
 
   // 5) Viagens
@@ -10103,7 +10116,10 @@ function buscaGlobal(termo) {
       titulo: (v.placa || "—") + " · " + (v.cliente || "sem cliente") + " · " + String(v.data || "").split("-").reverse().join("/"),
       detalhes: [(v.rota ? "Rota " + v.rota + " · " : "") + (Number(v.km) || 0) + " km · frete " + fmtR(Number(v.valorViagem) || 0),
                  "Motorista: " + (v.motoristaNaEpoca || v.motoristaDesignadoNome || "—") + " · situação: " + (v.statusMotorista || "não enviada ao motorista")],
-      aba: "viagem" });
+      aba: "viagem",
+      arquivos: [{ path: v.fotoKmSaida, nome: (v.placa || "sn") + "-" + (v.data || "") + "-km-saida.jpg", rotulo: "Foto KM saída" },
+                 { path: v.fotoKmChegada, nome: (v.placa || "sn") + "-" + (v.data || "") + "-km-chegada.jpg", rotulo: "Foto KM chegada" }]
+                .filter(function (a) { return !!a.path; }) });
   });
 
   // 6) Frota
@@ -10131,6 +10147,24 @@ function buscaDoCampo(el, ev) {
 }
 function buscaLimpar() { state._buscaTermo = ""; state._buscaAberta = false; render(); }
 function buscaIrPara(aba) { state._buscaAberta = false; abrirAreaDoInicio(aba); }
+/* v365: baixar o documento direto do resultado da busca. Quem atende o cliente
+   precisa do canhoto ou do XML na hora -- mandar a pessoa procurar em outra aba
+   derruba o motivo da busca existir. Os caminhos ficam num cache montado junto
+   com a tela, porque o onclick nao carrega objeto. */
+function buscaBaixar(i, j) {
+  var lista = (state._buscaArqCache || [])[i] || [];
+  var a = lista[j];
+  if (!a || !a.path) { alert("Arquivo não encontrado."); return; }
+  if (typeof rfBaixarArquivo === "function") rfBaixarArquivo(a.path, a.nome);
+  else alert("Download indisponível nesta tela.");
+}
+function buscaBaixarTodos(i) {
+  var lista = (state._buscaArqCache || [])[i] || [];
+  if (!lista.length) { alert("Nada para baixar aqui."); return; }
+  lista.forEach(function (a, k) {
+    setTimeout(function () { if (a.path && typeof rfBaixarArquivo === "function") rfBaixarArquivo(a.path, a.nome); }, k * 900);
+  });
+}
 function buscaCopiar(txt) {
   if (navigator.clipboard) navigator.clipboard.writeText(String(txt || ""));
 }
@@ -10144,7 +10178,8 @@ function buscaOverlayHTML() {
   } else if (!res.length) {
     corpo = '<div style="color:#C0392B;font-size:13px;padding:20px 0;">Nada encontrado para <b>' + esc(termo) + '</b>.<br><span style="color:#777;font-size:12px;">Se for uma nota que a Suzano acabou de mandar, ela só aparece depois que o XML do CT-e ou o PDF da DANFE for importado no sistema.</span></div>';
   } else {
-    corpo = res.map(function (h) {
+    state._buscaArqCache = res.map(function (h) { return h.arquivos || []; });
+    corpo = res.map(function (h, idx) {
       return '<div style="background:#0C0C0C;border:1px solid #262626;border-left:3px solid ' + h.cor + ';border-radius:10px;padding:11px 13px;margin-bottom:9px;">'
         + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">'
           + '<span style="font-size:9.5px;font-weight:800;color:' + h.cor + ';border:1px solid ' + h.cor + ';border-radius:5px;padding:1px 7px;letter-spacing:.5px;">' + h.tipo.toUpperCase() + '</span>'
@@ -10155,6 +10190,14 @@ function buscaOverlayHTML() {
           + '</span>'
         + '</div>'
         + h.detalhes.map(function (d) { return '<div style="font-size:11.5px;color:#bbb;line-height:1.6;">' + esc(d) + '</div>'; }).join("")
+        + ((h.arquivos && h.arquivos.length)
+            ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f;">'
+              + h.arquivos.map(function (a, j) {
+                  return '<button class="btn-outline" style="font-size:10.5px;padding:3px 9px;" onclick="buscaBaixar(' + idx + ',' + j + ')" title="Baixar ' + esc(a.nome) + '">\u2B07 ' + esc(a.rotulo) + '</button>';
+                }).join("")
+              + (h.arquivos.length > 1 ? '<button class="btn-gold" style="font-size:10.5px;padding:3px 9px;" onclick="buscaBaixarTodos(' + idx + ')">\u2B07 baixar os ' + h.arquivos.length + '</button>' : "")
+            + '</div>'
+            : '<div style="font-size:10.5px;color:#666;margin-top:7px;">sem arquivo anexado neste registro</div>')
         + '</div>';
     }).join("");
   }
@@ -17318,7 +17361,8 @@ Como as fixas são divididas: cada dívida fixa tem um campo "caminhão" na aba 
 ${`BUSCA GLOBAL (v364):
 Existe um campo de busca na barra do topo, em qualquer aba, e ele é a resposta certa quando alguém pergunta "onde está a nota X". Procura por número de NF-e, chave de acesso, número de CT-e ou MDF-e, placa, cliente, cidade, recebedor, pedido, chassi e RENAVAM.
 Achando uma NF-e, o resultado já mostra o CT-e que a transporta, o MDF-e onde esse CT-e está, a placa, o motorista, a viagem e se o canhoto foi anexado — e avisa quando o CT-e não está em MDF-e nenhum.
-Se alguém pedir para você localizar um documento, responda com o que sabe E diga onde ele mesmo pode achar da próxima vez: campo de busca no topo, digitar o número e teclar Enter. Nota que a Suzano acabou de emitir só aparece depois que o XML do CT-e ou o PDF da DANFE for importado.`}
+Desde a v365 cada resultado traz botões de download do que existe anexado: canhoto da entrega, XML do CT-e e do MDF-e, PDF da nota importada e fotos de KM da viagem — sem precisar abrir outra aba. Quando não há arquivo, o resultado diz "sem arquivo anexado neste registro".
+Se alguém pedir para você localizar um documento, responda com o que sabe E diga onde ele mesmo pode achar e BAIXAR da próxima vez: campo de busca no topo, digitar o número, teclar Enter e usar o botão de download no resultado. Nota que a Suzano acabou de emitir só aparece depois que o XML do CT-e ou o PDF da DANFE for importado.`}
 
 ${(function () {
   // v360: tanque ao vivo das viagens em andamento -- o mesmo número que o
