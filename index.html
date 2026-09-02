@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v363)</title>
+<title>RF Logística — Painel da Frota (v364)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -9989,6 +9989,192 @@ function painelTrocarAreaHTML() {
     + '</div></div>';
 }
 
+/* ===================== v364 — BUSCA GLOBAL =====================
+   Pedido do Renato: hoje, quando o André manda um número de nota, alguém
+   precisa vasculhar o sistema pra achar. Vai entrar gente na operação que não
+   tem como fazer isso, então a busca precisa estar dentro do app.
+   Procura em: CT-e (número, chave e as NF-e que ele transporta), MDF-e,
+   DANFE/espelho importado, entregas e canhotos, viagens, e a frota.
+   Achando uma NF, o resultado já diz o CT-e que a levou, o MDF-e onde ele
+   está, o caminhão, o motorista e se o canhoto foi anexado -- que é o
+   caminho que eu percorria à mão.
+   BLOCO 1 de <script>, porque o render() alcança (regra da v215). */
+function bgNorm(t) {
+  return String(t == null ? "" : t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+function bgDig(t) { return String(t == null ? "" : t).replace(/\D/g, ""); }
+function bgBate(campo, termoNorm, termoDig) {
+  if (campo == null || campo === "") return false;
+  if (termoDig.length >= 3) {
+    var d = bgDig(campo);
+    if (d && d.indexOf(termoDig) > -1) return true;
+  }
+  if (termoNorm.length >= 3) {
+    if (bgNorm(campo).indexOf(termoNorm) > -1) return true;
+  }
+  return false;
+}
+/* Onde esta NF-e está: o CT-e que a transporta e o MDF-e que carrega o CT-e. */
+function bgMdfeDoCte(chaveCte) {
+  return (state.fiscais || []).find(function (f) {
+    return f.tipo === "mdfe" && Array.isArray(f.ctes) && f.ctes.indexOf(chaveCte) > -1;
+  }) || null;
+}
+function bgViagemDaPlacaEData(placa, data) {
+  if (!placa) return null;
+  var cands = (state.viagens || []).filter(function (v) { return v.placa === placa; });
+  if (!cands.length) return null;
+  if (!data) return cands[cands.length - 1];
+  var melhor = null, menor = 1e9;
+  cands.forEach(function (v) {
+    var d = Math.abs(new Date((v.data || "1970-01-01") + "T00:00:00") - new Date(data + "T00:00:00")) / 86400000;
+    if (d < menor) { menor = d; melhor = v; }
+  });
+  return menor <= 20 ? melhor : null;
+}
+function buscaGlobal(termo) {
+  var tn = bgNorm(termo), td = bgDig(termo);
+  var hits = [];
+  if (tn.length < 3 && td.length < 3) return hits;
+
+  // 1) CT-e — inclui as NF-e que ele transporta
+  (state.fiscais || []).filter(function (f) { return f.tipo === "cte"; }).forEach(function (f) {
+    var nfes = Array.isArray(f.nfes) ? f.nfes : [];
+    var porNf = nfes.some(function (ch) { return bgBate(ch, tn, td); });
+    if (!porNf && !bgBate(f.numero, tn, td) && !bgBate(f.chave, tn, td)
+        && !bgBate(f.cliente, tn, td) && !bgBate(f.cidade, tn, td)) return;
+    var mdfe = bgMdfeDoCte(f.chave);
+    var det = [];
+    det.push("Destinatário: " + (f.cliente || "—") + (f.cidade ? " — " + f.cidade : ""));
+    det.push("Frete " + fmtR(Number(f.valor) || 0) + " · " + (Number(f.peso) || 0).toLocaleString("pt-BR") + " kg · emitido em " + (f.data ? String(f.data).split("-").reverse().join("/") : "—"));
+    if (nfes.length) det.push("NF-e transportada(s): " + nfes.map(function (c) { return String(c).slice(25, 34).replace(/^0+/, ""); }).join(", "));
+    if (mdfe) {
+      det.push("MDF-e nº " + mdfe.numero + " · placa " + (mdfe.placa || "—") + " · motorista " + (mdfe.motorista || "—"));
+      var vg = bgViagemDaPlacaEData(mdfe.placa, mdfe.data);
+      if (vg) det.push("Viagem: " + (vg.cliente || "sem cliente") + " de " + String(vg.data || "").split("-").reverse().join("/") + (vg.rota ? " · " + vg.rota : ""));
+    } else {
+      det.push("⚠ Este CT-e NÃO está em nenhum MDF-e importado.");
+    }
+    hits.push({ tipo: "CT-e", cor: GOLD, titulo: "CT-e nº " + (f.numero || "—") + (porNf ? "  (achado pela NF-e)" : ""),
+                detalhes: det, chave: f.chave, aba: "fiscal" });
+  });
+
+  // 2) MDF-e
+  (state.fiscais || []).filter(function (f) { return f.tipo === "mdfe"; }).forEach(function (f) {
+    if (!bgBate(f.numero, tn, td) && !bgBate(f.chave, tn, td) && !bgBate(f.placa, tn, td) && !bgBate(f.motorista, tn, td)) return;
+    hits.push({ tipo: "MDF-e", cor: "#3498DB", titulo: "MDF-e nº " + (f.numero || "—"),
+      detalhes: ["Placa " + (f.placa || "—") + " · motorista " + (f.motorista || "—"),
+                 (Array.isArray(f.ctes) ? f.ctes.length : 0) + " CT-e · " + (Number(f.peso) || 0).toLocaleString("pt-BR") + " kg · " + (f.data ? String(f.data).split("-").reverse().join("/") : "—"),
+                 f.ciot ? "CIOT " + f.ciot : "sem CIOT registrado"],
+      chave: f.chave, aba: "fiscal" });
+  });
+
+  // 3) DANFE / espelho importado na carga da Suzano
+  (state.suzanoCargas || []).forEach(function (c) {
+    (c.espelhos || []).forEach(function (e) {
+      if (!bgBate(e.nfe, tn, td) && !bgBate(e.chave, tn, td) && !bgBate(e.cliente, tn, td) && !bgBate(e.cnpjCliente, tn, td)) return;
+      hits.push({ tipo: "NF-e importada", cor: "#8E44AD", titulo: "NF-e " + (e.nfe || "—"),
+        detalhes: ["Destinatário: " + (e.cliente || "—") + (e.cidade ? " — " + e.cidade : ""),
+                   "Mercadoria " + fmtR(Number(e.valorMercadoria) || 0) + (e.qtdVolumes ? " · " + e.qtdVolumes + " volume(s)" : "") + (e.peso ? " · " + e.peso + " kg" : ""),
+                   "Carga de " + (c.data || "sem data") + (c.placa ? " · placa " + c.placa : " · placa não definida") + " · status " + (c.status || "—")],
+        chave: e.chave, aba: "suzano" });
+    });
+  });
+
+  // 4) Entregas e canhotos
+  (state.entregas || []).forEach(function (en) {
+    var notas = Array.isArray(en.notas) ? en.notas : [];
+    var achouNota = notas.some(function (n) { return bgBate(n.nf, tn, td) || bgBate(n.pedido, tn, td); });
+    if (!achouNota && !bgBate(en.recebedor, tn, td) && !bgBate(en.cidade, tn, td) && !bgBate(en.placa, tn, td)) return;
+    var comFoto = notas.filter(function (n) { return !!n.foto; }).length;
+    var vg = (state.viagens || []).find(function (v) { return String(v.id) === String(en.viagemId); });
+    hits.push({ tipo: "Entrega", cor: "#2E7D32", titulo: (en.recebedor || "entrega") + (en.cidade ? " — " + en.cidade : ""),
+      detalhes: ["Notas: " + (notas.map(function (n) { return n.nf; }).filter(Boolean).join(", ") || "—"),
+                 comFoto + " de " + notas.length + " canhoto(s) anexado(s)" + (comFoto < notas.length ? "  ⚠ falta canhoto" : "  ✓"),
+                 "Placa " + (en.placa || "—") + (vg ? " · viagem " + (vg.cliente || "") + " de " + String(vg.data || "").split("-").reverse().join("/") : "")],
+      aba: "entregas" });
+  });
+
+  // 5) Viagens
+  (state.viagens || []).forEach(function (v) {
+    if (!bgBate(v.placa, tn, td) && !bgBate(v.cliente, tn, td) && !bgBate(v.rota, tn, td)
+        && !bgBate(v.motoristaNaEpoca, tn, td) && !bgBate(v.motoristaDesignadoNome, tn, td)) return;
+    hits.push({ tipo: "Viagem", cor: "#E67E22",
+      titulo: (v.placa || "—") + " · " + (v.cliente || "sem cliente") + " · " + String(v.data || "").split("-").reverse().join("/"),
+      detalhes: [(v.rota ? "Rota " + v.rota + " · " : "") + (Number(v.km) || 0) + " km · frete " + fmtR(Number(v.valorViagem) || 0),
+                 "Motorista: " + (v.motoristaNaEpoca || v.motoristaDesignadoNome || "—") + " · situação: " + (v.statusMotorista || "não enviada ao motorista")],
+      aba: "viagem" });
+  });
+
+  // 6) Frota
+  (state.veiculos || []).forEach(function (vc) {
+    if (!bgBate(vc.placa, tn, td) && !bgBate(vc.chassi, tn, td) && !bgBate(vc.renavam, tn, td) && !bgBate(vc.motorista, tn, td)) return;
+    hits.push({ tipo: "Caminhão", cor: "#95A5A6", titulo: vc.placa || "—",
+      detalhes: [(vc.tipo || "") + " " + (vc.modelo || "") + (vc.ano ? " " + vc.ano : ""),
+                 "Motorista: " + (vc.motorista || "—") + " · " + (vc.statusOp || "—"),
+                 vc.renavam ? "RENAVAM " + vc.renavam : ""].filter(Boolean),
+      aba: "frota" });
+  });
+
+  return hits.slice(0, 60);
+}
+function buscaAbrir() { state._buscaAberta = true; render(); }
+function buscaFechar() { state._buscaAberta = false; render(); }
+function buscaExecutar(valor) {
+  state._buscaTermo = valor == null ? "" : String(valor);
+  state._buscaAberta = true;
+  render();
+}
+function buscaDoCampo(el, ev) {
+  if (ev && ev.key && ev.key !== "Enter") return;
+  buscaExecutar(el.value);
+}
+function buscaLimpar() { state._buscaTermo = ""; state._buscaAberta = false; render(); }
+function buscaIrPara(aba) { state._buscaAberta = false; abrirAreaDoInicio(aba); }
+function buscaCopiar(txt) {
+  if (navigator.clipboard) navigator.clipboard.writeText(String(txt || ""));
+}
+function buscaOverlayHTML() {
+  if (!state._buscaAberta) return "";
+  var termo = state._buscaTermo || "";
+  var res = termo ? buscaGlobal(termo) : [];
+  var corpo;
+  if (!termo) {
+    corpo = '<div style="color:#777;font-size:13px;padding:20px 0;">Digite um número de nota fiscal, CT-e, MDF-e, uma placa, um cliente ou uma cidade.</div>';
+  } else if (!res.length) {
+    corpo = '<div style="color:#C0392B;font-size:13px;padding:20px 0;">Nada encontrado para <b>' + esc(termo) + '</b>.<br><span style="color:#777;font-size:12px;">Se for uma nota que a Suzano acabou de mandar, ela só aparece depois que o XML do CT-e ou o PDF da DANFE for importado no sistema.</span></div>';
+  } else {
+    corpo = res.map(function (h) {
+      return '<div style="background:#0C0C0C;border:1px solid #262626;border-left:3px solid ' + h.cor + ';border-radius:10px;padding:11px 13px;margin-bottom:9px;">'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">'
+          + '<span style="font-size:9.5px;font-weight:800;color:' + h.cor + ';border:1px solid ' + h.cor + ';border-radius:5px;padding:1px 7px;letter-spacing:.5px;">' + h.tipo.toUpperCase() + '</span>'
+          + '<span style="font-size:14px;font-weight:800;color:#fff;">' + esc(h.titulo) + '</span>'
+          + '<span style="margin-left:auto;display:flex;gap:6px;">'
+            + (h.chave ? '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="buscaCopiar(\'' + esc(h.chave) + '\')" title="Copiar a chave de acesso">⧉ chave</button>' : "")
+            + (h.aba ? '<button class="btn-gold" style="font-size:10px;padding:2px 8px;" onclick="buscaIrPara(\'' + h.aba + '\')">abrir</button>' : "")
+          + '</span>'
+        + '</div>'
+        + h.detalhes.map(function (d) { return '<div style="font-size:11.5px;color:#bbb;line-height:1.6;">' + esc(d) + '</div>'; }).join("")
+        + '</div>';
+    }).join("");
+  }
+  return '<div onclick="buscaFechar()" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:9100;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto;">'
+    + '<div onclick="event.stopPropagation()" style="background:#080808;border:1px solid #2A2A2A;border-radius:16px;padding:18px 20px;max-width:980px;width:100%;">'
+      + '<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">'
+        + '<span style="font-size:16px;font-weight:800;color:' + GOLD + ';">🔎 Buscar no sistema</span>'
+        + '<button class="btn-outline" style="margin-left:auto;" onclick="buscaFechar()">✕ Fechar</button>'
+      + '</div>'
+      + '<input id="buscaCampoModal" value="' + esc(termo) + '" placeholder="Nº da nota, CT-e, MDF-e, placa, cliente ou cidade"'
+      + ' onkeydown="buscaDoCampo(this,event)" style="width:100%;font-size:15px;padding:10px 12px;background:#000;color:#fff;border:1px solid ' + GOLD + ';border-radius:8px;margin-bottom:6px;">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">'
+        + '<button class="btn-gold" style="font-size:12px;" onclick="buscaExecutar(document.getElementById(\'buscaCampoModal\').value)">Buscar</button>'
+        + (termo ? '<button class="btn-outline" style="font-size:12px;" onclick="buscaLimpar()">limpar</button>' : "")
+        + '<span style="font-size:11px;color:#777;margin-left:auto;">' + (termo ? res.length + " resultado(s)" : "") + '</span>'
+      + '</div>'
+      + corpo
+    + '</div></div>';
+}
+
 function barraNavegacao() {
   var visiveis = ABAS_DEF.filter(function (a) { return podeVerAba(a.id); });
   var grupos = [];
@@ -10003,7 +10189,14 @@ function barraNavegacao() {
     + '<span style="color:#555;">\u203A</span>'
     + '<span style="font-size:13px; font-weight:700; color:' + GOLD + ';">' + esc(String(rotuloDaAba(state.aba)).replace(/[^\p{L}\p{N} ()\/&.,\-]/gu, "").trim()) + '</span>'
     + '<button class="btn-outline" onclick="abrirTrocarArea()" title="Trocar de area sem voltar ao inicio" style="margin-left:8px;">\u21C4 Trocar de \u00e1rea</button>'
-    + '<button class="btn-outline" style="margin-left:auto;" onclick="exportarPDFAtual()" title="Gera um PDF da \u00e1rea atual (usa a impress\u00e3o do navegador)">\u{1F5A8}\uFE0F Exportar PDF</button>'
+    /* v364: busca global sempre à mão, em qualquer aba */
+    + '<span style="margin-left:auto; display:inline-flex; align-items:center; gap:6px;">'
+      + '<input id="buscaCampoBarra" placeholder="\u{1F50E} Buscar NF, CT-e, MDF-e, placa..." value="' + esc(state._buscaTermo || "") + '"'
+      + ' onkeydown="buscaDoCampo(this,event)" title="Digite o n\u00famero e tecle Enter. Procura em CT-e, MDF-e, notas importadas, entregas, viagens e frota."'
+      + ' style="width:250px; font-size:12px; padding:5px 9px; background:#000; color:#fff; border:1px solid #3a3a3a; border-radius:8px;">'
+      + '<button class="btn-outline" onclick="buscaExecutar(document.getElementById(\'buscaCampoBarra\').value)" title="Buscar">\u{1F50E}</button>'
+    + '</span>'
+    + '<button class="btn-outline" onclick="exportarPDFAtual()" title="Gera um PDF da \u00e1rea atual (usa a impress\u00e3o do navegador)">\u{1F5A8}\uFE0F Exportar PDF</button>'
     + '</div>';
 }
 function renderAbasAgrupadas() {
@@ -16313,6 +16506,7 @@ function render() {
 
     ${barraNavegacao()}
     ${painelTrocarAreaHTML()}
+    ${buscaOverlayHTML()}
 
     <div style="display:flex; gap:10px; padding:14px 24px; flex-wrap:wrap; align-items:center;">
       ${state.aba === "frota" ? `<input id="busca" placeholder="Buscar placa ou motorista..." value="${esc(state.busca)}" style="width:220px;" oninput="state.busca=this.value; renderTabela();">
@@ -17120,6 +17314,11 @@ O consumo em km/l só vem do próprio caminhão quando o KM de saída e chegada 
 Se perguntarem por que uma viagem que abasteceu muito não ficou cara, ou por que uma que não abasteceu nada tem custo de diesel, é isso: o custo segue o consumo, não o abastecimento. A aba Viagens e o Financeiro continuam mostrando o desembolso, que é outra pergunta.
 A aba mostra DOIS resultados por viagem, e não podem ser confundidos. MARGEM DA VIAGEM = frete − diesel consumido − outros − mão de obra; é só o que a viagem gastou na estrada. SOBRA REAL = a margem menos ADM, manutenção, imposto, pneus e alimentação, nos mesmos percentuais da aba Viagens, com a mão de obra corrigida pelo regime (CLT pelo rateio da folha). Nunca chamar a margem da viagem de lucro. E nem a sobra real é o que sobrou no mês: ela é antes das dívidas fixas (financiamento, seguro, folha da administração), que não pertencem a viagem nenhuma e só entram no Financeiro. A partir da v363 existe o número que responde "quanto este caminhão deixou no mês": LÍQUIDO DO MÊS = sobra das viagens do caminhão menos a parte das dívidas fixas que cabe a ele. É esse o número a dar quando perguntarem o resultado de um caminhão; margem e sobra são etapas do caminho.
 Como as fixas são divididas: cada dívida fixa tem um campo "caminhão" na aba Dívidas Fixas. Marcada, vai direto para aquele veículo (molas, pneus, elétrica, rastreador, financiamento, seguro são desse tipo). Em branco, é despesa da empresa (galpão, luz, internet, IPTU) e é rateada em PARTES IGUAIS entre os caminhões que rodaram no mês — caminhão parado não recebe rateio, mas continua carregando o que é dele. Se a maior parte das fixas ainda estiver sem caminhão marcado, avisar: peça de um caminhão específico estará sendo dividida entre todos e o líquido de cada um sai errado.`}
+
+${`BUSCA GLOBAL (v364):
+Existe um campo de busca na barra do topo, em qualquer aba, e ele é a resposta certa quando alguém pergunta "onde está a nota X". Procura por número de NF-e, chave de acesso, número de CT-e ou MDF-e, placa, cliente, cidade, recebedor, pedido, chassi e RENAVAM.
+Achando uma NF-e, o resultado já mostra o CT-e que a transporta, o MDF-e onde esse CT-e está, a placa, o motorista, a viagem e se o canhoto foi anexado — e avisa quando o CT-e não está em MDF-e nenhum.
+Se alguém pedir para você localizar um documento, responda com o que sabe E diga onde ele mesmo pode achar da próxima vez: campo de busca no topo, digitar o número e teclar Enter. Nota que a Suzano acabou de emitir só aparece depois que o XML do CT-e ou o PDF da DANFE for importado.`}
 
 ${(function () {
   // v360: tanque ao vivo das viagens em andamento -- o mesmo número que o
