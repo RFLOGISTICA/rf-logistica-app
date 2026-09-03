@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v384)</title>
+<title>RF Logística — Painel da Frota (v385)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1709,7 +1709,7 @@ function szPendenciasDaCaixa(bx) {
      o app cobrava espelho para sempre. Dispensar grava QUEM, QUANDO e POR QUE,
      e a linha continua visivel em cinza dentro da caixa. Nao e apagar a
      pendencia, e registrar que ela foi tratada fora daqui. */
-  var disp = ((state.szDispensas || {})[bx.k]) || {};
+  var disp = (szDispensas()[bx.k]) || {};
   out.dispensadas = out.filter(function (p) { return disp[p.id]; })
     .map(function (p) { p.dispensa = disp[p.id]; return p; });
   var vivas = out.filter(function (p) { return !disp[p.id]; });
@@ -1718,14 +1718,32 @@ function szPendenciasDaCaixa(bx) {
   return vivas;
 }
 
+/* v385 — CORRECAO: as dispensas nao estavam sendo gravadas.
+   Elas ficavam em state.szDispensas, e salvar() so persiste um conjunto fixo
+   de chaves -- szDispensas nao estava nele. Entao tudo o que Renato justificou
+   sumia no primeiro recarregamento e voltava a aparecer em vermelho. Mesma
+   familia do bug da v259, quando nada da aba Carregamento Suzano era gravado.
+   Agora moram dentro de state.config, que e persistido e sincronizado, e o que
+   por acaso tenha ficado no lugar antigo e migrado na primeira leitura. */
+function szDispensas() {
+  if (!state.config) state.config = {};
+  if (!state.config.szDispensas) state.config.szDispensas = {};
+  if (state.szDispensas) {
+    Object.keys(state.szDispensas).forEach(function (k) {
+      state.config.szDispensas[k] = Object.assign({}, state.config.szDispensas[k] || {}, state.szDispensas[k]);
+    });
+    delete state.szDispensas;
+  }
+  return state.config.szDispensas;
+}
 function szDispensarPend(k, id, txt) {
   var motivo = prompt("Como esta pendência foi resolvida?\n\n" + txt
     + "\n\nEscreva o motivo (ex: \"não teve espelho, a carga veio por foto\"). Fica registrado com seu nome e a data.");
   if (motivo === null) return;
   if (!String(motivo).trim()) { alert("Escreva o motivo — sem ele a dispensa não fica auditável."); return; }
-  if (!state.szDispensas) state.szDispensas = {};
-  if (!state.szDispensas[k]) state.szDispensas[k] = {};
-  state.szDispensas[k][id] = {
+  var D = szDispensas();
+  if (!D[k]) D[k] = {};
+  D[k][id] = {
     motivo: String(motivo).trim(),
     por: (state.sessao && state.sessao.nome) || "equipe",
     em: Date.now()
@@ -1733,8 +1751,9 @@ function szDispensarPend(k, id, txt) {
   salvar(); render();
 }
 function szReativarPend(k, id) {
-  if (!state.szDispensas || !state.szDispensas[k]) return;
-  delete state.szDispensas[k][id];
+  var D = szDispensas();
+  if (!D[k]) return;
+  delete D[k][id];
   salvar(); render();
 }
 /* Excluir a caixa inteira. So admin -- e uma acao destrutiva: some o
