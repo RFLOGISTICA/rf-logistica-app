@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v378)</title>
+<title>RF Logística — Painel da Frota (v379)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1606,14 +1606,18 @@ function szPendenciasDaCaixa(bx) {
   try { pack = szEmisCtesDaCaixa(placa, data) || pack; } catch (e) { }
   var ctes = pack.ctes || [], mdfes = pack.mdfes || [];
 
-  if (!ctes.length) {
+  /* v379: a linha "nenhum CT-e importado" so aparece quando NAO existe MDF-e
+     pra dizer quais faltam. Com MDF-e importado, a lista de numeros logo
+     abaixo ja diz tudo, e as duas juntas pareciam duas pendencias diferentes
+     quando eram a mesma. */
+  if (!ctes.length && !mdfes.length) {
     out.push({ nivel: "arquivo", txt: "Nenhum CT-e importado desta viagem", ir: "fiscal" });
   }
   if (!mdfes.length) {
     out.push({ nivel: "arquivo", txt: "MDF-e não importado", ir: "fiscal" });
   } else {
     mdfes.forEach(function (m) {
-      if (!m.encerrado) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " EM ABERTO — encerrar no SimplesCTe", ir: "fiscal" });
+      if (!m.encerrado) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " EM ABERTO — encerrar no SimplesCTe e importar aqui o XML do evento (…EncMdfe-procEvento.xml)", ir: "fiscal" });
       if (!m.ciot) out.push({ nivel: "arquivo", txt: "MDF-e " + (m.numero || "?") + " sem CIOT", ir: "fiscal" });
       if (!m.averbacoes || !m.averbacoes.length) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " sem número de averbação — carga sem prova de seguro", ir: "fiscal" });
       // CT-e que o MDF-e lista e que não foi importado
@@ -1668,8 +1672,15 @@ function szPendenciasDaCaixa(bx) {
   var feito = [];
   if (c && (c.espelhos || []).length) feito.push("Espelho anexado (" + (c.espelhos || []).length + " nota(s))");
   if (ctes.length) feito.push(ctes.length + " CT-e importado(s)");
-  if (mdfes.length) feito.push("MDF-e " + mdfes.map(function (m) { return m.numero || "?"; }).join(", ") + " importado(s)");
-  if (mdfes.length && mdfes.every(function (m) { return m.encerrado; })) feito.push("MDF-e encerrado");
+  /* v379: importar o manifesto e uma coisa, importar o EVENTO DE ENCERRAMENTO
+     (…EncMdfe-procEvento.xml) e outra. O verde "MDF-e importado" ao lado do
+     vermelho "MDF-e em aberto" parecia contradicao; agora o proprio verde diz
+     que nao cobre o encerramento. */
+  if (mdfes.length) {
+    var todosEnc = mdfes.every(function (m) { return m.encerrado; });
+    feito.push("MDF-e " + mdfes.map(function (m) { return m.numero || "?"; }).join(", ")
+      + " importado(s)" + (todosEnc ? " e encerrado(s)" : " (ainda n\u00e3o encerrado)"));
+  }
   if (mdfes.some(function (m) { return m.ciot; })) feito.push("CIOT no manifesto");
   if (mdfes.some(function (m) { return m.averbacoes && m.averbacoes.length; })) feito.push("Carga averbada");
   if (ents.length && !faltaCanhoto.length) feito.push("Todos os canhotos anexados");
