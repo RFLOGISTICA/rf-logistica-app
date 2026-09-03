@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v376)</title>
+<title>RF Logística — Painel da Frota (v377)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1735,7 +1735,48 @@ function szCaixasCaminhaoHTML() {
           }).join("")
           + '</div>';
       }
-      h += '<div style="font-size:11px;color:#777;">Use as etapas do resumo geral acima para importar arquivos e anexar canhotos — esta caixa mostra o estado desta viagem.</div>';
+      /* v377: a caixa e AUTONOMA. Renato: "tenho que resolver qualquer
+         pendencia ali mesmo". Antes ela so diagnosticava e mandava subir pro
+         resumo geral -- o que anula o motivo dela existir. Agora cada acao
+         esta aqui, ja amarrada nesta placa e nesta data. */
+      var cgId = bx.carga ? bx.carga.id : "";
+      h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">';
+      if (cgId) {
+        h += '<label class="btn-outline" style="font-size:11px;padding:4px 9px;cursor:pointer;">\ud83d\udcce Anexar espelho'
+          + '<input type="file" style="display:none;" onchange="szAnexarEspelho(\'' + esc(cgId) + '\',this)"></label>';
+      }
+      h += '<label class="btn-outline" style="font-size:11px;padding:4px 9px;cursor:pointer;">\ud83d\udcc4 Importar XML (CT-e/MDF-e)'
+        + '<input type="file" multiple style="display:none;" onchange="rfFiscalImportar(this)"></label>'
+        + '<label class="btn-outline" style="font-size:11px;padding:4px 9px;cursor:pointer;">\ud83d\udcf7 Anexar canhotos'
+        + '<input type="file" accept="image/*" multiple style="display:none;" onchange="rfCanhLoteSelecionar(this)"></label>'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfCanhLoteRecasar()">\ud83d\udd04 Tentar casar de novo</button>'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalCriarParadasTodas()">\ud83d\udccd Criar parada do CT-e</button>'
+        + '</div>';
+      h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalExportarPDF(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">\u2b07 Canhotos em PDF</button>'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalExportarZIP(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\',\'xml\')">\u2b07 XML (ZIP)</button>'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;color:' + GOLD + ';border-color:' + GOLD + ';" onclick="rfFiscalExportarZIP(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\',\'tudo\')">\u2b07 Tudo desta viagem (ZIP)</button>'
+        + '</div>';
+      /* as notas desta viagem, nota por nota, com o canhoto de cada uma */
+      var entsCx = (state.entregas || []).filter(function (e) {
+        return String(e.placa || "").toUpperCase() === String(bx.placa).toUpperCase()
+          && String(e.dataPrevista || "").slice(0, 10) === bx.data;
+      });
+      if (entsCx.length) {
+        h += '<div style="background:#0E0E0E;border-radius:8px;padding:10px;">'
+          + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:6px;">Paradas desta viagem</div>';
+        entsCx.forEach(function (e) {
+          var notas = e.notas || [];
+          var ok = notas.filter(function (n) { return n.foto; }).length;
+          h += '<div style="font-size:12px;color:#ddd;padding:5px 0;border-bottom:1px solid #1c1c1c;">'
+            + (ok === notas.length && notas.length ? "\u2705 " : "\u2b1c ")
+            + esc(e.recebedor || "?") + ' <span style="color:#888;">' + esc(e.cidade || "") + '</span>'
+            + ' <span style="color:' + (ok === notas.length ? "#2E7D32" : "#C0392B") + ';">' + ok + '/' + notas.length + ' canhoto(s)</span>'
+            + (notas.length ? ' <span style="color:#666;font-size:11px;">' + notas.map(function (n) { return n.nf ? "NF " + esc(n.nf) : "sem nº"; }).join(" · ") + '</span>' : "")
+            + '</div>';
+        });
+        h += '</div>';
+      }
       h += '</div>';
     }
     h += '</div>';
