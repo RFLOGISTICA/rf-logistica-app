@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v374)</title>
+<title>RF Logística — Painel da Frota (v375)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1445,6 +1445,130 @@ function linhaMt(nome, v) {
    não foi importado parece operação parada, quando na verdade não existe
    contra o que conferir.
    ========================================================================== */
+
+
+/* ==========================================================================
+   v375 — EXPORTAR XML PARA A CONTABILIDADE
+   --------------------------------------------------------------------------
+   Pedido de Renato (03/09): "o contador já me cobrou". Ele precisa mandar
+   TODOS os XML de um período, organizados em pasta por mês e por dia, e não
+   um pacote por viagem como existia até aqui.
+
+   Estrutura do ZIP:
+      2026-09/
+        2026-09-02/CTe-177.xml
+        2026-09-02/MDFe-40.xml
+        2026-09-03/...
+      indice.csv
+      FALTANDO.txt        (só aparece se faltar XML de algum documento)
+
+   Honestidade do pacote: documento importado antes da v296 não teve o XML
+   original guardado, só os dados lidos dele. Esses NÃO entram no ZIP e são
+   listados em FALTANDO.txt com número, data e placa, pra reimportar. Mandar
+   pro contador um pacote incompleto sem avisar é pior que não mandar.
+   ========================================================================== */
+
+function ctSetMes(v) { state._ctMes = v || ""; render(); }
+
+function ctDocsDoMes(mes) {
+  var docs = [];
+  try { docs = rfFiscais() || []; } catch (e) { }
+  return docs.filter(function (d) {
+    if (d.tipo !== "cte" && d.tipo !== "mdfe" && d.tipo !== "evento") return false;
+    var dt = String(d.data || "").slice(0, 10);
+    if (!dt) return false;
+    return !mes || dt.slice(0, 7) === mes;
+  });
+}
+
+function ctExportar() {
+  var mes = state._ctMes || "";
+  var docs = ctDocsDoMes(mes);
+  if (!docs.length) { alert("Nenhum documento fiscal nesse período."); return; }
+
+  state._ctMsg = "montando o pacote...";
+  render();
+
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) { state._ctMsg = "não consegui carregar o compactador (verifique a internet)."; render(); return; }
+    var zip = new JSZip();
+    var tarefas = [], semXml = [], linhas = ["tipo;numero;data;placa;chave;cliente;valor;arquivo"];
+
+    docs.forEach(function (d) {
+      var dt = String(d.data || "").slice(0, 10);
+      var pasta = dt.slice(0, 7) + "/" + dt + "/";
+      var nome = (d.tipo === "cte" ? "CTe-" : d.tipo === "mdfe" ? "MDFe-" : "Evento-")
+        + (d.numero || String(d.chave || "").slice(-8)) + ".xml";
+      linhas.push([d.tipo, d.numero || "", dt, d.placa || "", d.chave || "",
+        String(d.cliente || "").replace(/;/g, ","), d.valor || "", d.xmlPath ? pasta + nome : "SEM XML"].join(";"));
+      if (!d.xmlPath) { semXml.push(d); return; }
+      tarefas.push(rfBaixarDoBucket(d.xmlPath).then(function (b) { if (b) zip.file(pasta + nome, b); }));
+    });
+
+    zip.file("indice.csv", linhas.join("\n"));
+    if (semXml.length) {
+      zip.file("FALTANDO.txt",
+        "Estes documentos existem no sistema mas o XML ORIGINAL nao foi guardado\n"
+        + "(foram importados antes da v296, quando o app passou a guardar o arquivo).\n"
+        + "Reimporte os XML no bloco fiscal e gere o pacote de novo.\n\n"
+        + semXml.map(function (d) {
+          return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + (d.placa || "");
+        }).join("\n"));
+    }
+
+    Promise.all(tarefas).then(function () {
+      return zip.generateAsync({ type: "blob" });
+    }).then(function (blob) {
+      rfBaixarBlob(blob, "RF_XML_contabilidade_" + (mes || "tudo") + ".zip");
+      state._ctMsg = "✓ Pacote gerado: " + (docs.length - semXml.length) + " XML em pasta por dia."
+        + (semXml.length ? " ATENÇÃO: " + semXml.length + " documento(s) sem XML guardado — estão listados no FALTANDO.txt e precisam ser reimportados antes de mandar pro contador." : "");
+      render();
+    }).catch(function (e) {
+      state._ctMsg = "falhou ao gerar: " + ((e && e.message) || "erro");
+      render();
+    });
+  });
+}
+
+function ctBlocoHTML() {
+  var docs = [];
+  try { docs = rfFiscais() || []; } catch (e) { }
+  var meses = {};
+  docs.forEach(function (d) {
+    var m = String(d.data || "").slice(0, 7);
+    if (m) meses[m] = (meses[m] || 0) + 1;
+  });
+  var lista = Object.keys(meses).sort().reverse();
+  var mes = state._ctMes || "";
+  var doMes = ctDocsDoMes(mes);
+  var semXml = doMes.filter(function (d) { return !d.xmlPath; }).length;
+
+  var h = '<div style="border:1px solid ' + GOLD + ';border-radius:10px;background:#0A0A0A;padding:14px 16px;margin-bottom:14px;">'
+    + '<div style="font-size:13px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:.6px;">📦 Exportar XML para a contabilidade</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:8px 0 10px 0;">'
+    + 'Gera um ZIP com todos os CT-e, MDF-e e eventos de encerramento do período, '
+    + '<b>em pasta por mês e por dia</b>, mais um índice em CSV. É o pacote que vai para o contador.'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<select onchange="ctSetMes(this.value)" style="font-size:12px;">'
+    + '<option value="">todos os meses</option>'
+    + lista.map(function (m) {
+      return '<option value="' + m + '"' + (mes === m ? " selected" : "") + '>' + m.split("-").reverse().join("/") + ' (' + meses[m] + ' doc)</option>';
+    }).join("")
+    + '</select>'
+    + '<button class="btn-outline" style="font-size:12px;" onclick="ctExportar()">⬇ Gerar pacote</button>'
+    + '<span style="font-size:11px;color:#777;">' + doMes.length + ' documento(s) no período</span>'
+    + '</div>';
+
+  if (semXml) {
+    h += '<div style="margin-top:10px;font-size:12px;color:#E67E22;">⚠ ' + semXml + ' documento(s) do período estão no sistema mas <b>sem o XML original guardado</b> '
+      + '(importados antes da v296). Eles não entram no ZIP e vão listados no FALTANDO.txt — reimporte os XML antes de mandar.</div>';
+  }
+  if (state._ctMsg) {
+    h += '<div style="margin-top:10px;font-size:12px;color:#bbb;">' + esc(state._ctMsg) + '</div>';
+  }
+  return h + '</div>';
+}
 
 function szCxToggle(k) {
   if (!state._szCaixas) state._szCaixas = {};
@@ -20447,6 +20571,7 @@ function renderTabela() {
         </div>
         ${state._szResumoAberto ? `<div style="padding:0 16px 16px 16px;">${szTelaEtapasHTML()}</div>` : ""}
       </div>
+      ${ctBlocoHTML()}
       ${szCaixasCaminhaoHTML()}
     `;
     return;
