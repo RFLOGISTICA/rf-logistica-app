@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v380)</title>
+<title>RF Logística — Painel da Frota (v383)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1592,7 +1592,7 @@ function szPendenciasDaCaixa(bx) {
 
   // --- espelho da Suzano
   if (!c || !(c.espelhos || []).length) {
-    out.push({ nivel: "arquivo", txt: "Espelho da Suzano não anexado", ir: "emissao" });
+    out.push({ id: "espelho", nivel: "arquivo", txt: "Espelho da Suzano não anexado", ir: "emissao" });
   }
 
   /* --- documentos fiscais
@@ -1611,22 +1611,22 @@ function szPendenciasDaCaixa(bx) {
      abaixo ja diz tudo, e as duas juntas pareciam duas pendencias diferentes
      quando eram a mesma. */
   if (!ctes.length && !mdfes.length) {
-    out.push({ nivel: "arquivo", txt: "Nenhum CT-e importado desta viagem", ir: "fiscal" });
+    out.push({ id: "cte", nivel: "arquivo", txt: "Nenhum CT-e importado desta viagem", ir: "fiscal" });
   }
   if (!mdfes.length) {
-    out.push({ nivel: "arquivo", txt: "MDF-e não importado", ir: "fiscal" });
+    out.push({ id: "mdfe", nivel: "arquivo", txt: "MDF-e não importado", ir: "fiscal" });
   } else {
     mdfes.forEach(function (m) {
-      if (!m.encerrado) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " EM ABERTO — encerrar no SimplesCTe e importar aqui o XML do evento (…EncMdfe-procEvento.xml)", ir: "fiscal" });
-      if (!m.ciot) out.push({ nivel: "arquivo", txt: "MDF-e " + (m.numero || "?") + " sem CIOT", ir: "fiscal" });
-      if (!m.averbacoes || !m.averbacoes.length) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " sem número de averbação — carga sem prova de seguro", ir: "fiscal" });
+      if (!m.encerrado) out.push({ id: "enc-" + (m.numero||"?"), nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " EM ABERTO — encerrar no SimplesCTe e importar aqui o XML do evento (…EncMdfe-procEvento.xml)", ir: "fiscal" });
+      if (!m.ciot) out.push({ id: "ciot-" + (m.numero||"?"), nivel: "arquivo", txt: "MDF-e " + (m.numero || "?") + " sem CIOT", ir: "fiscal" });
+      if (!m.averbacoes || !m.averbacoes.length) out.push({ id: "averb-" + (m.numero||"?"), nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " sem número de averbação — carga sem prova de seguro", ir: "fiscal" });
       // CT-e que o MDF-e lista e que não foi importado
       var faltam = [];
       (m.ctes || []).forEach(function (ch) {
         var num = String(parseInt(String(ch).slice(25, 34), 10));
         if (!ctes.some(function (x) { return String(x.numero) === num; })) faltam.push(num);
       });
-      if (faltam.length) out.push({ nivel: "arquivo", txt: "Falta importar o XML do(s) CT-e " + faltam.join(", "), ir: "fiscal" });
+      if (faltam.length) out.push({ id: "cte-falta-" + (m.numero||"?"), nivel: "arquivo", txt: "Falta importar o XML do(s) CT-e " + faltam.join(", "), ir: "fiscal" });
     });
   }
 
@@ -1635,16 +1635,29 @@ function szPendenciasDaCaixa(bx) {
     return String(e.placa || "").toUpperCase() === String(placa).toUpperCase()
       && String(e.dataPrevista || "").slice(0, 10) === data;
   });
+  /* v382: quando a nota ainda nao tem numero de NF (entrega vinda da
+     roteirizacao nasce so com a remessa, e o numero so entra quando o CT-e e
+     importado), dizer "nota sem numero" nao ajuda ninguem a achar o papel.
+     Agora cai pra REMESSA/PEDIDO, que e o que a Suzano imprime e o que a
+     equipe usa pra localizar. Se nao tiver nem isso, mostra a ordem da parada
+     na rota, que pelo menos aponta onde procurar. */
   var faltaCanhoto = [];
   ents.forEach(function (e) {
-    (e.notas || []).forEach(function (n) {
-      if (!n.foto) faltaCanhoto.push((n.nf ? "NF " + n.nf : "nota sem número") + " (" + (e.recebedor || "?") + ")");
+    (e.notas || []).forEach(function (n, ix) {
+      if (n.foto) return;
+      var ident = n.nf ? "NF " + n.nf
+        : (n.remessa ? "remessa " + n.remessa
+          : (n.pedido ? "pedido " + n.pedido
+            : "nota " + (ix + 1) + " de " + (e.notas || []).length + " (ainda sem n\u00famero)"));
+      faltaCanhoto.push(ident + " \u2014 " + (e.recebedor || "?")
+        + (e.cidade ? ", " + e.cidade : ""));
     });
   });
   if (!ents.length && ctes.length) {
-    out.push({ nivel: "trava", txt: "CT-e importado mas nenhuma parada criada — os canhotos não têm onde encostar", ir: "canhotos" });
+    out.push({ id: "sem-parada", nivel: "trava", txt: "CT-e importado mas nenhuma parada criada — os canhotos não têm onde encostar", ir: "canhotos" });
   } else if (faltaCanhoto.length) {
     out.push({
+      id: "canhotos",
       nivel: "trava",
       txt: "Faltam " + faltaCanhoto.length + " canhoto(s): " + faltaCanhoto.slice(0, 6).join(" · ")
         + (faltaCanhoto.length > 6 ? " e mais " + (faltaCanhoto.length - 6) : ""),
@@ -1652,17 +1665,17 @@ function szPendenciasDaCaixa(bx) {
     });
   } else if (!ents.length && !ctes.length) {
     /* NÃO dizer que está tudo certo: não há contra o que conferir. */
-    out.push({ nivel: "arquivo", txt: "Não dá para conferir canhoto: sem CT-e e sem parada nesta viagem", ir: "fiscal" });
+    out.push({ id: "sem-base", nivel: "arquivo", txt: "Não dá para conferir canhoto: sem CT-e e sem parada nesta viagem", ir: "fiscal" });
   }
 
   // --- a viagem em si
   if (!v) {
-    out.push({ nivel: "arquivo", txt: "Sem viagem cadastrada para esta placa e data", ir: "roteirizacao" });
+    out.push({ id: "sem-viagem", nivel: "arquivo", txt: "Sem viagem cadastrada para esta placa e data", ir: "roteirizacao" });
   } else {
-    if (!v.fotoKmSaida) out.push({ nivel: "trava", txt: "Sem foto do KM inicial", ir: "viagem" });
-    if (!v.fotoKmChegada && v.statusMotorista !== "aguardando_motorista") out.push({ nivel: "trava", txt: "Sem foto do KM final — viagem não encerra", ir: "viagem" });
-    if (v.statusMotorista === "aguardando_equipe") out.push({ nivel: "arquivo", txt: "Motorista terminou: aguardando sua revisão", ir: "viagem" });
-    if (!v.motoristaDesignadoUid && v.statusMotorista !== "aprovada") out.push({ nivel: "arquivo", txt: "Viagem não foi enviada para nenhum motorista", ir: "viagem" });
+    if (!v.fotoKmSaida) out.push({ id: "km-ini", nivel: "trava", txt: "Sem foto do KM inicial", ir: "viagem" });
+    if (!v.fotoKmChegada && v.statusMotorista !== "aguardando_motorista") out.push({ id: "km-fim", nivel: "trava", txt: "Sem foto do KM final — viagem não encerra", ir: "viagem" });
+    if (v.statusMotorista === "aguardando_equipe") out.push({ id: "revisao", nivel: "arquivo", txt: "Motorista terminou: aguardando sua revisão", ir: "viagem" });
+    if (!v.motoristaDesignadoUid && v.statusMotorista !== "aprovada") out.push({ id: "envio", nivel: "arquivo", txt: "Viagem não foi enviada para nenhum motorista", ir: "viagem" });
   }
 
   /* v378: o que ja esta resolvido tambem aparece, em verde. Renato: "quando eu
@@ -1690,7 +1703,54 @@ function szPendenciasDaCaixa(bx) {
   if (v && v.fotoKmChegada) feito.push("Foto do KM final");
   if (v && v.statusMotorista === "aprovada") feito.push("Viagem aprovada");
   out.feito = feito;
-  return out;
+  /* v383: pendencia que ja foi resolvida POR FORA do app sai da lista.
+     Renato: "eu posso resolver a pendencia de outra forma e la continuar em
+     vermelho". Caso real: viagem do QDN8J44 que nao teve espelho, foi foto --
+     o app cobrava espelho para sempre. Dispensar grava QUEM, QUANDO e POR QUE,
+     e a linha continua visivel em cinza dentro da caixa. Nao e apagar a
+     pendencia, e registrar que ela foi tratada fora daqui. */
+  var disp = ((state.szDispensas || {})[bx.k]) || {};
+  out.dispensadas = out.filter(function (p) { return disp[p.id]; })
+    .map(function (p) { p.dispensa = disp[p.id]; return p; });
+  var vivas = out.filter(function (p) { return !disp[p.id]; });
+  vivas.feito = feito;
+  vivas.dispensadas = out.dispensadas;
+  return vivas;
+}
+
+function szDispensarPend(k, id, txt) {
+  var motivo = prompt("Como esta pendência foi resolvida?\n\n" + txt
+    + "\n\nEscreva o motivo (ex: \"não teve espelho, a carga veio por foto\"). Fica registrado com seu nome e a data.");
+  if (motivo === null) return;
+  if (!String(motivo).trim()) { alert("Escreva o motivo — sem ele a dispensa não fica auditável."); return; }
+  if (!state.szDispensas) state.szDispensas = {};
+  if (!state.szDispensas[k]) state.szDispensas[k] = {};
+  state.szDispensas[k][id] = {
+    motivo: String(motivo).trim(),
+    por: (state.sessao && state.sessao.nome) || "equipe",
+    em: Date.now()
+  };
+  salvar(); render();
+}
+function szReativarPend(k, id) {
+  if (!state.szDispensas || !state.szDispensas[k]) return;
+  delete state.szDispensas[k][id];
+  salvar(); render();
+}
+/* Excluir a caixa inteira. So admin -- e uma acao destrutiva: some o
+   carregamento daquela placa e data. Serve pra caixa que nasceu errada, como a
+   do QDE8C12 de 31/08, que veio da placa impressa no espelho e nunca foi
+   viagem de verdade. Nao apaga viagem, CT-e nem canhoto: so o carregamento. */
+function szExcluirCaixa(cargaId, placa, data) {
+  if (!ehAdmin()) { alert("Só o administrador pode excluir um carregamento."); return; }
+  if (!cargaId) { alert("Esta caixa não veio de um carregamento — ela existe por causa de uma viagem ou de um MDF-e. Corrija na origem."); return; }
+  if (!confirm("EXCLUIR o carregamento de " + placa + " em " + (data || "") + "?\n\n"
+    + "Some o carregamento e os espelhos lidos nele. Viagem, CT-e, MDF-e e canhotos NÃO são apagados.\n\n"
+    + "Use quando a caixa nasceu errada — por exemplo, placa que veio do espelho e nunca fez essa viagem.")) return;
+  var antes = (szCargas() || []).length;
+  state.suzanoCargas = (szCargas() || []).filter(function (c) { return c.id !== cargaId; });
+  salvar(); render();
+  alert(antes === (state.suzanoCargas || []).length ? "Não encontrei esse carregamento." : "Carregamento excluído.");
 }
 
 /* v380: marcar o MDF-e como encerrado na mao.
@@ -1700,16 +1760,26 @@ function szPendenciasDaCaixa(bx) {
    encerrado de verdade e o app ficava dizendo o contrario. Marcar aqui grava
    QUEM marcou e QUANDO, e a tela mostra que foi na mao -- para nao virar um
    "encerrado" indistinguivel do que veio da SEFAZ. */
+/* v381: SEM pedir protocolo. A pergunta anterior era ruim: obrigava abrir o
+   PDF de cada manifesto pra caçar um número, e o app nem guarda o protocolo
+   de autorização na importação, então não tinha como sugerir. Além disso, o
+   número carimbado no DAMDFE pelo SimplesCTe é o protocolo de AUTORIZAÇÃO,
+   não o do evento de encerramento -- registrar aquilo como "protocolo do
+   encerramento" seria gravar um dado errado com cara de certo.
+   O que vale como prova continua sendo o XML do evento. Marcar aqui é um
+   registro operacional: grava quem marcou e quando, e a tela deixa visível
+   que foi na mão. */
 function szMarcarEncerrado(chave) {
-  var prot = prompt("Protocolo do encerramento (esta no carimbo do DAMDFE, depois da data). Pode deixar em branco se nao tiver.");
-  if (prot === null) return;
   var docs = [];
   try { docs = rfFiscais() || []; } catch (e) { return; }
   var m = docs.filter(function (d) { return d.tipo === "mdfe" && String(d.chave || "") === String(chave); })[0];
-  if (!m) { alert("MDF-e nao encontrado."); return; }
+  if (!m) { alert("MDF-e não encontrado."); return; }
+  if (!confirm("Marcar o MDF-e " + (m.numero || "?") + " como ENCERRADO?\n\n"
+    + "Use isto quando o DAMDFE já traz o carimbo \"MDFe ENCERRADA\" mas você não tem o XML do evento.\n\n"
+    + "Fica registrado que foi marcado na mão, por você, com a data de hoje. "
+    + "A prova documental continua sendo o XML do evento — quando conseguir baixá-lo, importe que ele substitui esta marcação.")) return;
   m.encerrado = true;
   m.encerradoNaMao = true;
-  m.encerradoProtocolo = String(prot || "").trim();
   m.encerradoPor = (state.sessao && state.sessao.nome) || "equipe";
   m.encerradoEm = Date.now();
   salvar(); render();
@@ -1783,8 +1853,28 @@ function szCaixasCaminhaoHTML() {
           + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:6px;">O que falta nesta viagem</div>'
           + pend.map(function (p) {
             var c2 = p.nivel === "trava" ? "#C0392B" : "#E67E22";
-            return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-bottom:1px solid #1c1c1c;">'
-              + '<span style="color:' + c2 + ';font-weight:800;">' + (p.nivel === "trava" ? "●" : "○") + '</span> ' + esc(p.txt) + '</div>';
+            return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-bottom:1px solid #1c1c1c;display:flex;gap:8px;align-items:center;">'
+              + '<span style="color:' + c2 + ';font-weight:800;">' + (p.nivel === "trava" ? "●" : "○") + '</span>'
+              + '<span style="flex:1;">' + esc(p.txt) + '</span>'
+              + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;white-space:nowrap;" '
+              + 'onclick="szDispensarPend(\'' + esc(bx.k) + '\',\'' + esc(p.id || "") + '\',\'' + esc(String(p.txt).replace(/'/g, "")) + '\')" '
+              + 'title="Já resolvi isso por fora do app">✓ resolvido de outra forma</button>'
+              + '</div>';
+          }).join("")
+          + '</div>';
+      }
+      if ((pend.dispensadas || []).length) {
+        h += '<div style="background:#131313;border:1px dashed #333;border-radius:8px;padding:10px;margin-bottom:10px;">'
+          + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:6px;">Resolvido por fora do app</div>'
+          + pend.dispensadas.map(function (p) {
+            var d = p.dispensa || {};
+            return '<div style="font-size:12px;color:#999;padding:4px 0;display:flex;gap:8px;align-items:center;">'
+              + '<span style="flex:1;">' + esc(p.txt) + ' — <i>' + esc(d.motivo || "") + '</i>'
+              + ' <span style="color:#666;font-size:10px;">(' + esc(d.por || "") + ', '
+              + (d.em ? new Date(d.em).toLocaleDateString("pt-BR") : "") + ')</span></span>'
+              + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" '
+              + 'onclick="szReativarPend(\'' + esc(bx.k) + '\',\'' + esc(p.id || "") + '\')">↶ voltar a cobrar</button>'
+              + '</div>';
           }).join("")
           + '</div>';
       }
@@ -1828,6 +1918,7 @@ function szCaixasCaminhaoHTML() {
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalExportarPDF(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">\u2b07 Canhotos em PDF</button>'
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalExportarZIP(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\',\'xml\')">\u2b07 XML (ZIP)</button>'
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;color:' + GOLD + ';border-color:' + GOLD + ';" onclick="rfFiscalExportarZIP(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\',\'tudo\')">\u2b07 Tudo desta viagem (ZIP)</button>'
+        + (ehAdmin() && cgId ? '<button class="btn-outline" style="font-size:11px;padding:4px 9px;color:#C0392B;border-color:#C0392B;" onclick="szExcluirCaixa(\'' + esc(cgId) + '\',\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')" title="Some com o carregamento. Nao apaga viagem, CT-e nem canhoto.">\ud83d\uddd1 Excluir esta caixa</button>' : "")
         + '</div>';
       /* as notas desta viagem, nota por nota, com o canhoto de cada uma */
       var entsCx = (state.entregas || []).filter(function (e) {
@@ -1844,7 +1935,10 @@ function szCaixasCaminhaoHTML() {
             + (ok === notas.length && notas.length ? "\u2705 " : "\u2b1c ")
             + esc(e.recebedor || "?") + ' <span style="color:#888;">' + esc(e.cidade || "") + '</span>'
             + ' <span style="color:' + (ok === notas.length ? "#2E7D32" : "#C0392B") + ';">' + ok + '/' + notas.length + ' canhoto(s)</span>'
-            + (notas.length ? ' <span style="color:#666;font-size:11px;">' + notas.map(function (n) { return n.nf ? "NF " + esc(n.nf) : "sem nº"; }).join(" · ") + '</span>' : "")
+            + (notas.length ? ' <span style="color:#666;font-size:11px;">' + notas.map(function (n) {
+              return n.nf ? "NF " + esc(n.nf)
+                : (n.remessa ? "remessa " + esc(n.remessa) : (n.pedido ? "pedido " + esc(n.pedido) : "sem n\u00famero"));
+            }).join(" \u00b7 ") + '</span>' : "")
             + '</div>';
         });
         h += '</div>';
