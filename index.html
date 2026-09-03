@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v375)</title>
+<title>RF Logística — Painel da Frota (v376)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1139,49 +1139,44 @@ function mtDistKm(a, b) {
      "12283582 - CARGA:12283582            28   8.077,957"
      "6394 - BONINAL                        2     431,700"
    O peso vem no padrão brasileiro (ponto de milhar, vírgula decimal). */
+/* v376 — PARSER REESCRITO. A versao anterior trabalhava LINHA A LINHA e exigia
+   duas ou mais colunas separadas por espacos largos. Deu certo com texto
+   colado, mas o extrator de PDF (pdf.js) devolve os pedacos na ordem em que
+   estao desenhados na pagina e junta tudo com espaco simples -- as vezes sem
+   quebra de linha nenhuma. Resultado: "li o arquivo mas nao achei linhas de
+   cidade", que foi o que apareceu na tela.
+   Agora a leitura e por PADRAO no texto inteiro, nao por linha:
+      codigo - NOME DA CIDADE   volumes   peso,ddd
+   O peso da Mateus sempre vem com 3 casas decimais (431,700), e isso ancora
+   o reconhecimento mesmo com o texto todo embolado numa linha so. */
 function mtParse(txt) {
-  var linhas = String(txt || "").split(/\r?\n/);
-  var out = { rota: "", rotaCod: "", carga: "", cidades: [], ignoradas: [], urbano: false };
-  var reNum = /(-?[\d.]+,\d+|\d+)\s*$/;
-  linhas.forEach(function (ln) {
-    var l = ln.replace(/\t/g, "  ").trim();
-    if (!l) return;
-    if (/^TOTAL\b/i.test(l) || /^\d+\s*-\s*DEFINIDO/i.test(l) || /^Descri/i.test(l)) return;
+  var T = String(txt || "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+  var out = { rota: "", rotaCod: "", carga: "", cidades: [], ignoradas: [], urbano: false, bruto: T };
 
-    var mCarga = l.match(/CARGA\s*:?\s*(\d{6,})/i);
-    if (mCarga) { out.carga = mCarga[1]; return; }
+  var mC = T.match(/CARGA\s*:?\s*(\d{6,})/i);
+  if (mC) out.carga = mC[1];
 
-    // cabeçalho da rota: "3244 - SEABRA X IPUPIARA-BA"
-    var mRota = l.match(/^(\d{3,5})\s*-\s*(.+?\sX\s.+?)\s{2,}/i) || l.match(/^(\d{3,5})\s*-\s*(.+?\sX\s.+?)$/i);
-    if (mRota) { out.rotaCod = mRota[1]; out.rota = mRota[2].trim(); return; }
+  // cabecalho da rota: "3244 - SEABRA X IPUPIARA-BA 28 8.077,957"
+  var mR = T.match(/(\d{3,5})\s*-\s*([A-Z\u00c0-\u00da][A-Z\u00c0-\u00da0-9 .'\-]*?\sX\s[A-Z\u00c0-\u00da0-9 .'\-]*?)\s+\d{1,4}\s+[\d.]*\d,\d{3}/i);
+  if (mR) { out.rotaCod = mR[1]; out.rota = mR[2].trim(); }
 
-    // carregamento urbano: "974 - FEIRA DE SANTANA" como cabeçalho
-    if (/^\d{3,6}\s*-\s*FEIRA DE SANTANA\b/i.test(l) && !out.rota) { out.urbano = true; out.rota = "FEIRA DE SANTANA (urbano)"; return; }
+  // linhas de cidade
+  var re = /(\d{3,6})\s*-\s*([A-Za-z\u00c0-\u00ff][A-Za-z\u00c0-\u00ff0-9 .'\-]*?)\s+(\d{1,4})\s+([\d.]*\d,\d{3})/g;
+  var m;
+  while ((m = re.exec(T)) !== null) {
+    var nome = mtNorm(m[2]);
+    if (!nome || /\sX\s/.test(nome) || /^CARGA/.test(nome) || /^DEFINIDO/.test(nome) || /^TOTAL/.test(nome)) continue;
+    if (out.cidades.some(function (c) { return c.cod === m[1] && c.nome === nome; })) continue;
+    if (MT_BAIRROS_FSA.indexOf(nome) >= 0) out.urbano = true;
+    out.cidades.push({
+      cod: m[1], nome: nome,
+      volumes: mtNum(m[3]), peso: mtNum(m[4]),
+      conhecida: !!MT_CIDADES[nome]
+    });
+  }
+  if (/\bFEIRA DE SANTANA\b/i.test(T) && out.cidades.length
+    && out.cidades.every(function (c) { return MT_BAIRROS_FSA.indexOf(c.nome) >= 0; })) out.urbano = true;
 
-    var m = l.match(/^(\d{3,6})\s*-\s*(.+)$/);
-    if (!m) return;
-    var resto = m[2];
-    // arranca os dois números do fim: volumes e peso
-    var nums = resto.match(/(-?[\d.]*\d(?:,\d+)?)\s*$/);
-    var peso = 0, vol = 0, nome = resto;
-    var partes = resto.trim().split(/\s{2,}|\t+/).filter(Boolean);
-    if (partes.length >= 3) {
-      peso = mtNum(partes[partes.length - 1]);
-      vol = mtNum(partes[partes.length - 2]);
-      nome = partes.slice(0, partes.length - 2).join(" ");
-    } else {
-      var tk = resto.trim().split(/\s+/);
-      if (tk.length >= 3 && /\d/.test(tk[tk.length - 1]) && /\d/.test(tk[tk.length - 2])) {
-        peso = mtNum(tk.pop()); vol = mtNum(tk.pop()); nome = tk.join(" ");
-      }
-    }
-    nome = mtNorm(nome);
-    if (!nome) return;
-    if (MT_BAIRROS_FSA.indexOf(nome) >= 0) { out.urbano = true; }
-    out.cidades.push({ cod: m[1], nome: nome, volumes: vol, peso: peso, conhecida: !!MT_CIDADES[nome] });
-  });
-  // remove a linha do próprio total da rota, que repete nome e números
-  out.cidades = out.cidades.filter(function (c) { return !/\sX\s/.test(c.nome); });
   out.ignoradas = out.cidades.filter(function (c) { return !c.conhecida && !out.urbano; });
   return out;
 }
@@ -1297,7 +1292,11 @@ function mtAnexarPdf(files) {
       var txt = textos.join("\n");
       var p = mtParse(txt);
       if (!p.cidades.length) {
-        state._mateusMsg = "Li o arquivo mas nao achei linhas de cidade. Se o PDF for digitalizado (foto), o texto nao existe dentro dele -- nesse caso cole a tabela no campo abaixo.";
+        state._mateusMsg = txt.trim()
+          ? "Li o arquivo, mas nao reconheci as linhas de cidade. Joguei o texto lido no campo abaixo pra voce ver o que veio -- me mande esse texto que eu ajusto a leitura."
+          : "Esse PDF nao tem texto dentro (e digitalizado, foto). Cole a tabela no campo abaixo.";
+        var ta = document.getElementById("mt-colar");
+        if (ta) ta.value = txt;
         render(); return;
       }
       if (!state._mateus) state._mateus = {};
@@ -14693,14 +14692,39 @@ function rfFiscalExportarZIP(placa, data, oQue) {
         }));
       });
     }
+    /* v376: o ESPELHO da Suzano tambem entra no pacote. Ate a v375 o "tudo
+       (ZIP)" levava canhotos e XML, mas nao o espelho -- e ele e o documento
+       que abre a viagem: e dele que sai o frete e e ele que a Suzano cobra
+       de volta quando ha divergencia. Renato perguntou se conseguiria extrair
+       o espelho junto com o resto e a resposta honesta era nao. Agora vai,
+       na pasta espelho/. Espelho anexado antes da v313 pode nao ter o arquivo
+       guardado; nesse caso ele nao entra e a mensagem final avisa. */
+    var semEspelho = 0;
+    if (oQue !== "canhotos") {
+      try {
+        (szCargas() || []).forEach(function (cg) {
+          if (String(cg.placa || "").toUpperCase() !== String(placa).toUpperCase()) return;
+          if (String(cg.data || "").slice(0, 10) !== data) return;
+          var arqs = cg.arquivos || [];
+          if (!arqs.length && (cg.espelhos || []).length) semEspelho++;
+          arqs.forEach(function (a, ix) {
+            if (!a || !a.path) { semEspelho++; return; }
+            var nomeE = "espelho-" + (ix + 1) + "-" + String(a.nome || "arquivo").replace(/[\\/:*?"<>|]/g, "");
+            if (!/\.(pdf|jpg|jpeg|png)$/i.test(nomeE)) nomeE += ".pdf";
+            tarefas.push(rfBaixarDoBucket(a.path).then(function (b) { if (b) zip.file("espelho/" + nomeE, b); }));
+          });
+        });
+      } catch (e) { }
+    }
     zip.file("indice.csv", linhas.join("\n"));
     Promise.all(tarefas).then(function () {
       return zip.generateAsync({ type: "blob" });
     }).then(function (blob) {
       rfBaixarBlob(blob, "RF_" + base + ".zip");
       var semXml = g.ctes.concat(g.mdfes).filter(function (d) { return !d.xmlPath; }).length;
-      state._fiscalMsg = "✓ Pacote de " + placa + " gerado."
-        + (oQue !== "canhotos" && semXml ? " Atenção: " + semXml + " documento(s) foram importados antes da v296 e não têm o XML guardado — reimporte esses arquivos pra que entrem no pacote." : "");
+      state._fiscalMsg = "✓ Pacote de " + placa + " gerado (canhotos, XML e espelho)."
+        + (oQue !== "canhotos" && semXml ? " Atenção: " + semXml + " documento(s) foram importados antes da v296 e não têm o XML guardado — reimporte esses arquivos pra que entrem no pacote." : "")
+        + (semEspelho ? " Atenção: " + semEspelho + " espelho(s) desta viagem não têm o arquivo guardado (anexados antes da v313) — reanexe o PDF pra que entre no pacote." : "");
       render();
     });
   });
