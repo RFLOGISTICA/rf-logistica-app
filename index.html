@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v369)</title>
+<title>RF Logística — Painel da Frota (v370)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -4871,6 +4871,18 @@ function szDividirEspelhos(txt) {
   }
   return [txt];
 }
+/* v370: procura uma chave de NF-e em TODAS as cargas, não só na aberta.
+   Devolve { carga, esp } ou null. */
+function szEspelhoPorChave(chave) {
+  if (!chave) return null;
+  var achado = null;
+  (szCargas() || []).some(function (cx) {
+    var e = (cx.espelhos || []).filter(function (x) { return x.chave === chave; })[0];
+    if (e) { achado = { carga: cx, esp: e }; return true; }
+    return false;
+  });
+  return achado;
+}
 /* Aplica um arquivo inteiro: divide, lê cada bloco e devolve o resumo do que
    entrou, do que já estava e do que foi recusado — sem parar no primeiro erro. */
 function szAplicarArquivo(cargaId, txt, origem) {
@@ -4889,7 +4901,19 @@ function szAplicarArquivo(cargaId, txt, origem) {
        com a nota errada) ficaria preso ao valor errado pra sempre -- reimportar
        nao adiantava nada. Volumes nao sao tocados: pode haver etiqueta bipada
        em cima deles. */
-    var jaLido = (c.espelhos || []).filter(function (e) { return e.chave && d.chave && e.chave === d.chave; })[0];
+    /* v370 -- A NOTA JA LANCADA EM OUTRA CARGA ERA CONTADA COMO "RECUSADA".
+       Esta busca so olhava a carga aberta (c.espelhos). Quando a mesma NF ja
+       tinha sido lida em OUTRO carregamento, ela passava batido aqui, e o
+       szAplicarEspelho, que procura em TODAS as cargas (v326), atualizava os
+       dados e devolvia false -- caindo no "else r.recusadas++" la embaixo. O
+       painel dizia "recusada", como se o documento tivesse algum defeito,
+       quando na verdade a nota ja estava no sistema e nada estava errado.
+       Caso real: espelho 1469395 do PLY0A97 (NF 195988 A GRAF DA FEIRA e
+       195989 FEIRAGRAF), que ja tinham sido lidas na carga do OTQ9B07 de
+       02/09 -- a roteirizacao mandou essa carga para outro caminhao.
+       Agora a procura e em todas as cargas e o resultado e "ja estava". */
+    var achado = szEspelhoPorChave(d.chave);
+    var jaLido = achado ? achado.esp : null;
     if (jaLido) {
       var mudou = false;
       if (d.valorFrete && Number(jaLido.valorFrete) !== Number(d.valorFrete)) { jaLido.valorFrete = d.valorFrete; mudou = true; }
@@ -4898,6 +4922,13 @@ function szAplicarArquivo(cargaId, txt, origem) {
       if (d.dataEmissao && !jaLido.dataEmissao) { jaLido.dataEmissao = d.dataEmissao; mudou = true; }
       if (mudou) r.corrigidas = (r.corrigidas || 0) + 1;
       r.repetidas++;
+      if (achado.carga && achado.carga.id !== c.id) {
+        r.outraCarga = (r.outraCarga || 0) + 1;
+        r.ondeJaEstava = r.ondeJaEstava || [];
+        var ondeTxt = "NF " + (d.nfe || "?") + " já estava na carga "
+          + (achado.carga.placa || "sem placa") + " de " + (achado.carga.data || "sem data");
+        if (r.ondeJaEstava.indexOf(ondeTxt) === -1) r.ondeJaEstava.push(ondeTxt);
+      }
       return;
     }
     if (szAplicarEspelho(cargaId, d, origem, true)) { r.entraram++; r.nfs.push(d.nfe || "?"); }
@@ -4915,7 +4946,8 @@ function szAplicarDanfe(cargaId, txt, origem) {
     var d = szLerDanfeTexto(b);
     if (!d || !d.chave) { r.recusadas++; r.motivos.push("não achei a chave de acesso nessa nota"); return; }
     if (!szChaveValida(d.chave)) { r.recusadas++; r.motivos.push("NF " + (d.nfe || "?") + ": chave não passou no dígito verificador"); return; }
-    var ja = (c.espelhos || []).filter(function (e) { return e.chave === d.chave; })[0];
+    var achadoD = szEspelhoPorChave(d.chave);
+    var ja = achadoD ? achadoD.esp : null;
     if (ja) {
       var mudou = false;
       // a DANFE nunca sobrescreve o frete lido do espelho -- ela nao sabe o frete
@@ -4924,6 +4956,13 @@ function szAplicarDanfe(cargaId, txt, origem) {
       if (d.dataEmissao && !ja.dataEmissao) { ja.dataEmissao = d.dataEmissao; mudou = true; }
       if (mudou) r.corrigidas++;
       r.repetidas++;
+      if (achadoD.carga && achadoD.carga.id !== c.id) {
+        r.outraCarga = (r.outraCarga || 0) + 1;
+        r.ondeJaEstava = r.ondeJaEstava || [];
+        var ondeD = "NF " + (d.nfe || "?") + " já estava na carga "
+          + (achadoD.carga.placa || "sem placa") + " de " + (achadoD.carga.data || "sem data");
+        if (r.ondeJaEstava.indexOf(ondeD) === -1) r.ondeJaEstava.push(ondeD);
+      }
       return;
     }
     if (szAplicarEspelho(cargaId, d, origem || "DANFE", true)) { r.entraram++; r.nfs.push(d.nfe || "?"); }
@@ -4935,7 +4974,9 @@ function szAplicarDanfe(cargaId, txt, origem) {
 function szResumoLote(r, origem) {
   var partes = [];
   if (r.entraram) partes.push("✓ " + r.entraram + " nota(s) lançada(s)");
-  if (r.repetidas) partes.push(r.repetidas + " já estava(m) na carga" + (r.corrigidas ? " (" + r.corrigidas + " corrigida(s))" : ""));
+  if (r.repetidas) partes.push(r.repetidas + " já estava(m) na carga"
+    + (r.outraCarga ? " (" + r.outraCarga + " em outro carregamento)" : "")
+    + (r.corrigidas ? " (" + r.corrigidas + " corrigida(s))" : ""));
   if (r.recusadas) partes.push("⚠ " + r.recusadas + " recusada(s)");
   if (!partes.length) partes.push("nada foi lançado");
   var txt = partes.join(" · ");
@@ -7147,7 +7188,8 @@ function rfNfAnexarEspelhos(input) {
           r.entraram + " nota(s) nova(s)"
           + (r.repetidas ? " · " + r.repetidas + " já estava(m)" : "")
           + (r.recusadas ? " · " + r.recusadas + " recusada(s)" : "")
-          + (r.nfs && r.nfs.length ? " — NF " + r.nfs.join(", ") : ""),
+          + (r.nfs && r.nfs.length ? " — NF " + r.nfs.join(", ") : "")
+          + (r.ondeJaEstava && r.ondeJaEstava.length ? " — " + r.ondeJaEstava.join(" · ") : ""),
           r.entraram ? "#2E7D32" : (r.repetidas ? "#8E7A1F" : "#C0392B"));
         cargas[(c.placa || "sem placa")] = true;
         passo(i + 1);
