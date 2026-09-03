@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v371)</title>
+<title>RF Logística — Painel da Frota (v373)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -961,6 +961,434 @@ function rfViagemCaixasHTML(lista) {
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function fmtR(n) { return "R$ " + Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+/* ==========================================================================
+   v372 — IMPORTADOR DE CARGA DA MATEUS / JT
+   --------------------------------------------------------------------------
+   Por que existe: a tabela da JT dá só o NOME da rota e o preço fechado
+   ("SEABRA X IPUPIARA — R$ 5.900"). As cidades, os volumes e o peso só
+   chegam no PDF da carga, e MUDAM a cada semana: a 3230 já veio com 4, com
+   8 e com 10 cidades, sempre pelo mesmo frete. Sem calcular por carga não
+   há como saber qual carga deu dinheiro e qual não deu.
+
+   Por isso a tabela guardada aqui é de CIDADES, não de rotas. Uma rota é
+   qualquer combinação de cidades; guardando a coordenada de cada município
+   uma vez, qualquer combinação futura já tem distância.
+
+   O KM é ESTIMATIVA declarada: distância em linha reta entre as sedes
+   municipais, multiplicada pelo fator rodoviário (padrão 1,30), mais os
+   km urbanos por cidade. Não é Google Maps e não se apresenta como se
+   fosse. O fator é ajustável na tela justamente para ser calibrado contra
+   trechos que a operação já conhece de cor.
+   ========================================================================== */
+
+/* Sedes municipais. Coordenadas conferidas uma a uma; cidade que não estiver
+   aqui NÃO é chutada — o app avisa e deixa fora da conta. */
+var MT_CIDADES = {
+  "FEIRA DE SANTANA": [-12.2535848, -38.9600762],
+  "SEABRA": [-12.4175067, -41.7692236],
+  "BONINAL": [-12.7099665, -41.8284909],
+  "SOUTO SOARES": [-12.0880843, -41.6478049],
+  "PIATA": [-13.1509374, -41.7757215],
+  "IRAQUARA": [-12.2472472, -41.61734],
+  "MULUNGU DO MORRO": [-11.9653556, -41.6387052],
+  "PALMEIRAS": [-12.5146538, -41.5781621],
+  "IPUPIARA": [-11.8207163, -42.610849],
+  "RIBEIRA DO POMBAL": [-10.8364886, -38.5439651],
+  "PARIPIRANGA": [-10.6863183, -37.8629045],
+  "HELIOPOLIS": [-10.6764438, -38.2817913],
+  "OLINDINA": [-11.3626172, -38.3284511],
+  "INHAMBUPE": [-11.7868374, -38.3525212],
+  "CICERO DANTAS": [-10.5936112, -38.3852394],
+  "FATIMA": [-10.595978, -38.2104077],
+  "RIBEIRA DO AMPARO": [-11.0404632, -38.4310294],
+  "NOVA SOURE": [-11.2391995, -38.4802962],
+  "BANZAE": [-10.5835958, -38.6125724],
+  "CIPO": [-11.0997168, -38.5145545],
+  "GUANAMBI": [-14.2193381, -42.7796907],
+  "CAETITE": [-14.0648657, -42.4858867],
+  "PINDAI": [-14.4924422, -42.6862009],
+  "MORTUGABA": [-15.026004, -42.3685579],
+  "URANDI": [-14.7673594, -42.6588314],
+  "CANDIBA": [-14.411674, -42.8679866],
+  "LICINIO DE ALMEIDA": [-14.6825242, -42.5050773],
+  "JACARACI": [-14.8443302, -42.4321255],
+  "CONDEUBA": [-14.9026831, -41.9722144],
+  "IBIASSUCE": [-14.2666667, -42.2666667],
+  "CANARANA": [-11.684545, -41.7696758],
+  "IRECE": [-11.3022176, -41.8476563],
+  "BARRO ALTO": [-11.7632388, -41.9091635],
+  "AMERICA DOURADA": [-11.4536523, -41.4370771],
+  "IBIPEBA": [-11.6425807, -42.0121277],
+  "BARRA DO MENDES": [-11.8050067, -42.059284],
+  "LAPAO": [-11.3825778, -41.8294885],
+  "CAFARNAUM": [-11.6919598, -41.4683731],
+  "JOAO DOURADO": [-11.3488292, -41.6554283],
+  "IBITITA": [-11.5472392, -41.9773601],
+  "IACU": [-12.7652492, -40.2116118],
+  "RUY BARBOSA": [-12.2837758, -40.4915946],
+  "BOA VISTA DO TUPIM": [-12.6595387, -40.6050481],
+  "ITABERABA": [-12.5308131, -40.3083718],
+  "MURITIBA": [-12.6256734, -38.9890988],
+  "SAPEACU": [-12.7314563, -39.1869934],
+  "CRUZ DAS ALMAS": [-12.6718752, -39.1039317],
+  "CABACEIRAS DO PARAGUACU": [-12.5367141, -39.1903721],
+  "GOVERNADOR MANGABEIRA": [-12.6012584, -39.0411017],
+  "SAO FELIPE": [-12.8477119, -39.0897198],
+  "VERA CRUZ": [-12.9601643, -38.6126231],
+  "CONCEICAO DO ALMEIDA": [-12.7794244, -39.1699776],
+  "ITAPARICA": [-12.9001699, -38.6730631],
+  "MARAGOGIPE": [-12.777364, -38.9173648],
+  "FILADELFIA": [-10.7414503, -40.1330755],
+  "PONTO NOVO": [-10.8643794, -40.1336688],
+  "CAMPO FORMOSO": [-10.5085822, -40.3224547],
+  "JAGUARARI": [-10.257993, -40.1945297],
+  "ITIUBA": [-10.6902297, -39.8556824],
+  "PINDOBACU": [-10.7436015, -40.3632989],
+  "SENHOR DO BONFIM": [-10.4614397, -40.1867729],
+  "ANDORINHA": [-10.3447455, -39.8311312],
+  "ENTRE RIOS": [-11.9445271, -38.082927],
+  "RIO REAL": [-11.4840397, -37.9321896],
+  "APORA": [-11.660468, -38.0803409],
+  "ACAJUTIBA": [-11.661242, -38.0188963],
+  "CONDE": [-11.8137313, -37.611446],
+  "CRISOPOLIS": [-11.5115448, -38.1499416],
+  "ALAGOINHAS": [-12.1339689, -38.4211223],
+  "ARACAS": [-12.2114157, -38.2035232],
+  "CATU": [-12.3550864, -38.3756352],
+  "SAO SEBASTIAO DO PASSE": [-12.5127094, -38.4908644],
+  "ARAMARI": [-12.0882181, -38.4977979],
+  "ITANAGRA": [-12.2600624, -38.0375588],
+  "AMELIA RODRIGUES": [-12.3961612, -38.758604],
+  "UIBAI": [-11.3348553, -42.1310211],
+  "XIQUE-XIQUE": [-10.8233884, -42.7249305],
+  "BURITIRAMA": [-10.7141179, -43.6310085],
+  "JUSSARA": [-11.0466352, -41.9684011],
+  "BARRA": [-11.0897262, -43.1391246],
+  "CONCEICAO DO JACUIPE": [-12.3305286, -38.7670993],
+  "SERRINHA": [-11.662842, -39.0084965],
+  "SANTANOPOLIS": [-12.0260764, -38.8656811],
+  "CORACAO DE MARIA": [-12.2479449, -38.7486283],
+  "IRARA": [-12.0459601, -38.7659875],
+  "SANTA BARBARA": [-11.9539763, -38.9743437],
+  "IGAPORA": [-13.7719037, -42.7160132],
+  "MACAUBAS": [-13.0174655, -42.6867502],
+  "NOVO HORIZONTE": [-12.809465, -42.1677942],
+  "IBIPITANGA": [-12.8796751, -42.4846842],
+  "RIACHO DE SANTANA": [-13.6089805, -42.9337572],
+  "BOTUPORA": [-13.3814585, -42.52262],
+  "BOQUIRA": [-12.8211547, -42.7312116],
+  "IBITIARA": [-12.6488338, -42.2170492],
+  "TANQUE NOVO": [-13.5484316, -42.4897122],
+  "MATINA": [-13.9095687, -42.8429816],
+  "CACHOEIRA": [-12.6022814, -38.9642116],
+  "SAO FELIX": [-12.6057813, -38.9698624],
+  "SANTO AMARO": [-12.5464277, -38.7109578],
+  "CANDEIAS": [-12.6726284, -38.5431855],
+  "SANTA MARIA DA VITORIA": [-13.3857026, -44.1991852]
+};
+
+/* Bairros de Feira de Santana. A rota 3231 e os carregamentos urbanos não
+   trazem municípios, trazem bairros (Tomba, Sobradinho, Queimadinha...).
+   Buscar "Tomba" na tabela de cidades daria erro; então distribuição urbana
+   é tratada como categoria própria, com KM rodado por dia em vez de trecho
+   entre sedes. */
+var MT_BAIRROS_FSA = ["MANGABEIRA", "TOMBA", "PEDRA DO DESCANSO", "REGISTRO", "BRASILIA",
+  "OLHOS D AGUA", "MUCHILA", "SIM", "SANTA MONICA", "SANTO ANTONIO DOS PRAZERES",
+  "SERRARIA BRASIL", "CONCEICAO", "CONJUNTO FEIRA X", "PONTO CENTRAL", "SOBRADINHO",
+  "PARQUE IPE", "CAMPO LIMPO", "QUEIMADINHA", "CIDADE NOVA", "GABRIELA", "CAMPO LIMPO"];
+
+function mtNorm(t) {
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s*-\s*BA\s*$/i, "").replace(/[^A-Za-z0-9 \-]/g, " ")
+    .replace(/\s+/g, " ").trim().toUpperCase();
+}
+function mtCfg() {
+  var c = (state.config && state.config.mateus) || {};
+  return {
+    fatorRodo: Number(c.fatorRodo) || 1.16,   /* linha reta -> estrada. 1,16 saiu da
+       calibracao contra trechos que a operacao conhece: FSA->Seabra 349 km
+       reais, FSA->Irece 370, FSA->Guanambi 570. Com 1,30 dava 13% a mais em
+       tudo. Fica editavel na tela porque serra (Chapada) estica mais que
+       asfalto plano do Reconcavo. */
+    kmUrbanoCidade: c.kmUrbanoCidade == null ? 15 : Number(c.kmUrbanoCidade),
+    base: c.base || "FEIRA DE SANTANA"
+  };
+}
+function mtSetCfg(campo, valor) {
+  if (!state.config) state.config = {};
+  if (!state.config.mateus) state.config.mateus = {};
+  state.config.mateus[campo] = Number(String(valor).replace(",", ".")) || 0;
+  salvar(); render();
+}
+/* Haversine. O fator rodoviário transforma linha reta em estrada — é a única
+   aproximação do modelo, e está exposta na tela pra ser calibrada. */
+function mtDistKm(a, b) {
+  var A = MT_CIDADES[mtNorm(a)], B = MT_CIDADES[mtNorm(b)];
+  if (!A || !B) return null;
+  var R = 6371, rad = Math.PI / 180;
+  var dLat = (B[0] - A[0]) * rad, dLon = (B[1] - A[1]) * rad;
+  var la1 = A[0] * rad, la2 = B[0] * rad;
+  var h = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.asin(Math.sqrt(h)) * mtCfg().fatorRodo;
+}
+
+/* Lê o texto colado do PDF da Mateus.
+   Formatos que aparecem:
+     "3244 - SEABRA X IPUPIARA-BA          28   8.077,957"
+     "12283582 - CARGA:12283582            28   8.077,957"
+     "6394 - BONINAL                        2     431,700"
+   O peso vem no padrão brasileiro (ponto de milhar, vírgula decimal). */
+function mtParse(txt) {
+  var linhas = String(txt || "").split(/\r?\n/);
+  var out = { rota: "", rotaCod: "", carga: "", cidades: [], ignoradas: [], urbano: false };
+  var reNum = /(-?[\d.]+,\d+|\d+)\s*$/;
+  linhas.forEach(function (ln) {
+    var l = ln.replace(/\t/g, "  ").trim();
+    if (!l) return;
+    if (/^TOTAL\b/i.test(l) || /^\d+\s*-\s*DEFINIDO/i.test(l) || /^Descri/i.test(l)) return;
+
+    var mCarga = l.match(/CARGA\s*:?\s*(\d{6,})/i);
+    if (mCarga) { out.carga = mCarga[1]; return; }
+
+    // cabeçalho da rota: "3244 - SEABRA X IPUPIARA-BA"
+    var mRota = l.match(/^(\d{3,5})\s*-\s*(.+?\sX\s.+?)\s{2,}/i) || l.match(/^(\d{3,5})\s*-\s*(.+?\sX\s.+?)$/i);
+    if (mRota) { out.rotaCod = mRota[1]; out.rota = mRota[2].trim(); return; }
+
+    // carregamento urbano: "974 - FEIRA DE SANTANA" como cabeçalho
+    if (/^\d{3,6}\s*-\s*FEIRA DE SANTANA\b/i.test(l) && !out.rota) { out.urbano = true; out.rota = "FEIRA DE SANTANA (urbano)"; return; }
+
+    var m = l.match(/^(\d{3,6})\s*-\s*(.+)$/);
+    if (!m) return;
+    var resto = m[2];
+    // arranca os dois números do fim: volumes e peso
+    var nums = resto.match(/(-?[\d.]*\d(?:,\d+)?)\s*$/);
+    var peso = 0, vol = 0, nome = resto;
+    var partes = resto.trim().split(/\s{2,}|\t+/).filter(Boolean);
+    if (partes.length >= 3) {
+      peso = mtNum(partes[partes.length - 1]);
+      vol = mtNum(partes[partes.length - 2]);
+      nome = partes.slice(0, partes.length - 2).join(" ");
+    } else {
+      var tk = resto.trim().split(/\s+/);
+      if (tk.length >= 3 && /\d/.test(tk[tk.length - 1]) && /\d/.test(tk[tk.length - 2])) {
+        peso = mtNum(tk.pop()); vol = mtNum(tk.pop()); nome = tk.join(" ");
+      }
+    }
+    nome = mtNorm(nome);
+    if (!nome) return;
+    if (MT_BAIRROS_FSA.indexOf(nome) >= 0) { out.urbano = true; }
+    out.cidades.push({ cod: m[1], nome: nome, volumes: vol, peso: peso, conhecida: !!MT_CIDADES[nome] });
+  });
+  // remove a linha do próprio total da rota, que repete nome e números
+  out.cidades = out.cidades.filter(function (c) { return !/\sX\s/.test(c.nome); });
+  out.ignoradas = out.cidades.filter(function (c) { return !c.conhecida && !out.urbano; });
+  return out;
+}
+function mtNum(s) {
+  s = String(s || "").trim().replace(/\./g, "").replace(",", ".");
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/* Roteiro na ordem em que veio no PDF — é o que o motorista costuma fazer,
+   então é essa a quilometragem que vale pro custo. */
+function mtKmSequencia(nomes) {
+  var cfg = mtCfg(), pontos = [cfg.base].concat(nomes).concat([cfg.base]);
+  var km = 0, faltou = false, trechos = [];
+  for (var i = 0; i < pontos.length - 1; i++) {
+    var d = mtDistKm(pontos[i], pontos[i + 1]);
+    if (d == null) { faltou = true; continue; }
+    km += d;
+    trechos.push({ de: pontos[i], para: pontos[i + 1], km: d });
+  }
+  return { km: km, trechos: trechos, faltou: faltou };
+}
+/* Vizinho mais próximo, só como referência: mostra quanto se deixa na estrada
+   quando a ordem do PDF não é a melhor. Não substitui a ordem do PDF. */
+function mtKmOtimizado(nomes) {
+  var cfg = mtCfg(), rest = nomes.slice(), atual = cfg.base, ordem = [];
+  while (rest.length) {
+    var melhor = -1, melhorD = Infinity;
+    for (var i = 0; i < rest.length; i++) {
+      var d = mtDistKm(atual, rest[i]);
+      if (d != null && d < melhorD) { melhorD = d; melhor = i; }
+    }
+    if (melhor < 0) break;
+    atual = rest[melhor]; ordem.push(atual); rest.splice(melhor, 1);
+  }
+  return { km: mtKmSequencia(ordem).km, ordem: ordem };
+}
+
+/* Custo pelas MESMAS premissas do resto do app (calcularViagem): diesel pelo
+   consumo do tipo de veículo, mão de obra, alimentação por dia/noite, ADM e
+   imposto sobre o frete. Sem inventar rubrica nova. */
+function mtCusto(km, dias, frete, tipoVeic) {
+  var cfg = (state.config || {});
+  var diesel = Number(cfg.precoDiesel) || 7;
+  var kml = tipoVeic === "3/4" ? (Number(cfg.kml34) || 5) : (Number(cfg.kmlToco) || 3.5);
+  var diaria = Number(cfg.diariaPadrao) || 80;
+  var pernoite = Number(cfg.pernoitePadrao) || 0;
+  var noites = Math.max(0, dias - 1);
+  var admPct = Number(cfg.admPct) || 3;
+  var impPct = Number(cfg.impostoPct) || 6;
+  var manutKm = Number(cfg.manutencaoKm) || 0.15;
+
+  var c = {};
+  c.combustivel = kml > 0 ? (km / kml) * diesel : 0;
+  c.motorista = Number(cfg.vgPagMotorista) || 500;
+  c.ajudante = Number(cfg.vgPagAjudante) || 300;
+  c.alimentacao = dias * diaria + noites * pernoite;
+  c.manutencao = km * manutKm;
+  c.adm = frete * admPct / 100;
+  c.imposto = frete * impPct / 100;
+  c.total = c.combustivel + c.motorista + c.ajudante + c.alimentacao + c.manutencao + c.adm + c.imposto;
+  c.lucro = frete - c.total;
+  c.margem = frete > 0 ? (c.lucro / frete) * 100 : 0;
+  return c;
+}
+
+/* ---------------------------- estado da tela ---------------------------- */
+function mtSet(campo, valor) {
+  if (!state._mateus) state._mateus = {};
+  state._mateus[campo] = valor;
+  render();
+}
+function mtImportar() {
+  var txt = (document.getElementById("mt-colar") || {}).value || "";
+  if (!txt.trim()) { alert("Cole o conteúdo do PDF da carga primeiro."); return; }
+  var p = mtParse(txt);
+  if (!p.cidades.length) { alert("Não consegui achar cidades nesse texto. Cole a tabela inteira, com as linhas de código - cidade - volumes - peso."); return; }
+  if (!state._mateus) state._mateus = {};
+  state._mateus.carga = p;
+  render();
+}
+function mtSalvarCarga() {
+  var m = state._mateus || {}, p = m.carga;
+  if (!p) return;
+  if (!state.mateusCargas) state.mateusCargas = [];
+  var reg = {
+    id: "mt" + Date.now().toString(36),
+    salvoEm: Date.now(),
+    rota: p.rota, rotaCod: p.rotaCod, carga: p.carga,
+    cidades: p.cidades, urbano: p.urbano,
+    frete: Number(m.frete) || 0, dias: Number(m.dias) || 1,
+    tipo: m.tipo || "TOCO", km: Number(m.kmFinal) || 0
+  };
+  state.mateusCargas.push(reg);
+  state._mateus = {};
+  salvar(); render();
+  alert("Carga guardada. Ela entra no histórico da rota " + (reg.rota || "") + " pra comparar com as próximas.");
+}
+
+/* ------------------------------- a tela -------------------------------- */
+function mtBlocoHTML() {
+  var m = state._mateus || {}, p = m.carga, cfg = mtCfg();
+  var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;margin-bottom:18px;">'
+    + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">\ud83d\uddfa\ufe0f Carga da Mateus \u2014 KM, custo e margem</div>';
+
+  h += '<div style="font-size:11.5px;color:#999;line-height:1.5;margin-bottom:10px;">'
+    + 'A tabela da JT dá só o nome da rota e o preço fechado. As cidades chegam no PDF da carga e mudam toda semana — '
+    + 'a mesma rota já veio com 4, 8 e 10 cidades pelo mesmo frete. Cole aqui a tabela do PDF: o app monta o roteiro saindo de '
+    + esc(cfg.base) + ', estima o KM e mostra custo e margem <b>daquela carga</b>. '
+    + '<b>O KM é estimativa</b> — distância entre as sedes municipais vezes o fator rodoviário, mais os km urbanos por cidade. Não é Google Maps.'
+    + '</div>';
+
+  h += '<textarea id="mt-colar" placeholder="Cole aqui a tabela do PDF da carga (código - cidade - volumes - peso)" '
+    + 'style="width:100%;min-height:110px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;"></textarea>'
+    + '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="btn-outline" style="font-size:12px;" onclick="mtImportar()">📋 Ler a carga</button>'
+    + '<span style="font-size:11px;color:#777;">Fator rodoviário</span>'
+    + '<input value="' + cfg.fatorRodo + '" onchange="mtSetCfg(\'fatorRodo\',this.value)" style="width:60px;font-size:12px;">'
+    + '<span style="font-size:11px;color:#777;">KM urbano por cidade</span>'
+    + '<input value="' + cfg.kmUrbanoCidade + '" onchange="mtSetCfg(\'kmUrbanoCidade\',this.value)" style="width:60px;font-size:12px;">'
+    + '<span style="font-size:11px;color:#666;">' + Object.keys(MT_CIDADES).length + ' cidades na malha</span>'
+    + '</div>';
+
+  if (!p) { return h + '</div>'; }
+
+  var nomes = p.cidades.filter(function (c) { return c.conhecida; }).map(function (c) { return c.nome; });
+  var seq = mtKmSequencia(nomes);
+  var oti = mtKmOtimizado(nomes);
+  var kmUrb = p.cidades.length * cfg.kmUrbanoCidade;
+  var kmTotal = Math.round(seq.km + kmUrb);
+  var kmOti = Math.round(oti.km + kmUrb);
+  var pesoTot = p.cidades.reduce(function (s, c) { return s + (c.peso || 0); }, 0);
+  var volTot = p.cidades.reduce(function (s, c) { return s + (c.volumes || 0); }, 0);
+  var frete = Number(m.frete) || 0;
+  var dias = Number(m.dias) || 1;
+  var tipo = m.tipo || "TOCO";
+  if (!state._mateus) state._mateus = {};
+  state._mateus.kmFinal = kmTotal;
+
+  h += '<div style="margin-top:14px;padding:12px;background:#0E0E0E;border:1px solid #222;border-radius:8px;">'
+    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';">' + esc(p.rotaCod ? p.rotaCod + " · " : "") + esc(p.rota || "rota não identificada") + '</div>'
+    + '<div style="font-size:11px;color:#999;margin-top:2px;">Carga ' + esc(p.carga || "?") + ' · ' + p.cidades.length + ' cidade(s) · '
+    + volTot + ' volumes · ' + pesoTot.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg</div>';
+
+  if (p.urbano) {
+    h += '<div style="margin-top:10px;font-size:12px;color:#E67E22;">⚠ Esta carga é <b>distribuição urbana de Feira de Santana</b> — as linhas são bairros, não municípios. '
+      + 'Não existe trecho entre sedes pra calcular; informe o KM rodado do dia na mão.</div>';
+  }
+
+  if (p.ignoradas.length) {
+    h += '<div style="margin-top:10px;font-size:12px;color:#C0392B;">⚠ Fora da conta por falta de distância: <b>'
+      + p.ignoradas.map(function (c) { return esc(c.nome); }).join(", ") + '</b>. '
+      + 'Me peça pra acrescentar essas cidades na malha — não vou chutar quilometragem.</div>';
+  }
+
+  h += '<div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;">'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">KM na ordem do PDF</div>'
+    + '<div style="font-size:20px;font-weight:800;color:#fff;">' + kmTotal.toLocaleString("pt-BR") + ' km</div>'
+    + '<div style="font-size:10px;color:#666;">' + Math.round(seq.km).toLocaleString("pt-BR") + ' de estrada + ' + kmUrb + ' urbanos</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Se reordenasse</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (kmOti < kmTotal - 20 ? "#2E7D32" : "#888") + ';">' + kmOti.toLocaleString("pt-BR") + ' km</div>'
+    + '<div style="font-size:10px;color:#666;">' + (kmOti < kmTotal - 20 ? "economia de " + (kmTotal - kmOti) + " km" : "a ordem do PDF já está boa") + '</div></div>'
+    + '</div>';
+
+  h += '<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
+    + '<span style="font-size:11px;color:#777;">Frete da tabela JT (R$)</span>'
+    + '<input value="' + (frete || "") + '" onchange="mtSet(\'frete\',this.value)" placeholder="5900" style="width:90px;font-size:12px;">'
+    + '<span style="font-size:11px;color:#777;">Dias</span>'
+    + '<input value="' + dias + '" onchange="mtSet(\'dias\',this.value)" style="width:50px;font-size:12px;">'
+    + '<span style="font-size:11px;color:#777;">Veículo</span>'
+    + '<select onchange="mtSet(\'tipo\',this.value)" style="font-size:12px;">'
+    + '<option value="TOCO"' + (tipo === "TOCO" ? " selected" : "") + '>Toco</option>'
+    + '<option value="3/4"' + (tipo === "3/4" ? " selected" : "") + '>3/4</option></select>'
+    + '</div>';
+
+  if (frete > 0) {
+    var c = mtCusto(kmTotal, dias, frete, tipo);
+    var cor = c.margem >= 25 ? "#2E7D32" : c.margem >= 10 ? "#E67E22" : "#C0392B";
+    h += '<div style="margin-top:12px;padding:10px;background:#111;border-left:4px solid ' + cor + ';border-radius:6px;">'
+      + '<table style="width:100%;font-size:12px;color:#ccc;border-collapse:collapse;">'
+      + linhaMt("Combustível", c.combustivel) + linhaMt("Motorista", c.motorista) + linhaMt("Ajudante", c.ajudante)
+      + linhaMt("Alimentação", c.alimentacao) + linhaMt("Manutenção", c.manutencao)
+      + linhaMt("ADM", c.adm) + linhaMt("Imposto", c.imposto)
+      + '<tr style="border-top:1px solid #333;"><td style="padding:5px 0;font-weight:700;">Custo total</td><td style="text-align:right;font-weight:700;">' + fmtR(c.total) + '</td></tr>'
+      + '<tr><td style="padding:3px 0;">Frete</td><td style="text-align:right;">' + fmtR(frete) + '</td></tr>'
+      + '<tr><td style="padding:5px 0;font-weight:800;color:' + cor + ';">Lucro</td><td style="text-align:right;font-weight:800;color:' + cor + ';">'
+      + fmtR(c.lucro) + ' &nbsp;(' + c.margem.toFixed(1).replace(".", ",") + '%)</td></tr>'
+      + '</table></div>';
+  }
+
+  h += '<div style="margin-top:12px;font-size:11px;color:#888;">Roteiro: ' + esc(cfg.base) + ' → '
+    + p.cidades.map(function (x) { return esc(x.nome) + (x.conhecida ? "" : " ⚠"); }).join(" → ") + ' → ' + esc(cfg.base) + '</div>';
+
+  h += '<button class="btn-outline" style="font-size:11px;margin-top:10px;" onclick="mtSalvarCarga()">💾 Guardar esta carga no histórico</button>';
+  h += '</div>';
+
+  var hist = (state.mateusCargas || []).filter(function (x) { return x.rotaCod === p.rotaCod; });
+  if (hist.length) {
+    h += '<div style="margin-top:12px;font-size:11px;color:#999;">Histórico da rota ' + esc(p.rotaCod) + ': '
+      + hist.map(function (x) { return x.cidades.length + " cidades · " + x.km + " km"; }).join(" | ") + '</div>';
+  }
+  return h + '</div>';
+}
+function linhaMt(nome, v) {
+  return '<tr><td style="padding:3px 0;">' + nome + '</td><td style="text-align:right;">' + fmtR(v) + '</td></tr>';
+}
+
 function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function hojeISO() { return new Date().toISOString().slice(0, 10); }
 // Aceita "YYYY-MM-DD" ou "DD/MM/AAAA". Vazio => padrao (ou hoje). Inválida => null.
@@ -9100,6 +9528,7 @@ var ABAS_DEF = [
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
   { id: "carregasuzano", label: "🏭 Carregamento Suzano", grupo: "OPERAÇÃO" },   // v228
+  { id: "cargamateus", label: "🗺️ Carga Mateus", grupo: "OPERAÇÃO" },   // v372
   { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
   { id: "motoristas", label: "Motoristas 💰", grupo: "OPERAÇÃO" },
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
@@ -9112,6 +9541,7 @@ var ABAS_DEF = [
 ];
 var TAB_DESCRICOES = {
   frota: "Cadastro e status de cada caminhão da frota",
+  cargamateus: "Importa o PDF da carga da Mateus e estima KM, custo e margem da rota",
   manutencao: "Vencimentos de documentos, seguro e revisões",
   mtcustos: "Lançamento de manutenções e custos por veículo",
   oleo: "Controle de troca de óleo e filtros",
@@ -19762,6 +20192,13 @@ function renderTabela() {
     `;
   }
 
+  if (state.aba === "cargamateus") {
+    /* v372: aba propria. Nasceu dentro de Viagens e Renato pediu pra sair de la
+       -- e faz sentido: Viagens e lancamento do dia a dia, isto aqui e analise
+       de rota antes de fechar carga. */
+    wrap.innerHTML = mtBlocoHTML();
+    return;
+  }
   if (state.aba === "carregasuzano") {
     /* v228.1: renderTabela() ESCREVE em wrap.innerHTML — não devolve HTML.
        Na v228 eu usei `return` aqui, então a tela era montada e descartada:
