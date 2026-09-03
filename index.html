@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v377)</title>
+<title>RF Logística — Painel da Frota (v378)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1595,16 +1595,16 @@ function szPendenciasDaCaixa(bx) {
     out.push({ nivel: "arquivo", txt: "Espelho da Suzano não anexado", ir: "emissao" });
   }
 
-  // --- documentos fiscais
-  var docs = [];
-  try {
-    docs = (rfFiscais() || []).filter(function (d) {
-      return String(d.placa || "").toUpperCase() === String(placa).toUpperCase()
-        && String(d.data || "").slice(0, 10) === data;
-    });
-  } catch (e) { }
-  var ctes = docs.filter(function (d) { return d.tipo === "cte"; });
-  var mdfes = docs.filter(function (d) { return d.tipo === "mdfe"; });
+  /* --- documentos fiscais
+     v378 — CORRECAO: eu filtrava CT-e por placa + data, e o XML do CT-e NAO
+     TRAZ PLACA (placa e do MDF-e). Resultado: o CT-e era importado e a caixa
+     continuava dizendo "nenhum CT-e importado desta viagem". Foi exatamente o
+     que aconteceu com o PKO3F40 de 03/09. Agora uso szEmisCtesDaCaixa, que ja
+     resolve a cadeia certa: MDF-e diz a placa, o MDF-e lista as chaves dos
+     CT-e, e o CT-e vem por essas chaves. */
+  var pack = { ctes: [], mdfes: [] };
+  try { pack = szEmisCtesDaCaixa(placa, data) || pack; } catch (e) { }
+  var ctes = pack.ctes || [], mdfes = pack.mdfes || [];
 
   if (!ctes.length) {
     out.push({ nivel: "arquivo", txt: "Nenhum CT-e importado desta viagem", ir: "fiscal" });
@@ -1661,6 +1661,22 @@ function szPendenciasDaCaixa(bx) {
     if (!v.motoristaDesignadoUid && v.statusMotorista !== "aprovada") out.push({ nivel: "arquivo", txt: "Viagem não foi enviada para nenhum motorista", ir: "viagem" });
   }
 
+  /* v378: o que ja esta resolvido tambem aparece, em verde. Renato: "quando eu
+     importar um item ele tem que ficar verde sinalizando que foi importado".
+     Item que some nao confirma nada -- pode ter sumido porque foi resolvido ou
+     porque a regra deixou de enxergar. Verde e confirmacao. */
+  var feito = [];
+  if (c && (c.espelhos || []).length) feito.push("Espelho anexado (" + (c.espelhos || []).length + " nota(s))");
+  if (ctes.length) feito.push(ctes.length + " CT-e importado(s)");
+  if (mdfes.length) feito.push("MDF-e " + mdfes.map(function (m) { return m.numero || "?"; }).join(", ") + " importado(s)");
+  if (mdfes.length && mdfes.every(function (m) { return m.encerrado; })) feito.push("MDF-e encerrado");
+  if (mdfes.some(function (m) { return m.ciot; })) feito.push("CIOT no manifesto");
+  if (mdfes.some(function (m) { return m.averbacoes && m.averbacoes.length; })) feito.push("Carga averbada");
+  if (ents.length && !faltaCanhoto.length) feito.push("Todos os canhotos anexados");
+  if (v && v.fotoKmSaida) feito.push("Foto do KM inicial");
+  if (v && v.fotoKmChegada) feito.push("Foto do KM final");
+  if (v && v.statusMotorista === "aprovada") feito.push("Viagem aprovada");
+  out.feito = feito;
   return out;
 }
 
@@ -1720,6 +1736,9 @@ function szCaixasCaminhaoHTML() {
         ? "⚠ " + pend.length + " pendência(s): " + esc(pend.map(function (p) { return p.txt.split(" — ")[0]; }).slice(0, 3).join(" · "))
         + (pend.length > 3 ? " …" : "")
         : "✓ Nada pendente nesta viagem")
+      + ((pend.feito || []).length
+        ? '<span style="color:#2E7D32;font-weight:700;"> · ✅ ' + pend.feito.length + " ok</span>"
+        : "")
       + '</div>'
       + '</div>';
 
@@ -1732,6 +1751,14 @@ function szCaixasCaminhaoHTML() {
             var c2 = p.nivel === "trava" ? "#C0392B" : "#E67E22";
             return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-bottom:1px solid #1c1c1c;">'
               + '<span style="color:' + c2 + ';font-weight:800;">' + (p.nivel === "trava" ? "●" : "○") + '</span> ' + esc(p.txt) + '</div>';
+          }).join("")
+          + '</div>';
+      }
+      if ((pend.feito || []).length) {
+        h += '<div style="background:#0b140b;border:1px solid #1e3d1e;border-radius:8px;padding:10px;margin-bottom:10px;">'
+          + '<div style="font-size:11px;color:#5a8f5a;text-transform:uppercase;margin-bottom:6px;">Já resolvido</div>'
+          + pend.feito.map(function (t) {
+            return '<div style="font-size:12px;color:#8fd18f;padding:3px 0;">✅ ' + esc(t) + '</div>';
           }).join("")
           + '</div>';
       }
