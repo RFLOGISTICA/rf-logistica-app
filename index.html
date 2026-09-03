@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v379)</title>
+<title>RF Logística — Painel da Frota (v380)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1679,7 +1679,9 @@ function szPendenciasDaCaixa(bx) {
   if (mdfes.length) {
     var todosEnc = mdfes.every(function (m) { return m.encerrado; });
     feito.push("MDF-e " + mdfes.map(function (m) { return m.numero || "?"; }).join(", ")
-      + " importado(s)" + (todosEnc ? " e encerrado(s)" : " (ainda n\u00e3o encerrado)"));
+      + " importado(s)" + (todosEnc
+        ? (mdfes.some(function (m) { return m.encerradoNaMao; }) ? " e encerrado(s) \u2014 marcado na m\u00e3o" : " e encerrado(s)")
+        : " (ainda n\u00e3o encerrado)"));
   }
   if (mdfes.some(function (m) { return m.ciot; })) feito.push("CIOT no manifesto");
   if (mdfes.some(function (m) { return m.averbacoes && m.averbacoes.length; })) feito.push("Carga averbada");
@@ -1691,6 +1693,27 @@ function szPendenciasDaCaixa(bx) {
   return out;
 }
 
+/* v380: marcar o MDF-e como encerrado na mao.
+   O certo continua sendo importar o XML do evento (…EncMdfe-procEvento.xml),
+   que traz protocolo e data da SEFAZ. Mas o SimplesCTe as vezes so entrega o
+   DAMDFE em PDF com o carimbo "MDFe ENCERRADA", e nesse caso o manifesto esta
+   encerrado de verdade e o app ficava dizendo o contrario. Marcar aqui grava
+   QUEM marcou e QUANDO, e a tela mostra que foi na mao -- para nao virar um
+   "encerrado" indistinguivel do que veio da SEFAZ. */
+function szMarcarEncerrado(chave) {
+  var prot = prompt("Protocolo do encerramento (esta no carimbo do DAMDFE, depois da data). Pode deixar em branco se nao tiver.");
+  if (prot === null) return;
+  var docs = [];
+  try { docs = rfFiscais() || []; } catch (e) { return; }
+  var m = docs.filter(function (d) { return d.tipo === "mdfe" && String(d.chave || "") === String(chave); })[0];
+  if (!m) { alert("MDF-e nao encontrado."); return; }
+  m.encerrado = true;
+  m.encerradoNaMao = true;
+  m.encerradoProtocolo = String(prot || "").trim();
+  m.encerradoPor = (state.sessao && state.sessao.nome) || "equipe";
+  m.encerradoEm = Date.now();
+  salvar(); render();
+}
 function szCxCor(pend) {
   if (pend.some(function (p) { return p.nivel === "trava"; })) return "#C0392B";
   if (pend.length) return "#E67E22";
@@ -1789,6 +1812,17 @@ function szCaixasCaminhaoHTML() {
         + '<input type="file" accept="image/*" multiple style="display:none;" onchange="rfCanhLoteSelecionar(this)"></label>'
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfCanhLoteRecasar()">\ud83d\udd04 Tentar casar de novo</button>'
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalCriarParadasTodas()">\ud83d\udccd Criar parada do CT-e</button>'
+        + (function () {
+          var abertos = [];
+          try {
+            abertos = ((szEmisCtesDaCaixa(bx.placa, bx.data) || {}).mdfes || []).filter(function (m) { return !m.encerrado; });
+          } catch (e) { }
+          return abertos.map(function (m) {
+            return '<button class="btn-outline" style="font-size:11px;padding:4px 9px;color:#E67E22;border-color:#E67E22;" '
+              + 'onclick="szMarcarEncerrado(\'' + esc(m.chave) + '\')" title="Use quando o DAMDFE ja traz o carimbo MDFe ENCERRADA mas voce nao tem o XML do evento">'
+              + '\u2713 Marcar MDF-e ' + esc(m.numero || "?") + ' como encerrado</button>';
+          }).join("");
+        })()
         + '</div>';
       h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">'
         + '<button class="btn-outline" style="font-size:11px;padding:4px 9px;" onclick="rfFiscalExportarPDF(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">\u2b07 Canhotos em PDF</button>'
