@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v383)</title>
+<title>RF Logística — Painel da Frota (v384)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1790,32 +1790,9 @@ function szCxCor(pend) {
   return "#2E7D32";
 }
 
-function szCaixasCaminhaoHTML() {
-  var caixas = [];
-  try { caixas = szEmisCaixas() || []; } catch (e) { caixas = []; }
-  var dias = {};
-  caixas.forEach(function (b) { if (b.data) dias[b.data] = 1; });
-  var listaDias = Object.keys(dias).sort().reverse();
-  var diaSel = state._szCxDia || "";
-  var vis = caixas.filter(function (b) { return !diaSel || b.data === diaSel; });
+function szViagemCaixaHTML(bx) {
+  var h = '';
 
-  var h = '<div style="margin-top:18px;">';
-  h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">'
-    + '<span style="font-size:13px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:.6px;">🚚 Uma caixa por caminhão</span>'
-    + '<select onchange="szCxSetDia(this.value)" style="font-size:12px;">'
-    + '<option value="">todos os dias</option>'
-    + listaDias.map(function (d) {
-      return '<option value="' + d + '"' + (diaSel === d ? " selected" : "") + '>' + d.split("-").reverse().join("/") + '</option>';
-    }).join("")
-    + '</select>'
-    + '<span style="font-size:11px;color:#777;">' + vis.length + ' caixa(s)</span>'
-    + '</div>';
-
-  if (!vis.length) {
-    return h + '<div style="font-size:12px;color:#777;">Nenhum carregamento nesse filtro.</div></div>';
-  }
-
-  vis.slice(0, 60).forEach(function (bx) {
     var pend = szPendenciasDaCaixa(bx);
     var cor = szCxCor(pend);
     var aberto = (state._szCaixas || {})[bx.k];
@@ -1944,6 +1921,79 @@ function szCaixasCaminhaoHTML() {
         h += '</div>';
       }
       h += '</div>';
+    }
+    h += '</div>';
+
+  return h;
+}
+
+/* v384 — DOIS NIVEIS: caixa por PLACA, e dentro dela as viagens.
+   Renato: "aparece pkk e pko varias vezes, imagina fazendo 30 a 40 viagens
+   cada carro, vai continuar uma mistura so". Tem razao -- uma linha por viagem
+   nao escala. Agora o primeiro nivel e o caminhao; toca na placa e abrem as
+   viagens dele, da mais nova pra mais antiga, cada uma com o mesmo conteudo
+   de antes. O cabecalho da placa ja diz quantas viagens tem pendencia, pra
+   nao precisar abrir pra saber. */
+function szPlacaToggle(p) {
+  if (!state._szPlacas) state._szPlacas = {};
+  state._szPlacas[p] = !state._szPlacas[p];
+  render();
+}
+function szCaixasCaminhaoHTML() {
+  var caixas = [];
+  try { caixas = szEmisCaixas() || []; } catch (e) { caixas = []; }
+  var dias = {};
+  caixas.forEach(function (b) { if (b.data) dias[b.data] = 1; });
+  var listaDias = Object.keys(dias).sort().reverse();
+  var diaSel = state._szCxDia || "";
+  var vis = caixas.filter(function (b) { return !diaSel || b.data === diaSel; });
+
+  var h = '<div style="margin-top:18px;">';
+  h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">'
+    + '<span style="font-size:13px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:.6px;">\ud83d\ude9a Um caminh\u00e3o por caixa</span>'
+    + '<select onchange="szCxSetDia(this.value)" style="font-size:12px;">'
+    + '<option value="">todos os dias</option>'
+    + listaDias.map(function (d) {
+      return '<option value="' + d + '"' + (diaSel === d ? " selected" : "") + '>' + d.split("-").reverse().join("/") + '</option>';
+    }).join("")
+    + '</select></div>';
+
+  if (!vis.length) return h + '<div style="font-size:12px;color:#777;">Nenhum carregamento nesse filtro.</div></div>';
+
+  var porPlaca = {};
+  vis.forEach(function (b) {
+    var p = String(b.placa || "sem placa").toUpperCase();
+    (porPlaca[p] = porPlaca[p] || []).push(b);
+  });
+
+  Object.keys(porPlaca).sort().forEach(function (placa) {
+    var lista = porPlaca[placa].sort(function (a, b) { return String(b.data).localeCompare(String(a.data)); });
+    var comPend = 0, travadas = 0, ultima = lista[0] ? lista[0].data : "";
+    var pends = lista.map(function (b) {
+      var p = szPendenciasDaCaixa(b);
+      if (p.length) comPend++;
+      if (p.some(function (x) { return x.nivel === "trava"; })) travadas++;
+      return p;
+    });
+    var corP = travadas ? "#C0392B" : comPend ? "#E67E22" : "#2E7D32";
+    var aberta = (state._szPlacas || {})[placa];
+
+    h += '<div style="border:1px solid #222;border-left:6px solid ' + corP + ';border-radius:12px;background:#0C0C0C;margin-bottom:12px;overflow:hidden;">'
+      + '<div onclick="szPlacaToggle(\'' + esc(placa) + '\')" style="cursor:pointer;padding:14px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="color:' + GOLD + ';font-weight:800;font-size:20px;line-height:1;">' + (aberta ? "\u2212" : "+") + '</span>'
+      + '<span style="font-size:20px;font-weight:800;color:#fff;letter-spacing:.5px;">' + esc(placa) + '</span>'
+      + '<span style="font-size:12px;color:#999;">' + lista.length + ' viagem(ns)'
+      + (ultima ? ' \u00b7 \u00faltima em ' + esc(ultima.split("-").reverse().join("/")) : "") + '</span>'
+      + '<span style="margin-left:auto;font-size:12px;font-weight:700;color:' + corP + ';">'
+      + (comPend ? "\u26a0 " + comPend + " viagem(ns) com pend\u00eancia" + (travadas ? " \u00b7 " + travadas + " travada(s)" : "")
+        : "\u2713 todas em dia")
+      + '</span>'
+      + '</div>';
+
+    if (aberta) {
+      h += '<div style="padding:0 12px 12px 12px;">'
+        + lista.map(function (b) { return szViagemCaixaHTML(b); }).join("")
+        + '</div>';
     }
     h += '</div>';
   });
