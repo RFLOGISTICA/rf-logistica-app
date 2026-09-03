@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v370)</title>
+<title>RF Logística — Painel da Frota (v371)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -13444,21 +13444,50 @@ function rfFiscalGuardar(doc, res) {
   lista.push(doc);
   if (doc.tipo === "evento") { res.eventos = (res.eventos || 0) + 1; }
   else { res[doc.tipo === "cte" ? "ctes" : "mdfes"]++; }
-  // amarra as NF-e do CT-e nas paradas: preenche o número da NF que nasce vazio
-  // nas entregas da roteirização, sem tocar em nada que já esteja preenchido.
+  /* amarra as NF-e do CT-e nas paradas: preenche o número da NF que nasce vazio
+     nas entregas da roteirização, sem tocar em nada que já esteja preenchido.
+     v371 -- ANTES ISSO CASAVA SÓ PELO NOME DO CLIENTE, e por isso colocava a
+     chave errada quando o MESMO cliente estava em dois caminhões no mesmo dia.
+     Caso real de 02/09: a BAHIA DIST DE PAP foi partida entre o PKO3F40
+     (NF 196004) e o PKK1G22 (NF 196001); a parada do Jefferson ficou com a
+     chave da nota do Josuel, e o canhoto que ele já tinha anexado nunca era
+     reconhecido -- a viagem aparecia como "0/1 CT-e com canhoto" com o papel
+     assinado ali do lado. Agora entra a DATA na comparação e, se ainda assim
+     sobrar mais de uma parada candidata, o app NÃO escolhe: registra a dúvida
+     para a pessoa apontar na mão. Chave errada em nota fiscal é pior do que
+     campo vazio. */
   if (doc.tipo === "cte") {
     (doc.nfes || []).forEach(function (ch) {
       var num = String(parseInt(ch.slice(25, 34), 10));
-      (state.entregas || []).forEach(function (e) {
-        if (doc.cliente && !rfCanhNomeParecido(e.recebedor, doc.cliente)) return;
-        var vaga = (e.notas || []).findIndex(function (n) { return !n.nf; });
-        var jaTem = (e.notas || []).some(function (n) { return String(n.nf) === num; });
-        if (jaTem || vaga < 0) return;
-        e.notas[vaga].nf = num;
-        e.notas[vaga].chaveNfe = ch;
-        rfEntregaSalvar(e);
-        res.amarradas++;
+      var dataCte = String(doc.data || "").slice(0, 10);
+      var jaEmAlguma = (state.entregas || []).some(function (e) {
+        return (e.notas || []).some(function (n) { return n.chaveNfe === ch || String(n.nf) === num; });
       });
+      if (jaEmAlguma) return;
+      var cands = (state.entregas || []).filter(function (e) {
+        if (doc.cliente && !rfCanhNomeParecido(e.recebedor, doc.cliente)) return false;
+        var dataEnt = String(e.dataPrevista || "").slice(0, 10);
+        if (dataCte && dataEnt && dataCte !== dataEnt) return false;
+        return (e.notas || []).some(function (n) { return !n.nf; });
+      });
+      if (cands.length !== 1) {
+        if (cands.length > 1) {
+          res.ambiguas = (res.ambiguas || 0) + 1;
+          res.avisosAmbiguos = res.avisosAmbiguos || [];
+          res.avisosAmbiguos.push("NF " + num + " (" + (doc.cliente || "cliente") + "): "
+            + cands.length + " paradas do mesmo cliente no dia ("
+            + cands.map(function (e) { return e.placa || "sem placa"; }).join(", ")
+            + ") — não amarrei sozinho, aponte a nota na parada certa.");
+        }
+        return;
+      }
+      var e1 = cands[0];
+      var vaga = (e1.notas || []).findIndex(function (n) { return !n.nf; });
+      if (vaga < 0) return;
+      e1.notas[vaga].nf = num;
+      e1.notas[vaga].chaveNfe = ch;
+      rfEntregaSalvar(e1);
+      res.amarradas++;
     });
   }
 }
@@ -13539,6 +13568,7 @@ function rfFiscalImportar(input) {
       + (res.eventos ? " · " + res.eventos + " encerramento(s)" : "")
       + (res.repetidos ? " · " + res.repetidos + " já estavam no sistema" : "")
       + (res.amarradas ? " · " + res.amarradas + " nota(s) amarrada(s) em paradas" : "")
+      + (res.ambiguas ? " · ⚠ " + res.ambiguas + " nota(s) NÃO amarrada(s): o mesmo cliente aparece em mais de uma parada no dia — aponte na mão" : "")
       + (res.ignorados ? " · " + res.ignorados + " arquivo(s) não eram CT-e/MDF-e" : "")
       + (res.naoFiscal ? " · " + res.naoFiscal + " PDF/imagem ignorado(s)" : "")
       + (!res.ctes && !res.mdfes && !res.eventos && !res.repetidos
