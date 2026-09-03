@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v373)</title>
+<title>RF Logística — Painel da Frota (v374)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1281,6 +1281,39 @@ function mtSalvarCarga() {
   alert("Carga guardada. Ela entra no histórico da rota " + (reg.rota || "") + " pra comparar com as próximas.");
 }
 
+/* v374: anexar o PDF direto, em vez de copiar e colar. Reaproveita o mesmo
+   extrator de texto que o app ja usa no CRLV e no espelho da Suzano
+   (rfCrlvExtrairTexto), com limite de paginas alto porque a carga da Mateus
+   as vezes vem em varias folhas. PDF digitalizado (foto) nao tem texto
+   dentro: nesse caso o app diz isso em vez de fingir que leu. */
+function mtAnexarPdf(files) {
+  var lista = Array.prototype.slice.call(files || []);
+  if (!lista.length) return;
+  state._mateusMsg = "lendo " + lista.length + " arquivo(s)...";
+  render();
+  var textos = [];
+  var passo = function (i) {
+    if (i >= lista.length) {
+      var txt = textos.join("\n");
+      var p = mtParse(txt);
+      if (!p.cidades.length) {
+        state._mateusMsg = "Li o arquivo mas nao achei linhas de cidade. Se o PDF for digitalizado (foto), o texto nao existe dentro dele -- nesse caso cole a tabela no campo abaixo.";
+        render(); return;
+      }
+      if (!state._mateus) state._mateus = {};
+      state._mateus.carga = p;
+      state._mateusMsg = "\u2713 " + p.cidades.length + " cidade(s) lidas do PDF.";
+      render(); return;
+    }
+    rfCrlvExtrairTexto(lista[i], 20)
+      .then(function (t) { textos.push(t || ""); passo(i + 1); })
+      .catch(function (e) {
+        state._mateusMsg = "Nao consegui ler " + (lista[i].name || "o arquivo") + ": " + ((e && e.message) || "erro");
+        passo(i + 1);
+      });
+  };
+  passo(0);
+}
 /* ------------------------------- a tela -------------------------------- */
 function mtBlocoHTML() {
   var m = state._mateus || {}, p = m.carga, cfg = mtCfg();
@@ -1294,10 +1327,15 @@ function mtBlocoHTML() {
     + '<b>O KM é estimativa</b> — distância entre as sedes municipais vezes o fator rodoviário, mais os km urbanos por cidade. Não é Google Maps.'
     + '</div>';
 
-  h += '<textarea id="mt-colar" placeholder="Cole aqui a tabela do PDF da carga (código - cidade - volumes - peso)" '
-    + 'style="width:100%;min-height:110px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;"></textarea>'
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">' 
+    + '<label class="btn-outline" style="font-size:12px;cursor:pointer;">\ud83d\udcce Anexar PDF da carga'
+    + '<input type="file" accept="application/pdf,.pdf" multiple style="display:none;" onchange="mtAnexarPdf(this.files)"></label>'
+    + '<span style="font-size:11px;color:#777;">ou cole o texto abaixo</span></div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px;">' + esc(state._mateusMsg || "") + '</div>'
+    + '<textarea id="mt-colar" placeholder="Cole aqui a tabela do PDF da carga" '
+    + 'style="width:100%;min-height:90px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;"></textarea>'
     + '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
-    + '<button class="btn-outline" style="font-size:12px;" onclick="mtImportar()">📋 Ler a carga</button>'
+    + '<button class="btn-outline" style="font-size:12px;" onclick="mtImportar()">\ud83d\udccb Ler o texto colado</button>' 
     + '<span style="font-size:11px;color:#777;">Fator rodoviário</span>'
     + '<input value="' + cfg.fatorRodo + '" onchange="mtSetCfg(\'fatorRodo\',this.value)" style="width:60px;font-size:12px;">'
     + '<span style="font-size:11px;color:#777;">KM urbano por cidade</span>'
@@ -1387,6 +1425,200 @@ function mtBlocoHTML() {
 }
 function linhaMt(nome, v) {
   return '<tr><td style="padding:3px 0;">' + nome + '</td><td style="text-align:right;">' + fmtR(v) + '</td></tr>';
+}
+
+/* ==========================================================================
+   v374 — CARREGAMENTO SUZANO: UMA CAIXA POR CAMINHÃO
+   --------------------------------------------------------------------------
+   Motivo (Renato, 03/09): "cada caminhão tem que estar individual, está uma
+   mistura e quando chegar às 120 viagens eu não vou conseguir achar nada".
+   Ele tem razão — hoje as seis etapas empilham TODOS os caminhões de TODOS
+   os dias na mesma tela, e já está em 41 carregamentos.
+
+   Desenho igual ao da aba Custo Real, que já funciona assim: uma caixa
+   RESUMO GERAL em cima, que expande, e embaixo uma caixa por placa.
+
+   O campo mais importante da caixa é o de PENDÊNCIAS, e ele fica visível com
+   a caixa fechada — é o que permite varrer a lista e achar o buraco sem abrir
+   nada. Regra que não se abre mão: quando não dá pra saber, o campo DIZ que
+   não dá, em vez de dizer que está tudo certo. "0/0 canhoto" quando o CT-e
+   não foi importado parece operação parada, quando na verdade não existe
+   contra o que conferir.
+   ========================================================================== */
+
+function szCxToggle(k) {
+  if (!state._szCaixas) state._szCaixas = {};
+  state._szCaixas[k] = !state._szCaixas[k];
+  render();
+}
+function szCxToggleResumo() {
+  state._szResumoAberto = !state._szResumoAberto;
+  render();
+}
+function szCxSetDia(v) {
+  state._szCxDia = v || "";
+  render();
+}
+
+/* Todas as pendências de UMA caixa (placa + data), reunidas num lugar só.
+   nivel: "trava" (vermelho), "arquivo" (laranja), "ok" (verde). */
+function szPendenciasDaCaixa(bx) {
+  var out = [];
+  var c = bx.carga, v = bx.viagem;
+  var placa = bx.placa, data = bx.data;
+
+  // --- espelho da Suzano
+  if (!c || !(c.espelhos || []).length) {
+    out.push({ nivel: "arquivo", txt: "Espelho da Suzano não anexado", ir: "emissao" });
+  }
+
+  // --- documentos fiscais
+  var docs = [];
+  try {
+    docs = (rfFiscais() || []).filter(function (d) {
+      return String(d.placa || "").toUpperCase() === String(placa).toUpperCase()
+        && String(d.data || "").slice(0, 10) === data;
+    });
+  } catch (e) { }
+  var ctes = docs.filter(function (d) { return d.tipo === "cte"; });
+  var mdfes = docs.filter(function (d) { return d.tipo === "mdfe"; });
+
+  if (!ctes.length) {
+    out.push({ nivel: "arquivo", txt: "Nenhum CT-e importado desta viagem", ir: "fiscal" });
+  }
+  if (!mdfes.length) {
+    out.push({ nivel: "arquivo", txt: "MDF-e não importado", ir: "fiscal" });
+  } else {
+    mdfes.forEach(function (m) {
+      if (!m.encerrado) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " EM ABERTO — encerrar no SimplesCTe", ir: "fiscal" });
+      if (!m.ciot) out.push({ nivel: "arquivo", txt: "MDF-e " + (m.numero || "?") + " sem CIOT", ir: "fiscal" });
+      if (!m.averbacoes || !m.averbacoes.length) out.push({ nivel: "trava", txt: "MDF-e " + (m.numero || "?") + " sem número de averbação — carga sem prova de seguro", ir: "fiscal" });
+      // CT-e que o MDF-e lista e que não foi importado
+      var faltam = [];
+      (m.ctes || []).forEach(function (ch) {
+        var num = String(parseInt(String(ch).slice(25, 34), 10));
+        if (!ctes.some(function (x) { return String(x.numero) === num; })) faltam.push(num);
+      });
+      if (faltam.length) out.push({ nivel: "arquivo", txt: "Falta importar o XML do(s) CT-e " + faltam.join(", "), ir: "fiscal" });
+    });
+  }
+
+  // --- canhotos
+  var ents = (state.entregas || []).filter(function (e) {
+    return String(e.placa || "").toUpperCase() === String(placa).toUpperCase()
+      && String(e.dataPrevista || "").slice(0, 10) === data;
+  });
+  var faltaCanhoto = [];
+  ents.forEach(function (e) {
+    (e.notas || []).forEach(function (n) {
+      if (!n.foto) faltaCanhoto.push((n.nf ? "NF " + n.nf : "nota sem número") + " (" + (e.recebedor || "?") + ")");
+    });
+  });
+  if (!ents.length && ctes.length) {
+    out.push({ nivel: "trava", txt: "CT-e importado mas nenhuma parada criada — os canhotos não têm onde encostar", ir: "canhotos" });
+  } else if (faltaCanhoto.length) {
+    out.push({
+      nivel: "trava",
+      txt: "Faltam " + faltaCanhoto.length + " canhoto(s): " + faltaCanhoto.slice(0, 6).join(" · ")
+        + (faltaCanhoto.length > 6 ? " e mais " + (faltaCanhoto.length - 6) : ""),
+      ir: "canhotos"
+    });
+  } else if (!ents.length && !ctes.length) {
+    /* NÃO dizer que está tudo certo: não há contra o que conferir. */
+    out.push({ nivel: "arquivo", txt: "Não dá para conferir canhoto: sem CT-e e sem parada nesta viagem", ir: "fiscal" });
+  }
+
+  // --- a viagem em si
+  if (!v) {
+    out.push({ nivel: "arquivo", txt: "Sem viagem cadastrada para esta placa e data", ir: "roteirizacao" });
+  } else {
+    if (!v.fotoKmSaida) out.push({ nivel: "trava", txt: "Sem foto do KM inicial", ir: "viagem" });
+    if (!v.fotoKmChegada && v.statusMotorista !== "aguardando_motorista") out.push({ nivel: "trava", txt: "Sem foto do KM final — viagem não encerra", ir: "viagem" });
+    if (v.statusMotorista === "aguardando_equipe") out.push({ nivel: "arquivo", txt: "Motorista terminou: aguardando sua revisão", ir: "viagem" });
+    if (!v.motoristaDesignadoUid && v.statusMotorista !== "aprovada") out.push({ nivel: "arquivo", txt: "Viagem não foi enviada para nenhum motorista", ir: "viagem" });
+  }
+
+  return out;
+}
+
+function szCxCor(pend) {
+  if (pend.some(function (p) { return p.nivel === "trava"; })) return "#C0392B";
+  if (pend.length) return "#E67E22";
+  return "#2E7D32";
+}
+
+function szCaixasCaminhaoHTML() {
+  var caixas = [];
+  try { caixas = szEmisCaixas() || []; } catch (e) { caixas = []; }
+  var dias = {};
+  caixas.forEach(function (b) { if (b.data) dias[b.data] = 1; });
+  var listaDias = Object.keys(dias).sort().reverse();
+  var diaSel = state._szCxDia || "";
+  var vis = caixas.filter(function (b) { return !diaSel || b.data === diaSel; });
+
+  var h = '<div style="margin-top:18px;">';
+  h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">'
+    + '<span style="font-size:13px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:.6px;">🚚 Uma caixa por caminhão</span>'
+    + '<select onchange="szCxSetDia(this.value)" style="font-size:12px;">'
+    + '<option value="">todos os dias</option>'
+    + listaDias.map(function (d) {
+      return '<option value="' + d + '"' + (diaSel === d ? " selected" : "") + '>' + d.split("-").reverse().join("/") + '</option>';
+    }).join("")
+    + '</select>'
+    + '<span style="font-size:11px;color:#777;">' + vis.length + ' caixa(s)</span>'
+    + '</div>';
+
+  if (!vis.length) {
+    return h + '<div style="font-size:12px;color:#777;">Nenhum carregamento nesse filtro.</div></div>';
+  }
+
+  vis.slice(0, 60).forEach(function (bx) {
+    var pend = szPendenciasDaCaixa(bx);
+    var cor = szCxCor(pend);
+    var aberto = (state._szCaixas || {})[bx.k];
+    var mot = "";
+    try { mot = bx.carga ? (szEmisMotorista(bx.carga) || {}).nome || "" : (bx.viagem ? String(motoristaDaViagem(bx.viagem) || "") : ""); } catch (e) { }
+    var t = { ctes: 0, peso: 0, volumes: 0 };
+    try { if (bx.carga) t = szEmisTotais(bx.carga); } catch (e) { }
+
+    h += '<div style="border:1px solid #222;border-left:5px solid ' + cor + ';border-radius:10px;background:#0A0A0A;margin-bottom:10px;overflow:hidden;">'
+      + '<div onclick="szCxToggle(\'' + bx.k + '\')" style="cursor:pointer;padding:12px 14px;">'
+      + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="color:' + GOLD + ';font-weight:800;font-size:16px;">' + (aberto ? "−" : "+") + '</span>'
+      + '<span style="font-size:16px;font-weight:800;color:#fff;">' + esc(bx.placa || "sem placa") + '</span>'
+      + '<span style="font-size:11px;color:#999;">' + esc(bx.data ? bx.data.split("-").reverse().join("/") : "sem data") + '</span>'
+      + '<span style="font-size:11px;color:#bbb;">' + esc(mot || "sem motorista") + '</span>'
+      + '<span style="margin-left:auto;font-size:11px;color:#777;">' + t.ctes + ' nota(s) · ' + (t.volumes || 0) + ' vol · '
+      + Number(t.peso || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 }) + ' kg</span>'
+      + '</div>'
+      // ---- o campo de pendências, visível com a caixa FECHADA
+      + '<div style="margin-top:8px;font-size:12px;color:' + cor + ';font-weight:700;">'
+      + (pend.length
+        ? "⚠ " + pend.length + " pendência(s): " + esc(pend.map(function (p) { return p.txt.split(" — ")[0]; }).slice(0, 3).join(" · "))
+        + (pend.length > 3 ? " …" : "")
+        : "✓ Nada pendente nesta viagem")
+      + '</div>'
+      + '</div>';
+
+    if (aberto) {
+      h += '<div style="padding:0 14px 14px 14px;">';
+      if (pend.length) {
+        h += '<div style="background:#111;border-radius:8px;padding:10px;margin-bottom:10px;">'
+          + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:6px;">O que falta nesta viagem</div>'
+          + pend.map(function (p) {
+            var c2 = p.nivel === "trava" ? "#C0392B" : "#E67E22";
+            return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-bottom:1px solid #1c1c1c;">'
+              + '<span style="color:' + c2 + ';font-weight:800;">' + (p.nivel === "trava" ? "●" : "○") + '</span> ' + esc(p.txt) + '</div>';
+          }).join("")
+          + '</div>';
+      }
+      h += '<div style="font-size:11px;color:#777;">Use as etapas do resumo geral acima para importar arquivos e anexar canhotos — esta caixa mostra o estado desta viagem.</div>';
+      h += '</div>';
+    }
+    h += '</div>';
+  });
+
+  return h + '</div>';
 }
 
 function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
@@ -20207,7 +20439,15 @@ function renderTabela() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
         <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
       </div>
-      ${szTelaEtapasHTML()}
+      <div style="border:2px solid ${GOLD};border-radius:12px;background:#12100A;margin-bottom:14px;overflow:hidden;">
+        <div onclick="szCxToggleResumo()" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:14px 16px;">
+          <span style="color:${GOLD};font-weight:800;font-size:18px;line-height:1;">${state._szResumoAberto ? "\u2212" : "+"}</span>
+          <span style="color:${GOLD};font-weight:800;font-size:16px;letter-spacing:.5px;">RESUMO GERAL DA OPERA\u00c7\u00c3O</span>
+          <span style="margin-left:auto;font-size:11px;color:#888;">as seis etapas do dia \u00b7 importar arquivos e anexar canhotos</span>
+        </div>
+        ${state._szResumoAberto ? `<div style="padding:0 16px 16px 16px;">${szTelaEtapasHTML()}</div>` : ""}
+      </div>
+      ${szCaixasCaminhaoHTML()}
     `;
     return;
   }
