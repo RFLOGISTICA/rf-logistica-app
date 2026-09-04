@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v386)</title>
+<title>RF Logística — Painel da Frota (v388)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1569,6 +1569,120 @@ function ctBlocoHTML() {
   return h + '</div>';
 }
 
+/* ==========================================================================
+   v388 — CIDADE FORA DAS NOSSAS ROTAS
+   --------------------------------------------------------------------------
+   Renato (04/09): "minha rota e CENTRO NORTE e NORTE, o que tiver fora dai
+   tem que ser tratado". Entao a checagem nao e mais "cidade nova" -- e cidade
+   que nao pertence as duas regionais que a RF opera.
+
+   A lista abaixo saiu do historico real: sao as cidades que a RF ja atendeu
+   com viagem marcada como CENTRO NORTE ou NORTE, mais as nomeadas na tabela
+   do BID. Cidade que nao estiver aqui gera aviso -- pode ser destino novo
+   legitimo dentro da regional, e nesse caso e so acrescentar na lista.
+
+   Vale para as TRES portas de entrada: FOCRI (roteirizacao), espelho da
+   Suzano e romaneio da conferencia. */
+
+var RF_ROTAS_PROPRIAS = ["CENTRO NORTE", "NORTE"];
+
+var RF_CIDADES_ROTA = {
+  "CENTRO NORTE": ["FEIRA DE SANTANA", "ALAGOINHAS", "CATU", "CANDEIAS", "SANTO AMARO",
+    "SAO FRANCISCO DO CONDE", "SAO GONCALO DOS CAMPOS", "CONCEICAO DO JACUIPE",
+    "IRARA", "MATA DE SAO JOAO", "AMELIA RODRIGUES", "ARACAS", "ARAMARI", "ITANAGRA",
+    "SAO SEBASTIAO DO PASSE", "CORACAO DE MARIA", "SANTANOPOLIS"],
+  "NORTE": ["JUAZEIRO", "SENHOR DO BONFIM", "CAMPO FORMOSO", "JACOBINA", "VALENTE",
+    "SERRINHA", "FILADELFIA", "PINDOBACU", "CAPIM GROSSO", "MUNDO NOVO", "OUROLANDIA",
+    "RIACHAO DO JACUIPE", "SANTALUZ", "UAUA", "ABARE", "JAGUARARI", "ITIUBA",
+    "PONTO NOVO", "ANDORINHA", "CANSANCAO", "QUEIMADAS", "MONTE SANTO"]
+};
+
+function rfCidadeNorm(t) {
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s*[-\/]\s*BA\s*$/i, "").replace(/[^A-Za-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ").trim().toUpperCase();
+}
+/* Em qual das nossas rotas a cidade esta. "" = fora das duas. */
+function rfRotaDaCidade(cidade) {
+  var n = rfCidadeNorm(cidade);
+  if (!n) return "";
+  var extras = (state.config && state.config.cidadesRota) || {};
+  for (var i = 0; i < RF_ROTAS_PROPRIAS.length; i++) {
+    var r = RF_ROTAS_PROPRIAS[i];
+    if ((RF_CIDADES_ROTA[r] || []).indexOf(n) >= 0) return r;
+    if ((extras[r] || []).indexOf(n) >= 0) return r;
+  }
+  return "";
+}
+function rfCidadeForaDaRota(cidade) {
+  return !!rfCidadeNorm(cidade) && !rfRotaDaCidade(cidade);
+}
+/* Aceitar uma cidade: entra na lista da regional escolhida e para de avisar.
+   Fica gravado no config, que e sincronizado. */
+function rfAceitarCidade(cidade, rota) {
+  var n = rfCidadeNorm(cidade);
+  if (!n) return;
+  if (!confirm("Confirmar que " + n + " pertence \u00e0 rota " + rota + "?\n\n"
+    + "Ela deixa de gerar aviso daqui pra frente. Use s\u00f3 depois de conferir no BID que existe pre\u00e7o acordado para esse destino.")) return;
+  if (!state.config) state.config = {};
+  if (!state.config.cidadesRota) state.config.cidadesRota = {};
+  var l = state.config.cidadesRota[rota] || [];
+  if (l.indexOf(n) < 0) l.push(n);
+  state.config.cidadesRota[rota] = l;
+  salvar(); render();
+}
+
+/* Banner do topo: varre espelho, roteirizacao e conferencia dos ultimos dias. */
+function rfAvisoCidadesNovasHTML() {
+  var alvo = [];
+  var corte = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+  try {
+    (szCargas() || []).forEach(function (cg) {
+      if (String(cg.data || "") < corte) return;
+      (cg.espelhos || []).forEach(function (e) {
+        if (e.cidade) alvo.push({ cidade: e.cidade, fonte: "espelho", onde: (cg.placa || "sem placa") + " \u00b7 " + (cg.data || ""), cliente: e.cliente || "" });
+      });
+    });
+  } catch (e) { }
+  try {
+    (state.entregas || []).forEach(function (e) {
+      if (String(e.dataPrevista || "") < corte) return;
+      if (e.cidade) alvo.push({ cidade: e.cidade, fonte: "roteiriza\u00e7\u00e3o", onde: (e.placa || "") + " \u00b7 " + (e.dataPrevista || ""), cliente: e.recebedor || "" });
+    });
+  } catch (e) { }
+  try {
+    (state.romaneios || []).forEach(function (r) {
+      (r.caixas || []).forEach(function (c) {
+        if (c.cidade) alvo.push({ cidade: c.cidade, fonte: "confer\u00eancia", onde: (r.placa || "") + " \u00b7 romaneio", cliente: c.cliente || c.recebedor || "" });
+      });
+    });
+  } catch (e) { }
+
+  var vistas = {}, fora = [];
+  alvo.forEach(function (a) {
+    var n = rfCidadeNorm(a.cidade);
+    if (!n || vistas[n] || !rfCidadeForaDaRota(n)) return;
+    vistas[n] = true; fora.push(a);
+  });
+  if (!fora.length) return "";
+
+  return '<div style="border:2px solid #C0392B;background:#1a0b0b;border-radius:10px;padding:14px 16px;margin-bottom:14px;">'
+    + '<div style="font-size:13px;color:#C0392B;font-weight:800;text-transform:uppercase;letter-spacing:.5px;">\u26a0 ' + fora.length + ' cidade(s) fora das nossas rotas</div>'
+    + '<div style="font-size:11.5px;color:#bbb;margin:6px 0 10px 0;">'
+    + 'A RF opera <b>Centro Norte</b> e <b>Norte</b>. Estas cidades apareceram nos \u00faltimos 10 dias e n\u00e3o est\u00e3o em nenhuma das duas. '
+    + '<b>Trate antes de a carga subir no caminh\u00e3o</b>: confirme com a Suzano se existe acordo para esse destino e qual o pre\u00e7o. '
+    + 'Se pertencer a uma das nossas regionais, use o bot\u00e3o ao lado para acrescentar \u2014 ela para de avisar.'
+    + '</div>'
+    + fora.map(function (a) {
+      return '<div style="font-size:12px;color:#ddd;padding:5px 0;border-bottom:1px solid #2a1010;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        + '<span style="flex:1;"><b>' + esc(a.cidade) + '</b>' + (a.cliente ? ' \u2014 ' + esc(a.cliente) : "")
+        + ' <span style="color:#888;">(' + esc(a.fonte) + ': ' + esc(a.onde) + ')</span></span>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + esc(String(a.cidade).replace(/\x27/g, "")) + '\',\'CENTRO NORTE\')">+ Centro Norte</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + esc(String(a.cidade).replace(/\x27/g, "")) + '\',\'NORTE\')">+ Norte</button>'
+        + '</div>';
+    }).join("")
+    + '</div>';
+}
 function szCxToggle(k) {
   if (!state._szCaixas) state._szCaixas = {};
   state._szCaixas[k] = !state._szCaixas[k];
@@ -20874,6 +20988,7 @@ function renderTabela() {
         </div>
         ${state._szResumoAberto ? `<div style="padding:0 16px 16px 16px;">${szTelaEtapasHTML()}</div>` : ""}
       </div>
+      ${rfAvisoCidadesNovasHTML()}
       ${ctBlocoHTML()}
       ${szCaixasCaminhaoHTML()}
     `;
