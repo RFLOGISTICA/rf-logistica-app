@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v388)</title>
+<title>RF Logística — Painel da Frota (v389)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -17033,14 +17033,84 @@ function rfRotImportarCSV(input, file) {
   };
   leitor.readAsText(file, "UTF-8");
 }
+/* v389 — leitor do PDF de roteirizacao da RF.
+   Formato do bloco (rodape do PDF, fonte miuda, cinza):
+     #RFROT1;data=;placa=;motorista=;tipo=;faixa=;regional=;frete=;cliente=
+     #RFPAR;ordem=;cidade=;recebedor=;endereco=;bairro=;peso=;volumes=;remessa=;regional=;obs=
+     #RFFIM;paradas=;volumes=;peso=
+   Se o bloco nao estiver la, o app diz isso em vez de tentar adivinhar a
+   tabela visual -- PDF de terceiro nao tem esse bloco e nao deve ser lido. */
+function rfRotLerBlocoPDF(txt) {
+  var T = String(txt || "").replace(/\u00a0/g, " ");
+  var cab = T.match(/#RFROT1;([^\n#]+)/);
+  if (!cab) return null;
+  var campos = function (str) {
+    var o = {};
+    String(str || "").split(";").forEach(function (p) {
+      var i = p.indexOf("=");
+      if (i > 0) o[p.slice(0, i).trim()] = p.slice(i + 1).trim();
+    });
+    return o;
+  };
+  var head = campos(cab[1]);
+  var paradas = [];
+  var re = /#RFPAR;([^\n#]+)/g, m;
+  while ((m = re.exec(T)) !== null) paradas.push(campos(m[1]));
+  if (!paradas.length) return null;
+  return { head: head, paradas: paradas };
+}
+function rfRotImportarPDF(input, file) {
+  state._rotMsg = "lendo o PDF...";
+  render();
+  rfCrlvExtrairTexto(file, 20).then(function (txt) {
+    var b = rfRotLerBlocoPDF(txt);
+    if (!b) {
+      alert("Esse PDF não tem o bloco de importação da RF.\n\n"
+        + "Só os PDF de roteirização gerados pela própria RF podem ser importados — eles trazem os dados em texto no rodapé. "
+        + "PDF vindo de fora não tem esse bloco, e o app não vai adivinhar a tabela.");
+      state._rotMsg = ""; input.value = ""; render(); return;
+    }
+    var h = b.head;
+    var dataPrev = h.data || prompt("Data da viagem (AAAA-MM-DD):", hojeISO());
+    if (!dataPrev) { state._rotMsg = ""; input.value = ""; render(); return; }
+    var linhas = [["Veículo", "Regional", "Ordem", "Cidade", "Recebedor", "Endereço", "Bairro", "Peso (kg)", "Volumes", "Remessa(s)"]];
+    b.paradas.forEach(function (p) {
+      linhas.push([h.placa || "", p.regional || h.regional || "", p.ordem || "", p.cidade || "",
+        p.recebedor || "", p.endereco || "", p.bairro || "", p.peso || "0", p.volumes || "0", p.remessa || ""]);
+    });
+    try {
+      var wb = { SheetNames: ["Detalhe por Cliente"], Sheets: { "Detalhe por Cliente": { __rows: linhas } }, __proprio: true };
+      var res = rfRotProcessarPlanilha(wb, dataPrev);
+      state._rotMsg = "✓ PDF lido: " + b.paradas.length + " parada(s) no " + (h.placa || "")
+        + (h.motorista ? " · " + h.motorista : "")
+        + (h.frete ? " · frete R$ " + h.frete : "");
+      input.value = "";
+      render();
+      if (res && res.msg) alert(res.msg);
+    } catch (e) {
+      alert("Li o PDF mas não consegui montar a rota: " + ((e && e.message) || "erro"));
+      state._rotMsg = ""; render();
+    }
+  }).catch(function (e) {
+    alert("Não consegui ler o PDF: " + ((e && e.message) || "erro") + ". Se ele for digitalizado, não tem texto dentro.");
+    state._rotMsg = ""; input.value = ""; render();
+  });
+}
 function rfRotImportar(input) {
   var file = input.files && input.files[0];
   if (!file) return;
   if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Recarregue a página com internet e tente de novo."); return; }
   // v276: o seletor de arquivos do Android bloqueava .xlsx quando o accept era
   // por extensão, então o filtro ficou aberto e a checagem passou pra cá.
+  /* v389: PDF gerado pela propria RF entra aqui.
+     O PDF da roteirizacao que eu monto traz, no rodape, um bloco em texto com
+     os dados ja separados (#RFROT1 e #RFPAR). Nao e leitura por adivinhacao:
+     e o mesmo arquivo que vai pro cliente, e o app le o bloco exato.
+     Vantagem sobre o xlsx: o seletor do Android nao corta PDF, e o arquivo
+     serve pros dois lados -- Suzano e sistema. */
+  if (/\.pdf$/i.test(file.name || "")) { rfRotImportarPDF(input, file); return; }
   if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name || "")) {
-    alert("Selecione a planilha da roteirização (.xlsx ou .csv). O arquivo escolhido foi: " + (file.name || "sem nome"));
+    alert("Selecione a roteirização: o PDF gerado pela RF, ou a planilha (.xlsx ou .csv). O arquivo escolhido foi: " + (file.name || "sem nome"));
     input.value = ""; return;
   }
   // v350: CSV não é zip — não depende de descompactador nenhum, então é a saída
