@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v385)</title>
+<title>RF Logística — Painel da Frota (v386)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -20777,73 +20777,76 @@ function renderTabela() {
         ${state._romaneioLendo ? `<span style="color:${GOLD};font-size:12px;">Lendo romaneio com IA...</span>` : ""}
       </div>
       ${(function () {
-        // v219: encerrado sai da frente, mas continua acessível num bloco próprio
+        /* v386 — CAIXA POR PLACA, com recolher e filtro de data.
+           A v257 tinha resolvido a mistura obrigando a escolher um motorista
+           antes de ver qualquer coisa. Resolveu a bagunca e criou outra: com
+           41 romaneios, Renato nao consegue navegar -- tem que voltar no
+           seletor a cada troca e nao ha como andar pelas datas.
+           Agora e o mesmo desenho da aba Carregamento Suzano, que funciona:
+           uma caixa por placa, recolhida, e dentro dela os romaneios daquela
+           placa, do mais novo pro mais antigo. Com filtro de data no topo. */
         const todos = state.romaneios || [];
         if (!todos.length) return `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio anexado ainda.</div>`;
-        const abertos = todos.filter((r) => !rfRomaneioEncerrado(r));
-        const encerrados = todos.filter((r) => rfRomaneioEncerrado(r));
-        const verEncerrados = !!state._verRomaneiosEncerrados;
-        /* v257: Renato foi claro -- ver tudo junto nao serve. A aba nao mostra
-           romaneio nenhum enquanto ele nao escolher o motorista/placa. Escolheu,
-           abre TODOS os romaneios daquele motorista (e so os dele), inclusive os
-           encerrados no bloco recolhido. Nao existe mais opcao "todos". */
-        const contaPlaca = {};
-        todos.forEach((r) => {
-          const p = r.placa || "";
-          if (!contaPlaca[p]) contaPlaca[p] = { abertos: 0, encerrados: 0 };
-          if (rfRomaneioEncerrado(r)) contaPlaca[p].encerrados++; else contaPlaca[p].abertos++;
-        });
-        const placasTodas = Object.keys(contaPlaca).sort((a, b) => (a || "zzzz").localeCompare(b || "zzzz"));
-        const filtroPl = state._confFiltroPlaca || "";
-        const escolheuValida = filtroPl !== "" && placasTodas.indexOf(filtroPl) !== -1;
+
+        const dataDe = (r) => String(r.data || r.criadoEm && new Date(r.criadoEm).toISOString().slice(0, 10) || "").slice(0, 10);
+        const dias = {};
+        todos.forEach((r) => { const d = dataDe(r); if (d) dias[d] = 1; });
+        const listaDias = Object.keys(dias).sort().reverse();
+        const diaSel = state._confDia || "";
+        const vis = todos.filter((r) => !diaSel || dataDe(r) === diaSel);
+
         const rotuloPlaca = (p) => {
           const vv = state.veiculos.find((x) => x.placa === p);
           if (!p) return "(sem placa direcionada)";
           return esc(p) + (vv && vv.motorista ? " — " + esc(vv.motorista) : " — (sem motorista no cadastro)");
         };
-        const seletorMot = `
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-            <span style="font-size:12px;color:#999;">Motorista / placa:</span>
-            <select style="min-width:260px;" onchange="state._confFiltroPlaca=this.value; render();">
-              <option value="">— escolha o motorista/placa —</option>
-              ${placasTodas.map((p) => `<option value="${esc(p)}" ${filtroPl === p ? "selected" : ""}>${rotuloPlaca(p)} (${contaPlaca[p].abertos} em andamento)</option>`).join("")}
+        const porPlaca = {};
+        vis.forEach((r) => { const p = r.placa || ""; (porPlaca[p] = porPlaca[p] || []).push(r); });
+        const placas = Object.keys(porPlaca).sort((a, b) => (a || "zzzz").localeCompare(b || "zzzz"));
+
+        let h = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+            <span style="font-size:12px;color:#999;">Data:</span>
+            <select style="font-size:12px;" onchange="state._confDia=this.value; render();">
+              <option value="">todas as datas</option>
+              ${listaDias.map((d) => `<option value="${esc(d)}" ${diaSel === d ? "selected" : ""}>${esc(d.split("-").reverse().join("/"))}</option>`).join("")}
             </select>
-            ${escolheuValida ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="state._confFiltroPlaca=''; state._verRomaneiosEncerrados=false; render();">‹ trocar motorista</button>` : ""}
+            <span style="font-size:11px;color:#777;">${vis.length} romaneio(s) · ${placas.length} caminhão(ões)</span>
+            ${Object.keys(state._confAbertas || {}).length ? `<button class="btn-outline" style="font-size:11px;padding:2px 8px;" onclick="state._confAbertas={}; render();">recolher todas</button>` : ""}
           </div>`;
-        // Nada escolhido: so os atalhos, um por motorista/placa. Nenhum romaneio na tela.
-        if (!escolheuValida) {
-          return seletorMot + `
-            <div style="font-size:12px;color:#999;margin-bottom:12px;">Escolha um motorista/placa acima (ou clique num cartão abaixo) para abrir os romaneios dele. Um de cada vez — nada aparece misturado.</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px,1fr));gap:10px;">
-              ${placasTodas.map((p) => `
-                <button onclick="state._confFiltroPlaca='${esc(p)}'; state._verRomaneiosEncerrados=false; render();"
-                  style="background:#111;border:1px solid #2A2A2A;border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer;color:#fff;"
-                  onmouseover="this.style.borderColor='${GOLD}';" onmouseout="this.style.borderColor='#2A2A2A';">
-                  <div style="font-weight:800;font-size:13.5px;">🚛 ${rotuloPlaca(p)}</div>
-                  <div style="font-size:11px;color:${contaPlaca[p].abertos ? GOLD : "#777"};margin-top:4px;">
-                    ${contaPlaca[p].abertos} em andamento${contaPlaca[p].encerrados ? ` · ${contaPlaca[p].encerrados} encerrado${contaPlaca[p].encerrados === 1 ? "" : "s"}` : ""}
-                  </div>
-                </button>`).join("")}
+
+        if (!placas.length) return h + `<div style="font-size:12px;color:#777;">Nenhum romaneio nessa data.</div>`;
+
+        placas.forEach((p) => {
+          const lista = porPlaca[p].slice().sort((a, b) => String(dataDe(b)).localeCompare(String(dataDe(a))));
+          const abertos = lista.filter((r) => !rfRomaneioEncerrado(r));
+          const encerrados = lista.filter((r) => rfRomaneioEncerrado(r));
+          const sinalizadas = lista.filter((r) => (r.caixas || []).some((c) => c.sinalizada)).length;
+          const cor = sinalizadas ? "#C0392B" : abertos.length ? GOLD : "#2E7D32";
+          const aberta = (state._confAbertas || {})[p];
+          h += `<div style="border:1px solid #222;border-left:6px solid ${cor};border-radius:12px;background:#0C0C0C;margin-bottom:12px;overflow:hidden;">
+              <div onclick="state._confAbertas=state._confAbertas||{}; state._confAbertas['${esc(p)}']=!state._confAbertas['${esc(p)}']; render();"
+                   style="cursor:pointer;padding:14px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+                <span style="color:${GOLD};font-weight:800;font-size:20px;line-height:1;">${aberta ? "\u2212" : "+"}</span>
+                <span style="font-size:18px;font-weight:800;color:#fff;">🚛 ${rotuloPlaca(p)}</span>
+                <span style="font-size:12px;color:#999;">${lista.length} romaneio(s)</span>
+                <span style="margin-left:auto;font-size:12px;font-weight:700;color:${cor};">
+                  ${sinalizadas ? "⚠ " + sinalizadas + " sinalizada(s)" : abertos.length ? abertos.length + " em andamento" : "✓ todos encerrados"}
+                </span>
+              </div>
+              ${aberta ? `<div style="padding:0 12px 12px 12px;">
+                  ${abertos.length ? abertos.map((r) => rfConfRomaneioCardAdmin(r)).join("")
+                    : `<div style="color:#777;font-size:12px;padding:10px;">Nenhum romaneio em andamento nesta placa.</div>`}
+                  ${encerrados.length ? `<div style="margin-top:14px;padding-top:12px;border-top:1px solid #2A2A2A;">
+                      <button class="btn-outline" style="font-size:11px;" onclick="event.stopPropagation(); state._confEnc=state._confEnc||{}; state._confEnc['${esc(p)}']=!state._confEnc['${esc(p)}']; render();">
+                        ${(state._confEnc || {})[p] ? "▾" : "▸"} Encerrados (${encerrados.length})
+                      </button>
+                      <div style="font-size:10px;color:#666;margin-top:4px;">Não aparecem mais no app do motorista. Nada foi apagado.</div>
+                      ${(state._confEnc || {})[p] ? `<div style="margin-top:12px;">${encerrados.map((r) => rfConfRomaneioCardAdmin(r)).join("")}</div>` : ""}
+                    </div>` : ""}
+                </div>` : ""}
             </div>`;
-        }
-        // Escolhido: só o que é dessa placa -- abertos e encerrados.
-        const meusAbertos = abertos.filter((r) => (r.placa || "") === filtroPl);
-        const meusEncerrados = encerrados.filter((r) => (r.placa || "") === filtroPl);
-        return seletorMot + `
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-left:3px solid ${GOLD};padding-left:10px;margin-bottom:12px;">
-            <div style="font-size:15px;font-weight:800;color:#fff;">🚛 ${rotuloPlaca(filtroPl)}</div>
-            <span style="font-size:11px;color:#888;">${meusAbertos.length} romaneio${meusAbertos.length === 1 ? "" : "s"} em andamento</span>
-          </div>`
-          + (meusAbertos.length ? meusAbertos.map((r) => rfConfRomaneioCardAdmin(r)).join("")
-            : `<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum romaneio em andamento para esse motorista/placa.</div>`)
-          + (meusEncerrados.length ? `
-            <div style="margin-top:22px;padding-top:14px;border-top:1px solid #2A2A2A;">
-              <button class="btn-outline" style="font-size:11px;" onclick="state._verRomaneiosEncerrados=!state._verRomaneiosEncerrados;render();">
-                ${verEncerrados ? "▾" : "▸"} Encerrados desse motorista (${meusEncerrados.length})
-              </button>
-              <div style="font-size:10px;color:#666;margin-top:4px;">Não aparecem mais no app do motorista. Nada foi apagado — a conferência de cada um continua inteira aqui.</div>
-              ${verEncerrados ? `<div style="margin-top:12px;">${meusEncerrados.map((r) => rfConfRomaneioCardAdmin(r)).join("")}</div>` : ""}
-            </div>` : "");
+        });
+        return h;
       })()}
     `;
   }
