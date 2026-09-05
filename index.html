@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v392)</title>
+<title>RF Logística — Painel da Frota (v395)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1144,6 +1144,215 @@ function mtDistKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h)) * mtCfg().fatorRodo;
 }
 
+/* ==========================================================================
+   v393 — ROTEIRIZA PRIMEIRO, DEPOIS MEDE
+   --------------------------------------------------------------------------
+   Renato (05/09): "a distancia esta confusa, primeiro tem que roteirizar e
+   depois colocar a distancia".
+
+   Ele tem razao. Ate a v392 a tabela media os trechos na ORDEM DO PRINT, que
+   e a ordem em que a Mateus lista as lojas -- nao um roteiro. Dava numero
+   estranho: Paulo Afonso (380 km), voltar 128 km pra Novo Triunfo, subir 82
+   km pra Santa Brigida. Ninguem roda assim.
+
+   Agora o app monta o ROTEIRO primeiro e so entao mede trecho por trecho.
+   Ate 8 paradas a ordem e a MELHOR possivel de verdade, testando todas as
+   permutacoes (8! = 40.320 combinacoes, roda em milesimos de segundo no
+   proprio aparelho). Acima disso, vizinho mais proximo + 2-opt, que chega
+   perto sem travar a tela.
+
+   Aferido contra o Google Maps com a carga 12292340 (8 paradas): o Maps deu
+   1.183 km na ordem do print e o modelo deu 1.130 km de estrada pra mesma
+   ordem -- 4,5% abaixo. O fator rodoviario (editavel na tela) e o que ajusta
+   isso, e o KM real medido nas viagens fechadas substitui a estimativa de vez.
+   ========================================================================== */
+function mtKmDeOrdem(base, ordem) {
+  var pontos = [base].concat(ordem).concat([base]);
+  var km = 0;
+  for (var i = 0; i < pontos.length - 1; i++) {
+    var d = mtDistKm(pontos[i], pontos[i + 1]);
+    if (d == null) return null;                 // cidade fora da malha: nao da pra ordenar
+    km += d;
+  }
+  return km;
+}
+/* Melhor ordem de visita saindo da base e voltando pra ela. */
+/* ==========================================================================
+   v394 — O FATOR RODOVIARIO PASSA A SER POR ROTA, E APRENDIDO
+   --------------------------------------------------------------------------
+   Renato conferiu a rota 3237 no Google Maps e mandou os dois numeros: na
+   ordem do print 1.183 km, na ordem roteirizada 887 km. Cruzando com a linha
+   reta que o app calcula, o fator real desse corredor e ~1,22 -- nao 1,16,
+   que foi calibrado nas rotas da Chapada (Seabra 349 km reais, Irece 370,
+   Guanambi 570, que pedem ~1,13). Nenhum fator unico serve pros dois. Errar
+   6% em 900 km e 55 km de diesel na conta errada.
+
+   O fator vira POR ROTA, com tres origens, nesta ordem:
+     1. MEDIDO -- viagem fechada dessa rota: KM real das fotos de hodometro
+        dividido pela linha reta que o app guardou quando criou a viagem;
+     2. GOOGLE -- Renato cola uma vez o KM que o Maps deu pra rota;
+     3. GERAL -- o fator da tela (1,16), so enquanto nao existe nem um nem
+        outro.
+
+   Por que fator e nao media de KM: a mesma rota vem com 4, 8 ou 10 cidades a
+   cada semana. Media de KM de uma carga nao vale pra outra; a razao
+   estrada/linha reta vale, porque e do terreno, nao da carga.
+   ========================================================================== */
+function mtFatores() {
+  if (!state.mateusFator || typeof state.mateusFator !== "object") state.mateusFator = {};
+  return state.mateusFator;
+}
+/* So entra viagem que guardou a linha reta na criacao (v394 em diante) e que
+   fechou com os dois hodometros. O KM urbano sai da conta antes da divisao --
+   ele nao e trecho de estrada. */
+function mtFatorMedido(rotaCod, rotaNome) {
+  var razoes = [];
+  (state.viagens || []).forEach(function (v) {
+    if (String(v.cliente || "") !== "JT/Mateus") return;
+    var bate = (rotaCod && String(v.rotaCodMateus || "") === String(rotaCod))
+      || (rotaNome && v.rota && mtRotaNorm(v.rota) === mtRotaNorm(rotaNome));
+    if (!bate) return;
+    var reta = Number(v.kmRetaMateus) || 0;
+    if (reta <= 0) return;
+    var real = (Number(v.kmChegada) || 0) - (Number(v.kmSaida) || 0);
+    if (!(real >= 20 && real <= 3000)) return;
+    var estrada = real - (Number(v.kmUrbanoMateus) || 0);
+    if (estrada <= 0) return;
+    var f = estrada / reta;
+    if (f >= 1.0 && f <= 1.8) razoes.push(f);   // fora disso e leitura errada, nao terreno
+  });
+  if (!razoes.length) return null;
+  var m = razoes.reduce(function (a, b) { return a + b; }, 0) / razoes.length;
+  return { fator: Math.round(m * 1000) / 1000, n: razoes.length };
+}
+function mtFatorDaRota(rotaCod, rotaNome) {
+  var med = mtFatorMedido(rotaCod, rotaNome);
+  if (med) return { fator: med.fator, origem: "medido", n: med.n };
+  var g = mtFatores()[String(rotaCod || "")];
+  if (g && Number(g.fator) > 0) return { fator: Number(g.fator), origem: "google", n: 0, km: Number(g.km) || 0 };
+  return { fator: mtCfg().fatorRodo, origem: "geral", n: 0 };
+}
+/* Renato cola o KM que o Google deu pra ESTA rota; o app converte em fator e
+   guarda o fator, nao o KM -- assim vale pra carga da semana que vem, que vem
+   com outras cidades. */
+function mtCalibrarGoogle(kmTexto) {
+  var p = (state._mateus || {}).carga;
+  if (!p) return;
+  var km = Number(String(kmTexto || "").replace(/\./g, "").replace(",", ".")) || 0;
+  var info = mtKmDaCarga(p);
+  var reta = info.reta;
+  if (!km || !reta) { alert("Informe o KM que o Google mostrou para esta rota."); return; }
+  var f = km / reta;
+  if (f < 1 || f > 1.8) {
+    alert("Esse KM nao fecha com a rota (daria fator " + f.toFixed(2) + ").\n\n"
+      + "Confira se o numero e o da rota inteira, com estas mesmas cidades e a volta pra " + mtCfg().base + ".");
+    return;
+  }
+  mtFatores()[String(p.rotaCod || "")] = {
+    fator: Math.round(f * 1000) / 1000, km: km, cidades: (p.cidades || []).length,
+    rota: p.rota || "", em: Date.now()
+  };
+  salvar(); render();
+}
+
+function mtRotaOtima(nomes) {
+  var cfg = mtCfg(), base = cfg.base;
+  var lista = (nomes || []).slice();
+  if (lista.length <= 1) return { ordem: lista, km: mtKmDeOrdem(base, lista) || 0, exato: true };
+
+  if (lista.length <= 12) {
+    /* Exato por programacao dinamica (Held-Karp). A versao anterior testava
+       todas as permutacoes: com 8 paradas eram 40.320 caminhos e a tela
+       congelava mais de 1 segundo no tablet. Aqui sao 2^n x n x n passos --
+       com 8 paradas, 16 mil contas, instantaneo -- e o resultado e o MESMO,
+       a melhor ordem de verdade. */
+    var n = lista.length, INF = Infinity;
+    var dB = [], d = [];
+    for (var i = 0; i < n; i++) {
+      var db = mtDistKm(base, lista[i]);
+      if (db == null) return { ordem: lista, km: mtKmDeOrdem(base, lista) || 0, exato: false };
+      dB.push(db); d.push([]);
+      for (var j = 0; j < n; j++) d[i].push(i === j ? 0 : (mtDistKm(lista[i], lista[j]) || 0));
+    }
+    var total = 1 << n;
+    var dp = [], pai = [];
+    for (var m = 0; m < total; m++) { dp.push(new Array(n).fill(INF)); pai.push(new Array(n).fill(-1)); }
+    for (var i2 = 0; i2 < n; i2++) dp[1 << i2][i2] = dB[i2];
+    for (var mask = 1; mask < total; mask++) {
+      for (var u = 0; u < n; u++) {
+        if (!(mask & (1 << u)) || dp[mask][u] === INF) continue;
+        for (var v = 0; v < n; v++) {
+          if (mask & (1 << v)) continue;
+          var nm = mask | (1 << v), custo = dp[mask][u] + d[u][v];
+          if (custo < dp[nm][v]) { dp[nm][v] = custo; pai[nm][v] = u; }
+        }
+      }
+    }
+    var cheio = total - 1, melhorFim = -1, melhorKm2 = INF;
+    for (var f = 0; f < n; f++) {
+      var tot = dp[cheio][f] + dB[f];
+      if (tot < melhorKm2) { melhorKm2 = tot; melhorFim = f; }
+    }
+    if (melhorFim < 0) return { ordem: lista, km: mtKmDeOrdem(base, lista) || 0, exato: false };
+    var seq = [], mk = cheio, cur = melhorFim;
+    while (cur >= 0) { seq.push(lista[cur]); var ant = pai[mk][cur]; mk = mk & ~(1 << cur); cur = ant; }
+    seq.reverse();
+    return { ordem: seq, km: melhorKm2, exato: true };
+  }
+
+  /* muitas paradas: vizinho mais proximo e depois 2-opt */
+  var rest = lista.slice(), atual = base, ordem = [];
+  while (rest.length) {
+    var mi = -1, md = Infinity;
+    for (var j = 0; j < rest.length; j++) {
+      var d = mtDistKm(atual, rest[j]);
+      if (d != null && d < md) { md = d; mi = j; }
+    }
+    if (mi < 0) break;
+    atual = rest[mi]; ordem.push(atual); rest.splice(mi, 1);
+  }
+  ordem = ordem.concat(rest);
+  var km = mtKmDeOrdem(base, ordem);
+  var melhorou = true, voltas = 0;
+  while (melhorou && voltas < 40) {
+    melhorou = false; voltas++;
+    for (var a = 0; a < ordem.length - 1; a++) {
+      for (var b = a + 1; b < ordem.length; b++) {
+        var cand = ordem.slice(0, a).concat(ordem.slice(a, b + 1).reverse(), ordem.slice(b + 1));
+        var kc = mtKmDeOrdem(base, cand);
+        if (kc != null && km != null && kc < km - 0.01) { ordem = cand; km = kc; melhorou = true; }
+      }
+    }
+  }
+  return { ordem: ordem, km: km || 0, exato: false };
+}
+/* Os trechos, ja na ordem do roteiro, incluindo a VOLTA pra base -- que na
+   v392 entrava no total sem aparecer na tabela. */
+function mtTrechosDaRota(ordem) {
+  var base = mtCfg().base, pontos = [base].concat(ordem).concat([base]), out = [];
+  for (var i = 0; i < pontos.length - 1; i++) {
+    var d = mtDistKm(pontos[i], pontos[i + 1]);
+    out.push({ de: pontos[i], para: pontos[i + 1], km: d, volta: (i === pontos.length - 2) });
+  }
+  return out;
+}
+function mtMapsUrl(ordem) {
+  var base = mtCfg().base;
+  var pt = function (c) { return c + ", BA, Brasil"; };
+  var meio = ordem.map(pt);
+  return "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent(pt(base))
+    + "&destination=" + encodeURIComponent(pt(base))
+    + (meio.length ? "&waypoints=" + meio.map(encodeURIComponent).join("|") : "")
+    + "&travelmode=driving";
+}
+function mtVerRotaMaps() {
+  var p = (state._mateus || {}).carga;
+  if (!p) return;
+  var km = mtKmDaCarga(p);
+  if (!km.ordem || !km.ordem.length) { alert("Nenhuma cidade desta carga tem coordenada na malha — não dá pra montar a rota."); return; }
+  window.open(mtMapsUrl(km.ordem), "_blank");
+}
+
 /* Lê o texto colado do PDF da Mateus.
    Formatos que aparecem:
      "3244 - SEABRA X IPUPIARA-BA          28   8.077,957"
@@ -1633,15 +1842,28 @@ function mtHistoricoRota(rotaCod, rotaNome) {
 function mtKmDaCarga(p) {
   var cfg = mtCfg();
   var nomes = (p.cidades || []).filter(function (c) { return c.conhecida; }).map(function (c) { return c.nome; });
-  var seq = mtKmSequencia(nomes);
+  /* v393: ROTEIRIZA e so entao mede. A ordem do print e a ordem em que a
+     Mateus lista as lojas, nao um roteiro -- medir por ela dava distancia
+     que ninguem roda. */
+  var rota = mtRotaOtima(nomes);
   var urb = (p.cidades || []).length * cfg.kmUrbanoCidade;
-  var estimado = Math.round(seq.km + urb);
+  /* v394: mtDistKm ja devolve com o fator GERAL embutido. Aqui voltamos pra
+     linha reta pura e reaplicamos o fator DESTA rota. */
+  var geral = cfg.fatorRodo || 1;
+  var reta = rota.km / geral;
+  var retaPrint = (mtKmSequencia(nomes).km || 0) / geral;
+  var fat = mtFatorDaRota(p.rotaCod, p.rota);
+  var estrada = Math.round(reta * fat.fator);
+  var estimado = estrada + urb;
+  var naOrdemDoPrint = Math.round(retaPrint * fat.fator) + urb;
   var hist = mtHistoricoRota(p.rotaCod, p.rota);
-  var usado = hist.kmMedio > 0 ? hist.kmMedio : estimado;
   return {
-    estimado: estimado, estrada: Math.round(seq.km), urbano: urb, trechos: seq.trechos,
-    medido: hist.kmMedio, usado: usado, hist: hist,
-    origem: hist.kmMedio > 0 ? "medido" : "modelo"
+    estimado: estimado, estrada: estrada, urbano: urb, reta: Math.round(reta),
+    fator: fat.fator, fatorOrigem: fat.origem, fatorN: fat.n || 0, fatorKmGoogle: fat.km || 0,
+    ordem: rota.ordem, exato: rota.exato, trechos: mtTrechosDaRota(rota.ordem),
+    naOrdemDoPrint: naOrdemDoPrint, economia: Math.max(0, naOrdemDoPrint - estimado),
+    medido: hist.kmMedio, usado: estimado, hist: hist,
+    origem: fat.origem === "geral" ? "modelo" : "medido"
   };
 }
 function mtDiasDaCarga(p, padrao) {
@@ -1728,6 +1950,7 @@ function mtGerarViagem(auto) {
   var peso = 0, volumes = 0;
   (p.cidades || []).forEach(function (x) { peso += Number(x.peso) || 0; volumes += Number(x.volumes) || 0; });
   var rotaTar = mtCasarRotaTarifa(p.rota);
+  var kmCriacao = mtKmDaCarga(p);          /* v394: uma conta so, reusada abaixo */
   var valor = 0;
   try {
     if (typeof freteRotaDe === "function" && rotaTar) valor = freteRotaDe("JT/Mateus", rotaTar, veic.tipo || "", peso) || 0;
@@ -1745,13 +1968,33 @@ function mtGerarViagem(auto) {
     pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
     pesoKg: Math.round(peso * 10) / 10,
     cargaMateus: carga, rotaCodMateus: String(p.rotaCod || ""),
+    /* v394: guardados na criacao pra que, quando esta viagem fechar, o app
+       calcule o fator real desta rota (KM rodado - urbano) / linha reta. */
+    kmRetaMateus: kmCriacao.reta, kmUrbanoMateus: kmCriacao.urbano,
+    kmOrdemMateus: (kmCriacao.ordem || []).join(" > "),
     mateusVolumes: volumes,
-    mateusParadas: (p.cidades || []).map(function (x) {
-      return { cidade: x.nome, cod: x.cod, volumes: x.volumes, peso: x.peso };
-    }),
+    mateusParadas: (function () {
+      /* v393: guarda na ORDEM DO ROTEIRO, que e a ordem em que o motorista
+         vai rodar -- nao na ordem em que a Mateus lista as lojas. */
+      var ordem = mtKmDaCarga(p).ordem || [];
+      var por = {}; (p.cidades || []).forEach(function (x) { por[x.nome] = x; });
+      /* v395: numero da parada e KM do trecho ate ela -- e essa lista que o
+         motorista ve no celular, entao ela tem que se explicar sozinha. */
+      var trechos = {};
+      (kmCriacao.trechos || []).forEach(function (t) { if (!t.volta) trechos[t.para] = Math.round(t.km || 0); });
+      var out = ordem.map(function (nome, i) {
+        var x = por[nome] || {};
+        return { ordem: i + 1, cidade: nome, cod: x.cod, volumes: x.volumes, peso: x.peso, kmTrecho: trechos[nome] || 0 };
+      });
+      (p.cidades || []).forEach(function (x) {
+        if (ordem.indexOf(x.nome) < 0) out.push({ ordem: out.length + 1, cidade: x.nome, cod: x.cod, volumes: x.volumes, peso: x.peso, kmTrecho: 0, semCoordenada: true });
+      });
+      return out;
+    })(),
+    paradasFeitas: [],
     obs: "Programacao da Mateus" + (carga ? " (carga " + carga + ")" : "") + " -- "
       + (p.cidades || []).length + " cidade(s): "
-      + (p.cidades || []).map(function (x) { return x.nome; }).join(", ")
+      + ((mtKmDaCarga(p).ordem || []).length ? (mtKmDaCarga(p).ordem || []).join(" → ") : (p.cidades || []).map(function (x) { return x.nome; }).join(", "))
       + ". KM " + (mtKmDaCarga(p).origem === "medido" ? "pela média medida em viagens anteriores desta rota" : "estimado pelo roteiro") + "."
       + (auto && m.escolha ? " Caminhão escolhido pelo sistema: " + m.escolha.motivo + "." : "")
       + (rotaTar ? "" : " ATENCAO: a rota nao foi achada na tabela da JT, o valor ficou como voce digitou.")
@@ -1872,52 +2115,86 @@ function mtBlocoHTML() {
 
   /* v392: as cidades da carga, com o trecho ate cada uma. E o que Renato pediu
      pra "aparecer as cidades e a estimativa de distancia que ira percorrer". */
-  var trechoAte = {};
-  (seq.trechos || []).forEach(function (t) { trechoAte[t.para] = t.km; });
-  h += '<div style="margin-top:12px;overflow-x:auto;"><table style="width:100%;font-size:11.5px;color:#ccc;border-collapse:collapse;">'
+  /* v393: a tabela segue o ROTEIRO, nao a ordem do print, e a volta pra base
+     virou linha propria -- na v392 ela entrava no total sem aparecer. */
+  var porCidade = {};
+  p.cidades.forEach(function (c) { porCidade[c.nome] = c; });
+  var fora = p.cidades.filter(function (c) { return !c.conhecida; });
+  h += '<div style="margin-top:12px;font-size:11px;color:#888;">Roteiro montado pelo app'
+    + (kmInfo.exato ? ' — <b style="color:#2E7D32;">melhor ordem possível</b> (testou todas as combinações)' : ' — melhor ordem encontrada (muitas paradas para testar todas)')
+    + '. A ordem do print é só a lista de lojas da Mateus, não um roteiro.</div>';
+  h += '<div style="margin-top:6px;overflow-x:auto;"><table style="width:100%;font-size:11.5px;color:#ccc;border-collapse:collapse;">'
     + '<thead><tr style="color:#888;text-align:left;">'
-    + '<th style="padding:4px 6px;">#</th><th style="padding:4px 6px;">Cidade</th>'
+    + '<th style="padding:4px 6px;">#</th><th style="padding:4px 6px;">Trecho</th>'
     + '<th style="padding:4px 6px;text-align:right;">Vol</th><th style="padding:4px 6px;text-align:right;">Peso (kg)</th>'
-    + '<th style="padding:4px 6px;text-align:right;">Trecho</th></tr></thead><tbody>'
-    + p.cidades.map(function (c, i) {
-      var d = trechoAte[c.nome];
-      return '<tr style="border-top:1px solid #222;">'
-        + '<td style="padding:4px 6px;color:#777;">' + (i + 1) + '</td>'
-        + '<td style="padding:4px 6px;">' + esc(c.nome) + (c.conhecida ? "" : ' <span style="color:#C0392B;" title="cidade sem coordenada na malha — fica fora do cálculo de KM">⚠</span>') + '</td>'
-        + '<td style="padding:4px 6px;text-align:right;">' + (c.volumes || 0) + '</td>'
-        + '<td style="padding:4px 6px;text-align:right;">' + (c.peso || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + '</td>'
-        + '<td style="padding:4px 6px;text-align:right;color:#999;">' + (d != null ? Math.round(d) + " km" : "—") + '</td>'
-        + '</tr>';
-    }).join("")
+    + '<th style="padding:4px 6px;text-align:right;">KM</th><th style="padding:4px 6px;text-align:right;">Acum.</th></tr></thead><tbody>';
+  var acum = 0, nParada = 0;
+  (kmInfo.trechos || []).forEach(function (t) {
+    acum += (t.km || 0);
+    var c = porCidade[t.para] || {};
+    nParada += t.volta ? 0 : 1;
+    h += '<tr style="border-top:1px solid #222;' + (t.volta ? 'color:#8E7A1F;' : '') + '">'
+      + '<td style="padding:4px 6px;color:#777;">' + (t.volta ? '↩' : nParada) + '</td>'
+      + '<td style="padding:4px 6px;">' + esc(t.de) + ' → <b>' + esc(t.para) + '</b>' + (t.volta ? ' <span style="font-size:10px;">(volta vazio)</span>' : '') + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : (c.volumes || 0)) + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : (c.peso || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 })) + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;color:#ddd;">' + (t.km != null ? Math.round(t.km).toLocaleString("pt-BR") : "—") + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;color:#777;">' + Math.round(acum).toLocaleString("pt-BR") + '</td>'
+      + '</tr>';
+  });
+  h += '<tr style="border-top:1px solid #222;color:#999;"><td style="padding:4px 6px;">+</td>'
+    + '<td style="padding:4px 6px;">Rodagem dentro das cidades (' + p.cidades.length + ' × ' + cfg.kmUrbanoCidade + ' km)</td>'
+    + '<td colspan="2"></td><td style="padding:4px 6px;text-align:right;">' + kmInfo.urbano + '</td>'
+    + '<td style="padding:4px 6px;text-align:right;">' + Math.round(acum + kmInfo.urbano).toLocaleString("pt-BR") + '</td></tr>'
     + '<tr style="border-top:2px solid #333;font-weight:700;">'
     + '<td colspan="2" style="padding:5px 6px;">Total</td>'
     + '<td style="padding:5px 6px;text-align:right;">' + volTot + '</td>'
     + '<td style="padding:5px 6px;text-align:right;">' + pesoTot.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + '</td>'
-    + '<td style="padding:5px 6px;text-align:right;">' + kmTotal.toLocaleString("pt-BR") + ' km</td>'
+    + '<td colspan="2" style="padding:5px 6px;text-align:right;">' + kmInfo.estimado.toLocaleString("pt-BR") + ' km</td>'
     + '</tr></tbody></table></div>';
+  h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="btn-outline" style="font-size:11px;" onclick="mtVerRotaMaps()">\ud83d\uddfa\ufe0f Conferir esta rota no Google Maps</button>'
+    + (kmInfo.economia > 20 ? '<span style="font-size:11px;color:#2E7D32;">Na ordem em que o print lista, dariam ' + kmInfo.naOrdemDoPrint.toLocaleString("pt-BR") + ' km — o roteiro economiza ' + kmInfo.economia.toLocaleString("pt-BR") + ' km.</span>' : '<span style="font-size:11px;color:#777;">A ordem do print já era praticamente a melhor.</span>')
+    + '</div>';
+  if (fora.length) {
+    h += '<div style="margin-top:6px;font-size:11px;color:#C0392B;">\u26a0 Fora do roteiro por falta de coordenada: <b>'
+      + fora.map(function (c) { return esc(c.nome); }).join(", ") + '</b> — o peso e os volumes contam, a distância não. Me peça pra acrescentar essas cidades na malha.</div>';
+  }
 
   /* v392: de onde saiu o KM e quanto disso ja e dado real */
   var hist = kmInfo.hist;
   var corConf = hist.confianca >= 100 ? "#2E7D32" : hist.confianca >= 70 ? "#8E7A1F" : hist.confianca > 0 ? "#E67E22" : "#666";
   h += '<div style="margin-top:10px;padding:10px;background:#0B0B0B;border:1px solid #222;border-radius:6px;font-size:11.5px;color:#bbb;">'
-    + '<b style="color:' + GOLD + ';">Distância desta rota</b> — '
-    + (kmInfo.origem === "medido"
-      ? 'usando os <b>' + kmInfo.medido.toLocaleString("pt-BR") + ' km medidos</b> nas viagens anteriores (o modelo estimava ' + kmInfo.estimado.toLocaleString("pt-BR") + ' km).'
-      : 'ainda sem viagem medida nesta rota, usando a <b>estimativa do modelo: ' + kmInfo.estimado.toLocaleString("pt-BR") + ' km</b>.')
+    + '<b style="color:' + GOLD + ';">Distância desta rota</b> — <b>' + kmInfo.estimado.toLocaleString("pt-BR") + ' km</b> '
+    + '(' + kmInfo.reta.toLocaleString("pt-BR") + ' km em linha reta × fator ' + String(kmInfo.fator).replace(".", ",")
+    + ' = ' + kmInfo.estrada.toLocaleString("pt-BR") + ' de estrada, mais ' + kmInfo.urbano + ' urbanos).'
+    + '<div style="margin-top:5px;">Fator desta rota: '
+    + (kmInfo.fatorOrigem === "medido"
+      ? '<b style="color:#2E7D32;">medido</b> em ' + kmInfo.fatorN + ' viagem(ns) fechada(s) desta rota'
+      : kmInfo.fatorOrigem === "google"
+        ? '<b style="color:#8E7A1F;">calibrado pelo Google</b> (' + kmInfo.fatorKmGoogle.toLocaleString("pt-BR") + ' km informados uma vez)'
+        : '<b style="color:#E67E22;">geral (' + String(mtCfg().fatorRodo).replace(".", ",") + ')</b> — ainda não há nada medido nesta rota')
+    + '</div>'
     + '<div style="margin-top:5px;">Base real: <b style="color:' + corConf + ';">' + hist.kms.length + ' viagem(ns) com KM medido</b>'
     + (hist.kms.length ? ' (entre ' + hist.kmMin.toLocaleString("pt-BR") + ' e ' + hist.kmMax.toLocaleString("pt-BR") + ' km)' : "")
     + ' · dias medidos: ' + (hist.dias.length ? '<b>' + hist.diasMedio + '</b> em média (' + hist.dias.length + ' viagem(ns))' : 'nenhum ainda')
     + ' · confiança <b style="color:' + corConf + ';">' + hist.confianca + '%</b></div>'
-    + '<div style="margin-top:5px;color:#777;">A cada viagem desta rota que fecha com as duas fotos de hodômetro, o número real entra na média e a projeção melhora sozinha. Três viagens medidas = 100%.</div>'
+    + '<div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    + '<span style="font-size:11px;color:#777;">Conferiu no Google? Cole o KM da rota inteira:</span>'
+    + '<input id="mt-google-km" placeholder="887" style="width:80px;font-size:12px;">'
+    + '<button class="btn-outline" style="font-size:11px;" onclick="mtCalibrarGoogle((document.getElementById(\'mt-google-km\')||{}).value)">calibrar esta rota</button>'
+    + '</div>'
+    + '<div style="margin-top:5px;color:#777;">O fator é guardado por rota, não o KM — assim ele continua valendo na semana que vem, quando a mesma rota vier com outras cidades. Viagem fechada com as duas fotos de hodômetro substitui o número do Google.</div>'
     + '</div>';
 
   h += '<div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;">'
-    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">KM na ordem do PDF</div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">KM do roteiro</div>'
     + '<div style="font-size:20px;font-weight:800;color:#fff;">' + kmTotal.toLocaleString("pt-BR") + ' km</div>'
-    + '<div style="font-size:10px;color:#666;">' + Math.round(seq.km).toLocaleString("pt-BR") + ' de estrada + ' + kmUrb + ' urbanos</div></div>'
-    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Se reordenasse</div>'
-    + '<div style="font-size:20px;font-weight:800;color:' + (kmOti < kmTotal - 20 ? "#2E7D32" : "#888") + ';">' + kmOti.toLocaleString("pt-BR") + ' km</div>'
-    + '<div style="font-size:10px;color:#666;">' + (kmOti < kmTotal - 20 ? "economia de " + (kmTotal - kmOti) + " km" : "a ordem do PDF já está boa") + '</div></div>'
+    + '<div style="font-size:10px;color:#666;">' + kmInfo.estrada.toLocaleString("pt-BR") + ' de estrada + ' + kmInfo.urbano + ' urbanos'
+    + ' · fator ' + kmInfo.fatorOrigem + '</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Na ordem do print</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (kmInfo.economia > 20 ? "#C0392B" : "#888") + ';">' + kmInfo.naOrdemDoPrint.toLocaleString("pt-BR") + ' km</div>'
+    + '<div style="font-size:10px;color:#666;">' + (kmInfo.economia > 20 ? kmInfo.economia.toLocaleString("pt-BR") + " km a mais" : "praticamente igual") + '</div></div>'
     + '</div>';
 
   h += '<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
@@ -1947,7 +2224,7 @@ function mtBlocoHTML() {
   }
 
   h += '<div style="margin-top:12px;font-size:11px;color:#888;">Roteiro: ' + esc(cfg.base) + ' → '
-    + p.cidades.map(function (x) { return esc(x.nome) + (x.conhecida ? "" : " ⚠"); }).join(" → ") + ' → ' + esc(cfg.base) + '</div>';
+    + (kmInfo.ordem || []).map(function (x) { return esc(x); }).join(" → ") + ' → ' + esc(cfg.base) + '</div>';
 
   /* v390: conferencia da leitura, visivel antes de qualquer botao */
   var conf = mtConferir(p);
@@ -2870,6 +3147,11 @@ function salvar() {
     localStorage.setItem("rf-frota-suzanocargas-v1", JSON.stringify(state.suzanoCargas || []));
     localStorage.setItem("rf-frota-suzanoplano-v1", JSON.stringify(state.suzanoPlano || {}));
     localStorage.setItem("rf-frota-suzanorot-v1", JSON.stringify(state.suzanoRot || {}));
+    /* v394 — MESMO BUG DA v259, agora na Carga Mateus: o historico de cargas e o
+       fator aprendido de cada rota nunca eram gravados. Tudo o que a aba
+       aprendia morria ao recarregar a pagina. */
+    localStorage.setItem("rf-frota-mateuscargas-v1", JSON.stringify(state.mateusCargas || []));
+    localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
   } catch (e) {}
 }
@@ -2897,6 +3179,8 @@ let state = {
   suzanoCargas: carregar("rf-frota-suzanocargas-v1", () => []),
   suzanoPlano: carregar("rf-frota-suzanoplano-v1", () => ({})),
   suzanoRot: carregar("rf-frota-suzanorot-v1", () => ({})),
+  mateusCargas: carregar("rf-frota-mateuscargas-v1", () => []),
+  mateusFator: carregar("rf-frota-mateusfator-v1", () => ({})),
   fiscais: carregar("rf-frota-fiscais-v1", () => []),   // v286: CT-e, MDF-e e CIOT lidos dos XML
   sessao: carregarSessaoLocal(),
   aba: "frota",
@@ -13941,6 +14225,20 @@ function rfStatusDiaAtualizar(viagemId, campo, valor) {
   salvar();
   render();
 }
+/* v395: o que o motorista marcou no celular. A equipe le direto da caixa geral
+   -- a viagem ja vem com mateusParadas e paradasFeitas. */
+function rfParadasProgresso(v) {
+  var paradas = Array.isArray(v && v.mateusParadas) ? v.mateusParadas : [];
+  if (!paradas.length) return null;
+  var feitas = Array.isArray(v.paradasFeitas) ? v.paradasFeitas : [];
+  var chave = {};
+  feitas.forEach(function (f) { chave[String(f.cidade || "").trim().toUpperCase()] = f; });
+  var lista = paradas.map(function (pa) {
+    return { cidade: pa.cidade, ordem: pa.ordem, feita: chave[String(pa.cidade || "").trim().toUpperCase()] || null };
+  });
+  var n = lista.filter(function (x) { return x.feita; }).length;
+  return { lista: lista, feitas: n, total: paradas.length, pct: Math.round(n / paradas.length * 100) };
+}
 function rfStatusDiaCardAdmin(v) {
   const opt = STATUS_DIA_OPCOES[v.statusDia] || null;
   const feitas = v.entregasFeitas || 0;
@@ -13951,6 +14249,16 @@ function rfStatusDiaCardAdmin(v) {
       <span style="font-size:12px;color:#999;">${esc(v.placa || "")}${v.motoristaNaEpoca ? " — " + esc(v.motoristaNaEpoca) : ""}</span>
       ${opt ? `<span style="margin-left:auto;font-size:11px;font-weight:700;color:${opt.cor};border:1px solid ${opt.cor};border-radius:6px;padding:2px 8px;">${opt.label}</span>` : ""}
     </div>
+    ${(() => {
+      const pr = rfParadasProgresso(v);
+      if (!pr) return "";
+      return `<div style="margin-bottom:10px;padding:8px 10px;background:#0B0B0B;border:1px solid #222;border-radius:8px;">
+        <div style="font-size:11px;color:${pr.pct === 100 ? "#2E7D32" : GOLD};font-weight:700;margin-bottom:5px;">🗺️ Roteiro: ${pr.feitas} de ${pr.total} cidades concluídas pelo motorista</div>
+        <div style="font-size:11px;color:#bbb;line-height:1.6;">${pr.lista.map((x) => x.feita
+          ? `<span style="color:#2E7D32;">✓ ${esc(x.cidade)}</span>`
+          : `<span style="color:#777;">○ ${esc(x.cidade)}</span>`).join(" &nbsp;·&nbsp; ")}</div>
+      </div>`;
+    })()}
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
       <label style="font-size:11px;color:#999;">Entregas totais<br><input type="number" min="0" value="${total}" style="width:90px;" onchange="rfStatusDiaAtualizar('${v.id}','entregasTotal',this.value)"></label>
       <label style="font-size:11px;color:#999;">Entregas feitas<br><input type="number" min="0" value="${feitas}" style="width:90px;" onchange="rfStatusDiaAtualizar('${v.id}','entregasFeitas',this.value)"></label>
@@ -14380,12 +14688,103 @@ function motoristaCarregarViagensAtivas() {
       render();
       motoristaAvisarFimPendente(); // v227
       motoristaCarregarTanque();    // v360
+      motoristaCarregarParadas();   // v395
     });
   });
 }
 /* v360: o tanque do motorista vem PRONTO da RPC — o celular dele não baixa a
    caixa geral (painel_dados), então a conta do tanque na saída é feita no
    servidor, igual ao confirmar início/fim. Aqui só chega o número. */
+/* ==========================================================================
+   v395 — O ROTEIRO NA MAO DO MOTORISTA
+   --------------------------------------------------------------------------
+   Pedido de Renato (05/09): "a rota tem que aparecer para o motorista, e ele
+   tem a opcao de colocar cidade concluida".
+
+   O celular do motorista NAO baixa nem escreve na caixa geral (painel_dados) --
+   e a mesma regra de seguranca do confirmar inicio/fim, e foi ela que derrubou
+   a primeira versao do Status do Dia na v174. Entao aqui e igual: duas funcoes
+   novas no banco, `motorista_paradas_viagens` (le) e `motorista_marcar_parada`
+   (grava), e cada uma so alcanca a viagem designada ao proprio motorista, e so
+   enquanto ela esta em andamento.
+
+   Marcar de novo a mesma cidade nao duplica, e desmarcar remove -- a lista
+   guarda cidade + hora, entao a equipe ve a que horas cada cidade foi fechada.
+   ========================================================================== */
+function motoristaCarregarParadas() {
+  if (!ehMotorista()) return;
+  rfGetClient().then(function (sb) {
+    if (!sb) return;
+    sb.rpc("motorista_paradas_viagens").then(function (res) {
+      if (res.error) { console.warn("motorista_paradas_viagens:", res.error.message); return; }
+      var mapa = {};
+      (res.data || []).forEach(function (r) {
+        mapa[String(r.viagem_id)] = {
+          paradas: Array.isArray(r.paradas) ? r.paradas : [],
+          feitas: Array.isArray(r.paradas_feitas) ? r.paradas_feitas : []
+        };
+      });
+      state._paradasViagem = mapa;
+      render();
+    });
+  });
+}
+function motoristaParadaFeita(viagemId, cidade) {
+  var reg = (state._paradasViagem || {})[String(viagemId)];
+  if (!reg) return null;
+  var alvo = String(cidade || "").trim().toUpperCase();
+  return (reg.feitas || []).find(function (f) { return String(f.cidade || "").trim().toUpperCase() === alvo; }) || null;
+}
+function motoristaMarcarParada(viagemId, cidade, feita) {
+  rfGetClient().then(function (sb) {
+    if (!sb) { alert("Sem conexão. Tente de novo quando pegar sinal."); return; }
+    sb.rpc("motorista_marcar_parada", { p_viagem_id: viagemId, p_cidade: cidade, p_feita: !!feita })
+      .then(function (res) {
+        if (res.error) { alert("Não consegui salvar: " + res.error.message); return; }
+        var j = res.data || {};
+        if (j.ok === false) { alert(j.erro || "Não consegui marcar essa cidade."); return; }
+        if (!state._paradasViagem) state._paradasViagem = {};
+        if (!state._paradasViagem[String(viagemId)]) state._paradasViagem[String(viagemId)] = { paradas: [], feitas: [] };
+        state._paradasViagem[String(viagemId)].feitas = Array.isArray(j.paradasFeitas) ? j.paradasFeitas : [];
+        render();
+      });
+  });
+}
+/* O bloco do roteiro dentro do card da viagem do motorista. Sem paradas
+   cadastradas (viagem que nao veio da Carga Mateus) ele simplesmente nao
+   aparece -- em vez de mostrar uma lista vazia dizendo nada. */
+function motoristaRoteiroHTML(vg) {
+  var reg = (state._paradasViagem || {})[String(vg.id)];
+  if (!reg || !reg.paradas.length) return "";
+  var feitas = 0;
+  var linhas = reg.paradas.map(function (pa) {
+    var f = motoristaParadaFeita(vg.id, pa.cidade);
+    if (f) feitas++;
+    var hora = f && f.em ? new Date(Number(f.em)).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+    return '<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid #1E1E1E;">'
+      + '<span style="font-size:11px;color:' + (f ? "#2E7D32" : "#777") + ';min-width:18px;">' + (pa.ordem || "") + '</span>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:13px;font-weight:700;color:' + (f ? "#2E7D32" : "#eee") + ';' + (f ? "text-decoration:line-through;" : "") + '">' + esc(pa.cidade) + '</div>'
+      + '<div style="font-size:10.5px;color:#888;">' + (pa.volumes || 0) + ' vol · ' + (Number(pa.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kg'
+      + (pa.kmTrecho ? ' · ' + pa.kmTrecho + ' km deste trecho' : "")
+      + (hora ? ' · <span style="color:#2E7D32;">concluída ' + hora + '</span>' : "")
+      + '</div></div>'
+      + (f
+        ? '<button class="btn-outline" style="font-size:10px;padding:3px 7px;" onclick="motoristaMarcarParada(\'' + vg.id + '\',\'' + esc(pa.cidade).replace(/'/g, "\\'") + '\',false)">desfazer</button>'
+        : '<button class="btn-gold" style="font-size:10px;padding:3px 9px;" onclick="motoristaMarcarParada(\'' + vg.id + '\',\'' + esc(pa.cidade).replace(/'/g, "\\'") + '\',true)">✓ concluí</button>')
+      + '</div>';
+  }).join("");
+  var pct = Math.round(feitas / reg.paradas.length * 100);
+  return '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #222;">'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">'
+    + '<span style="font-size:12px;font-weight:800;color:' + GOLD + ';">\ud83d\uddfa\ufe0f Roteiro da viagem</span>'
+    + '<span style="font-size:11px;color:' + (pct === 100 ? "#2E7D32" : "#999") + ';">' + feitas + ' de ' + reg.paradas.length + ' cidades</span>'
+    + '</div>'
+    + '<div style="height:5px;background:#1C1C1C;border-radius:3px;overflow:hidden;margin-bottom:4px;">'
+    + '<div style="height:100%;width:' + pct + '%;background:' + (pct === 100 ? "#2E7D32" : GOLD) + ';"></div></div>'
+    + '<div style="font-size:10.5px;color:#777;margin-bottom:2px;">Na ordem que economiza estrada. Marque cada cidade quando terminar a entrega.</div>'
+    + linhas + '</div>';
+}
 function motoristaCarregarTanque() {
   if (!ehMotorista()) return;
   rfGetClient().then(function (sb) {
@@ -14636,6 +15035,7 @@ function motoristaViagemCard(vg) {
       <span style="font-size:12px; color:#999;">${vg.data ? new Date(vg.data + "T00:00:00").toLocaleDateString("pt-BR") : ""}</span>
     </div>
     ${motoristaTanqueCardHTML(vg)}
+    ${vg.status === "em_andamento" ? motoristaRoteiroHTML(vg) : ""}
     ${vg.status === "aguardando_motorista" ? `<div>
       <div style="font-size:11px;color:#C0392B;margin-bottom:5px;">📷 Foto do KM inicial (obrigatória para confirmar início)</div>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -19262,7 +19662,10 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `Antes de gerar viagem ele CONFERE se a soma das cidades bate com o total do cabeçalho (volumes exatos, peso com 0,5 kg de tolerância); `
       + `não batendo, o botão de gerar viagem fica bloqueado. A viagem sai no cliente JT/Mateus, com o valor da rota cadastrada na tabela da JT `
       + `(rota casada pelo nome, ignorando o sufixo -BA), KM estimado pelo roteiro e peso somado das cidades. `
-      + `O KM começa como ESTIMATIVA (distância entre sedes municipais × fator rodoviário + km urbanos) e, a partir da primeira viagem fechada da mesma rota, passa a ser a MÉDIA REAL medida pelas fotos de hodômetro (chegada − saída); 3 viagens medidas = 100% de confiança. O mesmo vale para os dias. `
+      + `O KM sai da linha reta entre as sedes municipais multiplicada pelo FATOR RODOVIÁRIO DAQUELA ROTA, mais os km urbanos. O fator tem três origens, nesta ordem: MEDIDO (viagem fechada da rota: km real das fotos de hodômetro menos o urbano, dividido pela linha reta guardada na criação), GOOGLE (Renato colou uma vez o km que o Maps deu para a rota) ou GERAL (o fator da tela, 1,16). `
+      + `Guarda-se o FATOR e não o km porque a mesma rota vem com 4, 8 ou 10 cidades a cada semana — a razão estrada/linha reta é do terreno, o km é da carga. Fatos conhecidos: a Chapada (Seabra, Irecê, Guanambi) pede fator perto de 1,13 e o Nordeste baiano (rota 3237) perto de 1,22. Os dias seguem a média medida das viagens fechadas da rota; 3 viagens medidas = 100% de confiança. `
+      + `O roteiro é montado ANTES de medir a distância: até 8 paradas o app testa todas as ordens possíveis e usa a melhor; acima disso usa vizinho mais próximo com 2-opt. A ordem em que a Mateus lista as lojas no print NÃO é roteiro. A volta para a base entra na conta e aparece na tabela. `
+      + `O motorista vê o roteiro no celular dele, na ordem otimizada, e marca cada cidade como concluída (RPCs motorista_paradas_viagens e motorista_marcar_parada); o que ele marca aparece para a equipe na aba Status do Dia e nos campos mateusParadas/paradasFeitas da viagem. `
       + `Ao anexar, o app escolhe o caminhão sozinho: entre os marcados como da JT/Mateus na Frota, pega os que não têm viagem aberta (regra rfViagensAbertasDaPlaca), prefere os que comportam o peso pela carga útil do CRLV e, entre esses, o parado há mais tempo. Não havendo nenhum livre, ele NÃO cria a viagem e mostra por que cada caminhão está ocupado, com a opção de liberar um ou cancelar a carga.`;
     if (!cargas.length && !viagensMt.length) return cabecalho + ` Ainda não há nenhuma carga importada.`;
     const linhas = cargas.slice().sort((a, b) => (b.salvoEm || 0) - (a.salvoEm || 0)).slice(0, 12).map((c) => {
@@ -22969,7 +23372,7 @@ revalidarSessaoAoAbrir();
      NOTA: até a v285 suzanoCargas (os espelhos da Suzano) NÃO subia pra nuvem
      nenhuma -- ficava só no aparelho onde foi lido. Era por isso que um espelho
      lido no tablet não existia no PC. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas"];
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas"];
   function unirPorId(local, nuvem) {
     if (!Array.isArray(nuvem)) return Array.isArray(local) ? local : nuvem;
     if (!Array.isArray(local) || !local.length) return nuvem;
@@ -22992,7 +23395,9 @@ revalidarSessaoAoAbrir();
     usuarios: "rf-frota-usuarios-v1",
     pagamentosMotorista: "rf-frota-pagamotorista-v1",
     fiscais: "rf-frota-fiscais-v1",
-    suzanoCargas: "rf-frota-suzanocargas-v1"
+    suzanoCargas: "rf-frota-suzanocargas-v1",
+    mateusCargas: "rf-frota-mateuscargas-v1",
+    mateusFator: "rf-frota-mateusfator-v1"
   };
 
   var sb = null;
