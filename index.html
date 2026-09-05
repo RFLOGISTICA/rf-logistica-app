@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v389)</title>
+<title>RF Logística — Painel da Frota (v392)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -1084,7 +1084,18 @@ var MT_CIDADES = {
   "SAO FELIX": [-12.6057813, -38.9698624],
   "SANTO AMARO": [-12.5464277, -38.7109578],
   "CANDEIAS": [-12.6726284, -38.5431855],
-  "SANTA MARIA DA VITORIA": [-13.3857026, -44.1991852]
+  "SANTA MARIA DA VITORIA": [-13.3857026, -44.1991852],
+  /* v392: rota 3237 (JEREMOABO X PAULO AFONSO). Coordenadas conferidas uma a
+     uma nas fichas dos municipios -- sem elas a rota inteira ficava fora do
+     calculo de KM e a estimativa saia so com os km urbanos. */
+  "PAULO AFONSO": [-9.40000, -38.22500],
+  "JEREMOABO": [-10.06694, -38.35000],
+  "PEDRO ALEXANDRE": [-10.01389, -37.89389],
+  "ANTAS": [-10.40000, -38.33278],
+  "GLORIA": [-9.33889, -38.25694],
+  "NOVO TRIUNFO": [-10.31694, -38.40583],
+  "SANTA BRIGIDA": [-9.73300, -38.13300],
+  "SITIO DO QUINTO": [-10.36700, -38.21700]
 };
 
 /* Bairros de Feira de Santana. A rota 3231 e os carregamentos urbanos não
@@ -1151,14 +1162,17 @@ function mtDistKm(a, b) {
    o reconhecimento mesmo com o texto todo embolado numa linha so. */
 function mtParse(txt) {
   var T = String(txt || "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
-  var out = { rota: "", rotaCod: "", carga: "", cidades: [], ignoradas: [], urbano: false, bruto: T };
+  var out = { rota: "", rotaCod: "", carga: "", cidades: [], ignoradas: [], urbano: false, bruto: T, totalVolumes: 0, totalPeso: 0 };
 
   var mC = T.match(/CARGA\s*:?\s*(\d{6,})/i);
   if (mC) out.carga = mC[1];
 
   // cabecalho da rota: "3244 - SEABRA X IPUPIARA-BA 28 8.077,957"
-  var mR = T.match(/(\d{3,5})\s*-\s*([A-Z\u00c0-\u00da][A-Z\u00c0-\u00da0-9 .'\-]*?\sX\s[A-Z\u00c0-\u00da0-9 .'\-]*?)\s+\d{1,4}\s+[\d.]*\d,\d{3}/i);
-  if (mR) { out.rotaCod = mR[1]; out.rota = mR[2].trim(); }
+  var mR = T.match(/(\d{3,5})\s*-\s*([A-Z\u00c0-\u00da][A-Z\u00c0-\u00da0-9 .'\-]*?\sX\s[A-Z\u00c0-\u00da0-9 .'\-]*?)\s+(\d{1,4})\s+([\d.]*\d,\d{3})/i);
+  /* v390: os totais do cabecalho passaram a ser GUARDADOS. Ate aqui eles eram
+     lidos e jogados fora -- e sao justamente eles que permitem conferir se a
+     leitura pegou todas as linhas. Numero que nao fecha nao vira viagem. */
+  if (mR) { out.rotaCod = mR[1]; out.rota = mR[2].trim(); out.totalVolumes = mtNum(mR[3]); out.totalPeso = mtNum(mR[4]); }
 
   // linhas de cidade
   var re = /(\d{3,6})\s*-\s*([A-Za-z\u00c0-\u00ff][A-Za-z\u00c0-\u00ff0-9 .'\-]*?)\s+(\d{1,4})\s+([\d.]*\d,\d{3})/g;
@@ -1256,7 +1270,9 @@ function mtImportar() {
   if (!p.cidades.length) { alert("Não consegui achar cidades nesse texto. Cole a tabela inteira, com as linhas de código - cidade - volumes - peso."); return; }
   if (!state._mateus) state._mateus = {};
   state._mateus.carga = p;
+  state._mateusMsg = "\u2713 " + p.cidades.length + " cidade(s) lidas do texto colado.";
   render();
+  mtTentarAutomatico();   /* v392 */
 }
 function mtSalvarCarga() {
   var m = state._mateus || {}, p = m.carga;
@@ -1292,9 +1308,8 @@ function mtAnexarPdf(files) {
       var txt = textos.join("\n");
       var p = mtParse(txt);
       if (!p.cidades.length) {
-        state._mateusMsg = txt.trim()
-          ? "Li o arquivo, mas nao reconheci as linhas de cidade. Joguei o texto lido no campo abaixo pra voce ver o que veio -- me mande esse texto que eu ajusto a leitura."
-          : "Esse PDF nao tem texto dentro (e digitalizado, foto). Cole a tabela no campo abaixo.";
+        if (!txt.trim()) { mtPdfSemTextoViaIA(lista[0]); return; }   /* v390: sem texto -> le a pagina como imagem */
+        state._mateusMsg = "Li o arquivo, mas nao reconheci as linhas de cidade. Joguei o texto lido no campo abaixo pra voce ver o que veio -- me mande esse texto que eu ajusto a leitura.";
         var ta = document.getElementById("mt-colar");
         if (ta) ta.value = txt;
         render(); return;
@@ -1302,7 +1317,9 @@ function mtAnexarPdf(files) {
       if (!state._mateus) state._mateus = {};
       state._mateus.carga = p;
       state._mateusMsg = "\u2713 " + p.cidades.length + " cidade(s) lidas do PDF.";
-      render(); return;
+      render();
+      mtTentarAutomatico();   /* v392 */
+      return;
     }
     rfCrlvExtrairTexto(lista[i], 20)
       .then(function (t) { textos.push(t || ""); passo(i + 1); })
@@ -1313,6 +1330,484 @@ function mtAnexarPdf(files) {
   };
   passo(0);
 }
+/* ==========================================================================
+   v390 — PRINT DA PROGRAMACAO (IMAGEM) E GERACAO DA VIAGEM
+   --------------------------------------------------------------------------
+   Dois buracos que Renato apontou em 05/09:
+
+   (1) A tela da Mateus so chega como PRINT. O importador da v372/v376 le
+       texto colado e PDF com camada de texto -- print e imagem, e imagem nao
+       tem texto nenhum dentro. Convertendo o print pra PDF tambem nao adianta:
+       vira imagem dentro de PDF. Por isso a imagem vai pra Edge Function
+       `ler-programacao-mateus` (publicada em 03/09), que le por visao.
+
+   (2) O importador parava no calculo de KM/custo e no historico. Ele nao
+       criava a VIAGEM. O pedido e' o mesmo modelo da Suzano, sem espelho e sem
+       CT-e: importa e gera a viagem.
+
+   TRAVA DETERMINISTICA (mesma linha do KM do hodometro e da chave do CT-e):
+   a IA le, mas quem valida e o app. A soma das cidades tem que fechar com o
+   total do cabecalho -- volumes exatos e peso com tolerancia de 0,5 kg. Nao
+   fechando, o botao de gerar viagem fica bloqueado, porque peso lido errado
+   vira frete errado e frete errado vira discussao com o cliente.
+   ========================================================================== */
+
+/* A tabela da JT guarda a rota pelo NOME ("JEREMOABO X PAULO AFONSO"); o print
+   traz codigo + nome, as vezes com sufixo -BA. Casar pelo nome normalizado. */
+function mtRotaNorm(t) {
+  return mtNorm(t).replace(/\bBA\b/g, " ").replace(/\s+/g, " ").trim();
+}
+function mtCasarRotaTarifa(nome) {
+  if (!nome) return "";
+  var rotas = [];
+  try { rotas = (typeof rfRotRotasDoCliente === "function") ? rfRotRotasDoCliente("JT/Mateus") : []; } catch (e) { rotas = []; }
+  var alvo = mtRotaNorm(nome);
+  for (var i = 0; i < rotas.length; i++) { if (mtRotaNorm(rotas[i]) === alvo) return rotas[i]; }
+  var pa = alvo.split(" X ");
+  if (pa.length === 2) {
+    for (var j = 0; j < rotas.length; j++) {
+      var pb = mtRotaNorm(rotas[j]).split(" X ");
+      if (pb.length === 2 && pb[0].trim() === pa[0].trim() && pb[1].trim() === pa[1].trim()) return rotas[j];
+    }
+  }
+  return "";
+}
+
+/* Conferencia da leitura. Sem os totais do cabecalho nao ha o que conferir --
+   e nesse caso o app DIZ que nao ha, em vez de dizer que esta tudo certo. */
+function mtConferir(p) {
+  if (!p) return null;
+  var somaVol = 0, somaPeso = 0;
+  (p.cidades || []).forEach(function (c) { somaVol += Number(c.volumes) || 0; somaPeso += Number(c.peso) || 0; });
+  var c = {
+    somaVol: somaVol, somaPeso: Math.round(somaPeso * 1000) / 1000,
+    totalVol: Number(p.totalVolumes) || 0, totalPeso: Number(p.totalPeso) || 0
+  };
+  c.temTotais = (c.totalVol > 0 || c.totalPeso > 0);
+  c.okVol = !c.totalVol || c.totalVol === somaVol;
+  c.okPeso = !c.totalPeso || Math.abs(c.totalPeso - somaPeso) <= 0.5;
+  c.ok = c.okVol && c.okPeso;
+  return c;
+}
+
+/* Chamada da Edge Function de visao. Funcao propria, isolada da
+   `ler-foto-abastecimento` (que atende 7 tipos em producao). */
+function mtViaIA(base64, mime) {
+  return new Promise(function (resolve, reject) {
+    if (!base64) { reject(new Error("imagem vazia")); return; }
+    rfGetClient().then(function (sb) {
+      if (!sb) { reject(new Error("sem conexao com o servidor")); return; }
+      sb.auth.getSession().then(function (res) {
+        var token = res.data && res.data.session && res.data.session.access_token;
+        if (!token) { reject(new Error("sessao expirada -- saia e entre de novo")); return; }
+        fetch(RF_SB_URL + "/functions/v1/ler-programacao-mateus", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ imagemBase64: base64, mimeType: mime || "image/jpeg" })
+        }).then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error((j && (j.erro || j.error)) || ("servidor respondeu " + r.status));
+            return j;
+          });
+        }).then(function (j) {
+          if (j && (j.erro || j.error)) { reject(new Error(String(j.erro || j.error))); return; }
+          resolve(j);
+        }).catch(reject);
+      }).catch(reject);
+    }).catch(reject);
+  });
+}
+
+/* Resposta da IA -> mesmo formato que o mtParse devolve, pra tela, KM, custo e
+   historico continuarem funcionando sem saber de onde veio a leitura. */
+function mtDaIA(j) {
+  var out = {
+    rota: String((j && j.rota) || "").trim(), rotaCod: String((j && j.rotaCodigo) || ""),
+    carga: String((j && j.carga) || ""), cidades: [], ignoradas: [], urbano: false,
+    bruto: "(lido do print por IA)", viaIA: true,
+    totalVolumes: Number(j && j.totalVolumes) || 0, totalPeso: Number(j && j.totalPeso) || 0
+  };
+  ((j && j.paradas) || []).forEach(function (pp) {
+    var nome = mtNorm(pp && pp.cidade);
+    if (!nome) return;
+    if (out.cidades.some(function (c) { return c.nome === nome; })) return;
+    if (MT_BAIRROS_FSA.indexOf(nome) >= 0) out.urbano = true;
+    out.cidades.push({
+      cod: String((pp && pp.codigo) || ""), nome: nome,
+      volumes: Number(pp && pp.volumes) || 0, peso: Number(pp && pp.peso) || 0,
+      conhecida: !!MT_CIDADES[nome]
+    });
+  });
+  out.ignoradas = out.cidades.filter(function (c) { return !c.conhecida && !out.urbano; });
+  return out;
+}
+
+function mtAplicarIA(j) {
+  var p = mtDaIA(j || {});
+  if (!p.cidades.length) {
+    state._mateusMsg = "A IA nao achou linhas de cidade nesse print. Mande a tela inteira, com as colunas de volumes e peso.";
+    render(); return;
+  }
+  if (!state._mateus) state._mateus = {};
+  state._mateus.carga = p;
+  var c = mtConferir(p);
+  state._mateusMsg = (!c || !c.temTotais)
+    ? "\u2713 " + p.cidades.length + " cidade(s) lidas do print. O cabecalho nao veio, entao nao deu pra conferir a soma -- confira voce."
+    : (c.ok
+      ? "\u2713 " + p.cidades.length + " cidade(s) lidas do print e a soma fecha com o cabecalho."
+      : "\u26a0 Li " + p.cidades.length + " cidade(s), mas a soma NAO fecha com o cabecalho. Veja o aviso abaixo.");
+  render();
+  mtTentarAutomatico();   /* v392: le e ja lanca a viagem */
+}
+
+/* Ponto unico de entrada do anexo: print/foto vai pra IA, PDF continua pelo
+   caminho de texto (exato e de graca) e so cai na IA se nao tiver texto. */
+function mtAnexarArquivo(files) {
+  var lista = Array.prototype.slice.call(files || []);
+  if (!lista.length) return;
+  var f = lista[0];
+  var ehImagem = /^image\//.test(f.type || "") || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name || "");
+  if (ehImagem) { mtAnexarImagem(f); return; }
+  mtAnexarPdf(lista);
+}
+
+function mtAnexarImagem(file) {
+  state._mateusMsg = "lendo o print com a IA...";
+  render();
+  rfComprimirImagem(file, 2000, 900000).then(function (blob) {
+    return rfCrlvBlobParaBase64(blob).then(function (b64) { return mtViaIA(b64, blob.type || "image/jpeg"); });
+  }).then(function (j) { mtAplicarIA(j); })
+    .catch(function (e) {
+      state._mateusMsg = "Nao consegui ler o print: " + ((e && e.message) || "erro");
+      render();
+    });
+}
+
+/* PDF sem camada de texto (print salvo como PDF, folha digitalizada): renderiza
+   a pagina como imagem e manda pra mesma IA. Reaproveita o rasterizador que ja
+   existia pro CRLV. */
+function mtPdfSemTextoViaIA(file) {
+  state._mateusMsg = "esse PDF nao tem texto dentro -- lendo a pagina como imagem...";
+  render();
+  rfCrlvRenderizarImagem(file).then(function (b64) { return mtViaIA(b64, "image/jpeg"); })
+    .then(function (j) { mtAplicarIA(j); })
+    .catch(function (e) {
+      state._mateusMsg = "Nao consegui ler esse PDF: " + ((e && e.message) || "erro") + ". Mande o print da tela.";
+      render();
+    });
+}
+
+/* ==========================================================================
+   v392 — AUTONOMIA DA CARGA DA MATEUS
+   --------------------------------------------------------------------------
+   Pedido de Renato (05/09): "a ferramenta e pra dar autonomia ao sistema. Ele
+   ja vai saber quais caminhoes sao de cada cliente e qual ja chegou de viagem,
+   e criar a viagem assim que anexar a imagem da JT. Se nao tiver nenhum
+   caminhao disponivel, o sistema avisa pra alguem liberar ou cancelar."
+
+   Como cada peca decide:
+
+   QUEM E DA JT -> campo Cliente da Frota (v391), com deducao pelo Local
+     enquanto o campo nao foi preenchido.
+
+   QUEM JA CHEGOU -> `rfViagensAbertasDaPlaca`, a MESMA regra que o resto do
+     app usa: viagem sem foto de KM de chegada e nao aprovada = caminhao ainda
+     na rua. Nao invento status novo, e nao uso o "Em viagem" digitado na
+     Frota, que e manual e envelhece.
+
+   QUAL ESCOLHER -> entre os livres, primeiro os que COMPORTAM o peso da carga
+     (carga util do CRLV) e, entre esses, o que esta parado ha mais tempo.
+     Nenhum comportando, ele diz isso em vez de escalar caminhao em excesso de
+     peso.
+
+   NAO TENDO NENHUM -> nao cria nada e mostra, caminhao por caminhao, POR QUE
+     nao esta livre e desde quando, com os dois caminhos: liberar um na marra
+     ou cancelar a carga. Criar viagem em caminhao ocupado seria pior que nao
+     criar.
+
+   APRENDIZADO -> a estimativa de KM do modelo (linha reta x fator rodoviario)
+     e so o comeco. A cada viagem fechada da mesma rota o app compara com o KM
+     REAL medido pelas fotos do hodometro (chegada - saida) e passa a usar a
+     media real. Mesma coisa com os dias. A tela mostra de quantas viagens veio
+     o numero -- 1 viagem e palpite, 3 ou mais e dado.
+   ========================================================================== */
+
+/* Capacidade util em kg. Sem carga util cadastrada devolve 0 e quem chama
+   trata como "nao sei" -- nunca como "cabe". */
+function mtCapacidadeKg(v) {
+  var t = Number((v || {}).cargaUtilT) || 0;
+  return t > 0 ? t * 1000 : 0;
+}
+/* Viagem aberta do caminhao (mesma regra do resto do app) ou null. */
+function mtViagemAberta(placa) {
+  try { var ab = rfViagensAbertasDaPlaca(placa); return ab && ab.length ? ab[0] : null; }
+  catch (e) { return null; }
+}
+/* Quando esse caminhao teve atividade pela ultima vez -- pra escolher o que
+   esta parado ha mais tempo. */
+function mtUltimaAtividade(placa) {
+  var ms = 0;
+  (state.viagens || []).forEach(function (v) {
+    if (v.placa !== placa) return;
+    var t = Number(v.criadoEm) || 0;
+    var d = String(v.data || "");
+    if (d) { var dt = new Date(d + "T12:00:00").getTime(); if (dt > t) t = dt; }
+    if (t > ms) ms = t;
+  });
+  return ms;
+}
+/* A escolha do caminhao. Devolve tambem POR QUE cada um ficou de fora --
+   e isso que a tela mostra quando nao sobra ninguem. */
+function mtEscolherCaminhao(pesoKg) {
+  var r = { placa: "", motivo: "", candidatos: [], ocupados: [], semCapacidade: false };
+  var jt = veiculosDoCliente("JT/Mateus", false);
+  if (!jt.length) { r.motivo = "nenhum caminhão está marcado como da JT/Mateus na Frota"; return r; }
+  jt.forEach(function (v) {
+    var st = String(v.statusOp || "");
+    if (st === "Fora de operação" || st === "Manutenção") { r.ocupados.push({ v: v, por: st.toLowerCase(), liberavel: false }); return; }
+    var ab = mtViagemAberta(v.placa);
+    if (ab) {
+      r.ocupados.push({
+        v: v, viagem: ab, liberavel: true,
+        por: "em viagem" + (ab.data ? " desde " + ab.data : "") + (ab.cliente ? " (" + ab.cliente + ")" : "")
+          + (ab.statusMotorista === "aguardando_equipe" ? " — motorista já fechou, falta a equipe aprovar" : "")
+      });
+      return;
+    }
+    /* Status "Em viagem" digitado na Frota SEM viagem lancada no sistema: o app
+       nao sabe qual das duas informacoes esta velha, entao trata como ocupado e
+       deixa a decisao com quem esta olhando. Mandar carga pra caminhao que esta
+       na estrada e o erro caro; pedir um clique nao e. */
+    if (st === "Em viagem") {
+      r.ocupados.push({ v: v, liberavel: true, por: "marcado como \u201cEm viagem\u201d na Frota, mas sem viagem lançada no sistema — confirme se ele já voltou" });
+      return;
+    }
+    r.candidatos.push(v);
+  });
+  if (!r.candidatos.length) { r.motivo = "todos os caminhões da JT/Mateus estão ocupados"; return r; }
+  var cabem = r.candidatos.filter(function (v) { var c = mtCapacidadeKg(v); return !pesoKg || (c > 0 && c >= pesoKg); });
+  var lista = cabem.length ? cabem : r.candidatos;
+  r.semCapacidade = !cabem.length && !!pesoKg;
+  lista = lista.slice().sort(function (a, b) { return mtUltimaAtividade(a.placa) - mtUltimaAtividade(b.placa); });
+  r.placa = lista[0].placa;
+  r.motivo = r.semCapacidade
+    ? "nenhum caminhão livre tem carga útil cadastrada que comporte " + Math.round(pesoKg).toLocaleString("pt-BR") + " kg — escolhi o que está parado há mais tempo, confira o peso"
+    : "livre, comporta a carga e está parado há mais tempo";
+  return r;
+}
+
+/* --------------------- aprendizado de KM e dias por rota ------------------ */
+function mtDiasReais(v) {
+  if (!v) return 0;
+  var ini = Number(v.inicioRealMs) || 0;
+  var fim = Number(v.fimRealMs) || Number(v.encerradaEm) || 0;
+  if (!ini || !fim || fim <= ini) return 0;
+  var d = Math.ceil((fim - ini) / 86400000);
+  return (d >= 1 && d <= 20) ? d : 0;
+}
+function mtHistoricoRota(rotaCod, rotaNome) {
+  var h = { viagens: [], kms: [], dias: [], kmMedio: 0, kmMin: 0, kmMax: 0, diasMedio: 0, confianca: 0 };
+  (state.viagens || []).forEach(function (v) {
+    if (String(v.cliente || "") !== "JT/Mateus") return;
+    var bate = (rotaCod && String(v.rotaCodMateus || "") === String(rotaCod))
+      || (rotaNome && v.rota && mtRotaNorm(v.rota) === mtRotaNorm(rotaNome));
+    if (!bate) return;
+    h.viagens.push(v);
+    var km = (Number(v.kmChegada) || 0) - (Number(v.kmSaida) || 0);
+    if (km >= 20 && km <= 3000) h.kms.push(km);
+    var d = mtDiasReais(v);
+    if (d) h.dias.push(d);
+  });
+  if (h.kms.length) {
+    h.kmMedio = Math.round(h.kms.reduce(function (a, b) { return a + b; }, 0) / h.kms.length);
+    h.kmMin = Math.min.apply(null, h.kms);
+    h.kmMax = Math.max.apply(null, h.kms);
+  }
+  if (h.dias.length) h.diasMedio = Math.round((h.dias.reduce(function (a, b) { return a + b; }, 0) / h.dias.length) * 10) / 10;
+  h.confianca = h.kms.length >= 3 ? 100 : (h.kms.length === 2 ? 70 : (h.kms.length === 1 ? 40 : 0));
+  return h;
+}
+/* KM da carga: o do modelo, o medido nas viagens anteriores da rota, e qual
+   dos dois o app vai usar. A tela e a criacao da viagem usam esta funcao --
+   assim as duas nunca divergem. */
+function mtKmDaCarga(p) {
+  var cfg = mtCfg();
+  var nomes = (p.cidades || []).filter(function (c) { return c.conhecida; }).map(function (c) { return c.nome; });
+  var seq = mtKmSequencia(nomes);
+  var urb = (p.cidades || []).length * cfg.kmUrbanoCidade;
+  var estimado = Math.round(seq.km + urb);
+  var hist = mtHistoricoRota(p.rotaCod, p.rota);
+  var usado = hist.kmMedio > 0 ? hist.kmMedio : estimado;
+  return {
+    estimado: estimado, estrada: Math.round(seq.km), urbano: urb, trechos: seq.trechos,
+    medido: hist.kmMedio, usado: usado, hist: hist,
+    origem: hist.kmMedio > 0 ? "medido" : "modelo"
+  };
+}
+function mtDiasDaCarga(p, padrao) {
+  var hist = mtHistoricoRota(p.rotaCod, p.rota);
+  if (hist.diasMedio > 0) return { dias: Math.max(1, Math.round(hist.diasMedio)), origem: "medido", n: hist.dias.length };
+  return { dias: Number(padrao) || 1, origem: "padrão", n: 0 };
+}
+/* Carimba a hora em que a viagem foi fechada, pra medir a duracao real. A RPC
+   do celular nao grava hora nenhuma -- entao o carimbo acontece aqui, na
+   primeira vez que o painel ve a viagem fechada depois de carregar a nuvem.
+   Erra por horas, nunca por dias, e e o que temos sem mexer no banco. */
+function mtMarcarFimReal() {
+  if (!window.__rfDadosCarregados) return 0;
+  var n = 0;
+  (state.viagens || []).forEach(function (v) {
+    if (v.fimRealMs) return;
+    var fechada = !!v.fotoKmChegada || v.statusMotorista === "aguardando_equipe" || v.statusMotorista === "aprovada";
+    if (!fechada) return;
+    if (!v.inicioRealMs) return;              // sem inicio real nao da pra medir duracao
+    v.fimRealMs = Number(v.encerradaEm) || Date.now();
+    n++;
+  });
+  return n;
+}
+
+/* ------------------ criacao automatica ao anexar (v392) ------------------- */
+function mtTentarAutomatico() {
+  var m = state._mateus || {}, p = m.carga;
+  if (!p || m.autoFeito) return;
+  m.autoFeito = true;                          // uma tentativa por importacao
+  var conf = mtConferir(p);
+  if (conf && conf.temTotais && !conf.ok) {
+    state._mateusMsg += " A viagem NÃO foi criada: a soma das cidades não fecha com o cabeçalho.";
+    render(); return;
+  }
+  var peso = 0;
+  (p.cidades || []).forEach(function (x) { peso += Number(x.peso) || 0; });
+  var esc = mtEscolherCaminhao(peso);
+  m.escolha = esc;
+  if (!esc.placa) {
+    state._mateusMsg += " A viagem NÃO foi criada: " + esc.motivo + ".";
+    render(); return;
+  }
+  m.placa = esc.placa;
+  var veic = (state.veiculos || []).find(function (x) { return x.placa === esc.placa; }) || {};
+  if (!m.motorista) m.motorista = veic.motorista || "";
+  var km = mtKmDaCarga(p);
+  m.kmFinal = km.usado;
+  var dd = mtDiasDaCarga(p, m.dias || 1);
+  m.dias = dd.dias;
+  mtGerarViagem(true);
+}
+
+/* ------------------------- gerar a viagem (v390) ------------------------- */
+function mtGerarViagem(auto) {
+  var m = state._mateus || {}, p = m.carga;
+  if (!p) { if (!auto) alert("Importe a carga primeiro."); return; }
+  if (window.__rfDadosCarregados === false) {
+    if (!auto) alert("Espere o sistema terminar de carregar os dados da nuvem antes de lancar a viagem.");
+    return;
+  }
+  var c = mtConferir(p);
+  if (c && c.temTotais && !c.ok) {
+    alert("A leitura nao fecha com o cabecalho da programacao:\n\n"
+      + "Cabecalho: " + c.totalVol + " volumes / " + c.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg\n"
+      + "Soma das cidades: " + c.somaVol + " volumes / " + c.somaPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg\n\n"
+      + "Nao vou gerar viagem com peso que nao bate -- peso errado vira frete errado. Mande o print inteiro ou corrija pelo texto colado.");
+    return;
+  }
+  var placa = m.placa || "";
+  if (!placa) { if (!auto) alert("Escolha o caminhao que vai levar essa carga."); return; }
+  var veic = (state.veiculos || []).find(function (x) { return x.placa === placa; }) || {};
+  var data = m.data || dataPadraoMes();
+  var carga = String(p.carga || "");
+  var jaTem = (state.viagens || []).find(function (x) {
+    return x.placa === placa && x.data === data && String(x.cliente || "") === "JT/Mateus"
+      && (carga ? String(x.cargaMateus || "") === carga : false);
+  });
+  if (jaTem) {
+    if (auto) { state._mateusMsg += " Essa carga já tinha viagem lançada — não dupliquei."; render(); return; }
+    alert("A carga " + carga + " ja tem viagem lancada no " + placa + " em " + data + ". Nao vou duplicar.");
+    state.aba = "viagem"; state._viagemCaixa = "JT/Mateus"; render(); return;
+  }
+  var peso = 0, volumes = 0;
+  (p.cidades || []).forEach(function (x) { peso += Number(x.peso) || 0; volumes += Number(x.volumes) || 0; });
+  var rotaTar = mtCasarRotaTarifa(p.rota);
+  var valor = 0;
+  try {
+    if (typeof freteRotaDe === "function" && rotaTar) valor = freteRotaDe("JT/Mateus", rotaTar, veic.tipo || "", peso) || 0;
+  } catch (e) { valor = 0; }
+  if (!valor && Number(m.frete) > 0) valor = Number(m.frete);
+
+  var v = {
+    id: uid(), placa: placa, cliente: "JT/Mateus", rota: rotaTar || p.rota || "",
+    data: data, criadoEm: Date.now(),
+    valorViagem: valor, km: Number(m.kmFinal) || mtKmDaCarga(p).usado, dias: Number(m.dias) || 1,
+    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+    combustivelItens: [], outrosItens: [],
+    vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true,
+    motoristaNaEpoca: m.motorista || veic.motorista || "",
+    pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+    pesoKg: Math.round(peso * 10) / 10,
+    cargaMateus: carga, rotaCodMateus: String(p.rotaCod || ""),
+    mateusVolumes: volumes,
+    mateusParadas: (p.cidades || []).map(function (x) {
+      return { cidade: x.nome, cod: x.cod, volumes: x.volumes, peso: x.peso };
+    }),
+    obs: "Programacao da Mateus" + (carga ? " (carga " + carga + ")" : "") + " -- "
+      + (p.cidades || []).length + " cidade(s): "
+      + (p.cidades || []).map(function (x) { return x.nome; }).join(", ")
+      + ". KM " + (mtKmDaCarga(p).origem === "medido" ? "pela média medida em viagens anteriores desta rota" : "estimado pelo roteiro") + "."
+      + (auto && m.escolha ? " Caminhão escolhido pelo sistema: " + m.escolha.motivo + "." : "")
+      + (rotaTar ? "" : " ATENCAO: a rota nao foi achada na tabela da JT, o valor ficou como voce digitou.")
+  };
+  state.viagens.push(v);
+  state._viagemCaixa = "JT/Mateus";
+
+  /* guarda tambem no historico da rota, que e o que permite comparar a mesma
+     rota com numeros de cidades diferentes de uma semana pra outra */
+  if (!state.mateusCargas) state.mateusCargas = [];
+  state.mateusCargas.push({
+    id: "mt" + Date.now().toString(36), salvoEm: Date.now(),
+    rota: p.rota, rotaCod: p.rotaCod, carga: p.carga,
+    cidades: p.cidades, urbano: p.urbano,
+    frete: valor, dias: Number(m.dias) || 1,
+    tipo: veic.tipo || "Toco", km: Number(m.kmFinal) || 0,
+    viagemId: v.id, placa: placa, viaIA: !!p.viaIA
+  });
+  state._mateusUltima = { placa: placa, data: data, viagemId: v.id, valor: valor, km: v.km, dias: v.dias, motivo: (m.escolha && m.escolha.motivo) || "" };
+  state._mateus = {};
+  state._mateusMsg = "";
+  salvar();
+  if (auto) {
+    state._mateusMsg = "\u2713 Viagem criada sozinha no " + placa
+      + (v.motoristaNaEpoca ? " com " + v.motoristaNaEpoca : "")
+      + " para " + data + " — " + (valor > 0 ? fmtR(valor) : "sem valor de tabela")
+      + ", " + (v.km || 0) + " km, " + (v.dias || 1) + " dia(s). Está na aba Viagens, caixa JT/Mateus.";
+    render(); return;
+  }
+  render();
+  alert("Viagem criada no " + placa + " para " + data + "."
+    + (valor > 0 ? "\nValor: " + fmtR(valor) + (rotaTar ? " (tabela da JT, rota " + rotaTar + ")" : "") : "\nSem valor: a rota nao esta na tabela da JT -- preencha na aba Viagens.")
+    + "\nEla esta na aba Viagens, na caixa do JT/Mateus.");
+}
+function mtLiberarCaminhao(placa) {
+  var m = state._mateus || {};
+  var ab = mtViagemAberta(placa);
+  if (!confirm("Criar a viagem no " + placa + " mesmo ele não estando disponível"
+    + (ab && ab.data ? " (em viagem desde " + ab.data + ")" : " (marcado como Em viagem na Frota)") + "?\n\nSe houver viagem aberta, ela continua aberta — quem fecha é o motorista ou a equipe. Isso aqui só força o lançamento desta carga.")) return;
+  m.placa = placa;
+  m.forcado = true;
+  state._mateus = m;
+  mtGerarViagem();
+}
+function mtCancelarCarga() {
+  if (!confirm("Descartar esta carga? Ela sai da tela e nenhuma viagem é criada.")) return;
+  state._mateus = {};
+  state._mateusMsg = "Carga descartada. Nenhuma viagem foi criada.";
+  salvar(); render();
+}
+function mtSetGer(campo, valor) {
+  if (!state._mateus) state._mateus = {};
+  state._mateus[campo] = valor;
+  render();
+}
+
 /* ------------------------------- a tela -------------------------------- */
 function mtBlocoHTML() {
   var m = state._mateus || {}, p = m.carga, cfg = mtCfg();
@@ -1321,14 +1816,14 @@ function mtBlocoHTML() {
 
   h += '<div style="font-size:11.5px;color:#999;line-height:1.5;margin-bottom:10px;">'
     + 'A tabela da JT dá só o nome da rota e o preço fechado. As cidades chegam no PDF da carga e mudam toda semana — '
-    + 'a mesma rota já veio com 4, 8 e 10 cidades pelo mesmo frete. Cole aqui a tabela do PDF: o app monta o roteiro saindo de '
+    + 'a mesma rota já veio com 4, 8 e 10 cidades pelo mesmo frete. Anexe o <b>print da programação</b> (ou o PDF, ou cole o texto): o app lê, confere a soma contra o cabeçalho, monta o roteiro saindo de '
     + esc(cfg.base) + ', estima o KM e mostra custo e margem <b>daquela carga</b>. '
     + '<b>O KM é estimativa</b> — distância entre as sedes municipais vezes o fator rodoviário, mais os km urbanos por cidade. Não é Google Maps.'
     + '</div>';
 
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">' 
-    + '<label class="btn-outline" style="font-size:12px;cursor:pointer;">\ud83d\udcce Anexar PDF da carga'
-    + '<input type="file" accept="application/pdf,.pdf" multiple style="display:none;" onchange="mtAnexarPdf(this.files)"></label>'
+    + '<label class="btn-outline" style="font-size:12px;cursor:pointer;">\ud83d\udcce Anexar print, foto ou PDF'
+    + '<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="mtAnexarArquivo(this.files)"></label>'
     + '<span style="font-size:11px;color:#777;">ou cole o texto abaixo</span></div>'
     + '<div style="font-size:12px;color:#888;margin-bottom:8px;">' + esc(state._mateusMsg || "") + '</div>'
     + '<textarea id="mt-colar" placeholder="Cole aqui a tabela do PDF da carga" '
@@ -1345,10 +1840,11 @@ function mtBlocoHTML() {
   if (!p) { return h + '</div>'; }
 
   var nomes = p.cidades.filter(function (c) { return c.conhecida; }).map(function (c) { return c.nome; });
-  var seq = mtKmSequencia(nomes);
   var oti = mtKmOtimizado(nomes);
-  var kmUrb = p.cidades.length * cfg.kmUrbanoCidade;
-  var kmTotal = Math.round(seq.km + kmUrb);
+  var kmInfo = mtKmDaCarga(p);            /* v392: modelo + o que ja foi medido */
+  var seq = { km: kmInfo.estrada, trechos: kmInfo.trechos };
+  var kmUrb = kmInfo.urbano;
+  var kmTotal = kmInfo.usado;
   var kmOti = Math.round(oti.km + kmUrb);
   var pesoTot = p.cidades.reduce(function (s, c) { return s + (c.peso || 0); }, 0);
   var volTot = p.cidades.reduce(function (s, c) { return s + (c.volumes || 0); }, 0);
@@ -1373,6 +1869,47 @@ function mtBlocoHTML() {
       + p.ignoradas.map(function (c) { return esc(c.nome); }).join(", ") + '</b>. '
       + 'Me peça pra acrescentar essas cidades na malha — não vou chutar quilometragem.</div>';
   }
+
+  /* v392: as cidades da carga, com o trecho ate cada uma. E o que Renato pediu
+     pra "aparecer as cidades e a estimativa de distancia que ira percorrer". */
+  var trechoAte = {};
+  (seq.trechos || []).forEach(function (t) { trechoAte[t.para] = t.km; });
+  h += '<div style="margin-top:12px;overflow-x:auto;"><table style="width:100%;font-size:11.5px;color:#ccc;border-collapse:collapse;">'
+    + '<thead><tr style="color:#888;text-align:left;">'
+    + '<th style="padding:4px 6px;">#</th><th style="padding:4px 6px;">Cidade</th>'
+    + '<th style="padding:4px 6px;text-align:right;">Vol</th><th style="padding:4px 6px;text-align:right;">Peso (kg)</th>'
+    + '<th style="padding:4px 6px;text-align:right;">Trecho</th></tr></thead><tbody>'
+    + p.cidades.map(function (c, i) {
+      var d = trechoAte[c.nome];
+      return '<tr style="border-top:1px solid #222;">'
+        + '<td style="padding:4px 6px;color:#777;">' + (i + 1) + '</td>'
+        + '<td style="padding:4px 6px;">' + esc(c.nome) + (c.conhecida ? "" : ' <span style="color:#C0392B;" title="cidade sem coordenada na malha — fica fora do cálculo de KM">⚠</span>') + '</td>'
+        + '<td style="padding:4px 6px;text-align:right;">' + (c.volumes || 0) + '</td>'
+        + '<td style="padding:4px 6px;text-align:right;">' + (c.peso || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + '</td>'
+        + '<td style="padding:4px 6px;text-align:right;color:#999;">' + (d != null ? Math.round(d) + " km" : "—") + '</td>'
+        + '</tr>';
+    }).join("")
+    + '<tr style="border-top:2px solid #333;font-weight:700;">'
+    + '<td colspan="2" style="padding:5px 6px;">Total</td>'
+    + '<td style="padding:5px 6px;text-align:right;">' + volTot + '</td>'
+    + '<td style="padding:5px 6px;text-align:right;">' + pesoTot.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + '</td>'
+    + '<td style="padding:5px 6px;text-align:right;">' + kmTotal.toLocaleString("pt-BR") + ' km</td>'
+    + '</tr></tbody></table></div>';
+
+  /* v392: de onde saiu o KM e quanto disso ja e dado real */
+  var hist = kmInfo.hist;
+  var corConf = hist.confianca >= 100 ? "#2E7D32" : hist.confianca >= 70 ? "#8E7A1F" : hist.confianca > 0 ? "#E67E22" : "#666";
+  h += '<div style="margin-top:10px;padding:10px;background:#0B0B0B;border:1px solid #222;border-radius:6px;font-size:11.5px;color:#bbb;">'
+    + '<b style="color:' + GOLD + ';">Distância desta rota</b> — '
+    + (kmInfo.origem === "medido"
+      ? 'usando os <b>' + kmInfo.medido.toLocaleString("pt-BR") + ' km medidos</b> nas viagens anteriores (o modelo estimava ' + kmInfo.estimado.toLocaleString("pt-BR") + ' km).'
+      : 'ainda sem viagem medida nesta rota, usando a <b>estimativa do modelo: ' + kmInfo.estimado.toLocaleString("pt-BR") + ' km</b>.')
+    + '<div style="margin-top:5px;">Base real: <b style="color:' + corConf + ';">' + hist.kms.length + ' viagem(ns) com KM medido</b>'
+    + (hist.kms.length ? ' (entre ' + hist.kmMin.toLocaleString("pt-BR") + ' e ' + hist.kmMax.toLocaleString("pt-BR") + ' km)' : "")
+    + ' · dias medidos: ' + (hist.dias.length ? '<b>' + hist.diasMedio + '</b> em média (' + hist.dias.length + ' viagem(ns))' : 'nenhum ainda')
+    + ' · confiança <b style="color:' + corConf + ';">' + hist.confianca + '%</b></div>'
+    + '<div style="margin-top:5px;color:#777;">A cada viagem desta rota que fecha com as duas fotos de hodômetro, o número real entra na média e a projeção melhora sozinha. Três viagens medidas = 100%.</div>'
+    + '</div>';
 
   h += '<div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;">'
     + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">KM na ordem do PDF</div>'
@@ -1412,7 +1949,104 @@ function mtBlocoHTML() {
   h += '<div style="margin-top:12px;font-size:11px;color:#888;">Roteiro: ' + esc(cfg.base) + ' → '
     + p.cidades.map(function (x) { return esc(x.nome) + (x.conhecida ? "" : " ⚠"); }).join(" → ") + ' → ' + esc(cfg.base) + '</div>';
 
-  h += '<button class="btn-outline" style="font-size:11px;margin-top:10px;" onclick="mtSalvarCarga()">💾 Guardar esta carga no histórico</button>';
+  /* v390: conferencia da leitura, visivel antes de qualquer botao */
+  var conf = mtConferir(p);
+  if (conf && conf.temTotais) {
+    h += conf.ok
+      ? '<div style="margin-top:12px;font-size:12px;color:#2E7D32;">\u2713 Confere com o cabeçalho da programação: '
+        + conf.totalVol + ' volumes e ' + conf.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg.</div>'
+      : '<div style="margin-top:12px;padding:10px;background:#1A0E0E;border-left:4px solid #C0392B;border-radius:6px;font-size:12px;color:#E8A0A0;">'
+        + '<b>\u26a0 A leitura não fecha com o cabeçalho.</b><br>Cabeçalho: ' + conf.totalVol + ' vol / '
+        + conf.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg &nbsp;·&nbsp; Soma das cidades: '
+        + conf.somaVol + ' vol / ' + conf.somaPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg.<br>'
+        + 'Falta linha na leitura ou algum número saiu errado. A viagem fica bloqueada até bater — peso errado vira frete errado.</div>';
+  } else if (p.viaIA) {
+    h += '<div style="margin-top:12px;font-size:12px;color:#E67E22;">\u26a0 O cabeçalho com os totais não veio no print, então não deu pra conferir a soma. Confira você antes de gerar a viagem.</div>';
+  }
+
+  /* v390: gerar a viagem -- o mesmo modelo da Suzano, sem espelho e sem CT-e */
+  var rotaTar = mtCasarRotaTarifa(p.rota);
+  var placaSel = m.placa || "";
+  var pesoTotG = pesoTot;
+  /* v391: os caminhoes da JT vem primeiro, pelo campo Cliente da Frota (ou pelo
+     Local, quando o campo ainda nao foi preenchido). Havendo um so, ja vem
+     escolhido -- sem gravar nada, so preenchendo a tela. */
+  var daJT = veiculosDoCliente("JT/Mateus", true);
+  var outros = (state.veiculos || []).filter(function (x) {
+    return x.placa && daJT.indexOf(x) < 0;
+  });
+  if (!placaSel && daJT.length === 1) { placaSel = daJT[0].placa; state._mateus.placa = placaSel; }
+  var mtOpcaoVeic = function (x) {
+    var co = veicClienteOp(x);
+    return '<option value="' + esc(x.placa) + '"' + (placaSel === x.placa ? " selected" : "") + '>'
+      + esc(x.placa) + ' · ' + esc(x.tipo || "")
+      + (x.motorista ? ' · ' + esc(x.motorista) : "")
+      + (co.cliente && co.cliente !== "JT/Mateus" ? ' · ' + esc(co.cliente) : "")
+      + (String(x.statusOp || "") === "Em viagem" ? ' (em viagem)' : "")
+      + '</option>';
+  };
+  var veicSel = (state.veiculos || []).find(function (x) { return x.placa === placaSel; }) || {};
+  var valorTab = 0;
+  try { if (typeof freteRotaDe === "function" && rotaTar && placaSel) valorTab = freteRotaDe("JT/Mateus", rotaTar, veicSel.tipo || "", pesoTotG) || 0; } catch (e) { valorTab = 0; }
+
+  h += '<div style="margin-top:14px;padding:12px;background:#111;border:1px solid ' + GOLD + ';border-radius:8px;">'
+    + '<div style="font-size:12.5px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">\ud83d\ude9a Gerar a viagem</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
+    + '<span style="font-size:11px;color:#777;">Caminhão</span>'
+    + '<select onchange="mtSetGer(\'placa\',this.value)" style="font-size:12px;">'
+    + '<option value="">— escolha —</option>'
+    + (daJT.length ? '<optgroup label="Da JT/Mateus (' + daJT.length + ')">'
+        + daJT.map(mtOpcaoVeic).join("") + '</optgroup>' : "")
+    + (outros.length ? '<optgroup label="Outros caminhões">' + outros.map(mtOpcaoVeic).join("") + '</optgroup>' : "")
+    + '</select>'
+    + '<span style="font-size:11px;color:#777;">Motorista</span>'
+    + '<input value="' + esc(m.motorista != null ? m.motorista : (veicSel.motorista || "")) + '" onchange="mtSetGer(\'motorista\',this.value)" placeholder="nome" style="width:150px;font-size:12px;">'
+    + '<span style="font-size:11px;color:#777;">Data</span>'
+    + '<input type="date" value="' + esc(m.data || dataPadraoMes()) + '" onchange="mtSetGer(\'data\',this.value)" style="font-size:12px;">'
+    + '</div>';
+
+  /* v392: por que nao ha caminhao, caminhao por caminhao, com as duas saidas */
+  var escolha = m.escolha || mtEscolherCaminhao(pesoTot);
+  if (!daJT.length) {
+    h += '<div style="margin-top:8px;font-size:11px;color:#E67E22;">\u26a0 Nenhum caminhão está marcado como da <b>JT/Mateus</b>. '
+      + 'Marque na aba Frota, coluna <b>Cliente</b> — aí o sistema passa a escolher sozinho.</div>';
+  } else if (!escolha.placa) {
+    h += '<div style="margin-top:10px;padding:11px;background:#1A0E0E;border-left:4px solid #C0392B;border-radius:6px;font-size:12px;color:#E8B0B0;">'
+      + '<b>\u26d4 Nenhum caminhão da JT/Mateus está disponível.</b> A viagem não foi criada.'
+      + '<div style="margin-top:7px;">'
+      + escolha.ocupados.map(function (o) {
+        return '<div style="margin:3px 0;color:#ddd;">• <b>' + esc(o.v.placa) + '</b> — ' + esc(o.por)
+          + (o.liberavel ? ' <button class="btn-outline" style="font-size:10px;padding:2px 6px;margin-left:6px;" onclick="mtLiberarCaminhao(\'' + esc(o.v.placa) + '\')">usar mesmo assim</button>' : "")
+          + '</div>';
+      }).join("")
+      + '</div>'
+      + '<div style="margin-top:8px;color:#E8B0B0;">Libere um caminhão acima (a viagem antiga continua aberta até alguém fechar) ou cancele esta carga.</div>'
+      + '<div style="margin-top:8px;"><button class="btn-outline" style="font-size:11px;" onclick="mtCancelarCarga()">\u2715 Cancelar esta carga</button></div>'
+      + '</div>';
+  } else if (m.escolha && m.escolha.placa) {
+    h += '<div style="margin-top:8px;font-size:11.5px;color:#2E7D32;">\u2713 O sistema escolheu o <b>' + esc(m.escolha.placa) + '</b>: ' + esc(m.escolha.motivo) + '.'
+      + (m.escolha.semCapacidade ? ' <span style="color:#E67E22;">Confira o peso antes de sair.</span>' : "")
+      + '</div>';
+  }
+  h += '<div style="margin-top:8px;font-size:11.5px;color:#999;">'
+    + (rotaTar
+      ? 'Rota casada com a tabela da JT: <b style="color:#ddd;">' + esc(rotaTar) + '</b>'
+        + (placaSel
+          ? (valorTab > 0
+            ? ' → valor <b style="color:' + GOLD + ';">' + fmtR(valorTab) + '</b> (' + esc(veicSel.tipo || "") + ')'
+            : ' → essa rota está com valor zerado na tabela para ' + esc(veicSel.tipo || "esse tipo") + '; vai entrar com o frete digitado acima.')
+          : ' — escolha o caminhão para o valor sair pelo tipo dele.')
+      : '\u26a0 A rota <b>' + esc(p.rota || "?") + '</b> não está na tabela da JT/Mateus. A viagem será criada com o frete que você digitou acima; cadastre a rota depois em Viagens → Clientes & forma de cobrança.')
+    + '</div>';
+
+  var bloqueado = !!(conf && conf.temTotais && !conf.ok);
+  h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="btn-outline" style="font-size:12px;' + (bloqueado ? "opacity:0.45;cursor:not-allowed;" : "border-color:" + GOLD + ";color:" + GOLD + ";") + '"'
+    + (bloqueado ? ' disabled' : ' onclick="mtGerarViagem()"') + '>\ud83d\ude9a Gerar viagem no JT/Mateus</button>'
+    + '<button class="btn-outline" style="font-size:11px;" onclick="mtSalvarCarga()">💾 Só guardar no histórico</button>'
+    + '</div>'
+    + '<div style="margin-top:6px;font-size:10.5px;color:#666;">A viagem nasce na aba Viagens, na caixa do JT/Mateus, com placa, motorista, data, KM estimado, peso e valor. Reimportar a mesma carga no mesmo caminhão e data não duplica.</div>'
+    + '</div>';
   h += '</div>';
 
   var hist = (state.mateusCargas || []).filter(function (x) { return x.rotaCod === p.rotaCod; });
@@ -2489,6 +3123,59 @@ function preencherLocalSeVazio(placa, localSugerido) {
     rec.local = localSugerido;
   }
 }
+/* ==========================================================================
+   v391 — A QUE CLIENTE CADA CAMINHAO ESTA ALOCADO
+   --------------------------------------------------------------------------
+   Renato (05/09): "o sistema ja tem os caminhoes que estao em viagem pela JT;
+   se nao tiver, cria um campo na Frota que eu digo qual e da JT, qual e da JDL
+   e qual e da Suzano".
+
+   Conferido no cadastro: NAO existia campo de cliente. O que existia era o
+   campo LOCAL, que e do MES (CAMPOS_MES) e virou texto livre misturado --
+   tem "JT/Mateus" e "JDL/Mercante", que sao cliente, mas tambem "Vistoria/
+   Placa Vermelha" e "Leao Transporte", que sao outra coisa. Nao da pra
+   confiar nele sozinho, e apagar o que ele guarda seria pior.
+
+   Entao: campo proprio `clienteOp` no cadastro fixo do veiculo (nao e do mes:
+   alocacao nao muda toda virada de mes), e enquanto ele estiver vazio o app
+   DEDUZ pelo texto do Local -- deixando claro na tela que veio de la. Deduzir
+   nao grava nada; quem grava e Renato escolhendo no seletor.
+   ========================================================================== */
+function veicClienteNorm(t) {
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+}
+/* Le o texto livre do Local e devolve o cliente cadastrado correspondente --
+   ou "" quando aquilo nao e nome de cliente (vistoria, placa vermelha...). */
+function veicClienteDoLocal(txt) {
+  var t = veicClienteNorm(txt);
+  if (!t) return "";
+  var lista = state.clientes || [];
+  var achar = function (nome) { return lista.indexOf(nome) >= 0 ? nome : ""; };
+  if (/\bJT\b|MATEUS/.test(t)) return achar("JT/Mateus");
+  if (/JDL|MERCANTE/.test(t)) return achar("Mercante/JDL") || achar("Operação JDL");
+  if (/SUZANO/.test(t)) return achar("Suzano");
+  if (/LEAO/.test(t)) return achar("Leão");
+  if (/YAMA/.test(t)) return achar("Yamaha");
+  for (var i = 0; i < lista.length; i++) { if (veicClienteNorm(lista[i]) === t) return lista[i]; }
+  return "";
+}
+/* Cliente do caminhao + de onde veio a informacao. Nunca inventa: sem campo e
+   sem pista no Local, devolve vazio e quem chama diz que nao sabe. */
+function veicClienteOp(v) {
+  if (!v) return { cliente: "", origem: "" };
+  if (v.clienteOp) return { cliente: v.clienteOp, origem: "cadastro" };
+  var doLocal = veicClienteDoLocal(mesVLer(v).local || v.local || "");
+  return doLocal ? { cliente: doLocal, origem: "local" } : { cliente: "", origem: "" };
+}
+/* Caminhoes alocados a um cliente. `soAptos` tira os que estao fora de operacao. */
+function veiculosDoCliente(cliente, soAptos) {
+  return (state.veiculos || []).filter(function (v) {
+    if (!v.placa) return false;
+    if (soAptos && String(v.statusOp || "") === "Fora de operação") return false;
+    return veicClienteOp(v).cliente === cliente;
+  });
+}
+
 function atualizarVeiculo(id, campo, valor) {
   const v = state.veiculos.find((x) => String(x.id) === String(id));
   if (!v) return;
@@ -18277,7 +18964,10 @@ function gerarContextoAssistente() {
     .map((x) => `- ${x.nome}: ${fmtR(x.valor)}${custoCat.totalDesp > 0 ? " (" + ((x.valor / custoCat.totalDesp) * 100).toFixed(1) + "% da despesa de viagens)" : ""}`)
     .join("\n");
   const frotaTudo = veiculosComMes().map((v) =>
-    `- ${v.placa} (${v.tipo || "?"}, ${v.modelo || "?"}, ${v.kmPorLitro || "?"} km/l): motorista ${v.motorista || "(sem)"}, regime ${v.regimeMotorista || "?"}, status ${v.statusOp || "?"}${v.local ? ", local: " + v.local : ""}`
+    `- ${v.placa} (${v.tipo || "?"}, ${v.modelo || "?"}, ${v.kmPorLitro || "?"} km/l): motorista ${v.motorista || "(sem)"}, regime ${v.regimeMotorista || "?"}, status ${v.statusOp || "?"}${v.local ? ", local: " + v.local : ""}${(() => {
+      const co = veicClienteOp(v);
+      return co.cliente ? `, alocado ao cliente ${co.cliente}${co.origem === "local" ? " (deduzido do campo Local — o campo Cliente ainda não foi preenchido)" : ""}` : ", sem cliente alocado";
+    })()}`
   ).join("\n");
   const dividasTudo = (state.dividas || []).map((d) =>
     `- ${d.nome || d.descricao || "dívida"}: ${fmtR(d.valorMes)}/mês, vence dia ${d.vencimento || "?"}`
@@ -18562,6 +19252,29 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       : `digitada à mão (não há troca lançada pra este caminhão)`;
     return `- ${v.placa}: KM atual ${kmA}, última troca em ${ol.ultima.toLocaleString("pt-BR")} km (${fonteUlt}), intervalo ${ol.intervalo.toLocaleString("pt-BR")} km, próxima em ${ol.proximo.toLocaleString("pt-BR")} km → ${sit}. ${extra}${alertaKm}`;
   }).join("\n");
+
+  // --- v390: carga da Mateus/JT (programação lida do print e viagem gerada) ---
+  const blocoMateus = !podeVerAba("cargamateus") ? "" : (function () {
+    const cargas = (state.mateusCargas || []);
+    const viagensMt = (state.viagens || []).filter((v) => v.cargaMateus || v.rotaCodMateus);
+    const cabecalho = `CARGA DA MATEUS / JT (aba "Carga Mateus"): a programação da Mateus só chega como PRINT de tela. `
+      + `O app lê o print por IA (Edge Function ler-programacao-mateus), lê PDF com texto direto, e aceita texto colado. `
+      + `Antes de gerar viagem ele CONFERE se a soma das cidades bate com o total do cabeçalho (volumes exatos, peso com 0,5 kg de tolerância); `
+      + `não batendo, o botão de gerar viagem fica bloqueado. A viagem sai no cliente JT/Mateus, com o valor da rota cadastrada na tabela da JT `
+      + `(rota casada pelo nome, ignorando o sufixo -BA), KM estimado pelo roteiro e peso somado das cidades. `
+      + `O KM começa como ESTIMATIVA (distância entre sedes municipais × fator rodoviário + km urbanos) e, a partir da primeira viagem fechada da mesma rota, passa a ser a MÉDIA REAL medida pelas fotos de hodômetro (chegada − saída); 3 viagens medidas = 100% de confiança. O mesmo vale para os dias. `
+      + `Ao anexar, o app escolhe o caminhão sozinho: entre os marcados como da JT/Mateus na Frota, pega os que não têm viagem aberta (regra rfViagensAbertasDaPlaca), prefere os que comportam o peso pela carga útil do CRLV e, entre esses, o parado há mais tempo. Não havendo nenhum livre, ele NÃO cria a viagem e mostra por que cada caminhão está ocupado, com a opção de liberar um ou cancelar a carga.`;
+    if (!cargas.length && !viagensMt.length) return cabecalho + ` Ainda não há nenhuma carga importada.`;
+    const linhas = cargas.slice().sort((a, b) => (b.salvoEm || 0) - (a.salvoEm || 0)).slice(0, 12).map((c) => {
+      const pesoC = (c.cidades || []).reduce((s, x) => s + (Number(x.peso) || 0), 0);
+      return `- carga ${c.carga || "?"} · rota ${c.rotaCod || "?"} ${c.rota || ""} · ${(c.cidades || []).length} cidade(s) (${(c.cidades || []).map((x) => x.nome).join(", ")}) · `
+        + `${Math.round(pesoC)} kg · ${c.km || 0} km estimados · ${c.tipo || "?"} · frete ${fmtR(c.frete || 0)}`
+        + (c.placa ? ` · gerou viagem no ${c.placa}` : ` · guardada só no histórico, sem viagem`)
+        + (c.viaIA ? ` (lida do print por IA)` : ``);
+    }).join("\n");
+    const linhasV = viagensMt.slice(-8).map((v) => `- viagem ${v.data} ${v.placa} (${v.motoristaNaEpoca || "sem motorista"}): rota ${v.rota || "?"}, carga ${v.cargaMateus || "?"}, ${v.pesoKg || 0} kg, ${v.km || 0} km, ${fmtR(v.valorViagem || 0)}`).join("\n");
+    return `${cabecalho}\nHISTÓRICO DE CARGAS:\n${linhas || "(nenhuma)"}\nVIAGENS GERADAS POR ESSA ABA:\n${linhasV || "(nenhuma)"}`;
+  })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
   const blocoSuzano = !podeVerAba("carregasuzano") ? "" : (function () {
@@ -18962,6 +19675,7 @@ ${podeOleo ? (linhasOleo || "(nenhum veículo cadastrado)") : "(sem permissão p
 ${blocoRegraKm}
 
 ${blocoSuzano}
+${blocoMateus}
 
 Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
 ${podeMot ? (linhasMotoristas || "(nenhum motorista por viagem cadastrado)") : "(sem permissão pra esta aba)"}
@@ -20012,7 +20726,7 @@ function renderTabela() {
 
   if (state.aba === "frota") {
     wrap.innerHTML = `<table style="min-width:1100px;"><thead><tr>
-      <th>Placa</th><th>Tipo</th><th title="Média de km rodados por litro de diesel — usado pra calcular o custo de combustível de cada viagem">km/L</th><th>Modelo</th><th>Status Baú</th><th>Motorista</th><th>Regime</th><th>Status Op.</th><th>Obs.</th><th></th>
+      <th>Placa</th><th>Tipo</th><th title="Média de km rodados por litro de diesel — usado pra calcular o custo de combustível de cada viagem">km/L</th><th>Modelo</th><th>Status Baú</th><th>Motorista</th><th>Regime</th><th title="Cliente em que este caminhão está rodando. É por aqui que o app sabe quais caminhões são da JT, da JDL e da Suzano.">Cliente</th><th>Status Op.</th><th>Obs.</th><th></th>
     </tr></thead><tbody>
       ${vs.map((v) => `<tr>
         <td><input value="${esc(v.placa)}" placeholder="AAA0A00" onchange="atualizarVeiculo('${v.id}','placa',this.value.toUpperCase())"></td>
@@ -20025,6 +20739,13 @@ function renderTabela() {
           <option value="viagem" ${(v.regimeMotorista || "viagem") === "viagem" ? "selected" : ""}>Por viagem</option>
           <option value="clt" ${v.regimeMotorista === "clt" ? "selected" : ""}>CLT</option>
         </select></td>
+        <td>${(() => {
+          const co = veicClienteOp(v);
+          const opts = (state.clientes || []).map((c) => `<option value="${esc(c)}" ${v.clienteOp === c ? "selected" : ""}>${esc(c)}</option>`).join("");
+          return `<select onchange="atualizarVeiculo('${v.id}','clienteOp',this.value)" style="min-width:120px;">
+              <option value="" ${!v.clienteOp ? "selected" : ""}>— sem alocação —</option>${opts}
+            </select>${(!v.clienteOp && co.cliente) ? `<div style="font-size:10px;color:#8E7A1F;margin-top:2px;" title="Deduzido do campo Local deste mês. Escolha aqui pra fixar.">Local diz: ${esc(co.cliente)}</div>` : ""}`;
+        })()}</td>
         <td><select onchange="atualizarVeiculo('${v.id}','statusOp',this.value)">${STATUS_OP.map((s) => `<option ${v.statusOp === s ? "selected" : ""}>${s}</option>`).join("")}</select></td>
         <td><input value="${esc(v.obs)}" placeholder="—" onchange="atualizarVeiculo('${v.id}','obs',this.value)"></td>
         <td><button class="btn-del" onclick="removerVeiculo('${v.id}')">✕</button></td>
@@ -22451,6 +23172,11 @@ revalidarSessaoAoAbrir();
         const nRom = rfRomaneiosAutoArquivar();
         if (nRom) console.log("[romaneios] " + nRom + " arquivado(s) por viagem fechada");
       } catch (e) { console.error("[romaneios auto]", e); }
+      // v392: carimba a hora do fim das viagens fechadas, pra medir a duração real
+      try {
+        const nFim = mtMarcarFimReal();
+        if (nFim) console.log("[mateus] " + nFim + " viagem(ns) ganharam hora de fim");
+      } catch (e) { console.error("[mateus fim real]", e); }
       // v256: romaneio sem viagem casa sozinho com a viagem aberta da mesma placa
       try {
         const nVinc = rfRomaneiosAutoVincular();
