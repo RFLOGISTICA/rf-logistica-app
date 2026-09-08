@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v397)</title>
+<title>RF Logística — Painel da Frota (v398)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2512,7 +2512,7 @@ function cmProprietario() {
 function cmSetProp(campo, valor) {
   var p = cmProprietario();
   p[campo] = valor;
-  salvar(); agendarSubida && agendarSubida();
+  salvar();
 }
 
 /* Mapa dos campos, na ordem da ficha. Cada item: [chave, rotulo, tipo].
@@ -2583,7 +2583,7 @@ function cmNova() {
   };
   cmFichas().push(f);
   state._cmAberta = f.id;
-  salvar(); agendarSubida && agendarSubida(); render();
+  salvar(); render();
 }
 function cmSet(id, secao, campo, valor) {
   var f = cmFicha(id); if (!f) return;
@@ -2593,7 +2593,7 @@ function cmSet(id, secao, campo, valor) {
     f[secao][campo] = valor;
   }
   f.atualizadoEm = Date.now();
-  salvar(); agendarSubida && agendarSubida();
+  salvar();
 }
 function cmSetRef(id, i, campo, valor) {
   var f = cmFicha(id); if (!f) return;
@@ -2601,21 +2601,21 @@ function cmSetRef(id, i, campo, valor) {
   if (!f.refs[i]) f.refs[i] = {};
   f.refs[i][campo] = valor;
   f.atualizadoEm = Date.now();
-  salvar(); agendarSubida && agendarSubida();
+  salvar();
 }
 function cmToggleCopia(id, chave) {
   var f = cmFicha(id); if (!f) return;
   if (!f.copias) f.copias = {};
   f.copias[chave] = !f.copias[chave];
   f.atualizadoEm = Date.now();
-  salvar(); agendarSubida && agendarSubida(); render();
+  salvar(); render();
 }
 function cmAbrir(id) { state._cmAberta = (state._cmAberta === id) ? "" : id; render(); }
 function cmExcluir(id) {
   var f = cmFicha(id); if (!f) return;
   if (!confirm("Excluir a ficha de " + ((f.mot && f.mot.nome) || "sem nome") + "? Isso não tem volta.")) return;
   state.motoristasCad = cmFichas().filter(function (x) { return String(x.id) !== String(id); });
-  salvar(); agendarSubida && agendarSubida(); render();
+  salvar(); render();
 }
 /* Puxa o veiculo da Frota: renavam, chassi, ano e modelo ja vieram do CRLV
    lido pelo pdf.js (v193), entao nao ha por que digitar de novo. */
@@ -2637,7 +2637,7 @@ function cmPuxarVeiculo(id, placa) {
   f.veic.cpfCnpj = f.veic.cpfCnpj || (f.prop && f.prop.cpf) || "";
   f.veic.rntrc = f.veic.rntrc || (f.prop && f.prop.rntrc) || "";
   f.atualizadoEm = Date.now();
-  salvar(); agendarSubida && agendarSubida(); render();
+  salvar(); render();
 }
 function cmFaltando(f) {
   var m = f.mot || {}, falta = [];
@@ -2667,10 +2667,7 @@ function cmBR(d) {
 /* Escreve exatamente nas celulas da ficha aprovada. Mudar posicao aqui e
    mudar o formato que o cliente ja aceitou -- so mexer se ele mandar ficha
    nova. */
-function cmExportar(id) {
-  var f = cmFicha(id);
-  if (!f) return;
-  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+function cmMontarWb(f) {
   var p = f.prop || {}, m = f.mot || {}, v = f.veic || {}, refs = f.refs || [];
   var cel = {};
   function pos(ref, valor) { if (valor !== undefined && valor !== null && valor !== "") cel[ref] = { t: "s", v: String(valor) }; }
@@ -2749,8 +2746,17 @@ function cmExportar(id) {
   ];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, cel, "Ficha de Cadastro");
-  var nome = String((m.nome || "motorista")).replace(/[^A-Za-zÀ-ú0-9]+/g, "_");
-  XLSX.writeFile(wb, "FO_YL_026_-_Ficha_de_Cadastro_-_" + nome + ".xlsx");
+  return wb;
+}
+function cmNomeArquivo(f) {
+  var nome = String(((f.mot || {}).nome || "motorista")).replace(/[^A-Za-zÀ-ú0-9]+/g, "_");
+  return "FO_YL_026_-_Ficha_de_Cadastro_-_" + nome;
+}
+function cmExportar(id) {
+  var f = cmFicha(id);
+  if (!f) return;
+  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+  XLSX.writeFile(cmMontarWb(f), cmNomeArquivo(f) + ".xlsx");
 }
 
 /* Versao pra imprimir/salvar em PDF, com as bordas e as tarjas das secoes --
@@ -2815,6 +2821,203 @@ function cmImprimir(id) {
   setTimeout(function () { try { w.print(); } catch (e) { } }, 400);
 }
 
+/* ==========================================================================
+   v398 — ANEXOS DA FICHA E PACOTE PARA O CLIENTE
+   --------------------------------------------------------------------------
+   Pedido de Renato (08/09): "um local para anexa a cnh e o endereço, nada
+   consta e toxicologico, pois quando o cliente pedir os dados para cadastro
+   eu poder exportar".
+
+   Os quatro documentos ficam presos A FICHA do motorista, nao na pasta da
+   placa (aba Documentos) -- documento de motorista segue a pessoa, nao o
+   caminhao, e quando o cliente pede o cadastro ele pede tudo junto.
+
+   Botao "Exportar pacote" gera um ZIP com a ficha FO_YL_026 em xlsx MAIS os
+   quatro arquivos, cada um com nome que se explica sozinho. E o que o
+   cliente pede, num anexo so.
+
+   VALIDADE: toxicologico e nada consta VENCEM, e cliente devolve cadastro com
+   documento vencido. Cada anexo guarda a data de validade e a ficha avisa
+   antes. Sugestao automatica na hora de anexar: toxicologico 2 anos e meio
+   (o prazo da CLT para motorista profissional) e nada consta 90 dias -- as
+   duas editaveis, porque cliente que pede prazo menor existe.
+
+   O upload usa rfDocsPreparar, o mesmo caminho da aba Documentos, que ja
+   resolve o bug do arquivo do seletor do Android que nao streama (v192).
+   ========================================================================== */
+var CM_DOCS = [
+  { k: "cnh", rot: "CNH", copia: "mot:CNH", diasPadrao: 0 },
+  { k: "endereco", rot: "Comprovante de endereço", copia: "mot:COMP. ENDEREÇO", diasPadrao: 0 },
+  { k: "nadaconsta", rot: "Nada consta (antecedentes)", copia: "", diasPadrao: 90 },
+  { k: "toxicologico", rot: "Exame toxicológico", copia: "", diasPadrao: 913 }
+];
+
+function cmDocsDe(f, tipo) {
+  if (!f.docs) f.docs = {};
+  if (!Array.isArray(f.docs[tipo])) f.docs[tipo] = [];
+  return f.docs[tipo];
+}
+function cmDocMsg(id, txt) { state._cmDocMsg = { id: id, txt: txt }; render(); }
+
+function cmDocUpload(input, fichaId, tipo) {
+  var f = cmFicha(fichaId);
+  var file = input.files && input.files[0];
+  input.value = "";
+  if (!f || !file) return;
+  var def = CM_DOCS.find(function (x) { return x.k === tipo; }) || { rot: tipo, diasPadrao: 0 };
+  cmDocMsg(fichaId, "enviando " + file.name + "...");
+  rfDocsEnviar("motoristas/" + fichaId, file, function (t) { cmDocMsg(fichaId, t); })
+    .then(function (r) {
+      var validade = "";
+      if (def.diasPadrao > 0) {
+        var d = new Date(); d.setDate(d.getDate() + def.diasPadrao);
+        validade = d.toISOString().slice(0, 10);
+      }
+      cmDocsDe(f, tipo).push({
+        path: r.path, nome: file.name, tam: file.size || 0,
+        quando: Date.now(), validade: validade
+      });
+      /* anexou o documento, a copia obrigatoria correspondente ja fica marcada */
+      if (def.copia) { if (!f.copias) f.copias = {}; f.copias[def.copia] = true; }
+      f.atualizadoEm = Date.now();
+      salvar();
+      cmDocMsg(fichaId, "✓ " + def.rot + " anexada.");
+    })
+    .catch(function (e) {
+      cmDocMsg(fichaId, "não consegui enviar: " + ((e && e.message) || "erro") + ((e && e.__rfInfo) || ""));
+    });
+}
+function cmDocValidade(fichaId, tipo, i, valor) {
+  var f = cmFicha(fichaId); if (!f) return;
+  var lista = cmDocsDe(f, tipo);
+  if (!lista[i]) return;
+  lista[i].validade = valor;
+  f.atualizadoEm = Date.now();
+  salvar();
+  render();
+}
+function cmDocExcluir(fichaId, tipo, i) {
+  var f = cmFicha(fichaId); if (!f) return;
+  var lista = cmDocsDe(f, tipo);
+  var d = lista[i]; if (!d) return;
+  if (!confirm("Excluir " + (d.nome || "este arquivo") + " da ficha? Isso apaga o arquivo da nuvem.")) return;
+  rfGetClient().then(function (sb) {
+    if (sb) { try { sb.storage.from(RF_BUCKET).remove([d.path]); } catch (e) { } }
+    lista.splice(i, 1);
+    f.atualizadoEm = Date.now();
+    salvar();
+    render();
+  });
+}
+/* O anexo que vale e o MAIS RECENTE de cada tipo -- e o que entra no pacote. */
+function cmDocAtual(f, tipo) {
+  var lista = (f.docs || {})[tipo] || [];
+  if (!lista.length) return null;
+  return lista.slice().sort(function (a, b) { return (b.quando || 0) - (a.quando || 0); })[0];
+}
+function cmDocDias(d) {
+  if (!d || !d.validade) return null;
+  try { return Math.round((new Date(d.validade + "T00:00:00") - new Date(new Date().toDateString())) / 86400000); }
+  catch (e) { return null; }
+}
+/* O que impede de mandar o cadastro pro cliente: anexo faltando ou vencido. */
+function cmDocsPendencias(f) {
+  var out = [];
+  CM_DOCS.forEach(function (def) {
+    var d = cmDocAtual(f, def.k);
+    if (!d) { out.push(def.rot + " não anexada"); return; }
+    var dias = cmDocDias(d);
+    if (dias !== null && dias < 0) out.push(def.rot + " VENCIDA há " + (-dias) + " dia(s)");
+    else if (dias !== null && dias <= 30) out.push(def.rot + " vence em " + dias + " dia(s)");
+  });
+  return out;
+}
+
+/* Pacote: ficha + os quatro documentos, num ZIP so. */
+function cmExportarPacote(id) {
+  var f = cmFicha(id); if (!f) return;
+  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+  cmDocMsg(id, "montando o pacote...");
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) { cmDocMsg(id, "não consegui carregar o compactador (verifique a internet)."); return; }
+    var zip = new JSZip();
+    var base = cmNomeArquivo(f);
+    try {
+      var wb = cmMontarWb(f);
+      var bin = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      zip.file(base + ".xlsx", bin);
+    } catch (e) { }
+    var faltando = [], tarefas = [];
+    CM_DOCS.forEach(function (def) {
+      var d = cmDocAtual(f, def.k);
+      if (!d) { faltando.push(def.rot); return; }
+      var ext = (String(d.nome || "").split(".").pop() || "pdf").toLowerCase();
+      var nomeArq = def.rot.replace(/[^A-Za-zÀ-ú0-9]+/g, "_") + "." + ext;
+      tarefas.push(rfBaixarDoBucket(d.path).then(function (b) {
+        if (b) zip.file("Documentos/" + nomeArq, b);
+        else faltando.push(def.rot + " (arquivo não veio da nuvem)");
+      }));
+    });
+    Promise.all(tarefas).then(function () {
+      if (faltando.length) {
+        zip.file("FALTANDO.txt",
+          "Documentos que NAO entraram neste pacote:\n\n- " + faltando.join("\n- ")
+          + "\n\nAnexe na aba Cadastro de Motorista e gere o pacote de novo antes de mandar pro cliente.\n");
+      }
+      return zip.generateAsync({ type: "blob" });
+    }).then(function (blob) {
+      rfBaixarBlob(blob, base.replace("Ficha_de_Cadastro", "Cadastro_Completo") + ".zip");
+      cmDocMsg(id, faltando.length
+        ? "✓ Pacote gerado, mas FALTA: " + faltando.join(", ") + " — está anotado no FALTANDO.txt de dentro do ZIP."
+        : "✓ Pacote completo gerado: ficha + os 4 documentos.");
+    }).catch(function (e) {
+      cmDocMsg(id, "falhou ao gerar o pacote: " + ((e && e.message) || "erro"));
+    });
+  });
+}
+
+function cmDocsHTML(f) {
+  var msg = (state._cmDocMsg && state._cmDocMsg.id === f.id) ? state._cmDocMsg.txt : "";
+  var h = cmSecaoTitulo("DOCUMENTOS ANEXADOS")
+    + '<div style="font-size:10.5px;color:#777;margin-top:4px;">'
+    + 'CNH, comprovante de endereço, nada consta e toxicológico. O mais recente de cada tipo é o que entra no pacote do cliente.</div>'
+    + (msg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(msg) + '</div>' : "")
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;margin-top:8px;">';
+  CM_DOCS.forEach(function (def) {
+    var lista = (f.docs || {})[def.k] || [];
+    var atual = cmDocAtual(f, def.k);
+    var dias = cmDocDias(atual);
+    var cor = !atual ? "#C0392B" : (dias === null ? "#2E7D32" : dias < 0 ? "#C0392B" : dias <= 30 ? "#E67E22" : "#2E7D32");
+    h += '<div style="background:#0B0B0B;border:1px solid ' + (atual ? "#222" : "#5A2020") + ';border-radius:6px;padding:9px;">'
+      + '<div style="display:flex;align-items:center;gap:6px;">'
+      + '<span style="font-size:12px;font-weight:800;color:#ddd;">' + esc(def.rot) + '</span>'
+      + '<span style="margin-left:auto;font-size:10.5px;color:' + cor + ';">'
+      + (!atual ? "não anexado"
+        : (dias === null ? "anexado" : (dias < 0 ? "VENCIDO há " + (-dias) + "d" : "vence em " + dias + "d")))
+      + '</span></div>';
+    if (lista.length) {
+      lista.slice().sort(function (a, b) { return (b.quando || 0) - (a.quando || 0); }).forEach(function (d) {
+        var i = lista.indexOf(d);
+        h += '<div style="margin-top:6px;border-top:1px solid #1C1C1C;padding-top:5px;">'
+          + '<div style="font-size:11px;color:#bbb;word-break:break-all;">' + esc(d.nome || "arquivo") + '</div>'
+          + '<div style="font-size:10px;color:#666;">enviado em ' + esc(rfFotoQuando(d.quando)) + '</div>'
+          + '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:4px;">'
+          + '<span style="font-size:10px;color:#777;">validade</span>'
+          + '<input type="date" value="' + esc(d.validade || "") + '" onchange="cmDocValidade(\'' + f.id + '\',\'' + def.k + '\',' + i + ',this.value)" style="font-size:11px;background:#111;color:#ddd;border:1px solid #333;border-radius:4px;padding:2px 4px;">'
+          + '<button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfDocsVer(\'' + esc(d.path) + '\')">ver</button>'
+          + '<button class="btn-outline" style="font-size:10px;padding:2px 6px;" onclick="rfBaixarArquivo(\'' + esc(d.path) + '\',\'' + esc(d.nome || "documento") + '\')">⬇</button>'
+          + '<button class="btn-del" style="font-size:10px;padding:2px 6px;" onclick="cmDocExcluir(\'' + f.id + '\',\'' + def.k + '\',' + i + ')">✕</button>'
+          + '</div></div>';
+      });
+    }
+    h += '<label class="btn-outline" style="display:inline-block;margin-top:7px;font-size:11px;cursor:pointer;">'
+      + (lista.length ? "\u21ba Enviar versão nova" : "\ud83d\udcce Anexar")
+      + '<input type="file" accept="image/*,application/pdf,.pdf" style="display:none;" onchange="cmDocUpload(this,\'' + f.id + '\',\'' + def.k + '\')"></label>'
+      + '</div>';
+  });
+  return h + '</div>';
+}
+
 /* ------------------------------- a tela --------------------------------- */
 function cmCampoHTML(id, secao, obj, def) {
   var val = (obj || {})[def[0]];
@@ -2850,6 +3053,7 @@ function cmBlocoHTML() {
   fichas.forEach(function (f) {
     var m = f.mot || {}, aberta = state._cmAberta === f.id;
     var falta = cmFaltando(f);
+    var pendDocs = cmDocsPendencias(f);
     var dias = cmDiasCnh(f);
     var corCnh = dias === null ? "#777" : (dias < 0 ? "#C0392B" : dias <= 30 ? "#E67E22" : "#2E7D32");
     h += '<div style="margin-top:10px;border:1px solid #222;border-radius:8px;background:#0E0E0E;">'
@@ -2867,12 +3071,16 @@ function cmBlocoHTML() {
       + (falta.length
         ? ' · <span style="color:#E67E22;">falta preencher: ' + esc(falta.slice(0, 6).join(", ")) + (falta.length > 6 ? " e mais " + (falta.length - 6) : "") + '</span>'
         : ' · <span style="color:#2E7D32;">ficha completa</span>')
+      + (pendDocs.length
+        ? '<div style="margin-top:3px;font-size:11px;color:#C0392B;">\ud83d\udcce ' + esc(pendDocs.join(" · ")) + '</div>'
+        : '<div style="margin-top:3px;font-size:11px;color:#2E7D32;">\ud83d\udcce CNH, endereço, nada consta e toxicológico anexados e válidos</div>')
       + '</div></div>';
     if (aberta) {
       h += '<div style="padding:0 12px 14px;">'
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
         + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportar(\'' + f.id + '\')">\u2b07 Exportar ficha (xlsx)</button>'
         + '<button class="btn-outline" style="font-size:11px;" onclick="cmImprimir(\'' + f.id + '\')">\ud83d\udda8\ufe0f Imprimir / salvar PDF</button>'
+        + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportarPacote(\'' + f.id + '\')">\ud83d\udce6 Exportar pacote (ficha + documentos)</button>'
         + '<button class="btn-del" style="font-size:11px;margin-left:auto;" onclick="cmExcluir(\'' + f.id + '\')">\u2715 Excluir ficha</button>'
         + '</div>'
         + cmSecaoTitulo("PROPRIETÁRIO")
@@ -2919,6 +3127,7 @@ function cmBlocoHTML() {
             + '</div>';
         });
       h += '</div>'
+        + cmDocsHTML(f)
         + '<div style="margin-top:10px;display:flex;flex-direction:column;gap:2px;">'
         + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">Observações</label>'
         + '<textarea onchange="cmSet(\'' + f.id + '\',\'raiz\',\'obs\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:6px;font-size:12px;min-height:50px;">' + esc(f.obs || "") + '</textarea>'
@@ -20316,7 +20525,9 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `Os campos, a ordem e até as posições das células na exportação são os da ficha original, porque mudar o formato significa devolver a ficha para aprovação de novo. `
       + `O bloco do PROPRIETÁRIO fica guardado uma vez em config.fichaProprietario e vem preenchido em toda ficha nova. Os DADOS DO VEÍCULO podem ser puxados da Frota (renavam, chassi, ano, marca/modelo e UF já vieram do CRLV lido pelo pdf.js na v193). `
       + `A ficha exporta em xlsx na mesma grade da original e também imprime em PDF com as bordas e as tarjas das seções. `
-      + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.`;
+      + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.\n`
+      + `ANEXOS (v398): cada ficha guarda quatro documentos — CNH, comprovante de endereço, nada consta (antecedentes) e exame toxicológico —, presos à PESSOA e não à placa. Cada anexo tem data de validade; ao anexar, o app já sugere 90 dias para o nada consta e 2 anos e meio para o toxicológico (prazo da CLT), ambos editáveis, e avisa quando faltam 30 dias ou menos. Anexar a CNH ou o comprovante de endereço marca sozinha a cópia obrigatória correspondente. `
+      + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
     if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
     const linhas = fichas.map((f) => {
       const m = f.mot || {}, v = f.veic || {};
@@ -20325,7 +20536,8 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       return `- ${m.nome || "(sem nome)"}${m.cpf ? " · CPF " + m.cpf : ""}${m.catCnh ? " · CNH categoria " + m.catCnh : ""}${v.placa ? " · veículo " + v.placa : ""}: `
         + (dias === null ? "vencimento da CNH não preenchido" : (dias < 0 ? `CNH VENCIDA há ${-dias} dia(s)` : `CNH válida, ${dias} dia(s)`))
         + ` · ${(f.refs || []).filter((r) => r && r.nome).length} referência(s)`
-        + (falta.length ? ` · FALTA PREENCHER: ${falta.join(", ")}` : ` · ficha completa`);
+        + (falta.length ? ` · FALTA PREENCHER: ${falta.join(", ")}` : ` · ficha completa`)
+        + (cmDocsPendencias(f).length ? ` · ANEXOS: ${cmDocsPendencias(f).join("; ")}` : ` · os 4 anexos estão em dia`);
     }).join("\n");
     return `${cab}\nFICHAS CADASTRADAS (${fichas.length}):\n${linhas}`;
   })();
