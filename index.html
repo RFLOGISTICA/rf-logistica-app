@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v409)</title>
+<title>RF Logística — Painel da Frota (v410)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3722,38 +3722,56 @@ function trFaixa(rbt12) {
   for (var i = 0; i < TR_ANEXO3.length; i++) if (rbt12 <= TR_ANEXO3[i].ate) return { faixa: i + 1, def: TR_ANEXO3[i] };
   return { faixa: 0, def: null };
 }
-function trSimular() {
-  var b = trBase(), cfg = trCfg();
-  var rec = b.receita;
-  var out = { base: b, cenarios: [] };
+/* v410: a conta foi separada da base pra poder rodar em QUALQUER faturamento,
+   não só no dos últimos 12 meses. É o que permite responder "a partir de
+   quanto o Lucro Presumido passa a compensar" — a pergunta que importa numa
+   empresa que está crescendo. Insumos e folha crescem junto com a receita, na
+   mesma proporção de hoje: é a premissa da projeção, e ela está escrita na
+   tela porque muda o resultado. */
+function trCenarios(rec, insumos, folha) {
+  var cfg = trCfg();
+  var out = { cenarios: [], receita: rec, insumos: insumos, folha: folha };
   if (rec <= 0) return out;
 
+  /* v410: acima do teto os dois cenários de Simples simplesmente não existem —
+     mas Lucro Presumido e regime geral continuam valendo, e é justamente aí
+     que a comparação interessa. Antes a função devolvia a lista vazia. */
   var f = trFaixa(rec);
-  if (!f.def) {
-    out.acima = true;
-    return out;
-  }
-  var efetiva = (rec * f.def.aliq - f.def.deduz) / rec;   /* alíquota efetiva do Simples */
-  var das = rec * efetiva;
+  out.acima = !f.def;
+  var efetiva = f.def ? (rec * f.def.aliq - f.def.deduz) / rec : 0;
+  var das = f.def ? rec * efetiva : 0;
   out.faixa = f.faixa; out.efetiva = efetiva;
 
-  /* 1. Simples como está */
+  /* 1. Simples como está.
+     SUBLIMITE: passando de R$ 3,6 milhões em 12 meses, o ICMS SAI do DAS e
+     passa a ser recolhido no regime normal do estado, mesmo continuando no
+     Simples para os tributos federais. Numa transportadora isso pesa, porque
+     o ICMS é a maior parcela — quem cresce sente esse degrau antes do teto. */
+  if (f.def) {
+  var passouSublimite = rec > 3600000;
+  var dasSub = passouSublimite ? das * (1 - TR_REPARTICAO3.iss_icms) : das;
+  var icmsForaDoDas = passouSublimite
+    ? rec * ((Number(cfg.aliqIcms) || 0) / 100) * (1 - (Number(cfg.credOutorgado) || 0) / 100)
+    : 0;
+  out.sublimite = passouSublimite;
   out.cenarios.push({
     nome: "Simples Nacional (hoje)",
-    imposto: das,
-    linhas: [
-      ["DAS (Anexo III, faixa " + f.faixa + ")", das],
-      ["Crédito aproveitado sobre insumos", 0]
-    ],
+    imposto: dasSub + icmsForaDoDas,
+    linhas: passouSublimite
+      ? [["DAS sem a parcela de ICMS (faixa " + f.faixa + ")", dasSub],
+         ["ICMS por fora — passou do sublimite de R$ 3,6 mi", icmsForaDoDas]]
+      : [["DAS (Anexo III, faixa " + f.faixa + ")", das],
+         ["Crédito aproveitado sobre insumos", 0]],
     obs: "Alíquota efetiva de " + (efetiva * 100).toFixed(2).replace(".", ",") + "% sobre a receita. "
       + "Tudo num guia só, incluindo a contribuição previdenciária patronal. Não gera crédito para o cliente nem aproveita crédito das compras."
+      + (passouSublimite ? " ATENÇÃO: acima de R$ 3,6 milhões em 12 meses o ICMS sai do DAS e é recolhido pelo regime normal do estado, mesmo permanecendo no Simples." : "")
   });
 
   /* 2. Simples Híbrido: sai do DAS a parcela de PIS/COFINS e ISS/ICMS */
   var pctFora = TR_REPARTICAO3.pis + TR_REPARTICAO3.cofins + TR_REPARTICAO3.iss_icms;
   var dasHib = das * (1 - pctFora);
   var aliq = (Number(cfg.aliqIbsCbs) || 0) / 100;
-  var credito = b.insumos * ((Number(cfg.pctCredito) || 0) / 100) * aliq;
+  var credito = insumos * ((Number(cfg.pctCredito) || 0) / 100) * aliq;
   var ibsCbs = rec * aliq - credito;
   out.cenarios.push({
     nome: "Simples Híbrido (IBS/CBS por fora)",
@@ -3768,6 +3786,7 @@ function trSimular() {
       + "com 100% da receita B2B, esse é o ponto a favor. ATENÇÃO: para a PRÓPRIA empresa o híbrido quase sempre sai MAIS CARO — o ganho é comercial, não tributário. "
       + "Vale quando o cliente exige o crédito ou repassa parte dele no frete. A alíquota de IBS/CBS ainda não está definida em lei: o valor da tela é estimativa."
   });
+  }
 
   /* 3. Lucro Presumido — hoje (regras atuais, sem reforma) */
   var irpjBase = rec * ((Number(cfg.presIrpj) || 0) / 100);
@@ -3777,7 +3796,7 @@ function trSimular() {
   var pisCofins = rec * 0.0365;
   var icmsCheio = rec * ((Number(cfg.aliqIcms) || 0) / 100);
   var icms = icmsCheio * (1 - (Number(cfg.credOutorgado) || 0) / 100);
-  var patronal = b.folha * ((Number(cfg.aliqPatronal) || 0) / 100);
+  var patronal = folha * ((Number(cfg.aliqPatronal) || 0) / 100);
   out.cenarios.push({
     nome: "Lucro Presumido (regras de hoje)",
     imposto: irpj + adicional + csll + pisCofins + icms + patronal,
@@ -3800,8 +3819,8 @@ function trSimular() {
   var aCbs = (Number(cfg.aliqCbs) || 0) / 100 * ft.cbs;
   var aIbs = (Number(cfg.aliqIbs) || 0) / 100 * ft.ibs;
   var pctCred = (Number(cfg.pctCredito) || 0) / 100;
-  var cbsDev = rec * aCbs, cbsCred = b.insumos * pctCred * aCbs;
-  var ibsDev = rec * aIbs, ibsCred = b.insumos * pctCred * aIbs;
+  var cbsDev = rec * aCbs, cbsCred = insumos * pctCred * aCbs;
+  var ibsDev = rec * aIbs, ibsCred = insumos * pctCred * aIbs;
   var icmsResid = icms * ft.antigo;
   var pisCofResid = pisCofins * ft.pisCofins;
   out.cenarios.push({
@@ -3827,6 +3846,35 @@ function trSimular() {
   var melhor = out.cenarios.slice().sort(function (a, b2) { return a.imposto - b2.imposto; })[0];
   out.melhor = melhor ? melhor.nome : "";
   return out;
+}
+
+function trSimular() {
+  var b = trBase();
+  var out = trCenarios(b.receita, b.insumos, b.folha);
+  out.base = b;
+  return out;
+}
+
+/* Projeção de crescimento: roda os mesmos cenários em vários patamares de
+   faturamento, mantendo a proporção atual de insumos e folha. Marca os dois
+   degraus que existem no caminho: o sublimite do ICMS (R$ 3,6 mi) e o teto do
+   Simples (R$ 4,8 mi). */
+function trProjecao(patamares) {
+  var b = trBase();
+  if (!b.receita) return [];
+  var pInsumo = b.insumos / b.receita, pFolha = b.folha / b.receita;
+  return (patamares || []).map(function (rec) {
+    var teto = rec > 4800000;
+    var r = trCenarios(rec, rec * pInsumo, rec * pFolha);
+    return {
+      receita: rec, mes: rec / 12, teto: teto, sublimite: rec > 3600000,
+      cenarios: teto ? r.cenarios.filter(function (c) { return c.nome.indexOf("Simples") < 0; }) : r.cenarios,
+      melhor: teto
+        ? (r.cenarios.filter(function (c) { return c.nome.indexOf("Simples") < 0; })
+            .sort(function (a, c2) { return a.imposto - c2.imposto; })[0] || {}).nome
+        : r.melhor
+    };
+  });
 }
 
 function trLinha(nome, v, forte) {
@@ -3894,6 +3942,49 @@ function trBlocoHTML() {
     + '<div style="margin-top:5px;color:#999;">Os dois pontos que mais mexem nesse número: quanto dos insumos realmente gera crédito e a alíquota final de IBS/CBS. Mexa nos parâmetros abaixo para ver o efeito.</div>'
     + '<div style="margin-top:6px;color:#E67E22;">A pergunta certa sobre o híbrido não é "pago menos imposto?" — quase sempre a resposta é não. É "o cliente paga mais pelo frete, ou passa a exigir o crédito para continuar comprando de mim?". Essa parte é negociação, não conta.</div>'
     + '</div>';
+
+  /* v410: projeção de crescimento — a pergunta real de quem está crescendo não
+     é "qual regime é melhor hoje", é "a partir de quanto muda". */
+  var recAtual = b.receita;
+  var patamares = [recAtual, recAtual * 1.5, recAtual * 2, 3600000, 4800000, 6000000, 9000000];
+  patamares = patamares.filter(function (v, i, a) { return v > 0 && a.indexOf(v) === i; })
+    .sort(function (a2, c2) { return a2 - c2; });
+  var proj = trProjecao(patamares);
+  h += '<div style="margin-top:14px;padding:11px;background:#0E0E0E;border:1px solid #222;border-radius:8px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">SE A RF CRESCER — A PARTIR DE QUANTO MUDA</div>'
+    + '<div style="font-size:11px;color:#888;margin-bottom:7px;">Mesmos cenários em vários patamares de faturamento, mantendo a proporção de hoje '
+    + '(insumos ' + (recAtual ? (b.insumos / recAtual * 100).toFixed(0) : 0) + '% e folha ' + (recAtual ? (b.folha / recAtual * 100).toFixed(0) : 0) + '% da receita). '
+    + 'Se a estrutura mudar — mais caminhão terceirizado, menos CLT — a conta muda junto.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;font-size:11.5px;color:#ccc;border-collapse:collapse;">'
+    + '<thead><tr style="color:#888;text-align:left;">'
+    + '<th style="padding:4px 6px;">Faturamento/ano</th><th style="padding:4px 6px;">Por mês</th>'
+    + '<th style="padding:4px 6px;text-align:right;">Simples</th><th style="padding:4px 6px;text-align:right;">Híbrido</th>'
+    + '<th style="padding:4px 6px;text-align:right;">L. Presumido</th><th style="padding:4px 6px;text-align:right;">Reforma ' + cfg.ano + '</th>'
+    + '<th style="padding:4px 6px;">Menor</th></tr></thead><tbody>';
+  proj.forEach(function (p) {
+    var pega = function (parte) {
+      var c = p.cenarios.find(function (x) { return x.nome.indexOf(parte) === 0; });
+      return c ? (c.pct * 100).toFixed(1).replace(".", ",") + "%" : "—";
+    };
+    var atual = Math.abs(p.receita - recAtual) < 1;
+    h += '<tr style="border-top:1px solid #222;' + (atual ? "background:#141109;" : "") + '">'
+      + '<td style="padding:4px 6px;' + (atual ? "color:" + GOLD + ";font-weight:700;" : "") + '">' + fmtR(p.receita)
+      + (atual ? ' <span style="font-size:10px;">(hoje)</span>' : "") + '</td>'
+      + '<td style="padding:4px 6px;color:#999;">' + fmtR(p.mes) + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + pega("Simples Nacional") + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + pega("Simples Híbrido") + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + pega("Lucro Presumido") + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + pega("Regime geral") + '</td>'
+      + '<td style="padding:4px 6px;font-size:10.5px;color:#2E7D32;">' + esc(String(p.melhor || "").replace(" (regras de hoje)", "").replace(" (hoje)", "")) + '</td>'
+      + '</tr>';
+    if (p.sublimite && p.receita <= 4800000) {
+      h += '<tr><td colspan="7" style="padding:2px 6px;font-size:10.5px;color:#E67E22;">↑ acima de R$ 3,6 mi o ICMS sai do DAS e é recolhido pelo regime normal do estado, mesmo continuando no Simples</td></tr>';
+    }
+    if (p.teto) {
+      h += '<tr><td colspan="7" style="padding:2px 6px;font-size:10.5px;color:#C0392B;">↑ acima de R$ 4,8 mi não existe mais Simples — a saída deixa de ser escolha</td></tr>';
+    }
+  });
+  h += '</tbody></table></div></div>';
 
   h += '<div style="margin-top:12px;padding:11px;background:#0E0E0E;border:1px solid #222;border-radius:8px;">'
     + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">PARÂMETROS DA SIMULAÇÃO</div>'
