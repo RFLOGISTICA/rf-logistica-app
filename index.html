@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v406)</title>
+<title>RF Logística — Painel da Frota (v407)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -25000,10 +25000,38 @@ revalidarSessaoAoAbrir();
       }
     });
     if (registros.length === 0) { status("\u2601 sincronizado", "#2E7D32"); return; }
-    sb.from("painel_dados").upsert(registros).then(function (res) {
-      if (res.error) status("\u26A0 falha ao salvar na nuvem", "#C0392B");
-      else status("\u2601 sincronizado", "#2E7D32");
-    });
+
+    /* v407 — POR QUE ESTA ETAPA EXISTE: a subida é última-escrita-vence. Cada
+       aparelho manda a SUA lista inteira e substitui a da nuvem. Pra quase tudo
+       isso funciona, porque quem edita viagem ou veículo já baixou a caixa toda
+       antes. Mas a ficha de motorista é preenchida em MÁQUINAS DIFERENTES ao
+       mesmo tempo (a recepção cadastra num PC, o Renato importa outra no
+       tablet), e aí o último que salva apaga da nuvem as fichas do outro — foi
+       o que aconteceu com as fichas que a Sandra cadastrou.
+       A união no download não resolve sozinha: o aparelho que já enviou não
+       reenvia (o ultimoEnviado impede), então o que ele tinha nunca volta.
+       Aqui a lista de fichas é unida com a que está na nuvem ANTES de subir. */
+    var enviar = function () {
+      sb.from("painel_dados").upsert(registros).then(function (res) {
+        if (res.error) status("\u26A0 falha ao salvar na nuvem", "#C0392B");
+        else status("\u2601 sincronizado", "#2E7D32");
+      });
+    };
+    var iFichas = -1;
+    registros.forEach(function (r, i) { if (r.chave === "motoristasCad") iFichas = i; });
+    if (iFichas < 0) { enviar(); return; }
+    sb.from("painel_dados").select("valor").eq("chave", "motoristasCad").maybeSingle()
+      .then(function (res) {
+        if (!res.error && res.data && Array.isArray(res.data.valor)) {
+          var unido = unirFichas(state.motoristasCad, res.data.valor);
+          state.motoristasCad = unido;
+          registros[iFichas].valor = unido;
+          ultimoEnviado.motoristasCad = JSON.stringify(unido);
+          try { localStorage.setItem(MAPA_LS.motoristasCad, ultimoEnviado.motoristasCad); } catch (e) {}
+        }
+        enviar();
+      })
+      .catch(function () { enviar(); });
   }
 
   function assinarTempoReal() {
