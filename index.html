@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v400)</title>
+<title>RF Logística — Painel da Frota (v401)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2494,19 +2494,49 @@ function linhaMt(nome, v) {
 /* Bloco do proprietario: e sempre o mesmo, entao fica guardado uma vez so em
    config e vem preenchido em toda ficha nova. Os valores iniciais sao os da
    ficha aprovada que Renato mandou. */
-function cmProprietario() {
+/* v401: o proprietario transportador e a EMPRESA, nao a pessoa fisica.
+   A ficha modelo que serviu de base foi preenchida quando a RF ainda era
+   firma individual em nome do Renato -- por isso o padrao saia "Renato da
+   Cruz Couto" com CPF, mas com o RNTRC da empresa do lado. Ficha misturada
+   assim e ficha que o cliente devolve. PJ nao tem CNH, entao esses quatro
+   campos ficam vazios e valem as copias da coluna PESSOA JURIDICA. */
+var CM_PROP_PADRAO = {
+  nome: "RF LOGÍSTICA TRANSPORTES & DISTRIBUIÇÃO LTDA",
+  cpf: "24.916.554/0001-00",
+  ie: "240941190",
+  email: "comercial@rflogistica.com.br",
+  endereco: "Av Getulio Vargas- Sala 807 EMP. Icone Tower", numero: "792",
+  cep: "44.001-496", uf: "BA", cidade: "Feira de Santana", bairro: "CENTRO",
+  pis: "", telCom: "(75) 99971-7578", contatoCom: "Renato Couto",
+  rntrc: "58983277", validRntrc: "",
+  telRes: "", contatoRes: "(75) 99971-7578",
+  cnh: "", prontuario: "", vencCnh: "", catCnh: ""
+};
+/* Nome do padrao ANTIGO. Serve so pra saber o que pode ser trocado sozinho:
+   ficha que alguem editou a mao nao e tocada. */
+var CM_PROP_ANTIGO = "Renato da Cruz Couto";
+
+function cmMigrarProprietario() {
+  var mudou = 0;
   if (!state.config) state.config = {};
-  if (!state.config.fichaProprietario) {
-    state.config.fichaProprietario = {
-      nome: "Renato da Cruz Couto", cpf: "", ie: "",
-      email: "comercial@rflogistica.com.br",
-      endereco: "Av Getulio Vargas - Sala 807 EMP. Icone Tower", numero: "792",
-      cep: "44.001-496", uf: "BA", cidade: "Feira de Santana", bairro: "CENTRO",
-      pis: "", telCom: "", contatoCom: "", rntrc: "58983277", validRntrc: "",
-      telRes: "", contatoRes: "(75) 99971-7578",
-      cnh: "", prontuario: "", vencCnh: "", catCnh: ""
-    };
+  var p = state.config.fichaProprietario;
+  if (!p || String(p.nome || "").trim() === CM_PROP_ANTIGO) {
+    state.config.fichaProprietario = JSON.parse(JSON.stringify(CM_PROP_PADRAO));
+    mudou++;
   }
+  (state.motoristasCad || []).forEach(function (f) {
+    if (f && f.prop && String(f.prop.nome || "").trim() === CM_PROP_ANTIGO) {
+      f.prop = JSON.parse(JSON.stringify(CM_PROP_PADRAO));
+      f.atualizadoEm = Date.now();
+      mudou++;
+    }
+  });
+  if (mudou) salvar();
+  return mudou;
+}
+
+function cmProprietario() {
+  cmMigrarProprietario();
   return state.config.fichaProprietario;
 }
 function cmSetProp(campo, valor) {
@@ -3201,6 +3231,7 @@ function cmSecaoTitulo(t) {
     + 'font-size:11.5px;font-weight:800;color:' + GOLD + ';letter-spacing:.6px;">' + t + '</div>';
 }
 function cmBlocoHTML() {
+  cmMigrarProprietario();
   var fichas = cmFichas().slice().sort(function (a, b) { return (b.atualizadoEm || 0) - (a.atualizadoEm || 0); });
   var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
     + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\udeaa Cadastro de Motorista</div>'
@@ -20695,6 +20726,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
     const fichas = (state.motoristasCad || []);
     const cab = `CADASTRO DE MOTORISTA (aba "Cadastro de Motorista", v397): ficha no modelo FO_YL_026 da Yamaha Motor Logística — o mesmo formato que já foi aprovado pelos clientes, com as seções PROPRIETÁRIO, MOTORISTA, REFERÊNCIAS PESSOAIS/COMERCIAIS (5 linhas), DADOS DO VEÍCULO e CÓPIAS OBRIGATÓRIAS. `
       + `Os campos, a ordem e até as posições das células na exportação são os da ficha original, porque mudar o formato significa devolver a ficha para aprovação de novo. `
+      + `O PROPRIETÁRIO transportador é a EMPRESA (RF Logística Transportes & Distribuição Ltda, CNPJ 24.916.554/0001-00, IE 240941190, RNTRC 58983277) — não a pessoa física. Até a v400 o padrão vinha com nome e CPF do Renato, herdado da ficha modelo da época em que a RF era firma individual; a v401 trocou e migra sozinha as fichas que ainda estavam com o padrão antigo, sem tocar em ficha editada à mão. Sendo PJ, os campos de CNH do proprietário ficam vazios e valem as cópias da coluna PESSOA JURÍDICA. `
       + `O bloco do PROPRIETÁRIO fica guardado uma vez em config.fichaProprietario e vem preenchido em toda ficha nova. Os DADOS DO VEÍCULO podem ser puxados da Frota (renavam, chassi, ano, marca/modelo e UF já vieram do CRLV lido pelo pdf.js na v193). `
       + `A ficha exporta em xlsx na mesma grade da original e também imprime em PDF com as bordas e as tarjas das seções. `
       + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.\n`
