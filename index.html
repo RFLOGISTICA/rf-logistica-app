@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v405)</title>
+<title>RF Logística — Painel da Frota (v406)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3093,10 +3093,11 @@ function cmImportar(input) {
   if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
   state._cmImportMsg = "lendo " + files.length + " ficha(s)...";
   render();
-  var lidas = 0, erros = [];
+  var lidas = 0, erros = [], modelos = [];
   var proxima = function (i) {
     if (i >= files.length) {
-      state._cmImportMsg = "✓ " + lidas + " ficha(s) importada(s)."
+      state._cmImportMsg = "✓ " + lidas + " ficha(s) importada(s)"
+        + (modelos.length ? " (" + modelos.join(", ") + ")" : "") + "."
         + (erros.length ? " Não consegui ler: " + erros.join("; ") : "");
       salvar(); render();
       return;
@@ -3108,13 +3109,34 @@ function cmImportar(input) {
         var wb = XLSX.read(new Uint8Array(fr.result), { type: "array", cellDates: true });
         var ws = wb.Sheets[wb.SheetNames[0]];
         if (!ws) throw new Error("planilha vazia");
+        /* v406: a importacao lia SO o modelo Yamaha -- ficha no modelo RF
+           entrava e nao achava nada, porque as celulas sao outras. Agora o app
+           reconhece qual dos dois modelos e o arquivo antes de ler.
+           Reconhecimento pelo texto fixo do proprio formulario: o modelo RF
+           tem "FICHA DE CADASTRO - MOTORISTA" na B4 e o nome da RF na B2; o
+           Yamaha tem "FICHA DE CADASTRO" na D2. Na duvida, tenta os dois mapas
+           e fica com o que achou mais campo preenchido. */
+        var textoDe = function (ref) { return ws[ref] && ws[ref].v != null ? String(ws[ref].v).trim() : ""; };
+        var contar = function (mapa) {
+          var n = 0;
+          mapa.forEach(function (it) { if (ws[it.c] && ws[it.c].v != null && ws[it.c].v !== "") n++; });
+          return n;
+        };
+        var ehRF = /FICHA DE CADASTRO - MOTORISTA/i.test(textoDe("B4"))
+          || /RF LOG[IÍ]STICA/i.test(textoDe("B2"))
+          || String(wb.SheetNames[0]).toUpperCase() === "MOTORISTA";
+        var ehYamaha = /FICHA DE CADASTRO/i.test(textoDe("D2"));
+        var mapaUsar = ehRF && !ehYamaha ? CM_VALORES_RF
+          : (!ehRF && ehYamaha ? CM_VALORES
+            : (contar(CM_VALORES_RF) > contar(CM_VALORES) ? CM_VALORES_RF : CM_VALORES));
+        var modeloLido = mapaUsar === CM_VALORES_RF ? "RF Logística" : "Yamaha";
         var f = {
           id: uid(), criadoEm: Date.now(), atualizadoEm: Date.now(),
           prop: {}, mot: {}, refs: [{}, {}, {}, {}, {}], veic: {}, copias: {}, docs: {}, obs: "",
-          importadaDe: file.name
+          importadaDe: file.name, modeloOrigem: modeloLido
         };
         var achou = 0;
-        CM_VALORES.forEach(function (item) {
+        mapaUsar.forEach(function (item) {
           var cel = ws[item.c];
           if (!cel || cel.v == null || cel.v === "") return;
           var valor = item.d ? cmDataDeCelula(cel.v) : String(cel.w != null ? cel.w : cel.v).trim();
@@ -3122,7 +3144,9 @@ function cmImportar(input) {
           cmGravarValor(f, item, valor);
           achou++;
         });
-        if (!achou) { erros.push(file.name + " (não é uma ficha FO_YL_026)"); }
+        /* modelo RF nao traz o bloco do PROPRIETARIO: entra o padrao da empresa */
+        if (mapaUsar === CM_VALORES_RF) f.prop = JSON.parse(JSON.stringify(cmProprietario()));
+        if (!achou) { erros.push(file.name + " (não reconheci como ficha FO_YL_026 nem como ficha RF)"); }
         else {
           /* ficha ja existente do mesmo CPF vira atualizacao, nao duplicata */
           var cpf = String((f.mot || {}).cpf || "").replace(/\D/g, "");
@@ -3134,6 +3158,7 @@ function cmImportar(input) {
             cmFichas().push(f);
           }
           lidas++;
+          if (modelos.indexOf("modelo " + modeloLido) < 0) modelos.push("modelo " + modeloLido);
         }
       } catch (e) {
         erros.push(file.name + " (" + ((e && e.message) || "erro na leitura") + ")");
@@ -3461,7 +3486,7 @@ function cmBlocoHTML() {
     + '<button class="btn-outline" style="font-size:12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmNova()">\uff0b Nova ficha</button>'
     + '<label class="btn-outline" style="font-size:12px;cursor:pointer;">\ud83d\udcc2 Importar fichas já preenchidas'
     + '<input type="file" accept=".xlsx,.xls" multiple style="display:none;" onchange="cmImportar(this)"></label>'
-    + '<span style="font-size:11px;color:#777;">lê o FO_YL_026 preenchido; mesmo CPF atualiza a ficha, não duplica</span>'
+    + '<span style="font-size:11px;color:#777;">lê os dois modelos (Yamaha e RF); mesmo CPF atualiza a ficha, não duplica</span>'
     + '</div>'
     + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "")
     + '<div style="margin-top:6px;font-size:11px;color:#666;">' + cmFichas().length + ' ficha(s) no sistema. As fichas sincronizam entre os aparelhos — quem preencher numa máquina aparece nas outras depois do próximo salvamento.</div>';
@@ -20954,7 +20979,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `COMO A FICHA É GERADA (v403): o app NÃO monta a planilha do zero. Ele carrega o próprio arquivo modelo, embutido no sistema em base64 com os valores do exemplo apagados, e escreve só os valores dentro dele mexendo no XML da planilha com o JSZip. Bordas, cores, fontes, mesclagens, alturas de linha, o logo da Yamaha e o rodapé de revisão da RF continuam byte a byte como no arquivo aprovado. Antes disso (até a v402) a planilha era montada pelo SheetJS, que acerta o conteúdo mas não escreve formatação nem imagem. Se o JSZip não carregar (sem internet), cai no caminho antigo e AVISA na tela que o arquivo saiu sem formatação e sem logo. `
       + `ASSINATURA (v404): a ficha RF sai com a assinatura digitalizada do Renato já aplicada em cima da linha "Assinatura do Responsável RF Logística" — a imagem está embutida no próprio modelo, com fundo transparente. A linha do MOTORISTA continua em branco de propósito, porque ele assina na hora da conferência dos documentos. Há um botão "RF sem assinatura" para quando se quer imprimir e assinar à mão. A ficha Yamaha não tem campo de assinatura e por isso não recebe nada. `
       + `DOIS MODELOS (v402): a exportação tem dois botões — ficha YAMAHA (FO_YL_026, aba "Ficha de Cadastro", grade B2:N64, com bloco PROPRIETÁRIO, 5 referências, veículo completo e a lista longa de cópias com exames médicos) e ficha RF LOGÍSTICA (F.001 REV.:00, aba "Motorista", grade B2:M42, com cabeçalho da RF, seções DADOS PESSOAIS / DADOS DA CNH / DADOS DO VEÍCULO só com placa, modelo e tipo / 4 referências / cópias curtas / duas assinaturas / rodapé de controle de revisão, e o campo EAR que só existe nela). O mesmo cadastro alimenta os dois; campo que só existe num modelo não é escrito no outro. O pacote ZIP leva as duas fichas. `
-      + `IMPORTAÇÃO (v399): dá para importar fichas FO_YL_026 já preenchidas (xlsx); o app lê pelas mesmas células e, se o CPF já existir, atualiza a ficha em vez de duplicar. `
+      + `IMPORTAÇÃO (v399/v406): dá para importar fichas já preenchidas em xlsx nos DOIS modelos. O app reconhece qual é pelo texto fixo do formulário (o RF tem "FICHA DE CADASTRO - MOTORISTA" na B4 e a aba chamada Motorista; o Yamaha tem "FICHA DE CADASTRO" na D2) e, na dúvida, tenta os dois mapas e fica com o que achou mais campo preenchido. Ficha no modelo RF não traz o bloco do PROPRIETÁRIO, então ele entra com o padrão da empresa. Se o CPF já existir, atualiza a ficha em vez de duplicar. Até a v405 a importação só lia o modelo Yamaha e a ficha RF entrava sem nada. `
       + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
     if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
     const linhas = fichas.map((f) => {
