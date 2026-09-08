@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v401)</title>
+<title>RF Logística — Painel da Frota (v402)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2575,7 +2575,8 @@ var CM_CAMPOS_MOT = [
   ["municipioCnh", "MUNICÍPIO CNH", "text"], ["ufCnh", "UF", "text"],
   ["naturalidade", "NATURALIDADE", "text"], ["ufNat", "UF", "text"],
   ["mopp", "MOPP", "text"], ["numeroMopp", "NÚMERO MOPP", "text"],
-  ["direcaoDefensiva", "DIREÇÃO DEFENSIVA", "text"], ["renach", "RENACH", "text"]
+  ["direcaoDefensiva", "DIREÇÃO DEFENSIVA", "text"], ["renach", "RENACH", "text"],
+  ["ear", "EAR (só na ficha RF)", "text"]
 ];
 var CM_CAMPOS_VEIC = [
   ["placa", "PLACA", "text"], ["renavam", "RENAVAM", "text"], ["chassi", "CHASSI", "text"],
@@ -2861,6 +2862,124 @@ function cmExportar(id) {
   XLSX.writeFile(cmMontarWb(f), cmNomeArquivo(f) + ".xlsx");
 }
 
+/* ==========================================================================
+   v402 — DOIS MODELOS DE FICHA: YAMAHA E RF LOGÍSTICA
+   --------------------------------------------------------------------------
+   Renato (08/09): "coloca dois botoes de exportação, um exporta ficha Yamaha
+   e o outro exporta ficha RF Logistica, pois sao fichas com logo diferente".
+
+   Sao dois formularios diferentes de verdade, nao so o logo:
+     YAMAHA (FO_YL_026)  -> grade B2:N64, aba "Ficha de Cadastro", tem bloco
+                            PROPRIETARIO, 5 referencias, veiculo completo
+                            (renavam, chassi, ano, rastreador) e a lista longa
+                            de copias com os exames medicos.
+     RF (F.001 REV.:00)  -> grade B2:M42, aba "Motorista", cabecalho da RF,
+                            secoes DADOS PESSOAIS / DADOS DA CNH / DADOS DO
+                            VEICULO (so placa, modelo e tipo) / REFERENCIAS
+                            (4) / COPIAS OBRIGATORIAS curtas, mais as duas
+                            assinaturas e o rodape de controle de revisao.
+                            NAO tem bloco de proprietario e TEM o campo EAR.
+
+   Os dois saem do MESMO cadastro. O que existe so num deles simplesmente nao
+   e escrito no outro -- nada e inventado pra preencher espaco.
+   ========================================================================== */
+var CM_ROTULOS_RF = {
+  B2: "RF LOGÍSTICA TRANSPORTES & DISTRIBUIÇÃO LTDA",
+  B3: "CNPJ: 24.916.554/0001-00   |   RNTRC: 058983277   |   Feira de Santana - BA",
+  B4: "FICHA DE CADASTRO - MOTORISTA",
+  B6: "DADOS PESSOAIS",
+  B7: "NOME:", I7: "CPF:",
+  B8: "RG:", E8: "ÓRGÃO EMISSOR:", G8: "CIDADE/UF EMISSÃO:", J8: "DATA EMISSÃO:",
+  B9: "ENDEREÇO:", H9: "NÚMERO:", J9: "CEP:",
+  B10: "UF:", D10: "CIDADE:", G10: "BAIRRO:", J10: "PIS:",
+  B11: "TEL. RESIDENCIAL:", F11: "CONTATO:", J11: "TEL. CELULAR:",
+  B12: "NOME DO PAI:", G12: "NOME DA MÃE:",
+  B13: "ESTADO CIVIL:", E13: "DATA DE NASC.:", H13: "NATURALIDADE:", K13: "UF:",
+  B15: "DADOS DA CNH",
+  B16: "NÚMERO CNH:", E16: "Nº PRONTUÁRIO:", H16: "EMISSÃO CNH:", K16: "CATEGORIA:",
+  B17: "1ª HABILITAÇÃO:", E17: "VENCIMENTO:", H17: "MUNICÍPIO CNH:", K17: "UF:",
+  B18: "MOPP:", D18: "NÚMERO MOPP:", G18: "DIREÇÃO DEFENSIVA:", J18: "EAR:",
+  B20: "DADOS DO VEÍCULO",
+  B21: "PLACA:", E21: "MODELO:", I21: "TIPO (TOCO/3-4):",
+  B23: "REFERÊNCIAS PESSOAIS / COMERCIAIS",
+  B24: "NOME:", H24: "PARENTESCO:", K24: "TELEFONE:",
+  B25: "NOME:", H25: "PARENTESCO:", K25: "TELEFONE:",
+  B26: "NOME:", H26: "PARENTESCO:", K26: "TELEFONE:",
+  B27: "NOME:", H27: "PARENTESCO:", K27: "TELEFONE:",
+  B29: "CÓPIAS OBRIGATÓRIAS (ANEXAR)",
+  B30: "PESSOA JURÍDICA", E30: "PESSOA FÍSICA", H30: "MOTORISTA", K30: "VEÍCULO",
+  B31: "☐ Contrato Social", E31: "☐ RG", H31: "☐ CNH", K31: "☐ CRLV",
+  B32: "☐ Cartão CNPJ", E32: "☐ CPF", H32: "☐ Ficha de Registro", K32: "☐ Apólice Seguro",
+  B33: "☐ RNTRC", E33: "☐ Comp. Endereço", H33: "☐ Exame Toxicológico",
+  B36: "_________________________________", H36: "_________________________________",
+  B37: "Assinatura do Motorista", H37: "Assinatura do Responsável RF Logística",
+  B40: "F.001 - REV.: 00",
+  B41: "Data", D41: "Razões das Alterações", J41: "Elaborado", L41: "Aprovado",
+  B42: "14/07/2026", D42: "Elaboração Inicial", J42: "RF Logística", L42: "Renato"
+};
+var CM_VALORES_RF = [
+  { c: "C7", s: "mot", k: "nome" }, { c: "J7", s: "mot", k: "cpf" },
+  { c: "C8", s: "mot", k: "rg" }, { c: "F8", s: "mot", k: "orgao" }, { c: "H8", s: "mot", k: "cidadeEmissao" }, { c: "K8", s: "mot", k: "dataEmissao", d: 1 },
+  { c: "C9", s: "mot", k: "endereco" }, { c: "I9", s: "mot", k: "numero" }, { c: "K9", s: "mot", k: "cep" },
+  { c: "C10", s: "mot", k: "uf" }, { c: "E10", s: "mot", k: "cidade" }, { c: "H10", s: "mot", k: "bairro" }, { c: "K10", s: "mot", k: "pis" },
+  { c: "C11", s: "mot", k: "telRes" }, { c: "G11", s: "mot", k: "contato" }, { c: "K11", s: "mot", k: "celular" },
+  { c: "C12", s: "mot", k: "pai" }, { c: "H12", s: "mot", k: "mae" },
+  { c: "C13", s: "mot", k: "estadoCivil" }, { c: "F13", s: "mot", k: "nascimento", d: 1 }, { c: "I13", s: "mot", k: "naturalidade" }, { c: "L13", s: "mot", k: "ufNat" },
+  { c: "C16", s: "mot", k: "cnh" }, { c: "F16", s: "mot", k: "prontuario" }, { c: "I16", s: "mot", k: "emissaoCnh", d: 1 }, { c: "L16", s: "mot", k: "catCnh" },
+  { c: "C17", s: "mot", k: "primeiraHab", d: 1 }, { c: "F17", s: "mot", k: "vencCnh", d: 1 }, { c: "I17", s: "mot", k: "municipioCnh" }, { c: "L17", s: "mot", k: "ufCnh" },
+  { c: "C18", s: "mot", k: "mopp" }, { c: "E18", s: "mot", k: "numeroMopp" }, { c: "H18", s: "mot", k: "direcaoDefensiva" }, { c: "K18", s: "mot", k: "ear" },
+  { c: "C21", s: "veic", k: "placa" }, { c: "F21", s: "veic", k: "modelo" }, { c: "J21", s: "veic", k: "tipo" },
+  { c: "C24", r: 0, k: "nome" }, { c: "I24", r: 0, k: "parentesco" }, { c: "L24", r: 0, k: "telefone" },
+  { c: "C25", r: 1, k: "nome" }, { c: "I25", r: 1, k: "parentesco" }, { c: "L25", r: 1, k: "telefone" },
+  { c: "C26", r: 2, k: "nome" }, { c: "I26", r: 2, k: "parentesco" }, { c: "L26", r: 2, k: "telefone" },
+  { c: "C27", r: 3, k: "nome" }, { c: "I27", r: 3, k: "parentesco" }, { c: "L27", r: 3, k: "telefone" }
+];
+var CM_MERGES_RF = ["B2:L2", "B3:L3", "B4:L4", "B6:L6", "C7:H7", "J7:L7", "C8:D8", "H8:I8", "K8:L8",
+  "C9:G9", "K9:L9", "E10:F10", "H10:I10", "K10:L10", "C11:E11", "G11:I11", "K11:L11", "C12:F12",
+  "H12:L12", "C13:D13", "F13:G13", "I13:J13", "B15:L15", "C16:D16", "F16:G16", "I16:J16",
+  "C17:D17", "F17:G17", "I17:J17", "E18:F18", "H18:I18", "K18:L18", "B20:L20", "C21:D21",
+  "F21:H21", "J21:L21", "B23:L23", "C24:G24", "I24:J24", "C25:G25", "I25:J25", "C26:G26",
+  "I26:J26", "C27:G27", "I27:J27", "B29:L29", "B30:D30", "E30:G30", "H30:J30", "K30:L30",
+  "B31:D31", "E31:G31", "H31:J31", "K31:L31", "B32:D32", "E32:G32", "H32:J32", "K32:L32",
+  "B33:D33", "E33:G33", "H33:J33", "K33:L33", "B36:F36", "H36:L36", "B37:F37", "H37:L37",
+  "B40:L40", "B41:C41", "D41:I41", "J41:K41", "L41:M41", "B42:C42", "D42:I42", "J42:K42", "L42:M42"];
+
+function cmRefParaMerge(txt) {
+  var p = txt.split(":");
+  var col = function (l) { var n = 0; for (var i = 0; i < l.length; i++) n = n * 26 + (l.charCodeAt(i) - 64); return n - 1; };
+  var a = p[0].match(/([A-Z]+)(\d+)/), b = p[1].match(/([A-Z]+)(\d+)/);
+  return { s: { r: Number(a[2]) - 1, c: col(a[1]) }, e: { r: Number(b[2]) - 1, c: col(b[1]) } };
+}
+
+function cmMontarWbRF(f) {
+  var cel = {};
+  Object.keys(CM_ROTULOS_RF).forEach(function (c) { cel[c] = { t: "s", v: CM_ROTULOS_RF[c] }; });
+  CM_VALORES_RF.forEach(function (item) {
+    var v = cmValorDe(f, item);
+    if (v === undefined || v === null || String(v) === "") return;
+    if (item.d) {
+      var dt = null;
+      try { dt = new Date(String(v).slice(0, 10) + "T00:00:00"); } catch (e) { dt = null; }
+      if (dt && !isNaN(dt.getTime())) { cel[item.c] = { t: "d", v: dt, z: "dd/mm/yyyy" }; return; }
+    }
+    cel[item.c] = { t: "s", v: String(v) };
+  });
+  cel["!ref"] = "A1:M42";
+  cel["!cols"] = [{ wch: 3 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+    { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 3 }];
+  cel["!merges"] = CM_MERGES_RF.map(cmRefParaMerge);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, cel, "Motorista");
+  return wb;
+}
+function cmExportarRF(id) {
+  var f = cmFicha(id);
+  if (!f) return;
+  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+  var nome = String(((f.mot || {}).nome || "motorista")).replace(/[^A-Za-zÀ-ú0-9]+/g, "_");
+  XLSX.writeFile(cmMontarWbRF(f), "RF_Logistica_Ficha_Cadastro_" + nome + ".xlsx");
+}
+
 /* ------------------------- importacao de ficha pronta -------------------- */
 /* Le um FO_YL_026 ja preenchido pelo MESMO mapa de celulas da exportacao.
    Nao adivinha nada: celula fora do mapa e ignorada. */
@@ -3140,6 +3259,9 @@ function cmExportarPacote(id) {
       var wb = cmMontarWb(f);
       var bin = XLSX.write(wb, { type: "array", bookType: "xlsx" });
       zip.file(base + ".xlsx", bin);
+      var nomeRf = String(((f.mot || {}).nome || "motorista")).replace(/[^A-Za-zÀ-ú0-9]+/g, "_");
+      zip.file("RF_Logistica_Ficha_Cadastro_" + nomeRf + ".xlsx",
+        XLSX.write(cmMontarWbRF(f), { type: "array", bookType: "xlsx" }));
     } catch (e) { }
     var faltando = [], tarefas = [];
     CM_DOCS.forEach(function (def) {
@@ -3238,7 +3360,8 @@ function cmBlocoHTML() {
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
     + 'Ficha no modelo <b>FO_YL_026</b>, o mesmo que já foi aprovado pelos clientes — campos, ordem e posições da planilha são os da ficha original. '
     + 'Preencha uma vez aqui e exporte quantas vezes precisar: o bloco do proprietário se repete sozinho e os dados do veículo vêm da Frota. '
-    + '<b>A ficha exportada sai idêntica ao modelo</b> — marcação de cópias, anexos e observações são controle interno e não entram no arquivo.'
+    + '<b>A ficha exportada sai idêntica ao modelo</b> — marcação de cópias, anexos e observações são controle interno e não entram no arquivo. '
+    + 'São dois modelos: <b>YAMAHA</b> (FO_YL_026, com o bloco do proprietário e 5 referências) e <b>RF LOGÍSTICA</b> (F.001, com EAR, 4 referências e as assinaturas). O mesmo cadastro alimenta os dois.'
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
     + '<button class="btn-outline" style="font-size:12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmNova()">\uff0b Nova ficha</button>'
@@ -3281,7 +3404,8 @@ function cmBlocoHTML() {
     if (aberta) {
       h += '<div style="padding:0 12px 14px;">'
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
-        + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportar(\'' + f.id + '\')">\u2b07 Exportar ficha (xlsx)</button>'
+        + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportar(\'' + f.id + '\')">\u2b07 Ficha YAMAHA (xlsx)</button>'
+        + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportarRF(\'' + f.id + '\')">\u2b07 Ficha RF LOGÍSTICA (xlsx)</button>'
         + '<button class="btn-outline" style="font-size:11px;" onclick="cmImprimir(\'' + f.id + '\')">\ud83d\udda8\ufe0f Imprimir / salvar PDF</button>'
         + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportarPacote(\'' + f.id + '\')">\ud83d\udce6 Exportar pacote (ficha + documentos)</button>'
         + '<button class="btn-del" style="font-size:11px;margin-left:auto;" onclick="cmExcluir(\'' + f.id + '\')">\u2715 Excluir ficha</button>'
@@ -20732,6 +20856,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.\n`
       + `ANEXOS (v398): cada ficha guarda quatro documentos — CNH, comprovante de endereço, nada consta (antecedentes) e exame toxicológico —, presos à PESSOA e não à placa. Cada anexo tem data de validade; ao anexar, o app já sugere 90 dias para o nada consta e 2 anos e meio para o toxicológico (prazo da CLT), ambos editáveis, e avisa quando faltam 30 dias ou menos. Anexar a CNH ou o comprovante de endereço marca sozinha a cópia obrigatória correspondente. `
       + `REGRA DURA (v399): o arquivo exportado tem que ser IDÊNTICO ao modelo aprovado — cliente devolve ficha com qualquer coisa a mais. Existe um mapa único (CM_ROTULOS com o texto fixo e CM_VALORES com a célula de cada campo) que a exportação escreve e a importação lê, então as duas não podem divergir. Marcação de cópias, anexos e observações são controle interno do app e NÃO vão para o arquivo. `
+      + `DOIS MODELOS (v402): a exportação tem dois botões — ficha YAMAHA (FO_YL_026, aba "Ficha de Cadastro", grade B2:N64, com bloco PROPRIETÁRIO, 5 referências, veículo completo e a lista longa de cópias com exames médicos) e ficha RF LOGÍSTICA (F.001 REV.:00, aba "Motorista", grade B2:M42, com cabeçalho da RF, seções DADOS PESSOAIS / DADOS DA CNH / DADOS DO VEÍCULO só com placa, modelo e tipo / 4 referências / cópias curtas / duas assinaturas / rodapé de controle de revisão, e o campo EAR que só existe nela). O mesmo cadastro alimenta os dois; campo que só existe num modelo não é escrito no outro. O pacote ZIP leva as duas fichas. `
       + `IMPORTAÇÃO (v399): dá para importar fichas FO_YL_026 já preenchidas (xlsx); o app lê pelas mesmas células e, se o CPF já existir, atualiza a ficha em vez de duplicar. `
       + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
     if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
