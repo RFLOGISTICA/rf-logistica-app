@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v408)</title>
+<title>RF Logística — Painel da Frota (v409)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3640,6 +3640,12 @@ function trCfg() {
   var c = state.config.tributario;
   var p = function (k, v) { if (c[k] === undefined || c[k] === null || c[k] === "") c[k] = v; };
   p("aliqIbsCbs", 26.5);        /* estimativa de IBS+CBS no regime geral (%) */
+  /* v409: a reforma nao entra de uma vez. Separar CBS de IBS e preciso porque
+     elas entram em anos diferentes: a CBS substitui PIS/COFINS ja em 2027, e o
+     IBS so substitui ICMS/ISS gradualmente entre 2029 e 2032. */
+  p("aliqCbs", 8.8);            /* CBS estimada (%) — projecao do governo */
+  p("aliqIbs", 17.7);           /* IBS estimado (%) — completa os ~26,5% */
+  p("ano", 2027);               /* ano simulado da transicao */
   p("pctCredito", 100);         /* quanto dos insumos gera crédito de fato (%) */
   p("presIrpj", 8);             /* presunção IRPJ transporte de carga (%) */
   p("presCsll", 12);            /* presunção CSLL transporte de carga (%) */
@@ -3690,6 +3696,28 @@ function trBase() {
   b.nMeses = Object.keys(b.meses).length;
   return b;
 }
+/* CALENDÁRIO DA REFORMA (LC 214/2025), que é o que faz a conta mudar de ano
+   para ano — não adianta simular "a reforma" sem dizer QUANDO:
+     2026        ano-teste: CBS 0,9% e IBS 0,1% destacados no documento, mas
+                 compensados com PIS/COFINS — carga NÃO muda.
+     2027-2028   CBS entra CHEIA e PIS/COFINS são extintos; IBS segue só no
+                 percentual de teste e ICMS/ISS continuam inteiros.
+     2029-2032   ICMS/ISS caem 10% ao ano (90%, 80%, 70%, 60%) e o IBS sobe na
+                 mesma proporção.
+     2033        ICMS e ISS extintos; sobra o IVA dual (CBS + IBS) cheio.
+   A alíquota de referência da CBS para 2027 só será definida no fim de 2026 —
+   por isso tudo aqui é estimativa editável. */
+function trFatores(ano) {
+  var a = Number(ano) || 2027;
+  if (a <= 2026) return { cbs: 0, ibs: 0, antigo: 1, pisCofins: 1, nota: "ano-teste: CBS 0,9% e IBS 0,1% são destacados mas compensados — a carga não muda" };
+  if (a <= 2028) return { cbs: 1, ibs: 0, antigo: 1, pisCofins: 0, nota: "CBS cheia no lugar de PIS/COFINS; ICMS/ISS ainda inteiros e IBS só no percentual de teste" };
+  if (a >= 2033) return { cbs: 1, ibs: 1, antigo: 0, pisCofins: 0, nota: "modelo definitivo: só CBS + IBS, sem ICMS e sem ISS" };
+  var passo = (a - 2028) / 5;        /* 2029→20%… 2032→80% do IBS */
+  var reduz = (a - 2028) * 0.1;      /* 2029→90% do ICMS… 2032→60% */
+  return { cbs: 1, ibs: passo, antigo: 1 - reduz, pisCofins: 0,
+    nota: "transição: ICMS/ISS a " + Math.round((1 - reduz) * 100) + "% e IBS a " + Math.round(passo * 100) + "%" };
+}
+
 function trFaixa(rbt12) {
   for (var i = 0; i < TR_ANEXO3.length; i++) if (rbt12 <= TR_ANEXO3[i].ate) return { faixa: i + 1, def: TR_ANEXO3[i] };
   return { faixa: 0, def: null };
@@ -3741,7 +3769,7 @@ function trSimular() {
       + "Vale quando o cliente exige o crédito ou repassa parte dele no frete. A alíquota de IBS/CBS ainda não está definida em lei: o valor da tela é estimativa."
   });
 
-  /* 3. Lucro Presumido */
+  /* 3. Lucro Presumido — hoje (regras atuais, sem reforma) */
   var irpjBase = rec * ((Number(cfg.presIrpj) || 0) / 100);
   var irpj = irpjBase * 0.15;
   var adicional = Math.max(0, irpjBase - 240000) * 0.10;   /* R$20 mil/mês */
@@ -3751,7 +3779,7 @@ function trSimular() {
   var icms = icmsCheio * (1 - (Number(cfg.credOutorgado) || 0) / 100);
   var patronal = b.folha * ((Number(cfg.aliqPatronal) || 0) / 100);
   out.cenarios.push({
-    nome: "Lucro Presumido",
+    nome: "Lucro Presumido (regras de hoje)",
     imposto: irpj + adicional + csll + pisCofins + icms + patronal,
     linhas: [
       ["IRPJ 15% sobre presunção de " + cfg.presIrpj + "%", irpj],
@@ -3764,6 +3792,35 @@ function trSimular() {
     obs: "Aqui a contribuição patronal sobre a folha volta a ser paga por fora — no Simples ela está dentro do DAS. "
       + "É o item que costuma decidir a comparação em transportadora com motorista CLT. "
       + "O crédito outorgado de ICMS do transporte veda o aproveitamento de outros créditos de ICMS."
+  });
+
+  /* 4. Regime geral JÁ NA REFORMA, no ano escolhido */
+  var ft = trFatores(cfg.ano);
+  out.fatores = ft;
+  var aCbs = (Number(cfg.aliqCbs) || 0) / 100 * ft.cbs;
+  var aIbs = (Number(cfg.aliqIbs) || 0) / 100 * ft.ibs;
+  var pctCred = (Number(cfg.pctCredito) || 0) / 100;
+  var cbsDev = rec * aCbs, cbsCred = b.insumos * pctCred * aCbs;
+  var ibsDev = rec * aIbs, ibsCred = b.insumos * pctCred * aIbs;
+  var icmsResid = icms * ft.antigo;
+  var pisCofResid = pisCofins * ft.pisCofins;
+  out.cenarios.push({
+    nome: "Regime geral na reforma — " + cfg.ano,
+    imposto: irpj + adicional + csll + patronal + pisCofResid + icmsResid + (cbsDev - cbsCred) + (ibsDev - ibsCred),
+    linhas: [
+      ["IRPJ + adicional + CSLL (não mudam na reforma)", irpj + adicional + csll],
+      ["Contribuição patronal sobre a folha", patronal],
+      ["PIS/COFINS remanescente", pisCofResid],
+      ["ICMS remanescente (" + Math.round(ft.antigo * 100) + "% do atual)", icmsResid],
+      ["CBS sobre a receita", cbsDev],
+      ["(−) crédito de CBS sobre insumos", -cbsCred],
+      ["IBS sobre a receita", ibsDev],
+      ["(−) crédito de IBS sobre insumos", -ibsCred]
+    ],
+    obs: "Calendário do ano escolhido — " + ft.nota + ". "
+      + "É aqui que a reforma pode virar a favor do transporte: o crédito passa a ser AMPLO (diesel, pedágio, pneus e manutenção), "
+      + "coisa que hoje quase não gera crédito. Quanto mais insumo na receita, melhor este cenário fica. "
+      + "A alíquota de referência da CBS para 2027 só é definida no fim de 2026 — os percentuais aqui são estimativa."
   });
 
   out.cenarios.forEach(function (c) { c.pct = rec > 0 ? c.imposto / rec : 0; });
@@ -3781,7 +3838,7 @@ function trBlocoHTML() {
   var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
     + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\uddee Simulação tributária</div>'
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
-    + 'Compara <b>Simples Nacional</b>, <b>Simples Híbrido</b> (IBS/CBS por fora, LC 214/2025) e <b>Lucro Presumido</b> sobre a mesma base: '
+    + 'Compara <b>Simples Nacional</b>, <b>Simples Híbrido</b> (IBS/CBS por fora, LC 214/2025), <b>Lucro Presumido com as regras de hoje</b> e o <b>regime geral já na reforma</b>, ano a ano da transição, sobre a mesma base: '
     + 'a receita e os insumos das viagens dos últimos 12 meses lançadas no sistema. '
     + '<b style="color:#E67E22;">Isto é simulação, não é a decisão.</b> As alíquotas de IBS/CBS ainda não foram definidas em lei, e a opção pelo híbrido é '
     + 'semestral e irretratável — o número final tem que ser conferido pelo contador com 12 meses reais de venda e compra.'
@@ -3840,8 +3897,18 @@ function trBlocoHTML() {
 
   h += '<div style="margin-top:12px;padding:11px;background:#0E0E0E;border:1px solid #222;border-radius:8px;">'
     + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">PARÂMETROS DA SIMULAÇÃO</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">'
+    + '<span style="font-size:11px;color:#777;">Ano da transição simulado no cenário da reforma</span>'
+    + '<select onchange="trSetCfg(\'ano\',this.value)" style="font-size:12px;">'
+    + [2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033].map(function (a) {
+        return '<option value="' + a + '"' + (Number(cfg.ano) === a ? " selected" : "") + '>' + a + '</option>';
+      }).join("")
+    + '</select>'
+    + '<span style="font-size:11px;color:#999;">' + esc((s.fatores && s.fatores.nota) || "") + '</span>'
+    + '</div>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;">'
-    + [["aliqIbsCbs", "IBS + CBS estimado (%)"], ["pctCredito", "Insumos que geram crédito (%)"],
+    + [["aliqCbs", "CBS estimada (%)"], ["aliqIbs", "IBS estimado (%)"],
+       ["aliqIbsCbs", "IBS + CBS no híbrido (%)"], ["pctCredito", "Insumos que geram crédito (%)"],
        ["presIrpj", "Presunção IRPJ (%)"], ["presCsll", "Presunção CSLL (%)"],
        ["aliqIcms", "ICMS médio do frete (%)"], ["credOutorgado", "Crédito outorgado ICMS (%)"],
        ["aliqPatronal", "Patronal sobre folha (%)"], ["pedagioMes", "Pedágio por mês (R$)"]]
