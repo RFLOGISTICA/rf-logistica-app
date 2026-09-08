@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v407)</title>
+<title>RF Logística — Painel da Frota (v408)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3586,6 +3586,287 @@ function cmBlocoHTML() {
   return h + '</div>';
 }
 
+
+/* ==========================================================================
+   v408 — ABA TRIBUTÁRIA: SIMULAR EM QUAL REGIME A RF SE ENQUADRA
+   --------------------------------------------------------------------------
+   Pedido de Renato (08/09): "temos que ter uma aba tributaria em nosso
+   sistema, onde podemos simular em qual vamos se enquadrar".
+
+   O que ela compara, sobre a MESMA base de 12 meses tirada do sistema:
+     1. SIMPLES NACIONAL (como está hoje) — Anexo III, alíquota efetiva pela
+        RBT12 dos últimos 12 meses.
+     2. SIMPLES NACIONAL HÍBRIDO — o DAS perde as parcelas de PIS/COFINS e
+        ICMS, e IBS/CBS passam a ser apurados por fora, com CRÉDITO sobre os
+        insumos. É a opção que a Yamalog cobrou resposta.
+     3. LUCRO PRESUMIDO — IRPJ e CSLL sobre presunção, PIS/COFINS cumulativo,
+        ICMS com crédito outorgado e a contribuição patronal sobre a folha,
+        que no Simples já está dentro do DAS.
+
+   POR QUE O HÍBRIDO PODE COMPENSAR AQUI: 100% da receita da RF é B2B, e
+   cliente no regime geral aproveita o crédito de IBS/CBS que a RF destacar.
+   Além disso a operação tem muito insumo creditável (diesel, manutenção,
+   pneus, pedágio), e no Simples normal esse crédito se perde.
+
+   HONESTIDADE DA CONTA, que é o que importa aqui:
+     - as alíquotas de IBS/CBS ainda NÃO estão definidas em lei; o valor da
+       tela é ESTIMATIVA e fica editável;
+     - a repartição do Anexo III é a da LC 123 e serve pra saber que fatia sai
+       do DAS no híbrido;
+     - transporte intermunicipal/interestadual troca o ISS do Anexo III pelo
+       ICMS, o que muda a composição mas pouco o total;
+     - nada aqui substitui o contador. A tela diz isso na cara, e o número
+       final tem que ser conferido pelo [[vicente-contador]] com 12 meses de
+       venda e compra reais antes de qualquer opção — que é irretratável
+       dentro do semestre.
+   ========================================================================== */
+
+/* Anexo III da LC 123/2006 (faixas por RBT12) */
+var TR_ANEXO3 = [
+  { ate: 180000, aliq: 0.060, deduz: 0 },
+  { ate: 360000, aliq: 0.112, deduz: 9360 },
+  { ate: 720000, aliq: 0.135, deduz: 17640 },
+  { ate: 1800000, aliq: 0.160, deduz: 35640 },
+  { ate: 3600000, aliq: 0.210, deduz: 125640 },
+  { ate: 4800000, aliq: 0.330, deduz: 648000 }
+];
+/* Repartição do Anexo III (faixas 1 a 5). No híbrido saem do DAS as parcelas
+   de PIS, COFINS e a de ISS/ICMS — é isso que vira IBS/CBS por fora. */
+var TR_REPARTICAO3 = { irpj: 0.04, csll: 0.035, cofins: 0.1282, pis: 0.0278, cpp: 0.434, iss_icms: 0.335 };
+
+function trCfg() {
+  if (!state.config) state.config = {};
+  if (!state.config.tributario) state.config.tributario = {};
+  var c = state.config.tributario;
+  var p = function (k, v) { if (c[k] === undefined || c[k] === null || c[k] === "") c[k] = v; };
+  p("aliqIbsCbs", 26.5);        /* estimativa de IBS+CBS no regime geral (%) */
+  p("pctCredito", 100);         /* quanto dos insumos gera crédito de fato (%) */
+  p("presIrpj", 8);             /* presunção IRPJ transporte de carga (%) */
+  p("presCsll", 12);            /* presunção CSLL transporte de carga (%) */
+  p("aliqIcms", 12);            /* ICMS médio do frete (%) */
+  p("credOutorgado", 20);       /* crédito outorgado do ICMS transporte (%) */
+  p("aliqPatronal", 26.8);      /* CPP + RAT + terceiros sobre a folha (%) */
+  p("pedagioMes", 0);           /* pedágio mensal, se não estiver nas viagens */
+  return c;
+}
+function trSetCfg(campo, valor) {
+  var c = trCfg();
+  c[campo] = Number(String(valor).replace(",", ".")) || 0;
+  salvar(); render();
+}
+function trMesesAtras(n) {
+  var d = new Date(); d.setMonth(d.getMonth() - n);
+  return d.toISOString().slice(0, 7);
+}
+/* Base real: receita e insumos das viagens dos últimos 12 meses. */
+function trBase() {
+  var limite = trMesesAtras(12);
+  var b = {
+    receita: 0, viagens: 0, combustivel: 0, manutencao: 0, pneus: 0, outros: 0,
+    folha: 0, pagPorViagem: 0, meses: {}, porCliente: {}
+  };
+  (state.viagens || []).forEach(function (v) {
+    var mes = String(v.data || "").slice(0, 7);
+    if (!mes || mes < limite) return;
+    var c;
+    try { c = calcularViagem(v); } catch (e) { return; }
+    b.viagens++;
+    b.receita += c.valorViagem;
+    b.combustivel += c.combustivel;
+    b.manutencao += c.manutencao;
+    b.pneus += c.pneus;
+    b.outros += c.outros;
+    if (c.ehCLT) b.folha += c.pagMotorista + c.pagAjudante;
+    else b.pagPorViagem += c.pagMotorista + c.pagAjudante;
+    b.meses[mes] = (b.meses[mes] || 0) + c.valorViagem;
+    var cl = v.cliente || "(sem cliente)";
+    b.porCliente[cl] = (b.porCliente[cl] || 0) + c.valorViagem;
+  });
+  var cfg = trCfg();
+  b.pedagio = (Number(cfg.pedagioMes) || 0) * 12;
+  /* Insumo creditável: o que a empresa compra de terceiro com imposto dentro.
+     Folha NÃO gera crédito — é o ponto que mais engana nessa conta. */
+  b.insumos = b.combustivel + b.manutencao + b.pneus + b.outros + b.pedagio;
+  b.nMeses = Object.keys(b.meses).length;
+  return b;
+}
+function trFaixa(rbt12) {
+  for (var i = 0; i < TR_ANEXO3.length; i++) if (rbt12 <= TR_ANEXO3[i].ate) return { faixa: i + 1, def: TR_ANEXO3[i] };
+  return { faixa: 0, def: null };
+}
+function trSimular() {
+  var b = trBase(), cfg = trCfg();
+  var rec = b.receita;
+  var out = { base: b, cenarios: [] };
+  if (rec <= 0) return out;
+
+  var f = trFaixa(rec);
+  if (!f.def) {
+    out.acima = true;
+    return out;
+  }
+  var efetiva = (rec * f.def.aliq - f.def.deduz) / rec;   /* alíquota efetiva do Simples */
+  var das = rec * efetiva;
+  out.faixa = f.faixa; out.efetiva = efetiva;
+
+  /* 1. Simples como está */
+  out.cenarios.push({
+    nome: "Simples Nacional (hoje)",
+    imposto: das,
+    linhas: [
+      ["DAS (Anexo III, faixa " + f.faixa + ")", das],
+      ["Crédito aproveitado sobre insumos", 0]
+    ],
+    obs: "Alíquota efetiva de " + (efetiva * 100).toFixed(2).replace(".", ",") + "% sobre a receita. "
+      + "Tudo num guia só, incluindo a contribuição previdenciária patronal. Não gera crédito para o cliente nem aproveita crédito das compras."
+  });
+
+  /* 2. Simples Híbrido: sai do DAS a parcela de PIS/COFINS e ISS/ICMS */
+  var pctFora = TR_REPARTICAO3.pis + TR_REPARTICAO3.cofins + TR_REPARTICAO3.iss_icms;
+  var dasHib = das * (1 - pctFora);
+  var aliq = (Number(cfg.aliqIbsCbs) || 0) / 100;
+  var credito = b.insumos * ((Number(cfg.pctCredito) || 0) / 100) * aliq;
+  var ibsCbs = rec * aliq - credito;
+  out.cenarios.push({
+    nome: "Simples Híbrido (IBS/CBS por fora)",
+    imposto: dasHib + ibsCbs,
+    linhas: [
+      ["DAS reduzido (sai PIS, COFINS e ICMS/ISS)", dasHib],
+      ["IBS + CBS sobre a receita", rec * aliq],
+      ["(−) crédito sobre insumos", -credito]
+    ],
+    obs: "As parcelas de PIS, COFINS e ICMS/ISS (" + (pctFora * 100).toFixed(1).replace(".", ",") + "% do DAS pela repartição do Anexo III) saem da guia "
+      + "e viram IBS/CBS apurados por fora, com direito a crédito nas compras. O cliente no regime geral passa a aproveitar o crédito do que a RF destacar — "
+      + "com 100% da receita B2B, esse é o ponto a favor. ATENÇÃO: para a PRÓPRIA empresa o híbrido quase sempre sai MAIS CARO — o ganho é comercial, não tributário. "
+      + "Vale quando o cliente exige o crédito ou repassa parte dele no frete. A alíquota de IBS/CBS ainda não está definida em lei: o valor da tela é estimativa."
+  });
+
+  /* 3. Lucro Presumido */
+  var irpjBase = rec * ((Number(cfg.presIrpj) || 0) / 100);
+  var irpj = irpjBase * 0.15;
+  var adicional = Math.max(0, irpjBase - 240000) * 0.10;   /* R$20 mil/mês */
+  var csll = rec * ((Number(cfg.presCsll) || 0) / 100) * 0.09;
+  var pisCofins = rec * 0.0365;
+  var icmsCheio = rec * ((Number(cfg.aliqIcms) || 0) / 100);
+  var icms = icmsCheio * (1 - (Number(cfg.credOutorgado) || 0) / 100);
+  var patronal = b.folha * ((Number(cfg.aliqPatronal) || 0) / 100);
+  out.cenarios.push({
+    nome: "Lucro Presumido",
+    imposto: irpj + adicional + csll + pisCofins + icms + patronal,
+    linhas: [
+      ["IRPJ 15% sobre presunção de " + cfg.presIrpj + "%", irpj],
+      ["Adicional de IRPJ (10% acima de R$ 20 mil/mês de lucro presumido)", adicional],
+      ["CSLL 9% sobre presunção de " + cfg.presCsll + "%", csll],
+      ["PIS/COFINS cumulativo (3,65%)", pisCofins],
+      ["ICMS " + cfg.aliqIcms + "% com crédito outorgado de " + cfg.credOutorgado + "%", icms],
+      ["Contribuição patronal sobre a folha (" + cfg.aliqPatronal + "%)", patronal]
+    ],
+    obs: "Aqui a contribuição patronal sobre a folha volta a ser paga por fora — no Simples ela está dentro do DAS. "
+      + "É o item que costuma decidir a comparação em transportadora com motorista CLT. "
+      + "O crédito outorgado de ICMS do transporte veda o aproveitamento de outros créditos de ICMS."
+  });
+
+  out.cenarios.forEach(function (c) { c.pct = rec > 0 ? c.imposto / rec : 0; });
+  var melhor = out.cenarios.slice().sort(function (a, b2) { return a.imposto - b2.imposto; })[0];
+  out.melhor = melhor ? melhor.nome : "";
+  return out;
+}
+
+function trLinha(nome, v, forte) {
+  return '<tr><td style="padding:3px 0;' + (forte ? "font-weight:700;" : "") + '">' + esc(nome) + '</td>'
+    + '<td style="text-align:right;' + (forte ? "font-weight:700;" : "") + (v < 0 ? "color:#2E7D32;" : "") + '">' + fmtR(v) + '</td></tr>';
+}
+function trBlocoHTML() {
+  var s = trSimular(), b = s.base, cfg = trCfg();
+  var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
+    + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\uddee Simulação tributária</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
+    + 'Compara <b>Simples Nacional</b>, <b>Simples Híbrido</b> (IBS/CBS por fora, LC 214/2025) e <b>Lucro Presumido</b> sobre a mesma base: '
+    + 'a receita e os insumos das viagens dos últimos 12 meses lançadas no sistema. '
+    + '<b style="color:#E67E22;">Isto é simulação, não é a decisão.</b> As alíquotas de IBS/CBS ainda não foram definidas em lei, e a opção pelo híbrido é '
+    + 'semestral e irretratável — o número final tem que ser conferido pelo contador com 12 meses reais de venda e compra.'
+    + '</div>';
+
+  if (!b.receita) {
+    return h + '<div style="font-size:12px;color:#E67E22;">Não há viagens lançadas nos últimos 12 meses para montar a base.</div></div>';
+  }
+  if (s.acima) {
+    return h + '<div style="font-size:12px;color:#C0392B;">A receita de 12 meses (' + fmtR(b.receita) + ') passou do teto do Simples Nacional (R$ 4,8 milhões). '
+      + 'A comparação com o Simples deixa de fazer sentido — fale com o contador.</div></div>';
+  }
+
+  h += '<div style="padding:10px;background:#0E0E0E;border:1px solid #222;border-radius:8px;font-size:11.5px;color:#bbb;">'
+    + '<b style="color:' + GOLD + ';">Base usada</b> — ' + b.viagens + ' viagem(ns) em ' + b.nMeses + ' mês(es) com lançamento'
+    + '<div style="margin-top:6px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Receita 12 meses</div><div style="font-size:17px;font-weight:800;color:#fff;">' + fmtR(b.receita) + '</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Insumos creditáveis</div><div style="font-size:17px;font-weight:800;color:#fff;">' + fmtR(b.insumos) + '</div>'
+    + '<div style="font-size:10px;color:#666;">' + (b.receita ? (b.insumos / b.receita * 100).toFixed(1).replace(".", ",") : "0") + '% da receita</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Folha (CLT)</div><div style="font-size:17px;font-weight:800;color:#fff;">' + fmtR(b.folha) + '</div>'
+    + '<div style="font-size:10px;color:#666;">não gera crédito</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Faixa do Simples</div><div style="font-size:17px;font-weight:800;color:#fff;">' + s.faixa + 'ª</div>'
+    + '<div style="font-size:10px;color:#666;">efetiva ' + (s.efetiva * 100).toFixed(2).replace(".", ",") + '%</div></div>'
+    + '</div>'
+    + '<div style="margin-top:7px;font-size:11px;color:#888;">Insumos = combustível ' + fmtR(b.combustivel) + ' · manutenção ' + fmtR(b.manutencao)
+    + ' · pneus ' + fmtR(b.pneus) + ' · outros da viagem ' + fmtR(b.outros) + (b.pedagio ? ' · pedágio ' + fmtR(b.pedagio) : "") + '</div>'
+    + '</div>';
+
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:12px;">';
+  s.cenarios.forEach(function (c) {
+    var melhor = c.nome === s.melhor;
+    h += '<div style="background:#0E0E0E;border:1px solid ' + (melhor ? "#2E7D32" : "#222") + ';border-radius:8px;padding:11px;">'
+      + '<div style="font-size:12.5px;font-weight:800;color:' + (melhor ? "#2E7D32" : "#ddd") + ';">' + esc(c.nome)
+      + (melhor ? ' <span style="font-size:10px;">— menor imposto na simulação</span>' : "") + '</div>'
+      + '<div style="margin-top:5px;font-size:22px;font-weight:800;color:#fff;">' + fmtR(c.imposto) + '</div>'
+      + '<div style="font-size:11px;color:#888;">' + (c.pct * 100).toFixed(2).replace(".", ",") + '% da receita · '
+      + fmtR(c.imposto / 12) + ' por mês</div>'
+      + '<table style="width:100%;font-size:11px;color:#bbb;border-collapse:collapse;margin-top:7px;">'
+      + c.linhas.map(function (l) { return trLinha(l[0], l[1]); }).join("")
+      + '<tr style="border-top:1px solid #333;">' + '<td style="padding:4px 0;font-weight:700;">Total</td>'
+      + '<td style="text-align:right;font-weight:700;">' + fmtR(c.imposto) + '</td></tr>'
+      + '</table>'
+      + '<div style="margin-top:6px;font-size:10.5px;color:#777;line-height:1.45;">' + esc(c.obs) + '</div>'
+      + '</div>';
+  });
+  h += '</div>';
+
+  var pior = s.cenarios.slice().sort(function (a, b2) { return b2.imposto - a.imposto; })[0];
+  var melhorC = s.cenarios.slice().sort(function (a, b2) { return a.imposto - b2.imposto; })[0];
+  h += '<div style="margin-top:12px;padding:11px;background:#0B0B0B;border-left:4px solid ' + GOLD + ';border-radius:6px;font-size:12px;color:#ddd;">'
+    + 'Na base de hoje, a diferença entre o mais barato (<b>' + esc(melhorC.nome) + '</b>) e o mais caro (<b>' + esc(pior.nome) + '</b>) é de '
+    + '<b style="color:' + GOLD + ';">' + fmtR(pior.imposto - melhorC.imposto) + ' por ano</b> — ' + fmtR((pior.imposto - melhorC.imposto) / 12) + ' por mês.'
+    + '<div style="margin-top:5px;color:#999;">Os dois pontos que mais mexem nesse número: quanto dos insumos realmente gera crédito e a alíquota final de IBS/CBS. Mexa nos parâmetros abaixo para ver o efeito.</div>'
+    + '<div style="margin-top:6px;color:#E67E22;">A pergunta certa sobre o híbrido não é "pago menos imposto?" — quase sempre a resposta é não. É "o cliente paga mais pelo frete, ou passa a exigir o crédito para continuar comprando de mim?". Essa parte é negociação, não conta.</div>'
+    + '</div>';
+
+  h += '<div style="margin-top:12px;padding:11px;background:#0E0E0E;border:1px solid #222;border-radius:8px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:6px;">PARÂMETROS DA SIMULAÇÃO</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;">'
+    + [["aliqIbsCbs", "IBS + CBS estimado (%)"], ["pctCredito", "Insumos que geram crédito (%)"],
+       ["presIrpj", "Presunção IRPJ (%)"], ["presCsll", "Presunção CSLL (%)"],
+       ["aliqIcms", "ICMS médio do frete (%)"], ["credOutorgado", "Crédito outorgado ICMS (%)"],
+       ["aliqPatronal", "Patronal sobre folha (%)"], ["pedagioMes", "Pedágio por mês (R$)"]]
+      .map(function (p) {
+        return '<div style="display:flex;flex-direction:column;gap:2px;">'
+          + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">' + p[1] + '</label>'
+          + '<input value="' + esc(String(cfg[p[0]]).replace(".", ",")) + '" onchange="trSetCfg(\'' + p[0] + '\',this.value)" '
+          + 'style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;"></div>';
+      }).join("")
+    + '</div>'
+    + '<div style="margin-top:7px;font-size:10.5px;color:#777;">A alíquota de IBS/CBS de referência do material que a Yamalog mandou fica entre 25% e 28,6% para transporte de cargas. '
+    + 'O pedágio só precisa ser informado aqui se ele não estiver lançado nas despesas das viagens.</div>'
+    + '</div>';
+
+  var clientes = Object.keys(b.porCliente).sort(function (a, c2) { return b.porCliente[c2] - b.porCliente[a]; });
+  h += '<div style="margin-top:12px;font-size:11px;color:#888;">Receita por cliente na base: '
+    + clientes.slice(0, 8).map(function (c2) { return esc(c2) + " " + fmtR(b.porCliente[c2]); }).join(" · ')".replace(")", "")) + '</div>';
+
+  h += '<div style="margin-top:10px;font-size:11px;color:#E67E22;line-height:1.5;">'
+    + '⚠ Prazos da opção pelo híbrido: janela de 1º a 30/09, efeitos a partir de janeiro, cancelamento até 30/11, e a escolha é <b>irretratável dentro do semestre</b>. '
+    + 'Leve esta simulação ao contador antes de responder qualquer cliente.'
+    + '</div>';
+
+  return h + '</div>';
+}
 
 /* ==========================================================================
    v374 — CARREGAMENTO SUZANO: UMA CAIXA POR CAMINHÃO
@@ -12505,6 +12786,7 @@ var ABAS_DEF = [
   { id: "custoreal", label: "⛽ Custo Real", grupo: "FINANCEIRO" },   // v357
   { id: "saldocaminhao", label: "🚚 Saldo por Caminhão", grupo: "FINANCEIRO" },
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
+  { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
   { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
 ];
@@ -12528,11 +12810,12 @@ var TAB_DESCRICOES = {
   graficos: "Visão geral gráfica da frota: custo por caminhão, consumo, manutenção recorrente e evolução mensal",
   saldocaminhao: "Saldo acumulado mês a mês de cada caminhão (receita − despesas − dívida alocada)",
   dividas: "Dívidas e obrigações fixas mensais",
+  tributario: "Simulação de regime tributário: Simples, Simples Híbrido (IBS/CBS) e Lucro Presumido sobre a base real de 12 meses",
   documentos: "Documentos da empresa e da frota",
   cadmotorista: "Ficha de cadastro do motorista no modelo aprovado pelos clientes (FO_YL_026), pronta para exportar",
   usuarios: "Acessos e permissões de cada usuário",
 };
-var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos", "custoreal"];
+var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos", "custoreal", "tributario"];
 
 function garantirAcesso() {
   garantirConfig();
@@ -20965,6 +21248,20 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `HISTÓRICO DE CARGAS:\n${linhas || "(nenhuma)"}\nVIAGENS GERADAS POR ESSA ABA:\n${linhasV || "(nenhuma)"}`;
   })();
 
+  // --- v408: simulação tributária ---
+  const blocoTributario = !podeVerAba("tributario") ? "" : (function () {
+    let s2 = null;
+    try { s2 = trSimular(); } catch (e) { return ""; }
+    const b2 = s2 && s2.base;
+    const cab = `SIMULAÇÃO TRIBUTÁRIA (aba "Tributário", v408): compara SIMPLES NACIONAL (Anexo III, alíquota efetiva pela RBT12), SIMPLES HÍBRIDO (LC 214/2025 — saem do DAS as parcelas de PIS, COFINS e ICMS/ISS, que somam 49,1% da guia pela repartição do Anexo III, e IBS/CBS passam a ser apurados por fora COM crédito sobre os insumos) e LUCRO PRESUMIDO (IRPJ e CSLL sobre presunção, PIS/COFINS cumulativo 3,65%, ICMS com crédito outorgado e a contribuição patronal sobre a folha, que no Simples está dentro do DAS). `
+      + `A base é a receita e os insumos das viagens dos últimos 12 meses lançadas no sistema; folha NÃO gera crédito. `
+      + `AO RESPONDER SOBRE ISSO, deixe sempre claro: é simulação, a alíquota de IBS/CBS ainda não está definida em lei, a opção pelo híbrido é semestral e irretratável, e quem decide é o contador com 12 meses reais de venda e compra. Nunca apresente o resultado como recomendação fechada.`;
+    if (!b2 || !b2.receita) return cab + ` Ainda não há viagens nos últimos 12 meses para montar a base.`;
+    if (s2.acima) return cab + ` ATENÇÃO: a receita de 12 meses (${fmtR(b2.receita)}) passou do teto do Simples.`;
+    const linhas = (s2.cenarios || []).map((c) => `- ${c.nome}: ${fmtR(c.imposto)} no ano (${(c.pct * 100).toFixed(2)}% da receita, ${fmtR(c.imposto / 12)} por mês)`).join("\n");
+    return `${cab}\nBASE: receita ${fmtR(b2.receita)} em ${b2.viagens} viagem(ns), insumos creditáveis ${fmtR(b2.insumos)} (${(b2.insumos / b2.receita * 100).toFixed(1)}% da receita), folha CLT ${fmtR(b2.folha)}, faixa ${s2.faixa} do Simples com efetiva ${(s2.efetiva * 100).toFixed(2)}%.\nRESULTADO DA SIMULAÇÃO:\n${linhas}\nMenor imposto na base de hoje: ${s2.melhor}.`;
+  })();
+
   // --- v397: cadastro de motorista (ficha FO_YL_026) ---
   const blocoCadMot = !podeVerAba("cadmotorista") ? "" : (function () {
     const fichas = (state.motoristasCad || []);
@@ -21228,7 +21525,9 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
     return `\nCALCULADORA YAMAHA — tarifa POR UNIDADE, conforme a classificação da cidade de entrega (${cab}):\n${linhas}\nCidades de cada classificação:\n${cidades}\n  No picking list da Yamalog, "SMALL" = MTC 1, "BIG" = MTC 2 e "SBIG" = MTC 6.\n  Uma mesma viagem pode ter destinos em classificações diferentes — cada destino é somado pela tarifa da região dele.${pedido}\n`;
   })();
 
-  return `${blocoCadMot}
+  return `${blocoTributario}
+
+${blocoCadMot}
 
 ${blocoFotos}
 
@@ -23492,6 +23791,11 @@ function renderTabela() {
     `;
   }
 
+  if (state.aba === "tributario") {
+    /* v408: simulação de regime tributário. */
+    wrap.innerHTML = trBlocoHTML();
+    return;
+  }
   if (state.aba === "cadmotorista") {
     /* v397: ficha de cadastro do motorista, no modelo FO_YL_026 aprovado. */
     wrap.innerHTML = cmBlocoHTML();
