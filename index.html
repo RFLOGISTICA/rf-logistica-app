@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v411)</title>
+<title>RF Logística — Painel da Frota (v412)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3908,6 +3908,48 @@ function trProjecao(patamares) {
   });
 }
 
+/* v412 — A PERGUNTA DIRETA: "quanto eu pago hoje, quanto eu pagaria no
+   Presumido, e o que eu ganho com isso". Os cartões lado a lado mostram os
+   três regimes, mas não respondiam isso de cara. Aqui a comparação é uma só:
+   Simples contra Lucro Presumido, com a diferença em reais e as vantagens
+   que NÃO aparecem na conta de imposto — que são justamente as que fazem
+   uma transportadora sair do Simples. */
+function trComparacao() {
+  var s = trSimular(), b = s.base, cfg = trCfg();
+  if (!b || !b.receita) return null;
+  var simples = s.cenarios.find(function (c) { return c.nome.indexOf("Simples Nacional") === 0; });
+  var presum = s.cenarios.find(function (c) { return c.nome.indexOf("Lucro Presumido") === 0; });
+  if (!presum) return null;
+  var r = {
+    receita: b.receita,
+    simples: simples ? simples.imposto : null,
+    presumido: presum.imposto,
+    diferenca: simples ? presum.imposto - simples.imposto : null
+  };
+  /* Ponto de virada: onde o Presumido passa a custar menos que o Simples.
+     Varre até o teto; não achando, diz que não existe virada por preço. */
+  var pInsumo = b.insumos / b.receita, pFolha = b.folha / b.receita;
+  r.virada = 0;
+  for (var rec = Math.max(b.receita, 300000); rec <= 4800000; rec += 50000) {
+    var x = trCenarios(rec, rec * pInsumo, rec * pFolha);
+    var sN = x.cenarios.find(function (c) { return c.nome.indexOf("Simples Nacional") === 0; });
+    var lP = x.cenarios.find(function (c) { return c.nome.indexOf("Lucro Presumido") === 0; });
+    if (sN && lP && lP.imposto <= sN.imposto) { r.virada = rec; break; }
+  }
+  /* Valor comercial: quanto de crédito o cliente passa a aproveitar no frete.
+     É o que se leva pra mesa de negociação — no Simples ele não tem isso. */
+  var aliqIcms = (Number(cfg.aliqIcms) || 0) / 100;
+  r.creditoIcms = b.receita * aliqIcms;
+  r.creditoPisCofins = b.receita * 0.0925;
+  /* Desoneração: quanto ela vale por ano, e até quando */
+  var anoHoje = new Date().getFullYear();
+  var pat = trPatronal(b.receita, b.folha, anoHoje);
+  r.deson = pat.deson ? pat.economia : 0;
+  r.desonTexto = pat.texto;
+  r.folha = b.folha;
+  return r;
+}
+
 function trLinha(nome, v, forte) {
   return '<tr><td style="padding:3px 0;' + (forte ? "font-weight:700;" : "") + '">' + esc(nome) + '</td>'
     + '<td style="text-align:right;' + (forte ? "font-weight:700;" : "") + (v < 0 ? "color:#2E7D32;" : "") + '">' + fmtR(v) + '</td></tr>';
@@ -3964,6 +4006,54 @@ function trBlocoHTML() {
       + '</div>';
   });
   h += '</div>';
+
+  /* v412: a comparação direta que o Renato pediu — Simples x Presumido */
+  var cp = trComparacao();
+  if (cp && cp.simples != null) {
+    var pior2 = cp.diferenca > 0;
+    h += '<div style="margin-top:14px;border:1px solid ' + GOLD + ';border-radius:8px;overflow:hidden;">'
+      + '<div style="background:#000;padding:9px 12px;font-size:12.5px;font-weight:800;color:' + GOLD + ';letter-spacing:.5px;">'
+      + 'SAIR DO SIMPLES PARA O LUCRO PRESUMIDO — O QUE MUDA NA PRÁTICA</div>'
+      + '<div style="padding:12px;background:#0E0E0E;">'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">'
+      + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Paga hoje (Simples)</div>'
+      + '<div style="font-size:20px;font-weight:800;color:#fff;">' + fmtR(cp.simples / 12) + '</div><div style="font-size:10px;color:#666;">por mês · ' + fmtR(cp.simples) + ' no ano</div></div>'
+      + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Pagaria no Presumido</div>'
+      + '<div style="font-size:20px;font-weight:800;color:#fff;">' + fmtR(cp.presumido / 12) + '</div><div style="font-size:10px;color:#666;">por mês · ' + fmtR(cp.presumido) + ' no ano</div></div>'
+      + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Diferença</div>'
+      + '<div style="font-size:20px;font-weight:800;color:' + (pior2 ? "#C0392B" : "#2E7D32") + ';">'
+      + (pior2 ? "+ " : "− ") + fmtR(Math.abs(cp.diferenca) / 12) + '</div>'
+      + '<div style="font-size:10px;color:' + (pior2 ? "#C0392B" : "#2E7D32") + ';">' + (pior2 ? "a mais" : "a menos") + ' por mês · ' + fmtR(Math.abs(cp.diferenca)) + ' no ano</div></div>'
+      + '</div>';
+
+    h += '<div style="margin-top:10px;font-size:11.5px;color:' + (cp.virada ? "#E67E22" : "#C0392B") + ';">'
+      + (cp.virada
+        ? 'O Presumido passa a custar menos a partir de <b>' + fmtR(cp.virada) + '</b> de faturamento anual (' + fmtR(cp.virada / 12) + ' por mês).'
+        : 'Com esta estrutura de custos, <b>o Presumido não fica mais barato em nenhum faturamento até o teto do Simples</b>. A migração acontece por obrigação (acima de R$ 4,8 milhões), não por economia de imposto.')
+      + '</div>';
+
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:11px;">'
+      + '<div style="background:#0B0B0B;border-left:3px solid #2E7D32;border-radius:6px;padding:10px;">'
+      + '<div style="font-size:11.5px;font-weight:800;color:#2E7D32;margin-bottom:5px;">O QUE VOCÊ GANHA</div>'
+      + '<div style="font-size:11.5px;color:#ccc;line-height:1.55;">'
+      + '<b>Crédito para o cliente.</b> Você destaca ICMS no CT-e e o embarcador se credita — cerca de <b>' + fmtR(cp.creditoIcms) + '</b> por ano no seu volume atual'
+      + ', mais o PIS/COFINS do frete (~' + fmtR(cp.creditoPisCofins) + ') para quem apura pelo não cumulativo. No Simples ele não aproveita quase nada. É por isso que embarcador grande prefere (e às vezes só homologa) transportadora fora do Simples.'
+      + '<br><br><b>Desoneração da folha (CPRB).</b> Só existe fora do Simples. Hoje vale <b>' + fmtR(cp.deson) + '</b> por ano para você — ' + esc(cp.desonTexto) + '. Ela acaba em 2028.'
+      + '<br><br><b>Presunção baixa.</b> IRPJ sobre 8% e CSLL sobre 12% da receita. Se a sua margem real for maior que isso, você paga imposto sobre um lucro menor do que o que de fato ganhou.'
+      + '<br><br><b>Sem teto e sem o degrau dos R$ 3,6 milhões</b> — cresce sem sobressalto de enquadramento.'
+      + '</div></div>'
+      + '<div style="background:#0B0B0B;border-left:3px solid #C0392B;border-radius:6px;padding:10px;">'
+      + '<div style="font-size:11.5px;font-weight:800;color:#C0392B;margin-bottom:5px;">O QUE VOCÊ PERDE</div>'
+      + '<div style="font-size:11.5px;color:#ccc;line-height:1.55;">'
+      + '<b>A folha sai do DAS.</b> No Simples a previdência patronal está dentro da guia. Fora dele, ela é paga por fora — com a sua folha de <b>' + fmtR(cp.folha) + '</b> por ano, é o item que mais pesa contra.'
+      + '<br><br><b>Mais obrigação acessória.</b> Apuração mensal de ICMS, PIS, COFINS, EFD e escrituração — custo de contabilidade maior.'
+      + '<br><br><b>Imposto sem relação com o lucro.</b> Mês ruim paga quase igual a mês bom, porque a base é a receita presumida.'
+      + '<br><br><b>Volta é difícil.</b> Sair do Simples e voltar depois tem janela e carência.'
+      + '</div></div>'
+      + '</div>'
+      + '<div style="margin-top:10px;font-size:11px;color:#888;">Regra prática: a conta de imposto sozinha manda você ficar no Simples. O que tira uma transportadora do Simples é o cliente exigindo crédito, o teto chegando, ou a folha ficando pequena em relação à receita.</div>'
+      + '</div></div>';
+  }
 
   var pior = s.cenarios.slice().sort(function (a, b2) { return b2.imposto - a.imposto; })[0];
   var melhorC = s.cenarios.slice().sort(function (a, b2) { return a.imposto - b2.imposto; })[0];
