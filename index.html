@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v410)</title>
+<title>RF Logística — Painel da Frota (v411)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3652,6 +3652,15 @@ function trCfg() {
   p("aliqIcms", 12);            /* ICMS médio do frete (%) */
   p("credOutorgado", 20);       /* crédito outorgado do ICMS transporte (%) */
   p("aliqPatronal", 26.8);      /* CPP + RAT + terceiros sobre a folha (%) */
+  /* v411: DESONERAÇÃO DA FOLHA (CPRB). Transporte rodoviário de cargas (CNAE
+     4930-2) é um dos 17 setores que podem trocar os 20% de patronal sobre a
+     folha por um percentual sobre a receita bruta. Isso só existe FORA do
+     Simples — quem está no Simples não alcança o benefício. É a maior
+     vantagem do Lucro Presumido pra transportadora com muita folha, e some
+     em 2028: Lei 14.973/2024 fez a reoneração gradual (2026: 10% folha +
+     0,9% receita; 2027: 15% folha + 0,6% receita; 2028: 20% folha, fim). */
+  p("desoneracao", 1);          /* 1 = simula optando pela CPRB */
+  p("ratTerceiros", 6.8);       /* RAT + terceiros — continuam sobre a folha */
   p("pedagioMes", 0);           /* pedágio mensal, se não estiver nas viagens */
   return c;
 }
@@ -3707,6 +3716,21 @@ function trBase() {
      2033        ICMS e ISS extintos; sobra o IVA dual (CBS + IBS) cheio.
    A alíquota de referência da CBS para 2027 só será definida no fim de 2026 —
    por isso tudo aqui é estimativa editável. */
+/* Patronal do ano, respeitando a opção pela desoneração e a reoneração
+   gradual. Fora da janela (2028 em diante) volta tudo pra folha. */
+function trPatronal(rec, folha, ano) {
+  var cfg = trCfg();
+  var a = Number(ano) || 2026;
+  var cheia = folha * ((Number(cfg.aliqPatronal) || 0) / 100);
+  if (!Number(cfg.desoneracao)) return { valor: cheia, deson: false, texto: "20% de patronal + RAT/terceiros sobre a folha" };
+  var tab = { 2026: { folha: 10, receita: 0.9 }, 2027: { folha: 15, receita: 0.6 } };
+  var t = tab[a];
+  if (!t) return { valor: cheia, deson: false, texto: "desoneração encerrada em 2028 — patronal cheia sobre a folha" };
+  var v = folha * ((t.folha + (Number(cfg.ratTerceiros) || 0)) / 100) + rec * (t.receita / 100);
+  return { valor: v, deson: true, economia: cheia - v,
+    texto: "CPRB " + a + ": " + t.folha + "% sobre a folha + " + String(t.receita).replace(".", ",") + "% sobre a receita, no lugar dos 20% cheios (RAT/terceiros seguem na folha)" };
+}
+
 function trFatores(ano) {
   var a = Number(ano) || 2027;
   if (a <= 2026) return { cbs: 0, ibs: 0, antigo: 1, pisCofins: 1, nota: "ano-teste: CBS 0,9% e IBS 0,1% são destacados mas compensados — a carga não muda" };
@@ -3796,7 +3820,9 @@ function trCenarios(rec, insumos, folha) {
   var pisCofins = rec * 0.0365;
   var icmsCheio = rec * ((Number(cfg.aliqIcms) || 0) / 100);
   var icms = icmsCheio * (1 - (Number(cfg.credOutorgado) || 0) / 100);
-  var patronal = folha * ((Number(cfg.aliqPatronal) || 0) / 100);
+  var anoHoje = new Date().getFullYear();
+  var patHoje = trPatronal(rec, folha, anoHoje);
+  var patronal = patHoje.valor;
   out.cenarios.push({
     nome: "Lucro Presumido (regras de hoje)",
     imposto: irpj + adicional + csll + pisCofins + icms + patronal,
@@ -3806,15 +3832,19 @@ function trCenarios(rec, insumos, folha) {
       ["CSLL 9% sobre presunção de " + cfg.presCsll + "%", csll],
       ["PIS/COFINS cumulativo (3,65%)", pisCofins],
       ["ICMS " + cfg.aliqIcms + "% com crédito outorgado de " + cfg.credOutorgado + "%", icms],
-      ["Contribuição patronal sobre a folha (" + cfg.aliqPatronal + "%)", patronal]
+      [patHoje.deson ? "Previdência com desoneração (CPRB)" : "Contribuição patronal sobre a folha (" + cfg.aliqPatronal + "%)", patronal]
     ],
-    obs: "Aqui a contribuição patronal sobre a folha volta a ser paga por fora — no Simples ela está dentro do DAS. "
+    obs: (patHoje.deson
+      ? "COM DESONERAÇÃO DA FOLHA: " + patHoje.texto + ". Isso economiza " + fmtR(patHoje.economia) + " por ano em relação à patronal cheia, e SÓ existe fora do Simples. "
+      : "")
+      + "A contribuição patronal sobre a folha volta a ser paga por fora — no Simples ela está dentro do DAS. "
       + "É o item que costuma decidir a comparação em transportadora com motorista CLT. "
       + "O crédito outorgado de ICMS do transporte veda o aproveitamento de outros créditos de ICMS."
   });
 
   /* 4. Regime geral JÁ NA REFORMA, no ano escolhido */
   var ft = trFatores(cfg.ano);
+  var patReforma = trPatronal(rec, folha, cfg.ano);
   out.fatores = ft;
   var aCbs = (Number(cfg.aliqCbs) || 0) / 100 * ft.cbs;
   var aIbs = (Number(cfg.aliqIbs) || 0) / 100 * ft.ibs;
@@ -3825,10 +3855,10 @@ function trCenarios(rec, insumos, folha) {
   var pisCofResid = pisCofins * ft.pisCofins;
   out.cenarios.push({
     nome: "Regime geral na reforma — " + cfg.ano,
-    imposto: irpj + adicional + csll + patronal + pisCofResid + icmsResid + (cbsDev - cbsCred) + (ibsDev - ibsCred),
+    imposto: irpj + adicional + csll + patReforma.valor + pisCofResid + icmsResid + (cbsDev - cbsCred) + (ibsDev - ibsCred),
     linhas: [
       ["IRPJ + adicional + CSLL (não mudam na reforma)", irpj + adicional + csll],
-      ["Contribuição patronal sobre a folha", patronal],
+      [patReforma.deson ? "Previdência com desoneração (CPRB)" : "Contribuição patronal sobre a folha", patReforma.valor],
       ["PIS/COFINS remanescente", pisCofResid],
       ["ICMS remanescente (" + Math.round(ft.antigo * 100) + "% do atual)", icmsResid],
       ["CBS sobre a receita", cbsDev],
@@ -3837,6 +3867,7 @@ function trCenarios(rec, insumos, folha) {
       ["(−) crédito de IBS sobre insumos", -ibsCred]
     ],
     obs: "Calendário do ano escolhido — " + ft.nota + ". "
+      + (patReforma.deson ? "Previdência: " + patReforma.texto + ". " : "")
       + "É aqui que a reforma pode virar a favor do transporte: o crédito passa a ser AMPLO (diesel, pedágio, pneus e manutenção), "
       + "coisa que hoje quase não gera crédito. Quanto mais insumo na receita, melhor este cenário fica. "
       + "A alíquota de referência da CBS para 2027 só é definida no fim de 2026 — os percentuais aqui são estimativa."
@@ -4002,7 +4033,8 @@ function trBlocoHTML() {
        ["aliqIbsCbs", "IBS + CBS no híbrido (%)"], ["pctCredito", "Insumos que geram crédito (%)"],
        ["presIrpj", "Presunção IRPJ (%)"], ["presCsll", "Presunção CSLL (%)"],
        ["aliqIcms", "ICMS médio do frete (%)"], ["credOutorgado", "Crédito outorgado ICMS (%)"],
-       ["aliqPatronal", "Patronal sobre folha (%)"], ["pedagioMes", "Pedágio por mês (R$)"]]
+       ["aliqPatronal", "Patronal sobre folha (%)"], ["ratTerceiros", "RAT + terceiros (%)"],
+       ["desoneracao", "Optar pela desoneração? (1 sim / 0 não)"], ["pedagioMes", "Pedágio por mês (R$)"]]
       .map(function (p) {
         return '<div style="display:flex;flex-direction:column;gap:2px;">'
           + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">' + p[1] + '</label>'
