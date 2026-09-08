@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v398)</title>
+<title>RF Logística — Painel da Frota (v399)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2556,11 +2556,15 @@ var CM_CAMPOS_VEIC = [
 ];
 /* As tres colunas de copias obrigatorias que valem pra RF: a empresa e PJ,
    entao a coluna PESSOA FISICA da ficha fica fora. */
+/* v399: as quatro colunas SAO as da ficha, palavra por palavra, inclusive a
+   PESSOA FISICA e a lista de exames medicos. Nada entra e nada sai daqui --
+   ficha alterada volta do cliente. */
 var CM_COPIAS = {
   pj: ["CONTRATO SOCIAL", "CNPJ", "I.E", "RG", "CNH", "COMP. ENDEREÇO", "REGISTRO ANTT", "DADOS BANCÁRIOS"],
-  motorista: ["RG", "CNH", "COMP. ENDEREÇO", "PIS/ PASEP", "FICHA REGISTRO", "CERTIFICADO DIREÇÃO DEFENSIVA",
-    "EXAMES: AUDIOMETRIA", "EXAMES: ELETROENCEFALOGRAMA", "EXAMES: ELETROCARDIOGRAMA",
-    "EXAMES: EXAME DE VISÃO", "EXAMES: CLÍNICO", "EXAMES: GLICEMIA", "EXAMES: AVALIAÇÃO PSICOLÓGICA"],
+  pf: ["RG", "CPF", "CNH", "COMP. ENDEREÇO", "PIS/ PASEP", "REGISTRO ANTT", "DADOS BANCÁRIOS"],
+  motorista: ["RG", "CNH", "COMP. ENDEREÇO", "PIS/ PASEP", "FICHA REGISTRO", "CERTIFICADO DIREÇÃO DEFENSIVA"],
+  exames: ["- AUDIOMETRIA", "- ELETROENCEFALOGRAMA", "- ELETROCARDIOGRAMA", "- EXAME DE VISÃO",
+    "- CLÍNICO", "- GLICEMIA", "- AVALIAÇÃO PSICOLÓGICA"],
   veiculo: ["CRLV", "CERTIFICADO DE CRONOTACÓGRAFO", "LAUDO DE OPACIDADE (FUMAÇA PRETA)"]
 };
 /* Sem estes o cliente devolve a ficha. E a lista que gera o aviso de pendencia. */
@@ -2663,86 +2667,154 @@ function cmBR(d) {
   return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(d);
 }
 
-/* ------------------------- exportacao na grade da ficha ------------------ */
-/* Escreve exatamente nas celulas da ficha aprovada. Mudar posicao aqui e
-   mudar o formato que o cliente ja aceitou -- so mexer se ele mandar ficha
-   nova. */
-function cmMontarWb(f) {
-  var p = f.prop || {}, m = f.mot || {}, v = f.veic || {}, refs = f.refs || [];
-  var cel = {};
-  function pos(ref, valor) { if (valor !== undefined && valor !== null && valor !== "") cel[ref] = { t: "s", v: String(valor) }; }
-  function rot(ref, txt) { cel[ref] = { t: "s", v: txt }; }
+/* ==========================================================================
+   v399 — A FICHA EXPORTADA É A FICHA, SEM UMA LINHA A MAIS + IMPORTAÇÃO
+   --------------------------------------------------------------------------
+   Renato (08/09): "NAO PODE COLOCAR NADA QUE NAO ESTEJA NA FICHA, POIS SE
+   COLOCAR VAI VOLTAR! TEM QUE TER O LOCAL PARA EU IMPORTAR AS QUE JA ESTA
+   PRONTAS".
 
-  rot("D2", "FICHA DE CADASTRO");
-  rot("B4", "Yamaha Motor do Brasil Logística Ltda - CDA Centro de Distribuição Anhanguera -  Rod. Anhanguera, Km 17,5 - São Paulo - SP / CEP: 05112-000");
+   O que estava errado na v397/v398 e sai agora:
+     - as copias obrigatorias saiam com "[X]" e "[ ]" na frente do texto;
+     - a coluna PESSOA FISICA tinha sido cortada da exportacao;
+     - os EXAMES MEDICOS tinham sido embutidos na coluna MOTORISTA em vez de
+       ficarem nas linhas F56:F63 como no original;
+     - havia uma linha "OBS:" na B65, que nao existe na ficha.
+   Nada disso volta. A marcacao das copias e as observacoes continuam
+   existindo NA TELA, como controle interno -- so nao vao pro arquivo.
 
-  rot("B6", "PROPRIETÁRIO");
-  rot("B8", "NOME/ R. SOCIAL:"); pos("C8", p.nome); rot("F8", "CPF/ CNPJ:"); pos("G8", p.cpf);
-  rot("B9", "I.E:"); pos("C9", p.ie); rot("F9", "E-MAIL:"); pos("G9", p.email);
-  rot("B10", "ENDEREÇO:"); pos("C10", p.endereco); rot("F10", "Nº:"); pos("G10", p.numero); rot("H10", "CEP:"); pos("I10", p.cep);
-  rot("B11", "UF:"); pos("C11", p.uf); rot("D11", "CIDADE:"); pos("E11", p.cidade); rot("F11", "BAIRRO:"); pos("G11", p.bairro); rot("H11", "PIS/PASEP:"); pos("I11", p.pis);
-  rot("B12", "TEL. COMERCIAL:"); pos("C12", p.telCom); rot("F12", "CONTATO:"); pos("G12", p.contatoCom); rot("H12", "RNTRC:"); pos("I12", p.rntrc);
-  rot("B13", "TEL. RESIDENCIAL:"); pos("C13", p.telRes); rot("F13", "CONTATO:"); pos("G13", p.contatoRes); rot("H13", "VALID. RNTRC:"); pos("I13", cmBR(p.validRntrc));
-  rot("B14", "NÚMERO CNH:"); pos("C14", p.cnh); rot("D14", "Nº PRONTUÁRIO:"); pos("E14", p.prontuario);
-  rot("F14", "VENCIMENTO:"); pos("G14", cmBR(p.vencCnh)); rot("H14", "CATEGORIA:"); pos("I14", p.catCnh);
+   COMO ISSO PARA DE ACONTECER: existe UM mapa unico (CM_ROTULOS e
+   CM_VALORES) com o texto fixo da ficha e a celula de cada campo. A
+   exportacao ESCREVE por esse mapa e a importacao LE pelo mesmo mapa. Nao ha
+   como uma sair diferente da outra, e acrescentar campo novo na exportacao
+   exigiria mexer no mapa -- que e o desenho aprovado.
+   ========================================================================== */
 
-  rot("B16", "MOTORISTA");
-  rot("B18", "NOME:"); pos("C18", m.nome); rot("F18", "CPF:"); pos("G18", m.cpf);
-  rot("B19", "RG:"); pos("C19", m.rg); rot("D19", "ORGÃO EMISSOR:"); pos("E19", m.orgao);
-  rot("F19", "CIDADE/ UF EMISSÃO:"); pos("G19", m.cidadeEmissao); rot("H19", "DATA EMISSÃO:"); pos("I19", cmBR(m.dataEmissao));
-  rot("B20", "ENDEREÇO:"); pos("C20", m.endereco); rot("F20", "NÚMERO:"); pos("G20", m.numero); rot("H20", "CEP:"); pos("I20", m.cep);
-  rot("B21", "UF:"); pos("C21", m.uf); rot("D21", "CIDADE:"); pos("E21", m.cidade); rot("F21", "BAIRRO:"); pos("G21", m.bairro); rot("H21", "PIS:"); pos("I21", m.pis);
-  rot("B22", "TEL. RESIDENCIAL:"); pos("C22", m.telRes); rot("D22", "CONTATO:"); pos("E22", m.contato); rot("F22", "TEL. CELULAR:"); pos("G22", m.celular);
-  rot("B23", "NOME DO PAI:"); pos("C23", m.pai); rot("F23", "NOME DA MÃE:"); pos("G23", m.mae);
-  rot("B24", "NÚMERO CNH:"); pos("C24", m.cnh); rot("D24", "Nº PRONTUÁRIO:"); pos("E24", m.prontuario);
-  rot("F24", "EMISSÃO CNH:"); pos("G24", cmBR(m.emissaoCnh)); rot("H24", "CATEGORIA:"); pos("I24", m.catCnh);
-  rot("B25", "1ª HABILITAÇÃO:"); pos("C25", cmBR(m.primeiraHab)); rot("D25", "VENCIMENTO:"); pos("E25", cmBR(m.vencCnh));
-  rot("F25", "ESTADO CIVIL:"); pos("G25", m.estadoCivil); rot("H25", "DATA DE NASC:"); pos("I25", cmBR(m.nascimento));
-  rot("B26", "MUNICÍPIO CNH:"); pos("C26", m.municipioCnh); rot("D26", "UF:"); pos("E26", m.ufCnh);
-  rot("F26", "NATURALIDADE:"); pos("G26", m.naturalidade); rot("H26", "UF:"); pos("I26", m.ufNat);
-  rot("B27", "MOPP:"); pos("C27", m.mopp); rot("D27", "NÚMERO MOPP:"); pos("E27", m.numeroMopp);
-  rot("F27", "DIREÇÃO DEFENSIVA:"); pos("G27", m.direcaoDefensiva); rot("H27", "RENACH:"); pos("I27", m.renach);
+/* Texto fixo da ficha, exatamente como esta no arquivo aprovado. */
+var CM_ROTULOS = {
+  D2: "FICHA DE CADASTRO",
+  B4: "Yamaha Motor do Brasil Logística Ltda - CDA Centro de Distribuição Anhanguera -  Rod. Anhanguera, Km 17,5 - São Paulo - SP / CEP: 05112-000 ",
+  B6: "PROPRIETÁRIO",
+  B8: "NOME/ R. SOCIAL:", F8: "CPF/ CNPJ:",
+  B9: "I.E:", F9: "E-MAIL:",
+  B10: "ENDEREÇO:", F10: "Nº:", H10: "CEP:",
+  B11: "UF:", D11: "CIDADE:", F11: "BAIRRO:", H11: "PIS/PASEP:",
+  B12: "TEL. COMERCIAL:", F12: "CONTATO:", H12: "RNTRC:",
+  B13: "TEL. RESIDENCIAL:", F13: "CONTATO:", H13: "VALID. RNTRC:",
+  B14: "NÚMERO CNH:", D14: "Nº PRONTUÁRIO:", F14: "VENCIMENTO:", H14: "CATEGORIA:",
+  B16: "MOTORISTA",
+  B18: "NOME:", F18: "CPF:",
+  B19: "RG:", D19: "ORGÃO EMISSOR:", F19: "CIDADE/ UF EMISSÃO:", H19: "DATA EMISSÃO:",
+  B20: "ENDEREÇO:", F20: "NÚMERO:", H20: "CEP:",
+  B21: "UF:", D21: "CIDADE:", F21: "BAIRRO:", H21: "PIS:",
+  B22: "TEL. RESIDENCIAL:", D22: "CONTATO:", F22: "TEL. CELULAR:",
+  B23: "NOME DO PAI:", F23: "NOME DA MÃE:",
+  B24: "NÚMERO CNH:", D24: "Nº PRONTUÁRIO:", F24: "EMISSÃO CNH:", H24: "CATEGORIA:",
+  B25: "1ª HABILITAÇÃO:", D25: "VENCIMENTO:", F25: "ESTADO CIVIL:", H25: "DATA DE NASC:",
+  B26: "MUNICÍPIO CNH:", D26: "UF:", F26: "NATURALIDADE:", H26: "UF:",
+  B27: "MOPP:", D27: "NÚMERO MOPP:", F27: "DIREÇÃO DEFENSIVA:", H27: "RENACH:",
+  B29: "REFERÊNCIAS PESSOAIS / COMERCIAIS",
+  B31: "NOME:", E31: "PARENTESCO:", G31: "TELEFONE:",
+  B32: "NOME:", E32: "PARENTESCO:", G32: "TELEFONE:",
+  B33: "NOME:", E33: "PARENTESCO:", G33: "TELEFONE:",
+  B34: "NOME:", E34: "PARENTESCO:", G34: "TELEFONE:",
+  B35: "NOME:", E35: "PARENTESCO:", G35: "TELEFONE:",
+  B37: "DADOS DO VEÍCULO",
+  B39: "PLACA:", E39: "RENAVAM:", G39: "CHASSI:",
+  B40: "CPF/ CNPJ:", E40: "ANO FAB:", G40: "RNTRC:",
+  B41: "CIDADE:", E41: "ANO MOD:", G41: "UF:",
+  B42: "TIPO:", E42: "CATEGORIA:", G42: "MODELO:",
+  B43: "MARCA:", E43: "RASTREADOR:", G43: "Nº SÉRIE:",
+  B46: "CÓPIAS OBRIGATÓRIAS",
+  B48: "PESSOA JURÍDICA", D48: "PESSOA FÍSICA", F48: "MOTORISTA", H48: "VEÍCULO",
+  B49: "CONTRATO SOCIAL", D49: "RG", F49: "RG", H49: "CRLV",
+  B50: "CNPJ", D50: "CPF", F50: "CNH", H50: "CERTIFICADO DE CRONOTACÓGRAFO",
+  B51: "I.E", D51: "CNH", F51: "COMP. ENDEREÇO", H51: "LAUDO DE OPACIDADE (FUMAÇA PRETA)",
+  B52: "RG", D52: "COMP. ENDEREÇO", F52: "PIS/ PASEP",
+  B53: "CNH", D53: "PIS/ PASEP", F53: "FICHA REGISTRO",
+  B54: "COMP. ENDEREÇO", D54: "REGISTRO ANTT", F54: "CERTIFICADO DIREÇÃO DEFENSIVA",
+  B55: "REGISTRO ANTT", D55: "DADOS BANCÁRIOS",
+  B56: "DADOS BANCÁRIOS", F56: "EXAMES MÉDICOS:",
+  F57: "- AUDIOMETRIA", F58: "- ELETROENCEFALOGRAMA", F59: "- ELETROCARDIOGRAMA",
+  F60: "- EXAME DE VISÃO", F61: "- CLÍNICO", F62: "- GLICEMIA", F63: "- AVALIAÇÃO PSICOLÓGICA"
+};
 
-  rot("B29", "REFERÊNCIAS PESSOAIS / COMERCIAIS");
-  for (var i = 0; i < 5; i++) {
-    var r = refs[i] || {}, ln = 31 + i;
-    rot("B" + ln, "NOME:"); pos("C" + ln, r.nome);
-    rot("E" + ln, "PARENTESCO:"); pos("F" + ln, r.parentesco);
-    rot("G" + ln, "TELEFONE:"); pos("H" + ln, r.telefone);
+/* Onde cada campo mora na ficha. Exportacao escreve aqui, importacao le
+   daqui -- as duas nunca divergem. r = indice da referencia (0 a 4). */
+var CM_VALORES = [
+  { c: "C8", s: "prop", k: "nome" }, { c: "G8", s: "prop", k: "cpf" },
+  { c: "C9", s: "prop", k: "ie" }, { c: "G9", s: "prop", k: "email" },
+  { c: "C10", s: "prop", k: "endereco" }, { c: "G10", s: "prop", k: "numero" }, { c: "I10", s: "prop", k: "cep" },
+  { c: "C11", s: "prop", k: "uf" }, { c: "E11", s: "prop", k: "cidade" }, { c: "G11", s: "prop", k: "bairro" }, { c: "I11", s: "prop", k: "pis" },
+  { c: "C12", s: "prop", k: "telCom" }, { c: "G12", s: "prop", k: "contatoCom" }, { c: "I12", s: "prop", k: "rntrc" },
+  { c: "C13", s: "prop", k: "telRes" }, { c: "G13", s: "prop", k: "contatoRes" }, { c: "I13", s: "prop", k: "validRntrc", d: 1 },
+  { c: "C14", s: "prop", k: "cnh" }, { c: "E14", s: "prop", k: "prontuario" }, { c: "G14", s: "prop", k: "vencCnh", d: 1 }, { c: "I14", s: "prop", k: "catCnh" },
+
+  { c: "C18", s: "mot", k: "nome" }, { c: "G18", s: "mot", k: "cpf" },
+  { c: "C19", s: "mot", k: "rg" }, { c: "E19", s: "mot", k: "orgao" }, { c: "G19", s: "mot", k: "cidadeEmissao" }, { c: "I19", s: "mot", k: "dataEmissao", d: 1 },
+  { c: "C20", s: "mot", k: "endereco" }, { c: "G20", s: "mot", k: "numero" }, { c: "I20", s: "mot", k: "cep" },
+  { c: "C21", s: "mot", k: "uf" }, { c: "E21", s: "mot", k: "cidade" }, { c: "G21", s: "mot", k: "bairro" }, { c: "I21", s: "mot", k: "pis" },
+  { c: "C22", s: "mot", k: "telRes" }, { c: "E22", s: "mot", k: "contato" }, { c: "G22", s: "mot", k: "celular" },
+  { c: "C23", s: "mot", k: "pai" }, { c: "G23", s: "mot", k: "mae" },
+  { c: "C24", s: "mot", k: "cnh" }, { c: "E24", s: "mot", k: "prontuario" }, { c: "G24", s: "mot", k: "emissaoCnh", d: 1 }, { c: "I24", s: "mot", k: "catCnh" },
+  { c: "C25", s: "mot", k: "primeiraHab", d: 1 }, { c: "E25", s: "mot", k: "vencCnh", d: 1 }, { c: "G25", s: "mot", k: "estadoCivil" }, { c: "I25", s: "mot", k: "nascimento", d: 1 },
+  { c: "C26", s: "mot", k: "municipioCnh" }, { c: "E26", s: "mot", k: "ufCnh" }, { c: "G26", s: "mot", k: "naturalidade" }, { c: "I26", s: "mot", k: "ufNat" },
+  { c: "C27", s: "mot", k: "mopp" }, { c: "E27", s: "mot", k: "numeroMopp" }, { c: "G27", s: "mot", k: "direcaoDefensiva" }, { c: "I27", s: "mot", k: "renach" },
+
+  { c: "C31", r: 0, k: "nome" }, { c: "F31", r: 0, k: "parentesco" }, { c: "H31", r: 0, k: "telefone" },
+  { c: "C32", r: 1, k: "nome" }, { c: "F32", r: 1, k: "parentesco" }, { c: "H32", r: 1, k: "telefone" },
+  { c: "C33", r: 2, k: "nome" }, { c: "F33", r: 2, k: "parentesco" }, { c: "H33", r: 2, k: "telefone" },
+  { c: "C34", r: 3, k: "nome" }, { c: "F34", r: 3, k: "parentesco" }, { c: "H34", r: 3, k: "telefone" },
+  { c: "C35", r: 4, k: "nome" }, { c: "F35", r: 4, k: "parentesco" }, { c: "H35", r: 4, k: "telefone" },
+
+  { c: "C39", s: "veic", k: "placa" }, { c: "F39", s: "veic", k: "renavam" }, { c: "H39", s: "veic", k: "chassi" },
+  { c: "C40", s: "veic", k: "cpfCnpj" }, { c: "F40", s: "veic", k: "anoFab" }, { c: "H40", s: "veic", k: "rntrc" },
+  { c: "C41", s: "veic", k: "cidade" }, { c: "F41", s: "veic", k: "anoMod" }, { c: "H41", s: "veic", k: "uf" },
+  { c: "C42", s: "veic", k: "tipo" }, { c: "F42", s: "veic", k: "categoria" }, { c: "H42", s: "veic", k: "modelo" },
+  { c: "C43", s: "veic", k: "marca" }, { c: "F43", s: "veic", k: "rastreador" }, { c: "H43", s: "veic", k: "serie" }
+];
+
+function cmValorDe(f, item) {
+  if (item.r != null) return ((f.refs || [])[item.r] || {})[item.k];
+  return (f[item.s] || {})[item.k];
+}
+function cmGravarValor(f, item, valor) {
+  if (item.r != null) {
+    if (!Array.isArray(f.refs)) f.refs = [{}, {}, {}, {}, {}];
+    if (!f.refs[item.r]) f.refs[item.r] = {};
+    f.refs[item.r][item.k] = valor;
+    return;
   }
+  if (!f[item.s]) f[item.s] = {};
+  f[item.s][item.k] = valor;
+}
 
-  rot("B37", "DADOS DO VEÍCULO");
-  rot("B39", "PLACA:"); pos("C39", v.placa); rot("E39", "RENAVAM:"); pos("F39", v.renavam); rot("G39", "CHASSI:"); pos("H39", v.chassi);
-  rot("B40", "CPF/ CNPJ:"); pos("C40", v.cpfCnpj); rot("E40", "ANO FAB:"); pos("F40", v.anoFab); rot("G40", "RNTRC:"); pos("H40", v.rntrc);
-  rot("B41", "CIDADE:"); pos("C41", v.cidade); rot("E41", "ANO MOD:"); pos("F41", v.anoMod); rot("G41", "UF:"); pos("H41", v.uf);
-  rot("B42", "TIPO:"); pos("C42", v.tipo); rot("E42", "CATEGORIA:"); pos("F42", v.categoria); rot("G42", "MODELO:"); pos("H42", v.modelo);
-  rot("B43", "MARCA:"); pos("C43", v.marca); rot("E43", "RASTREADOR:"); pos("F43", v.rastreador); rot("G43", "Nº SÉRIE:"); pos("H43", v.serie);
-
-  rot("B46", "CÓPIAS OBRIGATÓRIAS");
-  rot("B48", "PESSOA JURÍDICA"); rot("D48", "PESSOA FÍSICA"); rot("F48", "MOTORISTA"); rot("H48", "VEÍCULO");
-  var marcar = function (col, linha0, lista, prefixo) {
-    lista.forEach(function (nome, k) {
-      var ln = linha0 + k;
-      rot(col + ln, ((f.copias || {})[prefixo + nome] ? "[X] " : "[ ] ") + nome);
-    });
-  };
-  marcar("B", 49, CM_COPIAS.pj, "pj:");
-  marcar("F", 49, CM_COPIAS.motorista, "mot:");
-  marcar("H", 49, CM_COPIAS.veiculo, "vei:");
-  if (f.obs) { rot("B65", "OBS:"); pos("C65", f.obs); }
-
-  cel["!ref"] = "A1:N66";
+/* ------------------------- exportacao ----------------------------------- */
+function cmMontarWb(f) {
+  var cel = {};
+  Object.keys(CM_ROTULOS).forEach(function (c) { cel[c] = { t: "s", v: CM_ROTULOS[c] }; });
+  CM_VALORES.forEach(function (item) {
+    var v = cmValorDe(f, item);
+    if (v === undefined || v === null || String(v) === "") return;
+    if (item.d) {
+      var dt = null;
+      try { dt = new Date(String(v).slice(0, 10) + "T00:00:00"); } catch (e) { dt = null; }
+      if (dt && !isNaN(dt.getTime())) { cel[item.c] = { t: "d", v: dt, z: "dd/mm/yyyy" }; return; }
+    }
+    cel[item.c] = { t: "s", v: String(v) };
+  });
+  cel["!ref"] = "A1:N64";
   cel["!cols"] = [{ wch: 3.9 }, { wch: 13.6 }, { wch: 15.3 }, { wch: 13.2 }, { wch: 11.8 },
     { wch: 16.5 }, { wch: 16.9 }, { wch: 12 }, { wch: 14 }, { wch: 1.1 }, { wch: 1 },
     { wch: 9 }, { wch: 9 }, { wch: 9 }];
   cel["!merges"] = [
-    { s: { r: 1, c: 3 }, e: { r: 1, c: 6 } },     // D2:G2 titulo
-    { s: { r: 3, c: 1 }, e: { r: 3, c: 8 } },     // B4:I4 cabecalho do cliente
-    { s: { r: 5, c: 1 }, e: { r: 5, c: 8 } },     // B6:I6 PROPRIETARIO
-    { s: { r: 15, c: 1 }, e: { r: 15, c: 8 } },   // B16:I16 MOTORISTA
-    { s: { r: 28, c: 1 }, e: { r: 28, c: 8 } },   // B29:I29 REFERENCIAS
-    { s: { r: 36, c: 1 }, e: { r: 36, c: 8 } },   // B37:I37 DADOS DO VEICULO
-    { s: { r: 45, c: 1 }, e: { r: 45, c: 8 } }    // B46:I46 COPIAS OBRIGATORIAS
+    { s: { r: 1, c: 3 }, e: { r: 1, c: 6 } },
+    { s: { r: 3, c: 1 }, e: { r: 3, c: 8 } },
+    { s: { r: 5, c: 1 }, e: { r: 5, c: 8 } },
+    { s: { r: 15, c: 1 }, e: { r: 15, c: 8 } },
+    { s: { r: 28, c: 1 }, e: { r: 28, c: 8 } },
+    { s: { r: 36, c: 1 }, e: { r: 36, c: 8 } },
+    { s: { r: 45, c: 1 }, e: { r: 45, c: 8 } }
   ];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, cel, "Ficha de Cadastro");
@@ -2759,62 +2831,154 @@ function cmExportar(id) {
   XLSX.writeFile(cmMontarWb(f), cmNomeArquivo(f) + ".xlsx");
 }
 
-/* Versao pra imprimir/salvar em PDF, com as bordas e as tarjas das secoes --
-   o xlsx do SheetJS carrega os dados e a grade, mas nao o desenho. */
+/* ------------------------- importacao de ficha pronta -------------------- */
+/* Le um FO_YL_026 ja preenchido pelo MESMO mapa de celulas da exportacao.
+   Nao adivinha nada: celula fora do mapa e ignorada. */
+function cmDataDeCelula(v) {
+  if (v == null || v === "") return "";
+  if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") {                    /* serial do Excel */
+    var ms = Math.round((v - 25569) * 86400000);
+    var d = new Date(ms);
+    return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  }
+  var t = String(v).trim();
+  var br = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (br) {
+    var ano = br[3].length === 2 ? (Number(br[3]) > 50 ? "19" + br[3] : "20" + br[3]) : br[3];
+    return ano + "-" + ("0" + br[2]).slice(-2) + "-" + ("0" + br[1]).slice(-2);
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  return "";
+}
+function cmImportar(input) {
+  var files = input.files ? Array.prototype.slice.call(input.files) : [];
+  input.value = "";
+  if (!files.length) return;
+  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+  state._cmImportMsg = "lendo " + files.length + " ficha(s)...";
+  render();
+  var lidas = 0, erros = [];
+  var proxima = function (i) {
+    if (i >= files.length) {
+      state._cmImportMsg = "✓ " + lidas + " ficha(s) importada(s)."
+        + (erros.length ? " Não consegui ler: " + erros.join("; ") : "");
+      salvar(); render();
+      return;
+    }
+    var file = files[i];
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var wb = XLSX.read(new Uint8Array(fr.result), { type: "array", cellDates: true });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        if (!ws) throw new Error("planilha vazia");
+        var f = {
+          id: uid(), criadoEm: Date.now(), atualizadoEm: Date.now(),
+          prop: {}, mot: {}, refs: [{}, {}, {}, {}, {}], veic: {}, copias: {}, docs: {}, obs: "",
+          importadaDe: file.name
+        };
+        var achou = 0;
+        CM_VALORES.forEach(function (item) {
+          var cel = ws[item.c];
+          if (!cel || cel.v == null || cel.v === "") return;
+          var valor = item.d ? cmDataDeCelula(cel.v) : String(cel.w != null ? cel.w : cel.v).trim();
+          if (valor === "") return;
+          cmGravarValor(f, item, valor);
+          achou++;
+        });
+        if (!achou) { erros.push(file.name + " (não é uma ficha FO_YL_026)"); }
+        else {
+          /* ficha ja existente do mesmo CPF vira atualizacao, nao duplicata */
+          var cpf = String((f.mot || {}).cpf || "").replace(/\D/g, "");
+          var ja = cpf ? cmFichas().find(function (x) { return String((x.mot || {}).cpf || "").replace(/\D/g, "") === cpf; }) : null;
+          if (ja) {
+            ja.prop = f.prop; ja.mot = f.mot; ja.refs = f.refs; ja.veic = f.veic;
+            ja.atualizadoEm = Date.now(); ja.importadaDe = file.name;
+          } else {
+            cmFichas().push(f);
+          }
+          lidas++;
+        }
+      } catch (e) {
+        erros.push(file.name + " (" + ((e && e.message) || "erro na leitura") + ")");
+      }
+      proxima(i + 1);
+    };
+    fr.onerror = function () { erros.push(file.name + " (falha ao abrir)"); proxima(i + 1); };
+    fr.readAsArrayBuffer(file);
+  };
+  proxima(0);
+}
+
+/* Versao pra imprimir/salvar em PDF. Mesmas linhas da ficha, na mesma ordem,
+   sem nada a mais -- so ganha as bordas e as tarjas que o xlsx do SheetJS
+   nao consegue desenhar. */
 function cmImprimir(id) {
   var f = cmFicha(id); if (!f) return;
-  var p = f.prop || {}, m = f.mot || {}, v = f.veic || {}, refs = f.refs || [];
-  var lin = function (pares) {
-    return '<tr>' + pares.map(function (x) {
-      return '<td class="r">' + esc(x[0]) + '</td><td class="v"' + (x[2] ? ' colspan="' + x[2] + '"' : "") + '>' + esc(x[1] || "") + '</td>';
+  var g = function (ref) {
+    var item = CM_VALORES.find(function (x) { return x.c === ref; });
+    if (!item) return "";
+    var v = cmValorDe(f, item);
+    if (v == null || v === "") return "";
+    return item.d ? cmBR(v) : String(v);
+  };
+  var rot = function (ref) { return CM_ROTULOS[ref] || ""; };
+  var par = function (lista) {
+    return '<tr>' + lista.map(function (x) {
+      return '<td class="r">' + esc(rot(x[0])) + '</td><td class="v"' + (x[2] ? ' colspan="' + x[2] + '"' : "") + '>' + esc(g(x[1])) + '</td>';
     }).join("") + '</tr>';
   };
-  var secao = function (t) { return '<tr><td class="s" colspan="8">' + t + '</td></tr>'; };
-  var h = '<html><head><meta charset="utf-8"><title>Ficha de Cadastro — ' + esc(m.nome || "") + '</title>'
-    + '<style>body{font-family:Arial,Helvetica,sans-serif;font-size:11px;margin:18px;}'
-    + 'h1{font-size:15px;text-align:center;margin:0 0 6px;} .cab{font-size:9.5px;text-align:center;color:#333;margin-bottom:10px;}'
-    + 'table{width:100%;border-collapse:collapse;} td{border:1px solid #999;padding:3px 5px;height:16px;}'
-    + '.r{background:#EFEFEF;font-weight:bold;font-size:9.5px;white-space:nowrap;} .v{font-size:10.5px;}'
-    + '.s{background:#000;color:#fff;font-weight:bold;letter-spacing:.5px;}'
-    + '.cx{font-size:10px;} @media print{body{margin:8mm;}}</style></head><body>'
-    + '<h1>FICHA DE CADASTRO</h1>'
-    + '<div class="cab">Yamaha Motor do Brasil Logística Ltda — CDA Centro de Distribuição Anhanguera — Rod. Anhanguera, Km 17,5 — São Paulo/SP — CEP 05112-000</div>'
-    + '<table>'
-    + secao("PROPRIETÁRIO")
-    + lin([["NOME/ R. SOCIAL", p.nome, 3], ["CPF/ CNPJ", p.cpf]])
-    + lin([["I.E", p.ie, 3], ["E-MAIL", p.email]])
-    + lin([["ENDEREÇO", p.endereco, 1], ["Nº", p.numero], ["CEP", p.cep]])
-    + lin([["UF", p.uf], ["CIDADE", p.cidade], ["BAIRRO", p.bairro], ["PIS/PASEP", p.pis]])
-    + lin([["TEL. COMERCIAL", p.telCom], ["CONTATO", p.contatoCom], ["RNTRC", p.rntrc], ["VALID. RNTRC", cmBR(p.validRntrc)]])
-    + lin([["TEL. RESIDENCIAL", p.telRes], ["CONTATO", p.contatoRes], ["NÚMERO CNH", p.cnh], ["CATEGORIA", p.catCnh]])
-    + secao("MOTORISTA")
-    + lin([["NOME", m.nome, 3], ["CPF", m.cpf]])
-    + lin([["RG", m.rg], ["ORGÃO EMISSOR", m.orgao], ["CIDADE/ UF EMISSÃO", m.cidadeEmissao], ["DATA EMISSÃO", cmBR(m.dataEmissao)]])
-    + lin([["ENDEREÇO", m.endereco, 1], ["NÚMERO", m.numero], ["CEP", m.cep]])
-    + lin([["UF", m.uf], ["CIDADE", m.cidade], ["BAIRRO", m.bairro], ["PIS", m.pis]])
-    + lin([["TEL. RESIDENCIAL", m.telRes], ["CONTATO", m.contato], ["TEL. CELULAR", m.celular], ["ESTADO CIVIL", m.estadoCivil]])
-    + lin([["NOME DO PAI", m.pai, 1], ["NOME DA MÃE", m.mae, 3]])
-    + lin([["NÚMERO CNH", m.cnh], ["Nº PRONTUÁRIO", m.prontuario], ["EMISSÃO CNH", cmBR(m.emissaoCnh)], ["CATEGORIA", m.catCnh]])
-    + lin([["1ª HABILITAÇÃO", cmBR(m.primeiraHab)], ["VENCIMENTO", cmBR(m.vencCnh)], ["RENACH", m.renach], ["DATA DE NASC", cmBR(m.nascimento)]])
-    + lin([["MUNICÍPIO CNH", m.municipioCnh], ["UF", m.ufCnh], ["NATURALIDADE", m.naturalidade], ["UF", m.ufNat]])
-    + lin([["MOPP", m.mopp], ["NÚMERO MOPP", m.numeroMopp], ["DIREÇÃO DEFENSIVA", m.direcaoDefensiva], ["", ""]])
-    + secao("REFERÊNCIAS PESSOAIS / COMERCIAIS")
-    + refs.map(function (r) { r = r || {}; return lin([["NOME", r.nome, 3], ["PARENTESCO", r.parentesco], ["TELEFONE", r.telefone]]); }).join("")
-    + secao("DADOS DO VEÍCULO")
-    + lin([["PLACA", v.placa], ["RENAVAM", v.renavam], ["CHASSI", v.chassi, 3]])
-    + lin([["CPF/ CNPJ", v.cpfCnpj], ["ANO FAB", v.anoFab], ["RNTRC", v.rntrc], ["UF", v.uf]])
-    + lin([["CIDADE", v.cidade], ["ANO MOD", v.anoMod], ["TIPO", v.tipo], ["CATEGORIA", v.categoria]])
-    + lin([["MARCA", v.marca], ["MODELO", v.modelo], ["RASTREADOR", v.rastreador], ["Nº SÉRIE", v.serie]])
-    + secao("CÓPIAS OBRIGATÓRIAS")
-    + '<tr><td class="cx" colspan="2"><b>PESSOA JURÍDICA</b><br>'
-    + CM_COPIAS.pj.map(function (x) { return ((f.copias || {})["pj:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td>'
-    + '<td class="cx" colspan="4"><b>MOTORISTA</b><br>'
-    + CM_COPIAS.motorista.map(function (x) { return ((f.copias || {})["mot:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td>'
-    + '<td class="cx" colspan="2"><b>VEÍCULO</b><br>'
-    + CM_COPIAS.veiculo.map(function (x) { return ((f.copias || {})["vei:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td></tr>'
-    + '</table>'
-    + (f.obs ? '<div style="margin-top:8px;font-size:10px;"><b>OBS:</b> ' + esc(f.obs) + '</div>' : "")
-    + '</body></html>';
+  var secao = function (ref) { return '<tr><td class="s" colspan="8">' + esc(rot(ref)) + '</td></tr>'; };
+  var h = '<html><head><meta charset="utf-8"><title>' + esc(rot("D2")) + ' — ' + esc((f.mot || {}).nome || "") + '</title>'
+    + '<style>body{font-family:Arial,Helvetica,sans-serif;font-size:11px;margin:16px;}'
+    + 'h1{font-size:15px;text-align:center;margin:0 0 6px;} .cab{font-size:9px;text-align:center;color:#333;margin-bottom:10px;}'
+    + 'table{width:100%;border-collapse:collapse;} td{border:1px solid #999;padding:3px 5px;height:15px;}'
+    + '.r{background:#EFEFEF;font-weight:bold;font-size:9px;white-space:nowrap;} .v{font-size:10.5px;}'
+    + '.s{background:#000;color:#fff;font-weight:bold;letter-spacing:.5px;} .cx{font-size:9.5px;vertical-align:top;}'
+    + '@media print{body{margin:8mm;}}</style></head><body>'
+    + '<h1>' + esc(rot("D2")) + '</h1><div class="cab">' + esc(rot("B4")) + '</div><table>'
+    + secao("B6")
+    + par([["B8", "C8", 3], ["F8", "G8"]])
+    + par([["B9", "C9", 3], ["F9", "G9"]])
+    + par([["B10", "C10", 1], ["F10", "G10"], ["H10", "I10"]])
+    + par([["B11", "C11"], ["D11", "E11"], ["F11", "G11"], ["H11", "I11"]])
+    + par([["B12", "C12"], ["F12", "G12"], ["H12", "I12"], ["H13", "I13"]])
+    + par([["B13", "C13"], ["F13", "G13"], ["B14", "C14"], ["D14", "E14"]])
+    + par([["F14", "G14"], ["H14", "I14"], ["", ""], ["", ""]])
+    + secao("B16")
+    + par([["B18", "C18", 3], ["F18", "G18"]])
+    + par([["B19", "C19"], ["D19", "E19"], ["F19", "G19"], ["H19", "I19"]])
+    + par([["B20", "C20", 1], ["F20", "G20"], ["H20", "I20"]])
+    + par([["B21", "C21"], ["D21", "E21"], ["F21", "G21"], ["H21", "I21"]])
+    + par([["B22", "C22"], ["D22", "E22"], ["F22", "G22"], ["", ""]])
+    + par([["B23", "C23", 1], ["F23", "G23", 3]])
+    + par([["B24", "C24"], ["D24", "E24"], ["F24", "G24"], ["H24", "I24"]])
+    + par([["B25", "C25"], ["D25", "E25"], ["F25", "G25"], ["H25", "I25"]])
+    + par([["B26", "C26"], ["D26", "E26"], ["F26", "G26"], ["H26", "I26"]])
+    + par([["B27", "C27"], ["D27", "E27"], ["F27", "G27"], ["H27", "I27"]])
+    + secao("B29")
+    + [31, 32, 33, 34, 35].map(function (ln) {
+      return par([["B" + ln, "C" + ln, 3], ["E" + ln, "F" + ln], ["G" + ln, "H" + ln]]);
+    }).join("")
+    + secao("B37")
+    + par([["B39", "C39"], ["E39", "F39"], ["G39", "H39", 3]])
+    + par([["B40", "C40"], ["E40", "F40"], ["G40", "H40", 3]])
+    + par([["B41", "C41"], ["E41", "F41"], ["G41", "H41", 3]])
+    + par([["B42", "C42"], ["E42", "F42"], ["G42", "H42", 3]])
+    + par([["B43", "C43"], ["E43", "F43"], ["G43", "H43", 3]])
+    + secao("B46")
+    + '<tr><td class="cx" colspan="2"><b>' + esc(rot("B48")) + '</b><br>'
+    + ["B49", "B50", "B51", "B52", "B53", "B54", "B55", "B56"].map(function (c) { return esc(rot(c)); }).join("<br>") + '</td>'
+    + '<td class="cx" colspan="2"><b>' + esc(rot("D48")) + '</b><br>'
+    + ["D49", "D50", "D51", "D52", "D53", "D54", "D55"].map(function (c) { return esc(rot(c)); }).join("<br>") + '</td>'
+    + '<td class="cx" colspan="2"><b>' + esc(rot("F48")) + '</b><br>'
+    + ["F49", "F50", "F51", "F52", "F53", "F54"].map(function (c) { return esc(rot(c)); }).join("<br>")
+    + '<br><br>' + esc(rot("F56")) + '<br>'
+    + ["F57", "F58", "F59", "F60", "F61", "F62", "F63"].map(function (c) { return esc(rot(c)); }).join("<br>") + '</td>'
+    + '<td class="cx" colspan="2"><b>' + esc(rot("H48")) + '</b><br>'
+    + ["H49", "H50", "H51"].map(function (c) { return esc(rot(c)); }).join("<br>") + '</td></tr>'
+    + '</table></body></html>';
   var w = window.open("", "_blank");
   if (!w) { alert("O navegador bloqueou a janela. Libere pop-ups pra imprimir a ficha."); return; }
   w.document.write(h); w.document.close();
@@ -3042,9 +3206,16 @@ function cmBlocoHTML() {
     + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\udeaa Cadastro de Motorista</div>'
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
     + 'Ficha no modelo <b>FO_YL_026</b>, o mesmo que já foi aprovado pelos clientes — campos, ordem e posições da planilha são os da ficha original. '
-    + 'Preencha uma vez aqui e exporte quantas vezes precisar: o bloco do proprietário se repete sozinho e os dados do veículo vêm da Frota.'
+    + 'Preencha uma vez aqui e exporte quantas vezes precisar: o bloco do proprietário se repete sozinho e os dados do veículo vêm da Frota. '
+    + '<b>A ficha exportada sai idêntica ao modelo</b> — marcação de cópias, anexos e observações são controle interno e não entram no arquivo.'
     + '</div>'
-    + '<button class="btn-outline" style="font-size:12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmNova()">\uff0b Nova ficha</button>';
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="btn-outline" style="font-size:12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmNova()">\uff0b Nova ficha</button>'
+    + '<label class="btn-outline" style="font-size:12px;cursor:pointer;">\ud83d\udcc2 Importar fichas já preenchidas'
+    + '<input type="file" accept=".xlsx,.xls" multiple style="display:none;" onchange="cmImportar(this)"></label>'
+    + '<span style="font-size:11px;color:#777;">lê o FO_YL_026 preenchido; mesmo CPF atualiza a ficha, não duplica</span>'
+    + '</div>'
+    + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "");
 
   if (!fichas.length) {
     return h + '<div style="margin-top:12px;font-size:12px;color:#777;">Nenhuma ficha cadastrada ainda.</div></div>';
@@ -3112,7 +3283,7 @@ function cmBlocoHTML() {
         + '</div>'
         + cmGradeHTML(f.id, "veic", f.veic, CM_CAMPOS_VEIC)
         + cmSecaoTitulo("CÓPIAS OBRIGATÓRIAS")
-        + '<div style="font-size:10.5px;color:#777;margin-top:4px;">Marque o que já foi anexado — a marcação sai na ficha exportada.</div>'
+        + '<div style="font-size:10.5px;color:#777;margin-top:4px;">Controle interno do que já foi anexado. A lista sai na ficha exportada como no modelo, sem as marcações.</div>'
         + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:6px;">';
       [["PESSOA JURÍDICA", CM_COPIAS.pj, "pj:"], ["MOTORISTA", CM_COPIAS.motorista, "mot:"], ["VEÍCULO", CM_COPIAS.veiculo, "vei:"]]
         .forEach(function (col) {
@@ -3129,7 +3300,7 @@ function cmBlocoHTML() {
       h += '</div>'
         + cmDocsHTML(f)
         + '<div style="margin-top:10px;display:flex;flex-direction:column;gap:2px;">'
-        + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">Observações</label>'
+        + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">Observações (uso interno — não sai na ficha)</label>'
         + '<textarea onchange="cmSet(\'' + f.id + '\',\'raiz\',\'obs\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:6px;font-size:12px;min-height:50px;">' + esc(f.obs || "") + '</textarea>'
         + '</div>'
         + '</div>';
@@ -20527,6 +20698,8 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `A ficha exporta em xlsx na mesma grade da original e também imprime em PDF com as bordas e as tarjas das seções. `
       + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.\n`
       + `ANEXOS (v398): cada ficha guarda quatro documentos — CNH, comprovante de endereço, nada consta (antecedentes) e exame toxicológico —, presos à PESSOA e não à placa. Cada anexo tem data de validade; ao anexar, o app já sugere 90 dias para o nada consta e 2 anos e meio para o toxicológico (prazo da CLT), ambos editáveis, e avisa quando faltam 30 dias ou menos. Anexar a CNH ou o comprovante de endereço marca sozinha a cópia obrigatória correspondente. `
+      + `REGRA DURA (v399): o arquivo exportado tem que ser IDÊNTICO ao modelo aprovado — cliente devolve ficha com qualquer coisa a mais. Existe um mapa único (CM_ROTULOS com o texto fixo e CM_VALORES com a célula de cada campo) que a exportação escreve e a importação lê, então as duas não podem divergir. Marcação de cópias, anexos e observações são controle interno do app e NÃO vão para o arquivo. `
+      + `IMPORTAÇÃO (v399): dá para importar fichas FO_YL_026 já preenchidas (xlsx); o app lê pelas mesmas células e, se o CPF já existir, atualiza a ficha em vez de duplicar. `
       + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
     if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
     const linhas = fichas.map((f) => {
