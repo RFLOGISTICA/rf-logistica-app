@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v396)</title>
+<title>RF Logística — Painel da Frota (v397)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2470,6 +2470,468 @@ function linhaMt(nome, v) {
 }
 
 /* ==========================================================================
+   v397 — CADASTRO DE MOTORISTA (ficha FO_YL_026)
+   --------------------------------------------------------------------------
+   Pedido de Renato (08/09): "vamos criar uma caixa chamado de cadastro de
+   motorista, esta ai o exemplo que usamos e que temos que respeitar, pois ja
+   esta aprovado pelos clientes".
+
+   O modelo e a FICHA DE CADASTRO FO_YL_026 da Yamaha Motor do Brasil
+   Logistica. Como ela ja passou pelo cliente, NAO se inventa layout: os
+   campos, a ordem e ate a posicao das celulas na exportacao sao os mesmos da
+   ficha aprovada (grade B2:N64, cabecalho na D2, secoes PROPRIETARIO na B6,
+   MOTORISTA na B16, REFERENCIAS na B29, DADOS DO VEICULO na B37 e COPIAS
+   OBRIGATORIAS na B46).
+
+   O que o app acrescenta, sem mexer no formato:
+     - guarda a ficha (antes era um xlsx solto por motorista, refeito a mao);
+     - repete sozinho o bloco do PROPRIETARIO, que e igual em toda ficha;
+     - puxa os dados do veiculo da Frota (que ja vem do CRLV lido na v193);
+     - avisa o que falta preencher e se a CNH esta vencida ou perto disso;
+     - exporta a ficha preenchida em xlsx na mesma grade, e imprime em PDF.
+   ========================================================================== */
+
+/* Bloco do proprietario: e sempre o mesmo, entao fica guardado uma vez so em
+   config e vem preenchido em toda ficha nova. Os valores iniciais sao os da
+   ficha aprovada que Renato mandou. */
+function cmProprietario() {
+  if (!state.config) state.config = {};
+  if (!state.config.fichaProprietario) {
+    state.config.fichaProprietario = {
+      nome: "Renato da Cruz Couto", cpf: "", ie: "",
+      email: "comercial@rflogistica.com.br",
+      endereco: "Av Getulio Vargas - Sala 807 EMP. Icone Tower", numero: "792",
+      cep: "44.001-496", uf: "BA", cidade: "Feira de Santana", bairro: "CENTRO",
+      pis: "", telCom: "", contatoCom: "", rntrc: "58983277", validRntrc: "",
+      telRes: "", contatoRes: "(75) 99971-7578",
+      cnh: "", prontuario: "", vencCnh: "", catCnh: ""
+    };
+  }
+  return state.config.fichaProprietario;
+}
+function cmSetProp(campo, valor) {
+  var p = cmProprietario();
+  p[campo] = valor;
+  salvar(); agendarSubida && agendarSubida();
+}
+
+/* Mapa dos campos, na ordem da ficha. Cada item: [chave, rotulo, tipo].
+   A tela e a exportacao leem DAQUI -- assim as duas nunca divergem. */
+var CM_CAMPOS_PROP = [
+  ["nome", "NOME/ R. SOCIAL", "text"], ["cpf", "CPF/ CNPJ", "text"],
+  ["ie", "I.E", "text"], ["email", "E-MAIL", "text"],
+  ["endereco", "ENDEREÇO", "text"], ["numero", "Nº", "text"], ["cep", "CEP", "text"],
+  ["uf", "UF", "text"], ["cidade", "CIDADE", "text"], ["bairro", "BAIRRO", "text"],
+  ["pis", "PIS/PASEP", "text"],
+  ["telCom", "TEL. COMERCIAL", "text"], ["contatoCom", "CONTATO", "text"],
+  ["rntrc", "RNTRC", "text"], ["validRntrc", "VALID. RNTRC", "date"],
+  ["telRes", "TEL. RESIDENCIAL", "text"], ["contatoRes", "CONTATO", "text"],
+  ["cnh", "NÚMERO CNH", "text"], ["prontuario", "Nº PRONTUÁRIO", "text"],
+  ["vencCnh", "VENCIMENTO", "date"], ["catCnh", "CATEGORIA", "text"]
+];
+var CM_CAMPOS_MOT = [
+  ["nome", "NOME", "text"], ["cpf", "CPF", "text"],
+  ["rg", "RG", "text"], ["orgao", "ORGÃO EMISSOR", "text"],
+  ["cidadeEmissao", "CIDADE/ UF EMISSÃO", "text"], ["dataEmissao", "DATA EMISSÃO", "date"],
+  ["endereco", "ENDEREÇO", "text"], ["numero", "NÚMERO", "text"], ["cep", "CEP", "text"],
+  ["uf", "UF", "text"], ["cidade", "CIDADE", "text"], ["bairro", "BAIRRO", "text"],
+  ["pis", "PIS", "text"],
+  ["telRes", "TEL. RESIDENCIAL", "text"], ["contato", "CONTATO", "text"], ["celular", "TEL. CELULAR", "text"],
+  ["pai", "NOME DO PAI", "text"], ["mae", "NOME DA MÃE", "text"],
+  ["cnh", "NÚMERO CNH", "text"], ["prontuario", "Nº PRONTUÁRIO", "text"],
+  ["emissaoCnh", "EMISSÃO CNH", "date"], ["catCnh", "CATEGORIA", "text"],
+  ["primeiraHab", "1ª HABILITAÇÃO", "date"], ["vencCnh", "VENCIMENTO", "date"],
+  ["estadoCivil", "ESTADO CIVIL", "text"], ["nascimento", "DATA DE NASC", "date"],
+  ["municipioCnh", "MUNICÍPIO CNH", "text"], ["ufCnh", "UF", "text"],
+  ["naturalidade", "NATURALIDADE", "text"], ["ufNat", "UF", "text"],
+  ["mopp", "MOPP", "text"], ["numeroMopp", "NÚMERO MOPP", "text"],
+  ["direcaoDefensiva", "DIREÇÃO DEFENSIVA", "text"], ["renach", "RENACH", "text"]
+];
+var CM_CAMPOS_VEIC = [
+  ["placa", "PLACA", "text"], ["renavam", "RENAVAM", "text"], ["chassi", "CHASSI", "text"],
+  ["cpfCnpj", "CPF/ CNPJ", "text"], ["anoFab", "ANO FAB", "text"], ["rntrc", "RNTRC", "text"],
+  ["cidade", "CIDADE", "text"], ["anoMod", "ANO MOD", "text"], ["uf", "UF", "text"],
+  ["tipo", "TIPO", "text"], ["categoria", "CATEGORIA", "text"], ["modelo", "MODELO", "text"],
+  ["marca", "MARCA", "text"], ["rastreador", "RASTREADOR", "text"], ["serie", "Nº SÉRIE", "text"]
+];
+/* As tres colunas de copias obrigatorias que valem pra RF: a empresa e PJ,
+   entao a coluna PESSOA FISICA da ficha fica fora. */
+var CM_COPIAS = {
+  pj: ["CONTRATO SOCIAL", "CNPJ", "I.E", "RG", "CNH", "COMP. ENDEREÇO", "REGISTRO ANTT", "DADOS BANCÁRIOS"],
+  motorista: ["RG", "CNH", "COMP. ENDEREÇO", "PIS/ PASEP", "FICHA REGISTRO", "CERTIFICADO DIREÇÃO DEFENSIVA",
+    "EXAMES: AUDIOMETRIA", "EXAMES: ELETROENCEFALOGRAMA", "EXAMES: ELETROCARDIOGRAMA",
+    "EXAMES: EXAME DE VISÃO", "EXAMES: CLÍNICO", "EXAMES: GLICEMIA", "EXAMES: AVALIAÇÃO PSICOLÓGICA"],
+  veiculo: ["CRLV", "CERTIFICADO DE CRONOTACÓGRAFO", "LAUDO DE OPACIDADE (FUMAÇA PRETA)"]
+};
+/* Sem estes o cliente devolve a ficha. E a lista que gera o aviso de pendencia. */
+var CM_OBRIGATORIOS = ["nome", "cpf", "rg", "endereco", "cidade", "uf", "pis", "pai", "mae",
+  "cnh", "catCnh", "vencCnh", "celular"];
+
+function cmFichas() {
+  if (!Array.isArray(state.motoristasCad)) state.motoristasCad = [];
+  return state.motoristasCad;
+}
+function cmFicha(id) {
+  return cmFichas().find(function (x) { return String(x.id) === String(id); }) || null;
+}
+function cmNova() {
+  var p = cmProprietario();
+  var f = {
+    id: uid(), criadoEm: Date.now(), atualizadoEm: Date.now(),
+    prop: JSON.parse(JSON.stringify(p)),
+    mot: {}, refs: [{}, {}, {}, {}, {}], veic: {}, copias: {}, obs: ""
+  };
+  cmFichas().push(f);
+  state._cmAberta = f.id;
+  salvar(); agendarSubida && agendarSubida(); render();
+}
+function cmSet(id, secao, campo, valor) {
+  var f = cmFicha(id); if (!f) return;
+  if (secao === "raiz") { f[campo] = valor; }
+  else {
+    if (!f[secao]) f[secao] = {};
+    f[secao][campo] = valor;
+  }
+  f.atualizadoEm = Date.now();
+  salvar(); agendarSubida && agendarSubida();
+}
+function cmSetRef(id, i, campo, valor) {
+  var f = cmFicha(id); if (!f) return;
+  if (!Array.isArray(f.refs)) f.refs = [{}, {}, {}, {}, {}];
+  if (!f.refs[i]) f.refs[i] = {};
+  f.refs[i][campo] = valor;
+  f.atualizadoEm = Date.now();
+  salvar(); agendarSubida && agendarSubida();
+}
+function cmToggleCopia(id, chave) {
+  var f = cmFicha(id); if (!f) return;
+  if (!f.copias) f.copias = {};
+  f.copias[chave] = !f.copias[chave];
+  f.atualizadoEm = Date.now();
+  salvar(); agendarSubida && agendarSubida(); render();
+}
+function cmAbrir(id) { state._cmAberta = (state._cmAberta === id) ? "" : id; render(); }
+function cmExcluir(id) {
+  var f = cmFicha(id); if (!f) return;
+  if (!confirm("Excluir a ficha de " + ((f.mot && f.mot.nome) || "sem nome") + "? Isso não tem volta.")) return;
+  state.motoristasCad = cmFichas().filter(function (x) { return String(x.id) !== String(id); });
+  salvar(); agendarSubida && agendarSubida(); render();
+}
+/* Puxa o veiculo da Frota: renavam, chassi, ano e modelo ja vieram do CRLV
+   lido pelo pdf.js (v193), entao nao ha por que digitar de novo. */
+function cmPuxarVeiculo(id, placa) {
+  var f = cmFicha(id); if (!f) return;
+  var v = (state.veiculos || []).find(function (x) { return String(x.placa) === String(placa); });
+  if (!v) { alert("Escolha uma placa da frota."); return; }
+  f.veic = f.veic || {};
+  f.veic.placa = v.placa || "";
+  f.veic.renavam = v.renavam || "";
+  f.veic.chassi = v.chassi || "";
+  f.veic.anoFab = v.anoFabricacao || v.ano || "";
+  f.veic.anoMod = v.anoModelo || v.ano || "";
+  f.veic.modelo = v.modelo || "";
+  f.veic.marca = v.marca || "";
+  f.veic.tipo = v.tipo || "";
+  f.veic.uf = v.ufEmplacamento || "BA";
+  f.veic.cidade = f.veic.cidade || "Feira de Santana";
+  f.veic.cpfCnpj = f.veic.cpfCnpj || (f.prop && f.prop.cpf) || "";
+  f.veic.rntrc = f.veic.rntrc || (f.prop && f.prop.rntrc) || "";
+  f.atualizadoEm = Date.now();
+  salvar(); agendarSubida && agendarSubida(); render();
+}
+function cmFaltando(f) {
+  var m = f.mot || {}, falta = [];
+  CM_OBRIGATORIOS.forEach(function (c) {
+    if (!String(m[c] == null ? "" : m[c]).trim()) {
+      var def = CM_CAMPOS_MOT.find(function (x) { return x[0] === c; });
+      falta.push(def ? def[1] : c);
+    }
+  });
+  var refs = (f.refs || []).filter(function (r) { return r && String(r.nome || "").trim(); });
+  if (refs.length < 3) falta.push((3 - refs.length) + " referência(s)");
+  return falta;
+}
+function cmDiasCnh(f) {
+  var v = (f.mot || {}).vencCnh;
+  if (!v) return null;
+  try { return Math.round((new Date(v + "T00:00:00") - new Date(new Date().toDateString())) / 86400000); }
+  catch (e) { return null; }
+}
+function cmBR(d) {
+  if (!d) return "";
+  var p = String(d).slice(0, 10).split("-");
+  return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(d);
+}
+
+/* ------------------------- exportacao na grade da ficha ------------------ */
+/* Escreve exatamente nas celulas da ficha aprovada. Mudar posicao aqui e
+   mudar o formato que o cliente ja aceitou -- so mexer se ele mandar ficha
+   nova. */
+function cmExportar(id) {
+  var f = cmFicha(id);
+  if (!f) return;
+  if (typeof XLSX === "undefined") { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; }
+  var p = f.prop || {}, m = f.mot || {}, v = f.veic || {}, refs = f.refs || [];
+  var cel = {};
+  function pos(ref, valor) { if (valor !== undefined && valor !== null && valor !== "") cel[ref] = { t: "s", v: String(valor) }; }
+  function rot(ref, txt) { cel[ref] = { t: "s", v: txt }; }
+
+  rot("D2", "FICHA DE CADASTRO");
+  rot("B4", "Yamaha Motor do Brasil Logística Ltda - CDA Centro de Distribuição Anhanguera -  Rod. Anhanguera, Km 17,5 - São Paulo - SP / CEP: 05112-000");
+
+  rot("B6", "PROPRIETÁRIO");
+  rot("B8", "NOME/ R. SOCIAL:"); pos("C8", p.nome); rot("F8", "CPF/ CNPJ:"); pos("G8", p.cpf);
+  rot("B9", "I.E:"); pos("C9", p.ie); rot("F9", "E-MAIL:"); pos("G9", p.email);
+  rot("B10", "ENDEREÇO:"); pos("C10", p.endereco); rot("F10", "Nº:"); pos("G10", p.numero); rot("H10", "CEP:"); pos("I10", p.cep);
+  rot("B11", "UF:"); pos("C11", p.uf); rot("D11", "CIDADE:"); pos("E11", p.cidade); rot("F11", "BAIRRO:"); pos("G11", p.bairro); rot("H11", "PIS/PASEP:"); pos("I11", p.pis);
+  rot("B12", "TEL. COMERCIAL:"); pos("C12", p.telCom); rot("F12", "CONTATO:"); pos("G12", p.contatoCom); rot("H12", "RNTRC:"); pos("I12", p.rntrc);
+  rot("B13", "TEL. RESIDENCIAL:"); pos("C13", p.telRes); rot("F13", "CONTATO:"); pos("G13", p.contatoRes); rot("H13", "VALID. RNTRC:"); pos("I13", cmBR(p.validRntrc));
+  rot("B14", "NÚMERO CNH:"); pos("C14", p.cnh); rot("D14", "Nº PRONTUÁRIO:"); pos("E14", p.prontuario);
+  rot("F14", "VENCIMENTO:"); pos("G14", cmBR(p.vencCnh)); rot("H14", "CATEGORIA:"); pos("I14", p.catCnh);
+
+  rot("B16", "MOTORISTA");
+  rot("B18", "NOME:"); pos("C18", m.nome); rot("F18", "CPF:"); pos("G18", m.cpf);
+  rot("B19", "RG:"); pos("C19", m.rg); rot("D19", "ORGÃO EMISSOR:"); pos("E19", m.orgao);
+  rot("F19", "CIDADE/ UF EMISSÃO:"); pos("G19", m.cidadeEmissao); rot("H19", "DATA EMISSÃO:"); pos("I19", cmBR(m.dataEmissao));
+  rot("B20", "ENDEREÇO:"); pos("C20", m.endereco); rot("F20", "NÚMERO:"); pos("G20", m.numero); rot("H20", "CEP:"); pos("I20", m.cep);
+  rot("B21", "UF:"); pos("C21", m.uf); rot("D21", "CIDADE:"); pos("E21", m.cidade); rot("F21", "BAIRRO:"); pos("G21", m.bairro); rot("H21", "PIS:"); pos("I21", m.pis);
+  rot("B22", "TEL. RESIDENCIAL:"); pos("C22", m.telRes); rot("D22", "CONTATO:"); pos("E22", m.contato); rot("F22", "TEL. CELULAR:"); pos("G22", m.celular);
+  rot("B23", "NOME DO PAI:"); pos("C23", m.pai); rot("F23", "NOME DA MÃE:"); pos("G23", m.mae);
+  rot("B24", "NÚMERO CNH:"); pos("C24", m.cnh); rot("D24", "Nº PRONTUÁRIO:"); pos("E24", m.prontuario);
+  rot("F24", "EMISSÃO CNH:"); pos("G24", cmBR(m.emissaoCnh)); rot("H24", "CATEGORIA:"); pos("I24", m.catCnh);
+  rot("B25", "1ª HABILITAÇÃO:"); pos("C25", cmBR(m.primeiraHab)); rot("D25", "VENCIMENTO:"); pos("E25", cmBR(m.vencCnh));
+  rot("F25", "ESTADO CIVIL:"); pos("G25", m.estadoCivil); rot("H25", "DATA DE NASC:"); pos("I25", cmBR(m.nascimento));
+  rot("B26", "MUNICÍPIO CNH:"); pos("C26", m.municipioCnh); rot("D26", "UF:"); pos("E26", m.ufCnh);
+  rot("F26", "NATURALIDADE:"); pos("G26", m.naturalidade); rot("H26", "UF:"); pos("I26", m.ufNat);
+  rot("B27", "MOPP:"); pos("C27", m.mopp); rot("D27", "NÚMERO MOPP:"); pos("E27", m.numeroMopp);
+  rot("F27", "DIREÇÃO DEFENSIVA:"); pos("G27", m.direcaoDefensiva); rot("H27", "RENACH:"); pos("I27", m.renach);
+
+  rot("B29", "REFERÊNCIAS PESSOAIS / COMERCIAIS");
+  for (var i = 0; i < 5; i++) {
+    var r = refs[i] || {}, ln = 31 + i;
+    rot("B" + ln, "NOME:"); pos("C" + ln, r.nome);
+    rot("E" + ln, "PARENTESCO:"); pos("F" + ln, r.parentesco);
+    rot("G" + ln, "TELEFONE:"); pos("H" + ln, r.telefone);
+  }
+
+  rot("B37", "DADOS DO VEÍCULO");
+  rot("B39", "PLACA:"); pos("C39", v.placa); rot("E39", "RENAVAM:"); pos("F39", v.renavam); rot("G39", "CHASSI:"); pos("H39", v.chassi);
+  rot("B40", "CPF/ CNPJ:"); pos("C40", v.cpfCnpj); rot("E40", "ANO FAB:"); pos("F40", v.anoFab); rot("G40", "RNTRC:"); pos("H40", v.rntrc);
+  rot("B41", "CIDADE:"); pos("C41", v.cidade); rot("E41", "ANO MOD:"); pos("F41", v.anoMod); rot("G41", "UF:"); pos("H41", v.uf);
+  rot("B42", "TIPO:"); pos("C42", v.tipo); rot("E42", "CATEGORIA:"); pos("F42", v.categoria); rot("G42", "MODELO:"); pos("H42", v.modelo);
+  rot("B43", "MARCA:"); pos("C43", v.marca); rot("E43", "RASTREADOR:"); pos("F43", v.rastreador); rot("G43", "Nº SÉRIE:"); pos("H43", v.serie);
+
+  rot("B46", "CÓPIAS OBRIGATÓRIAS");
+  rot("B48", "PESSOA JURÍDICA"); rot("D48", "PESSOA FÍSICA"); rot("F48", "MOTORISTA"); rot("H48", "VEÍCULO");
+  var marcar = function (col, linha0, lista, prefixo) {
+    lista.forEach(function (nome, k) {
+      var ln = linha0 + k;
+      rot(col + ln, ((f.copias || {})[prefixo + nome] ? "[X] " : "[ ] ") + nome);
+    });
+  };
+  marcar("B", 49, CM_COPIAS.pj, "pj:");
+  marcar("F", 49, CM_COPIAS.motorista, "mot:");
+  marcar("H", 49, CM_COPIAS.veiculo, "vei:");
+  if (f.obs) { rot("B65", "OBS:"); pos("C65", f.obs); }
+
+  cel["!ref"] = "A1:N66";
+  cel["!cols"] = [{ wch: 3.9 }, { wch: 13.6 }, { wch: 15.3 }, { wch: 13.2 }, { wch: 11.8 },
+    { wch: 16.5 }, { wch: 16.9 }, { wch: 12 }, { wch: 14 }, { wch: 1.1 }, { wch: 1 },
+    { wch: 9 }, { wch: 9 }, { wch: 9 }];
+  cel["!merges"] = [
+    { s: { r: 1, c: 3 }, e: { r: 1, c: 6 } },     // D2:G2 titulo
+    { s: { r: 3, c: 1 }, e: { r: 3, c: 8 } },     // B4:I4 cabecalho do cliente
+    { s: { r: 5, c: 1 }, e: { r: 5, c: 8 } },     // B6:I6 PROPRIETARIO
+    { s: { r: 15, c: 1 }, e: { r: 15, c: 8 } },   // B16:I16 MOTORISTA
+    { s: { r: 28, c: 1 }, e: { r: 28, c: 8 } },   // B29:I29 REFERENCIAS
+    { s: { r: 36, c: 1 }, e: { r: 36, c: 8 } },   // B37:I37 DADOS DO VEICULO
+    { s: { r: 45, c: 1 }, e: { r: 45, c: 8 } }    // B46:I46 COPIAS OBRIGATORIAS
+  ];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, cel, "Ficha de Cadastro");
+  var nome = String((m.nome || "motorista")).replace(/[^A-Za-zÀ-ú0-9]+/g, "_");
+  XLSX.writeFile(wb, "FO_YL_026_-_Ficha_de_Cadastro_-_" + nome + ".xlsx");
+}
+
+/* Versao pra imprimir/salvar em PDF, com as bordas e as tarjas das secoes --
+   o xlsx do SheetJS carrega os dados e a grade, mas nao o desenho. */
+function cmImprimir(id) {
+  var f = cmFicha(id); if (!f) return;
+  var p = f.prop || {}, m = f.mot || {}, v = f.veic || {}, refs = f.refs || [];
+  var lin = function (pares) {
+    return '<tr>' + pares.map(function (x) {
+      return '<td class="r">' + esc(x[0]) + '</td><td class="v"' + (x[2] ? ' colspan="' + x[2] + '"' : "") + '>' + esc(x[1] || "") + '</td>';
+    }).join("") + '</tr>';
+  };
+  var secao = function (t) { return '<tr><td class="s" colspan="8">' + t + '</td></tr>'; };
+  var h = '<html><head><meta charset="utf-8"><title>Ficha de Cadastro — ' + esc(m.nome || "") + '</title>'
+    + '<style>body{font-family:Arial,Helvetica,sans-serif;font-size:11px;margin:18px;}'
+    + 'h1{font-size:15px;text-align:center;margin:0 0 6px;} .cab{font-size:9.5px;text-align:center;color:#333;margin-bottom:10px;}'
+    + 'table{width:100%;border-collapse:collapse;} td{border:1px solid #999;padding:3px 5px;height:16px;}'
+    + '.r{background:#EFEFEF;font-weight:bold;font-size:9.5px;white-space:nowrap;} .v{font-size:10.5px;}'
+    + '.s{background:#000;color:#fff;font-weight:bold;letter-spacing:.5px;}'
+    + '.cx{font-size:10px;} @media print{body{margin:8mm;}}</style></head><body>'
+    + '<h1>FICHA DE CADASTRO</h1>'
+    + '<div class="cab">Yamaha Motor do Brasil Logística Ltda — CDA Centro de Distribuição Anhanguera — Rod. Anhanguera, Km 17,5 — São Paulo/SP — CEP 05112-000</div>'
+    + '<table>'
+    + secao("PROPRIETÁRIO")
+    + lin([["NOME/ R. SOCIAL", p.nome, 3], ["CPF/ CNPJ", p.cpf]])
+    + lin([["I.E", p.ie, 3], ["E-MAIL", p.email]])
+    + lin([["ENDEREÇO", p.endereco, 1], ["Nº", p.numero], ["CEP", p.cep]])
+    + lin([["UF", p.uf], ["CIDADE", p.cidade], ["BAIRRO", p.bairro], ["PIS/PASEP", p.pis]])
+    + lin([["TEL. COMERCIAL", p.telCom], ["CONTATO", p.contatoCom], ["RNTRC", p.rntrc], ["VALID. RNTRC", cmBR(p.validRntrc)]])
+    + lin([["TEL. RESIDENCIAL", p.telRes], ["CONTATO", p.contatoRes], ["NÚMERO CNH", p.cnh], ["CATEGORIA", p.catCnh]])
+    + secao("MOTORISTA")
+    + lin([["NOME", m.nome, 3], ["CPF", m.cpf]])
+    + lin([["RG", m.rg], ["ORGÃO EMISSOR", m.orgao], ["CIDADE/ UF EMISSÃO", m.cidadeEmissao], ["DATA EMISSÃO", cmBR(m.dataEmissao)]])
+    + lin([["ENDEREÇO", m.endereco, 1], ["NÚMERO", m.numero], ["CEP", m.cep]])
+    + lin([["UF", m.uf], ["CIDADE", m.cidade], ["BAIRRO", m.bairro], ["PIS", m.pis]])
+    + lin([["TEL. RESIDENCIAL", m.telRes], ["CONTATO", m.contato], ["TEL. CELULAR", m.celular], ["ESTADO CIVIL", m.estadoCivil]])
+    + lin([["NOME DO PAI", m.pai, 1], ["NOME DA MÃE", m.mae, 3]])
+    + lin([["NÚMERO CNH", m.cnh], ["Nº PRONTUÁRIO", m.prontuario], ["EMISSÃO CNH", cmBR(m.emissaoCnh)], ["CATEGORIA", m.catCnh]])
+    + lin([["1ª HABILITAÇÃO", cmBR(m.primeiraHab)], ["VENCIMENTO", cmBR(m.vencCnh)], ["RENACH", m.renach], ["DATA DE NASC", cmBR(m.nascimento)]])
+    + lin([["MUNICÍPIO CNH", m.municipioCnh], ["UF", m.ufCnh], ["NATURALIDADE", m.naturalidade], ["UF", m.ufNat]])
+    + lin([["MOPP", m.mopp], ["NÚMERO MOPP", m.numeroMopp], ["DIREÇÃO DEFENSIVA", m.direcaoDefensiva], ["", ""]])
+    + secao("REFERÊNCIAS PESSOAIS / COMERCIAIS")
+    + refs.map(function (r) { r = r || {}; return lin([["NOME", r.nome, 3], ["PARENTESCO", r.parentesco], ["TELEFONE", r.telefone]]); }).join("")
+    + secao("DADOS DO VEÍCULO")
+    + lin([["PLACA", v.placa], ["RENAVAM", v.renavam], ["CHASSI", v.chassi, 3]])
+    + lin([["CPF/ CNPJ", v.cpfCnpj], ["ANO FAB", v.anoFab], ["RNTRC", v.rntrc], ["UF", v.uf]])
+    + lin([["CIDADE", v.cidade], ["ANO MOD", v.anoMod], ["TIPO", v.tipo], ["CATEGORIA", v.categoria]])
+    + lin([["MARCA", v.marca], ["MODELO", v.modelo], ["RASTREADOR", v.rastreador], ["Nº SÉRIE", v.serie]])
+    + secao("CÓPIAS OBRIGATÓRIAS")
+    + '<tr><td class="cx" colspan="2"><b>PESSOA JURÍDICA</b><br>'
+    + CM_COPIAS.pj.map(function (x) { return ((f.copias || {})["pj:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td>'
+    + '<td class="cx" colspan="4"><b>MOTORISTA</b><br>'
+    + CM_COPIAS.motorista.map(function (x) { return ((f.copias || {})["mot:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td>'
+    + '<td class="cx" colspan="2"><b>VEÍCULO</b><br>'
+    + CM_COPIAS.veiculo.map(function (x) { return ((f.copias || {})["vei:" + x] ? "☑ " : "☐ ") + esc(x); }).join("<br>") + '</td></tr>'
+    + '</table>'
+    + (f.obs ? '<div style="margin-top:8px;font-size:10px;"><b>OBS:</b> ' + esc(f.obs) + '</div>' : "")
+    + '</body></html>';
+  var w = window.open("", "_blank");
+  if (!w) { alert("O navegador bloqueou a janela. Libere pop-ups pra imprimir a ficha."); return; }
+  w.document.write(h); w.document.close();
+  setTimeout(function () { try { w.print(); } catch (e) { } }, 400);
+}
+
+/* ------------------------------- a tela --------------------------------- */
+function cmCampoHTML(id, secao, obj, def) {
+  var val = (obj || {})[def[0]];
+  return '<div style="display:flex;flex-direction:column;gap:2px;">'
+    + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;letter-spacing:.3px;">' + esc(def[1]) + '</label>'
+    + '<input type="' + (def[2] === "date" ? "date" : "text") + '" value="' + esc(val == null ? "" : val) + '" '
+    + 'onchange="cmSet(\'' + id + '\',\'' + secao + '\',\'' + def[0] + '\',this.value)" '
+    + 'style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;width:100%;">'
+    + '</div>';
+}
+function cmGradeHTML(id, secao, obj, defs) {
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px;">'
+    + defs.map(function (d) { return cmCampoHTML(id, secao, obj, d); }).join("") + '</div>';
+}
+function cmSecaoTitulo(t) {
+  return '<div style="margin-top:14px;background:#000;border:1px solid #333;border-radius:5px;padding:5px 9px;'
+    + 'font-size:11.5px;font-weight:800;color:' + GOLD + ';letter-spacing:.6px;">' + t + '</div>';
+}
+function cmBlocoHTML() {
+  var fichas = cmFichas().slice().sort(function (a, b) { return (b.atualizadoEm || 0) - (a.atualizadoEm || 0); });
+  var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
+    + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\udeaa Cadastro de Motorista</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
+    + 'Ficha no modelo <b>FO_YL_026</b>, o mesmo que já foi aprovado pelos clientes — campos, ordem e posições da planilha são os da ficha original. '
+    + 'Preencha uma vez aqui e exporte quantas vezes precisar: o bloco do proprietário se repete sozinho e os dados do veículo vêm da Frota.'
+    + '</div>'
+    + '<button class="btn-outline" style="font-size:12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmNova()">\uff0b Nova ficha</button>';
+
+  if (!fichas.length) {
+    return h + '<div style="margin-top:12px;font-size:12px;color:#777;">Nenhuma ficha cadastrada ainda.</div></div>';
+  }
+
+  fichas.forEach(function (f) {
+    var m = f.mot || {}, aberta = state._cmAberta === f.id;
+    var falta = cmFaltando(f);
+    var dias = cmDiasCnh(f);
+    var corCnh = dias === null ? "#777" : (dias < 0 ? "#C0392B" : dias <= 30 ? "#E67E22" : "#2E7D32");
+    h += '<div style="margin-top:10px;border:1px solid #222;border-radius:8px;background:#0E0E0E;">'
+      + '<div style="padding:10px 12px;cursor:pointer;" onclick="cmAbrir(\'' + f.id + '\')">'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+      + '<span style="font-size:15px;font-weight:800;color:#fff;">' + esc(m.nome || "(sem nome)") + '</span>'
+      + (m.cpf ? '<span style="font-size:11.5px;color:#aaa;">CPF ' + esc(m.cpf) + '</span>' : "")
+      + (m.catCnh ? '<span style="font-size:11.5px;color:#aaa;">CNH ' + esc(m.catCnh) + '</span>' : "")
+      + ((f.veic || {}).placa ? '<span style="font-size:11.5px;color:' + GOLD + ';">' + esc(f.veic.placa) + '</span>' : "")
+      + '<span style="margin-left:auto;font-size:11px;color:#777;">' + (aberta ? "▲ fechar" : "▼ abrir ficha") + '</span>'
+      + '</div>'
+      + '<div style="margin-top:4px;font-size:11px;">'
+      + (dias === null ? '<span style="color:#777;">CNH sem vencimento preenchido</span>'
+        : '<span style="color:' + corCnh + ';">CNH ' + (dias < 0 ? 'VENCIDA há ' + (-dias) + ' dia(s)' : (dias <= 30 ? 'vence em ' + dias + ' dia(s)' : 'válida até ' + cmBR(m.vencCnh))) + '</span>')
+      + (falta.length
+        ? ' · <span style="color:#E67E22;">falta preencher: ' + esc(falta.slice(0, 6).join(", ")) + (falta.length > 6 ? " e mais " + (falta.length - 6) : "") + '</span>'
+        : ' · <span style="color:#2E7D32;">ficha completa</span>')
+      + '</div></div>';
+    if (aberta) {
+      h += '<div style="padding:0 12px 14px;">'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
+        + '<button class="btn-outline" style="font-size:11px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="cmExportar(\'' + f.id + '\')">\u2b07 Exportar ficha (xlsx)</button>'
+        + '<button class="btn-outline" style="font-size:11px;" onclick="cmImprimir(\'' + f.id + '\')">\ud83d\udda8\ufe0f Imprimir / salvar PDF</button>'
+        + '<button class="btn-del" style="font-size:11px;margin-left:auto;" onclick="cmExcluir(\'' + f.id + '\')">\u2715 Excluir ficha</button>'
+        + '</div>'
+        + cmSecaoTitulo("PROPRIETÁRIO")
+        + '<div style="font-size:10.5px;color:#777;margin-top:4px;">Vem preenchido do cadastro da empresa. O que você mudar aqui vale só nesta ficha.</div>'
+        + cmGradeHTML(f.id, "prop", f.prop, CM_CAMPOS_PROP)
+        + cmSecaoTitulo("MOTORISTA")
+        + cmGradeHTML(f.id, "mot", f.mot, CM_CAMPOS_MOT)
+        + cmSecaoTitulo("REFERÊNCIAS PESSOAIS / COMERCIAIS")
+        + '<div style="font-size:10.5px;color:#777;margin-top:4px;">A ficha tem cinco linhas; os clientes costumam cobrar pelo menos três preenchidas.</div>';
+      for (var i = 0; i < 5; i++) {
+        var r = (f.refs || [])[i] || {};
+        h += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;margin-top:6px;">'
+          + '<input placeholder="Nome ' + (i + 1) + '" value="' + esc(r.nome || "") + '" onchange="cmSetRef(\'' + f.id + '\',' + i + ',\'nome\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;">'
+          + '<input placeholder="Parentesco" value="' + esc(r.parentesco || "") + '" onchange="cmSetRef(\'' + f.id + '\',' + i + ',\'parentesco\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;">'
+          + '<input placeholder="Telefone" value="' + esc(r.telefone || "") + '" onchange="cmSetRef(\'' + f.id + '\',' + i + ',\'telefone\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;">'
+          + '</div>';
+      }
+      h += cmSecaoTitulo("DADOS DO VEÍCULO")
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;">'
+        + '<span style="font-size:11px;color:#777;">Puxar da Frota:</span>'
+        + '<select id="cm-placa-' + f.id + '" style="font-size:12px;">'
+        + '<option value="">— escolha a placa —</option>'
+        + (state.veiculos || []).filter(function (x) { return x.placa; }).map(function (x) {
+          return '<option value="' + esc(x.placa) + '"' + ((f.veic || {}).placa === x.placa ? " selected" : "") + '>'
+            + esc(x.placa) + (x.modelo ? ' · ' + esc(x.modelo) : "") + '</option>';
+        }).join("")
+        + '</select>'
+        + '<button class="btn-outline" style="font-size:11px;" onclick="cmPuxarVeiculo(\'' + f.id + '\',(document.getElementById(\'cm-placa-' + f.id + '\')||{}).value)">\u21ba Preencher com os dados do CRLV</button>'
+        + '</div>'
+        + cmGradeHTML(f.id, "veic", f.veic, CM_CAMPOS_VEIC)
+        + cmSecaoTitulo("CÓPIAS OBRIGATÓRIAS")
+        + '<div style="font-size:10.5px;color:#777;margin-top:4px;">Marque o que já foi anexado — a marcação sai na ficha exportada.</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:6px;">';
+      [["PESSOA JURÍDICA", CM_COPIAS.pj, "pj:"], ["MOTORISTA", CM_COPIAS.motorista, "mot:"], ["VEÍCULO", CM_COPIAS.veiculo, "vei:"]]
+        .forEach(function (col) {
+          h += '<div style="background:#0B0B0B;border:1px solid #222;border-radius:6px;padding:8px;">'
+            + '<div style="font-size:11px;font-weight:800;color:#bbb;margin-bottom:4px;">' + col[0] + '</div>'
+            + col[1].map(function (x) {
+              var mk = (f.copias || {})[col[2] + x];
+              return '<div onclick="cmToggleCopia(\'' + f.id + '\',\'' + esc(col[2] + x).replace(/'/g, "") + '\')" '
+                + 'style="cursor:pointer;font-size:11px;color:' + (mk ? "#2E7D32" : "#999") + ';padding:2px 0;">'
+                + (mk ? "☑" : "☐") + ' ' + esc(x) + '</div>';
+            }).join("")
+            + '</div>';
+        });
+      h += '</div>'
+        + '<div style="margin-top:10px;display:flex;flex-direction:column;gap:2px;">'
+        + '<label style="font-size:9.5px;color:#888;text-transform:uppercase;">Observações</label>'
+        + '<textarea onchange="cmSet(\'' + f.id + '\',\'raiz\',\'obs\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:6px;font-size:12px;min-height:50px;">' + esc(f.obs || "") + '</textarea>'
+        + '</div>'
+        + '</div>';
+    }
+    h += '</div>';
+  });
+  return h + '</div>';
+}
+
+
+/* ==========================================================================
    v374 — CARREGAMENTO SUZANO: UMA CAIXA POR CAMINHÃO
    --------------------------------------------------------------------------
    Motivo (Renato, 03/09): "cada caminhão tem que estar individual, está uma
@@ -3285,6 +3747,7 @@ function salvar() {
     localStorage.setItem("rf-frota-mateuscargas-v1", JSON.stringify(state.mateusCargas || []));
     localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
+    localStorage.setItem("rf-frota-motoristascad-v1", JSON.stringify(state.motoristasCad || []));   // v397
   } catch (e) {}
 }
 
@@ -3314,6 +3777,7 @@ let state = {
   mateusCargas: carregar("rf-frota-mateuscargas-v1", () => []),
   mateusFator: carregar("rf-frota-mateusfator-v1", () => ({})),
   fiscais: carregar("rf-frota-fiscais-v1", () => []),   // v286: CT-e, MDF-e e CIOT lidos dos XML
+  motoristasCad: carregar("rf-frota-motoristascad-v1", () => []),   // v397: fichas FO_YL_026
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -11386,6 +11850,7 @@ var ABAS_DEF = [
   { id: "saldocaminhao", label: "🚚 Saldo por Caminhão", grupo: "FINANCEIRO" },
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
+  { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
 ];
 var TAB_DESCRICOES = {
   frota: "Cadastro e status de cada caminhão da frota",
@@ -11408,6 +11873,7 @@ var TAB_DESCRICOES = {
   saldocaminhao: "Saldo acumulado mês a mês de cada caminhão (receita − despesas − dívida alocada)",
   dividas: "Dívidas e obrigações fixas mensais",
   documentos: "Documentos da empresa e da frota",
+  cadmotorista: "Ficha de cadastro do motorista no modelo aprovado pelos clientes (FO_YL_026), pronta para exportar",
   usuarios: "Acessos e permissões de cada usuário",
 };
 var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos", "custoreal"];
@@ -19843,6 +20309,27 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `HISTÓRICO DE CARGAS:\n${linhas || "(nenhuma)"}\nVIAGENS GERADAS POR ESSA ABA:\n${linhasV || "(nenhuma)"}`;
   })();
 
+  // --- v397: cadastro de motorista (ficha FO_YL_026) ---
+  const blocoCadMot = !podeVerAba("cadmotorista") ? "" : (function () {
+    const fichas = (state.motoristasCad || []);
+    const cab = `CADASTRO DE MOTORISTA (aba "Cadastro de Motorista", v397): ficha no modelo FO_YL_026 da Yamaha Motor Logística — o mesmo formato que já foi aprovado pelos clientes, com as seções PROPRIETÁRIO, MOTORISTA, REFERÊNCIAS PESSOAIS/COMERCIAIS (5 linhas), DADOS DO VEÍCULO e CÓPIAS OBRIGATÓRIAS. `
+      + `Os campos, a ordem e até as posições das células na exportação são os da ficha original, porque mudar o formato significa devolver a ficha para aprovação de novo. `
+      + `O bloco do PROPRIETÁRIO fica guardado uma vez em config.fichaProprietario e vem preenchido em toda ficha nova. Os DADOS DO VEÍCULO podem ser puxados da Frota (renavam, chassi, ano, marca/modelo e UF já vieram do CRLV lido pelo pdf.js na v193). `
+      + `A ficha exporta em xlsx na mesma grade da original e também imprime em PDF com as bordas e as tarjas das seções. `
+      + `Campos que o cliente cobra e geram aviso de pendência: ${CM_OBRIGATORIOS.join(", ")}, mais pelo menos 3 referências preenchidas.`;
+    if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
+    const linhas = fichas.map((f) => {
+      const m = f.mot || {}, v = f.veic || {};
+      const falta = cmFaltando(f);
+      const dias = cmDiasCnh(f);
+      return `- ${m.nome || "(sem nome)"}${m.cpf ? " · CPF " + m.cpf : ""}${m.catCnh ? " · CNH categoria " + m.catCnh : ""}${v.placa ? " · veículo " + v.placa : ""}: `
+        + (dias === null ? "vencimento da CNH não preenchido" : (dias < 0 ? `CNH VENCIDA há ${-dias} dia(s)` : `CNH válida, ${dias} dia(s)`))
+        + ` · ${(f.refs || []).filter((r) => r && r.nome).length} referência(s)`
+        + (falta.length ? ` · FALTA PREENCHER: ${falta.join(", ")}` : ` · ficha completa`);
+    }).join("\n");
+    return `${cab}\nFICHAS CADASTRADAS (${fichas.length}):\n${linhas}`;
+  })();
+
   // --- v396: trava de foto repetida ---
   const blocoFotos = (function () {
     const rec = (state._fotosRecusadas || []);
@@ -20076,7 +20563,9 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
     return `\nCALCULADORA YAMAHA — tarifa POR UNIDADE, conforme a classificação da cidade de entrega (${cab}):\n${linhas}\nCidades de cada classificação:\n${cidades}\n  No picking list da Yamalog, "SMALL" = MTC 1, "BIG" = MTC 2 e "SBIG" = MTC 6.\n  Uma mesma viagem pode ter destinos em classificações diferentes — cada destino é somado pela tarifa da região dele.${pedido}\n`;
   })();
 
-  return `${blocoFotos}
+  return `${blocoCadMot}
+
+${blocoFotos}
 
 ${blocoSync}
 ${blocoTela}
@@ -22338,6 +22827,11 @@ function renderTabela() {
     `;
   }
 
+  if (state.aba === "cadmotorista") {
+    /* v397: ficha de cadastro do motorista, no modelo FO_YL_026 aprovado. */
+    wrap.innerHTML = cmBlocoHTML();
+    return;
+  }
   if (state.aba === "cargamateus") {
     /* v372: aba propria. Nasceu dentro de Viagens e Renato pediu pra sair de la
        -- e faz sentido: Viagens e lancamento do dia a dia, isto aqui e analise
@@ -23551,7 +24045,7 @@ revalidarSessaoAoAbrir();
      NOTA: até a v285 suzanoCargas (os espelhos da Suzano) NÃO subia pra nuvem
      nenhuma -- ficava só no aparelho onde foi lido. Era por isso que um espelho
      lido no tablet não existia no PC. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas"];
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad"];
   function unirPorId(local, nuvem) {
     if (!Array.isArray(nuvem)) return Array.isArray(local) ? local : nuvem;
     if (!Array.isArray(local) || !local.length) return nuvem;
@@ -23576,7 +24070,8 @@ revalidarSessaoAoAbrir();
     fiscais: "rf-frota-fiscais-v1",
     suzanoCargas: "rf-frota-suzanocargas-v1",
     mateusCargas: "rf-frota-mateuscargas-v1",
-    mateusFator: "rf-frota-mateusfator-v1"
+    mateusFator: "rf-frota-mateusfator-v1",
+    motoristasCad: "rf-frota-motoristascad-v1"   /* v397 */
   };
 
   var sb = null;
