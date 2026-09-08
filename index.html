@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v399)</title>
+<title>RF Logística — Painel da Frota (v400)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3215,7 +3215,8 @@ function cmBlocoHTML() {
     + '<input type="file" accept=".xlsx,.xls" multiple style="display:none;" onchange="cmImportar(this)"></label>'
     + '<span style="font-size:11px;color:#777;">lê o FO_YL_026 preenchido; mesmo CPF atualiza a ficha, não duplica</span>'
     + '</div>'
-    + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "");
+    + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "")
+    + '<div style="margin-top:6px;font-size:11px;color:#666;">' + cmFichas().length + ' ficha(s) no sistema. As fichas sincronizam entre os aparelhos — quem preencher numa máquina aparece nas outras depois do próximo salvamento.</div>';
 
   if (!fichas.length) {
     return h + '<div style="margin-top:12px;font-size:12px;color:#777;">Nenhuma ficha cadastrada ainda.</div></div>';
@@ -24420,7 +24421,12 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas"];
+  var CHAVES = ["veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad"];
+  /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
+     v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
+     (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
+     importada ficava so no aparelho de quem preencheu e nao aparecia em
+     nenhum outro -- foi o que aconteceu com a ficha que a Sandra anexou. */
   /* v286: estas duas são listas em que cada aparelho ACRESCENTA itens (XML lido
      no PC, espelho lido no tablet). Substituir pelo que vier da nuvem apagaria
      o que o outro aparelho acabou de ler -- é a mesma corrida que já causou
@@ -24431,6 +24437,22 @@ revalidarSessaoAoAbrir();
      nenhuma -- ficava só no aparelho onde foi lido. Era por isso que um espelho
      lido no tablet não existia no PC. */
   var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad"];
+  /* v400: ficha de motorista e editada em mais de um aparelho (a recepcao
+     preenche, o Renato confere). Uniao simples por id manteria SEMPRE a versao
+     local e a edicao do outro aparelho nunca chegaria. Aqui vence a mais
+     recente pelo atualizadoEm, campo que toda ficha grava. */
+  function unirFichas(local, nuvem) {
+    if (!Array.isArray(nuvem)) return Array.isArray(local) ? local : nuvem;
+    if (!Array.isArray(local) || !local.length) return nuvem;
+    var por = {};
+    nuvem.forEach(function (x) { if (x && x.id != null) por[String(x.id)] = x; });
+    local.forEach(function (x) {
+      if (!x || x.id == null) return;
+      var k = String(x.id), n = por[k];
+      if (!n || Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) por[k] = x;
+    });
+    return Object.keys(por).map(function (k) { return por[k]; });
+  }
   function unirPorId(local, nuvem) {
     if (!Array.isArray(nuvem)) return Array.isArray(local) ? local : nuvem;
     if (!Array.isArray(local) || !local.length) return nuvem;
@@ -24607,7 +24629,9 @@ revalidarSessaoAoAbrir();
 
       linhas.forEach(function (linha) {
         if (CHAVES.indexOf(linha.chave) !== -1 && linha.valor != null) {
-          state[linha.chave] = (CHAVES_UNIAO.indexOf(linha.chave) !== -1)
+          state[linha.chave] = linha.chave === "motoristasCad"
+            ? unirFichas(state[linha.chave], linha.valor)
+            : (CHAVES_UNIAO.indexOf(linha.chave) !== -1)
             ? unirPorId(state[linha.chave], linha.valor)   // v286
             : linha.valor;
           ultimoEnviado[linha.chave] = JSON.stringify(state[linha.chave]);
@@ -24717,7 +24741,9 @@ revalidarSessaoAoAbrir();
           // edição em andamento. Assim que meu envio terminar e ultimoEnviado
           // atualizar, a próxima atualização real (se houver) passa normalmente.
           if (Date.now() - _ultimaEdicaoLocalTs < 6000) return;
-          state[nova.chave] = (CHAVES_UNIAO.indexOf(nova.chave) !== -1)
+          state[nova.chave] = nova.chave === "motoristasCad"
+            ? unirFichas(state[nova.chave], nova.valor)
+            : (CHAVES_UNIAO.indexOf(nova.chave) !== -1)
             ? unirPorId(state[nova.chave], nova.valor)   // v286
             : nova.valor;
           ultimoEnviado[nova.chave] = JSON.stringify(state[nova.chave]);
