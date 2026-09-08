@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v395)</title>
+<title>RF Logística — Painel da Frota (v396)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -2080,7 +2080,7 @@ function mtBlocoHTML() {
     + '<span style="font-size:11px;color:#666;">' + Object.keys(MT_CIDADES).length + ' cidades na malha</span>'
     + '</div>';
 
-  if (!p) { return h + '</div>'; }
+  if (!p) { return h + '</div>' + mtViagensHTML(); }
 
   var nomes = p.cidades.filter(function (c) { return c.conhecida; }).map(function (c) { return c.nome; });
   var oti = mtKmOtimizado(nomes);
@@ -2331,8 +2331,140 @@ function mtBlocoHTML() {
     h += '<div style="margin-top:12px;font-size:11px;color:#999;">Histórico da rota ' + esc(p.rotaCod) + ': '
       + hist.map(function (x) { return x.cidades.length + " cidades · " + x.km + " km"; }).join(" | ") + '</div>';
   }
+  /* v396: a caixa das viagens ja lancadas vem depois do bloco da carga nova. */
+  return h + '</div>' + mtViagensHTML();
+}
+/* ==========================================================================
+   v396 — VIAGENS DA MATEUS JÁ LANÇADAS, COM O ROTEIRO NA TELA
+   --------------------------------------------------------------------------
+   Motivo (Renato, 08/09): "na aba carga mateus deveria ficar a caixa com a
+   placa e roterização da viagem anexa, assim eu posso olhar e avaliar se esta
+   ok, hoje so vejo se eu entrar no app do motorista com senha e login dele".
+
+   O roteiro JA existe: mtGerarViagem grava `mateusParadas` (ordem, cidade,
+   volumes, peso e KM do trecho) e `kmOrdemMateus` na viagem. So que ele
+   sumia da tela: o bloco de roteiro so aparece enquanto a carga esta sendo
+   importada (state._mateus.carga), e depois de gerar a viagem esse estado e
+   zerado. Dai em diante o unico lugar que mostrava era o celular do motorista.
+
+   Esta caixa fecha esse buraco no lado da equipe: uma caixa por viagem, com
+   placa, motorista, KM e as paradas na ordem em que o caminhao vai rodar.
+   ========================================================================== */
+function mtViagensJT() {
+  return (state.viagens || [])
+    .filter(function (v) { return String(v.cliente || "") === "JT/Mateus"; })
+    .sort(function (a, b) { return String(b.data || "").localeCompare(String(a.data || "")) || (Number(b.criadoEm || 0) - Number(a.criadoEm || 0)); });
+}
+
+function mtToggleViagem(id) {
+  state._mtViagemAberta = (state._mtViagemAberta === id) ? "" : id;
+  render();
+}
+
+function mtViagensHTML() {
+  var vs = mtViagensJT();
+  var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;margin-top:18px;">'
+    + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">\ud83d\ude9b Viagens da Mateus \u2014 placa e roteiro</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin-bottom:10px;">'
+    + 'O mesmo roteiro que o motorista vê no celular, na ordem em que ele vai rodar — sem precisar entrar no app dele. '
+    + 'Clique na caixa para abrir as paradas.</div>';
+  if (!vs.length) {
+    return h + '<div style="font-size:12px;color:#777;">Nenhuma viagem da JT/Mateus lançada ainda.</div></div>';
+  }
+  vs.slice(0, 20).forEach(function (v) {
+    var paradas = Array.isArray(v.mateusParadas) ? v.mateusParadas : [];
+    var aberta = state._mtViagemAberta === v.id;
+    var cidades = paradas.filter(function (x) { return !x.semCoordenada; }).length;
+    var semCoord = paradas.filter(function (x) { return x.semCoordenada; });
+    var feitas = (v.paradasFeitas || []).length;
+    var veic = (state.veiculos || []).find(function (x) { return x.placa === v.placa; }) || {};
+    h += '<div style="margin-top:10px;border:1px solid #222;border-radius:8px;background:#0E0E0E;">'
+      + '<div style="padding:10px 12px;cursor:pointer;" onclick="mtToggleViagem(\'' + esc(String(v.id)) + '\')">'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+      + '<span style="font-size:15px;font-weight:800;color:#fff;">' + esc(v.placa || "sem placa") + '</span>'
+      + '<span style="font-size:12px;color:' + GOLD + ';font-weight:700;">' + esc(v.rota || "rota não identificada") + '</span>'
+      + '<span style="font-size:11px;color:#888;">' + esc(v.data || "") + (v.cargaMateus ? ' · carga ' + esc(v.cargaMateus) : "") + '</span>'
+      + '<span style="margin-left:auto;font-size:11px;color:#777;">' + (aberta ? "▲ fechar" : "▼ ver roteiro") + '</span>'
+      + '</div>'
+      + '<div style="margin-top:4px;font-size:11.5px;color:#aaa;">'
+      + 'Motorista: <b style="color:#ddd;">' + esc(v.motoristaNaEpoca || veic.motorista || "não informado") + '</b>'
+      + ' · ' + cidades + ' cidade(s)'
+      + ' · ' + (Number(v.km) || 0).toLocaleString("pt-BR") + ' km'
+      + ' · ' + (Number(v.dias) || 1) + ' dia(s)'
+      + ' · ' + (Number(v.mateusVolumes) || 0) + ' vol'
+      + ' · ' + (Number(v.pesoKg) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1 }) + ' kg'
+      + (feitas ? ' · <span style="color:#2E7D32;">' + feitas + ' parada(s) baixada(s)</span>' : "")
+      + '</div>';
+    if (!aberta && paradas.length) {
+      h += '<div style="margin-top:4px;font-size:11px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+        + paradas.map(function (x) { return esc(x.cidade); }).join(" → ") + '</div>';
+    }
+    if (semCoord.length) {
+      h += '<div style="margin-top:4px;font-size:11px;color:#C0392B;">\u26a0 ' + semCoord.length
+        + ' cidade(s) fora do cálculo de distância: ' + semCoord.map(function (x) { return esc(x.cidade); }).join(", ") + '</div>';
+    }
+    h += '</div>';
+    if (aberta) {
+      if (!paradas.length) {
+        h += '<div style="padding:0 12px 12px;font-size:11.5px;color:#E67E22;">'
+          + 'Esta viagem foi lançada antes da v393 e não guardou o roteiro parada a parada. '
+          + (v.kmOrdemMateus ? 'A ordem registrada foi: <b style="color:#ddd;">' + esc(v.kmOrdemMateus) + '</b>.' : 'Só o KM total ficou gravado.')
+          + '</div>';
+      } else {
+        var acum = 0;
+        h += '<div style="padding:0 12px 12px;overflow-x:auto;">'
+          + '<table style="width:100%;font-size:11.5px;color:#ccc;border-collapse:collapse;">'
+          + '<thead><tr style="color:#888;text-align:left;">'
+          + '<th style="padding:4px 6px;">#</th><th style="padding:4px 6px;">Cidade</th>'
+          + '<th style="padding:4px 6px;text-align:right;">Vol</th><th style="padding:4px 6px;text-align:right;">Peso (kg)</th>'
+          + '<th style="padding:4px 6px;text-align:right;">KM trecho</th><th style="padding:4px 6px;text-align:right;">Acum.</th></tr></thead><tbody>';
+        paradas.forEach(function (x) {
+          acum += Number(x.kmTrecho) || 0;
+          var baixada = (v.paradasFeitas || []).some(function (f) {
+            return String((f && (f.cidade || f)) || "").toUpperCase() === String(x.cidade || "").toUpperCase();
+          });
+          h += '<tr style="border-top:1px solid #222;' + (x.semCoordenada ? 'color:#C0392B;' : "") + '">'
+            + '<td style="padding:4px 6px;color:#777;">' + (x.ordem || "") + '</td>'
+            + '<td style="padding:4px 6px;"><b>' + esc(x.cidade || "") + '</b>'
+            + (baixada ? ' <span style="color:#2E7D32;font-size:10px;">✓ baixada</span>' : "")
+            + (x.semCoordenada ? ' <span style="font-size:10px;">(sem coordenada)</span>' : "") + '</td>'
+            + '<td style="padding:4px 6px;text-align:right;">' + (Number(x.volumes) || 0) + '</td>'
+            + '<td style="padding:4px 6px;text-align:right;">' + (Number(x.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + '</td>'
+            + '<td style="padding:4px 6px;text-align:right;color:#ddd;">' + (Number(x.kmTrecho) ? Math.round(x.kmTrecho).toLocaleString("pt-BR") : "—") + '</td>'
+            + '<td style="padding:4px 6px;text-align:right;color:#777;">' + Math.round(acum).toLocaleString("pt-BR") + '</td>'
+            + '</tr>';
+        });
+        h += '</tbody></table>'
+          + '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+          + '<button class="btn-outline" style="font-size:11px;" onclick="mtVerRotaViagem(\'' + esc(String(v.id)) + '\')">\ud83d\uddfa\ufe0f Conferir esta rota no Google Maps</button>'
+          + '<span style="font-size:11px;color:#777;">KM da viagem: <b style="color:#ddd;">' + (Number(v.km) || 0).toLocaleString("pt-BR") + ' km</b>'
+          + ' · trechos entre cidades: ' + Math.round(acum).toLocaleString("pt-BR") + ' km'
+          + ' · o resto é rodagem urbana</span>'
+          + '</div>'
+          + (v.obs ? '<div style="margin-top:6px;font-size:10.5px;color:#666;">' + esc(v.obs) + '</div>' : "")
+          + '</div>';
+      }
+    }
+    h += '</div>';
+  });
+  if (vs.length > 20) {
+    h += '<div style="margin-top:8px;font-size:11px;color:#666;">Mostrando as 20 viagens mais recentes de ' + vs.length + '.</div>';
+  }
   return h + '</div>';
 }
+
+function mtVerRotaViagem(id) {
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(id); });
+  if (!v) return;
+  var ordem = (Array.isArray(v.mateusParadas) ? v.mateusParadas : [])
+    .filter(function (x) { return !x.semCoordenada; })
+    .map(function (x) { return x.cidade; });
+  if (!ordem.length && v.kmOrdemMateus) ordem = String(v.kmOrdemMateus).split(" > ");
+  if (!ordem.length) { alert("Esta viagem não guardou o roteiro."); return; }
+  try { window.open(mtMapsUrl(ordem), "_blank"); }
+  catch (e) { alert("Não consegui abrir o mapa."); }
+}
+
 function linhaMt(nome, v) {
   return '<tr><td style="padding:3px 0;">' + nome + '</td><td style="text-align:right;">' + fmtR(v) + '</td></tr>';
 }
@@ -14877,9 +15009,15 @@ function motoristaUploadEConfirmar(input, viagemId, tipo) {
       : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
     prep.then(function (p) {
       var placa = (state.sessao && state.sessao.placa_motorista) || "sem-placa";
-      var path = "km/" + placa + "/" + viagemId + "-" + tipo + "-" + Date.now() + "." + p.ext;
-      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
+      /* v396: a foto de hodometro e a que mais tenta se repetir — a mesma foto
+         do painel serve pra "provar" saida e chegada. Sem foto nova nao ha KM
+         novo, entao a viagem NAO e confirmada. */
+      return rfFotoChecar(p.blob, "km/" + tipo).then(function (chk) {
+        if (chk.dup) { rfFotoRecusar(chk, "km/" + tipo); input.value = ""; return null; }
+        var path = "km/" + placa + "/" + viagemId + "-" + tipo + "-" + Date.now() + "." + p.ext;
+        return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
+        rfFotoRegistrar(chk, "km/" + tipo, path, placa, "viagem " + viagemId);
         // v146: lê o KM da foto com a IA de visão (mesma tecnologia do
         // abastecimento) antes de confirmar — assim já manda o número pronto
         // pra equipe, sem precisar digitar depois olhando a foto na mão.
@@ -14911,6 +15049,7 @@ function motoristaUploadEConfirmar(input, viagemId, tipo) {
         } else {
           terminarConfirmacao(0);
         }
+        });
       });
     }).catch(function (e) { alert("Erro ao confirmar: " + (e.message || e)); });
   });
@@ -16750,10 +16889,23 @@ function rfCanhotoSubirBlob(placa, ref, idx, blob) {
       ? rfComprimirImagem(blob).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
       : Promise.resolve({ blob: blob, ext: "bin", ct: blob.type || "application/octet-stream" });
     return prep.then(function (p) {
-      var path = "canhotos/" + (placa || "sem-placa") + "/" + (ref || "lote") + "-nf" + idx + "-"
-        + Date.now() + "-" + Math.random().toString(36).slice(2, 7) + "." + p.ext;
-      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false })
-        .then(function (res) { if (res.error) throw res.error; return path; });
+      /* v396: canhoto repetido nao sobe — e o caso classico, a mesma foto
+         reaproveitada em varias notas. Aqui a recusa vira erro, porque quem
+         chama ja trata erro e mostra a mensagem na tela do motorista. */
+      return rfFotoChecar(p.blob, "canhoto").then(function (chk) {
+        if (chk.dup) {
+          rfFotoRecusar(chk, "canhoto");
+          throw new Error("Foto de canhoto repetida — envie a foto deste canhoto.");
+        }
+        var path = "canhotos/" + (placa || "sem-placa") + "/" + (ref || "lote") + "-nf" + idx + "-"
+          + Date.now() + "-" + Math.random().toString(36).slice(2, 7) + "." + p.ext;
+        return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false })
+          .then(function (res) {
+            if (res.error) throw res.error;
+            rfFotoRegistrar(chk, "canhoto", path, placa || "", String(ref || ""));
+            return path;
+          });
+      });
     });
   });
 }
@@ -19675,8 +19827,33 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
         + (c.placa ? ` · gerou viagem no ${c.placa}` : ` · guardada só no histórico, sem viagem`)
         + (c.viaIA ? ` (lida do print por IA)` : ``);
     }).join("\n");
-    const linhasV = viagensMt.slice(-8).map((v) => `- viagem ${v.data} ${v.placa} (${v.motoristaNaEpoca || "sem motorista"}): rota ${v.rota || "?"}, carga ${v.cargaMateus || "?"}, ${v.pesoKg || 0} kg, ${v.km || 0} km, ${fmtR(v.valorViagem || 0)}`).join("\n");
-    return `${cabecalho}\nHISTÓRICO DE CARGAS:\n${linhas || "(nenhuma)"}\nVIAGENS GERADAS POR ESSA ABA:\n${linhasV || "(nenhuma)"}`;
+    /* v396: o roteiro parada a parada entra no contexto -- a caixa nova da aba
+       mostra isso na tela, entao o assistente tem que saber responder o mesmo. */
+    const linhasV = viagensMt.slice(-8).map((v) => {
+      const par = Array.isArray(v.mateusParadas) ? v.mateusParadas : [];
+      const roteiro = par.length
+        ? par.map((x) => `${x.ordem}. ${x.cidade}${Number(x.kmTrecho) ? " (" + Math.round(x.kmTrecho) + " km do ponto anterior)" : ""}${x.semCoordenada ? " [sem coordenada, fora do cálculo]" : ""}`).join(" → ")
+        : (v.kmOrdemMateus || "(roteiro não guardado — viagem anterior à v393)");
+      const feitas = (v.paradasFeitas || []).length;
+      return `- viagem ${v.data} ${v.placa} (${v.motoristaNaEpoca || "sem motorista"}): rota ${v.rota || "?"}, carga ${v.cargaMateus || "?"}, ${v.pesoKg || 0} kg, ${v.mateusVolumes || 0} vol, ${v.km || 0} km, ${v.dias || 1} dia(s), ${fmtR(v.valorViagem || 0)}`
+        + `\n    ROTEIRO: ${roteiro}${feitas ? ` · ${feitas} parada(s) já baixada(s) pelo motorista` : ""}`;
+    }).join("\n");
+    return `${cabecalho}\n`
+      + `A caixa "Viagens da Mateus — placa e roteiro" (v396) mostra na própria aba Carga Mateus, para a equipe, a placa, o motorista e o roteiro parada a parada de cada viagem já lançada, com o KM de cada trecho. Antes disso esse roteiro só era visível entrando no app do motorista.\n`
+      + `HISTÓRICO DE CARGAS:\n${linhas || "(nenhuma)"}\nVIAGENS GERADAS POR ESSA ABA:\n${linhasV || "(nenhuma)"}`;
+  })();
+
+  // --- v396: trava de foto repetida ---
+  const blocoFotos = (function () {
+    const rec = (state._fotosRecusadas || []);
+    const cab = `FOTO ÚNICA (trava de foto repetida, v396): toda foto enviada pelo motorista — canhoto de entrega, hodômetro de saída/chegada e as fotos do abastecimento — passa por uma checagem de conteúdo ANTES de subir. `
+      + `São duas impressões digitais: SHA-256 dos bytes (pega arquivo idêntico) e dHash de 64 bits (pega a MESMA imagem recomprimida, redimensionada ou levemente cortada, que é o caso de quem reenvia pela galeria). `
+      + `Fotos com distância de Hamming até ${RF_FOTO_DIST_MAX} bits são consideradas a mesma foto. O registro fica na tabela fotos_hash do Supabase, com chave primária no SHA — a trava está no banco, não no app. `
+      + `Foto recusada NÃO sobe e a viagem NÃO é confirmada: o motorista tem que tirar uma foto nova. A checagem é fail-open de propósito: se a consulta não responder (sem internet), a foto sobe, porque motorista travado na doca é pior que foto repetida — nesse caso a conferência da equipe é a rede de segurança. `
+      + `IMPORTANTE ao responder sobre isso: o envio de canhoto EM LOTE (uma foto com vários canhotos na mesma folha) continua valendo para várias notas — ele sobe uma vez só e é reaproveitado, não é repetição.`;
+    if (!rec.length) return cab + ` Nenhuma foto foi recusada nesta sessão do painel (a lista é só do aparelho atual, não é o histórico do banco).`;
+    const linhas = rec.slice(0, 15).map((r) => `- ${rfFotoQuando(r.quando)}: recusada em ${r.contexto} (${r.via}); a mesma imagem já estava em ${r.donoContexto || "outro registro"}${r.donoPlaca ? " · " + r.donoPlaca : ""}${r.donoRef ? " · " + r.donoRef : ""}${r.donoQuando ? ", enviada em " + rfFotoQuando(r.donoQuando) : ""}${r.donoQuem ? " por " + r.donoQuem : ""}`).join("\n");
+    return `${cab}\nRECUSAS NESTE APARELHO (${rec.length}):\n${linhas}`;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
@@ -19899,7 +20076,9 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
     return `\nCALCULADORA YAMAHA — tarifa POR UNIDADE, conforme a classificação da cidade de entrega (${cab}):\n${linhas}\nCidades de cada classificação:\n${cidades}\n  No picking list da Yamalog, "SMALL" = MTC 1, "BIG" = MTC 2 e "SBIG" = MTC 6.\n  Uma mesma viagem pode ter destinos em classificações diferentes — cada destino é somado pela tarifa da região dele.${pedido}\n`;
   })();
 
-  return `${blocoSync}
+  return `${blocoFotos}
+
+${blocoSync}
 ${blocoTela}
 ${blocoDonoDaRota}
 ${blocoCaixasViagens}
@@ -23724,6 +23903,177 @@ function rfGetClient() {
   });
 }
 
+/* ==========================================================================
+   v396 — FOTO ÚNICA: TRAVA DE FOTO REPETIDA
+   --------------------------------------------------------------------------
+   Motivo (Renato, 08/09): "alguns motoristas estao repetindo fotos, e nao
+   podemos deixar isso acontecer, as fotos tem que ser unica".
+
+   Por que comparar o CAMINHO do arquivo nunca ia resolver: quem reenvia a
+   mesma foto manda outra vez pelo seletor, e o app grava com nome novo
+   (Date.now + random). No banco viram dois arquivos diferentes. O que
+   identifica a repeticao e o CONTEUDO da imagem, nao o nome.
+
+   Duas impressoes digitais, porque uma so nao basta:
+     1. SHA-256 dos bytes — pega o arquivo identico, byte a byte.
+     2. dHash 64 bits (9x8 em cinza, comparando pixel com o vizinho) — pega a
+        MESMA foto recomprimida, redimensionada ou levemente cortada, que e o
+        que acontece quando ele reenvia pela galeria e o app comprime de novo.
+        O SHA-256 muda nesse caso; o dHash nao.
+
+   A comparacao do dHash e por distancia de Hamming (<= 4 bits de 64). Acima
+   disso sao fotos diferentes do mesmo assunto — duas fotos do mesmo painel
+   tiradas em segundos dao distancia bem maior que 4.
+
+   Registro central na tabela `fotos_hash` do Supabase (criada em 08/09), com
+   PK no SHA — entao a trava vive no BANCO, nao no app: mexer no HTML nao
+   libera. Guarda contexto, caminho, placa, referencia e quem enviou.
+
+   FAIL-OPEN de proposito: se a checagem nao responder (sem internet, tabela
+   fora do ar), a foto SOBE. Motorista parado na doca com entrega travada por
+   causa de uma consulta que nao respondeu e pior que uma foto repetida, que
+   a equipe ainda pega na conferencia.
+   ========================================================================== */
+var RF_FOTOS_TABELA = "fotos_hash";
+var RF_FOTO_DIST_MAX = 4;          /* bits diferentes ainda considerados a mesma foto */
+
+function rfFotoSha(blob) {
+  return blob.arrayBuffer().then(function (buf) {
+    if (!(window.crypto && window.crypto.subtle)) return "";
+    return window.crypto.subtle.digest("SHA-256", buf).then(function (h) {
+      return Array.prototype.map.call(new Uint8Array(h), function (b) {
+        return ("0" + b.toString(16)).slice(-2);
+      }).join("");
+    });
+  }).catch(function () { return ""; });
+}
+
+/* dHash: 9x8 em cinza; cada pixel comparado com o da direita vira 1 bit. */
+function rfFotoDHash(blob) {
+  return new Promise(function (resolve) {
+    try {
+      if (!/^image\//.test(blob.type || "")) { resolve(""); return; }
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        try {
+          var cv = document.createElement("canvas");
+          cv.width = 9; cv.height = 8;
+          var cx = cv.getContext("2d");
+          cx.drawImage(img, 0, 0, 9, 8);
+          var d = cx.getImageData(0, 0, 9, 8).data;
+          var cinza = [];
+          for (var i = 0; i < 72; i++) {
+            var o = i * 4;
+            cinza.push(0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2]);
+          }
+          var bits = "";
+          for (var y = 0; y < 8; y++) {
+            for (var x = 0; x < 8; x++) {
+              bits += (cinza[y * 9 + x] > cinza[y * 9 + x + 1]) ? "1" : "0";
+            }
+          }
+          var hex = "";
+          for (var k = 0; k < 64; k += 4) hex += parseInt(bits.slice(k, k + 4), 2).toString(16);
+          resolve(hex);
+        } catch (e) { resolve(""); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(""); };
+      img.src = url;
+    } catch (e) { resolve(""); }
+  });
+}
+
+function rfFotoDistancia(a, b) {
+  if (!a || !b || a.length !== b.length) return 99;
+  var d = 0;
+  for (var i = 0; i < a.length; i++) {
+    var x = parseInt(a[i], 16) ^ parseInt(b[i], 16);
+    while (x) { d += x & 1; x >>= 1; }
+  }
+  return d;
+}
+
+function rfFotoQuando(ms) {
+  try { return new Date(Number(ms) || 0).toLocaleString("pt-BR"); } catch (e) { return ""; }
+}
+
+/* Devolve { dup, dono, sha, dhash, aviso }. dup=true => nao pode subir. */
+function rfFotoChecar(blob, contexto) {
+  return Promise.all([rfFotoSha(blob), rfFotoDHash(blob)]).then(function (r) {
+    var sha = r[0], dh = r[1];
+    if (!sha && !dh) return { dup: false, sha: "", dhash: "", aviso: "sem impressão digital" };
+    return rfGetClient().then(function (sb) {
+      if (!sb) return { dup: false, sha: sha, dhash: dh, aviso: "sem nuvem" };
+      var achaSha = sha
+        ? sb.from(RF_FOTOS_TABELA).select("*").eq("hash", sha).limit(1)
+        : Promise.resolve({ data: [] });
+      return achaSha.then(function (res) {
+        if (res && res.error) return { dup: false, sha: sha, dhash: dh, aviso: res.error.message };
+        if (res && res.data && res.data.length) return { dup: true, dono: res.data[0], sha: sha, dhash: dh, via: "arquivo idêntico" };
+        if (!dh) return { dup: false, sha: sha, dhash: dh };
+        return sb.from(RF_FOTOS_TABELA).select("hash,dhash,contexto,caminho,placa,referencia,quem_nome,criado_em")
+          .not("dhash", "is", null).order("criado_em", { ascending: false }).limit(800)
+          .then(function (res2) {
+            if (res2 && res2.error) return { dup: false, sha: sha, dhash: dh, aviso: res2.error.message };
+            var lista = (res2 && res2.data) || [];
+            for (var i = 0; i < lista.length; i++) {
+              if (rfFotoDistancia(dh, lista[i].dhash) <= RF_FOTO_DIST_MAX) {
+                return { dup: true, dono: lista[i], sha: sha, dhash: dh, via: "mesma imagem reenviada" };
+              }
+            }
+            return { dup: false, sha: sha, dhash: dh };
+          });
+      });
+    });
+  }).catch(function (e) {
+    return { dup: false, sha: "", dhash: "", aviso: (e && e.message) || "falha na checagem" };
+  });
+}
+
+function rfFotoRegistrar(info, contexto, caminho, placa, referencia) {
+  if (!info || !info.sha) return Promise.resolve();
+  return rfGetClient().then(function (sb) {
+    if (!sb) return;
+    return sb.from(RF_FOTOS_TABELA).insert({
+      hash: info.sha, dhash: info.dhash || null, contexto: contexto || "",
+      caminho: caminho || "", placa: placa || "", referencia: referencia || "",
+      quem: (state.sessao && state.sessao.uid) || null,
+      quem_nome: (state.sessao && (state.sessao.nome || state.sessao.email)) || "",
+      criado_em: Date.now()
+    }).then(function (res) {
+      if (res && res.error && !/duplicate|already exists/i.test(res.error.message || "")) {
+        console.warn("fotos_hash:", res.error.message);
+      }
+    });
+  }).catch(function () { });
+}
+
+/* Mensagem unica pro motorista — ele precisa entender o que fazer, nao levar
+   um "erro" seco. Guarda tambem a ultima recusa pro assistente contar. */
+function rfFotoRecusar(info, contexto) {
+  var d = info.dono || {};
+  if (!state._fotosRecusadas) state._fotosRecusadas = [];
+  state._fotosRecusadas.unshift({
+    quando: Date.now(), contexto: contexto, via: info.via || "",
+    donoContexto: d.contexto || "", donoCaminho: d.caminho || "",
+    donoPlaca: d.placa || "", donoRef: d.referencia || "",
+    donoQuem: d.quem_nome || "", donoQuando: d.criado_em || 0
+  });
+  state._fotosRecusadas = state._fotosRecusadas.slice(0, 30);
+  try { salvar(); } catch (e) { }
+  alert("⛔ Essa foto já foi enviada antes (" + (info.via || "repetida") + ").\n\n"
+    + "Já está no sistema em: " + (d.contexto || "outro registro")
+    + (d.placa ? " · " + d.placa : "")
+    + (d.referencia ? " · " + d.referencia : "")
+    + (d.criado_em ? "\nEnviada em " + rfFotoQuando(d.criado_em) : "")
+    + (d.quem_nome ? " por " + d.quem_nome : "")
+    + "\n\nTire uma foto NOVA agora, do documento/painel que está na sua frente. "
+    + "Cada registro precisa da sua própria foto.");
+}
+
+
 /* v329: maxDim e limite de bytes viraram parametros.
    Motivo real: a foto de NOTA FISCAL precisa de MUITO mais definicao que a de
    painel de caminhao. Com 1600px e 360KB a linha da chave de acesso, que ja e
@@ -24813,9 +25163,14 @@ function rfAbastUpload(input, abastId, tipo) {
       ? rfComprimirImagem(file).then(function (b) { return { blob: b, ext: "jpg", ct: "image/jpeg" }; })
       : Promise.resolve({ blob: file, ext: (file.name.split(".").pop() || "bin").toLowerCase(), ct: file.type || "application/octet-stream" });
     prep.then(function (p) {
-      var path = "abast/" + (a.placa || "sem-placa") + "/" + a.id + "-" + tipo + "-" + Date.now() + "." + p.ext;
-      return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
+      /* v396: foto repetida nao sobe. Checa antes do upload pra nao sujar o
+         bucket com arquivo que vai ser recusado. */
+      return rfFotoChecar(p.blob, "abastecimento/" + tipo).then(function (chk) {
+        if (chk.dup) { rfFotoRecusar(chk, "abastecimento/" + tipo); input.value = ""; render(); return null; }
+        var path = "abast/" + (a.placa || "sem-placa") + "/" + a.id + "-" + tipo + "-" + Date.now() + "." + p.ext;
+        return sb.storage.from(RF_BUCKET).upload(path, p.blob, { contentType: p.ct, upsert: false }).then(function (res) {
         if (res.error) throw res.error;
+        rfFotoRegistrar(chk, "abastecimento/" + tipo, path, a.placa || "", "abast " + a.id);
         if (tipo === "km") a.fotoKm = path;
         else if (tipo === "nota") a.fotoNota = path;
         else if (tipo === "comprovante") a.fotoComprovante = path;
@@ -24839,6 +25194,7 @@ function rfAbastUpload(input, abastId, tipo) {
         }
         render();
         rfAbastSalvarCampoMotorista(a);
+        });
       });
     }).catch(function (e) { alert("Erro ao anexar foto: " + (e.message || e)); });
   });
