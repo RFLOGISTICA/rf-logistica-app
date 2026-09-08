@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v412)</title>
+<title>RF Logística — Painel da Frota (v414)</title>
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
      fatura ja esta lancada em Dividas Fixas. So existiam duas origens --
@@ -3678,7 +3678,7 @@ function trBase() {
   var limite = trMesesAtras(12);
   var b = {
     receita: 0, viagens: 0, combustivel: 0, manutencao: 0, pneus: 0, outros: 0,
-    folha: 0, pagPorViagem: 0, meses: {}, porCliente: {}
+    folha: 0, pagPorViagem: 0, custos: 0, meses: {}, porCliente: {}
   };
   (state.viagens || []).forEach(function (v) {
     var mes = String(v.data || "").slice(0, 7);
@@ -3693,6 +3693,8 @@ function trBase() {
     b.outros += c.outros;
     if (c.ehCLT) b.folha += c.pagMotorista + c.pagAjudante;
     else b.pagPorViagem += c.pagMotorista + c.pagAjudante;
+    /* v413: custo total da viagem SEM o imposto — é a base do lucro real */
+    b.custos += (c.totalDesp || 0) - (c.imposto || 0);
     b.meses[mes] = (b.meses[mes] || 0) + c.valorViagem;
     var cl = v.cliente || "(sem cliente)";
     b.porCliente[cl] = (b.porCliente[cl] || 0) + c.valorViagem;
@@ -3703,6 +3705,8 @@ function trBase() {
      Folha NÃO gera crédito — é o ponto que mais engana nessa conta. */
   b.insumos = b.combustivel + b.manutencao + b.pneus + b.outros + b.pedagio;
   b.nMeses = Object.keys(b.meses).length;
+  b.lucro = b.receita - b.custos;
+  b.margem = b.receita ? b.lucro / b.receita : 0;
   return b;
 }
 /* CALENDÁRIO DA REFORMA (LC 214/2025), que é o que faz a conta mudar de ano
@@ -3752,9 +3756,10 @@ function trFaixa(rbt12) {
    empresa que está crescendo. Insumos e folha crescem junto com a receita, na
    mesma proporção de hoje: é a premissa da projeção, e ela está escrita na
    tela porque muda o resultado. */
-function trCenarios(rec, insumos, folha) {
+function trCenarios(rec, insumos, folha, margem) {
   var cfg = trCfg();
   var out = { cenarios: [], receita: rec, insumos: insumos, folha: folha };
+  var margemReal = (margem == null ? null : Number(margem));
   if (rec <= 0) return out;
 
   /* v410: acima do teto os dois cenários de Simples simplesmente não existem —
@@ -3842,7 +3847,41 @@ function trCenarios(rec, insumos, folha) {
       + "O crédito outorgado de ICMS do transporte veda o aproveitamento de outros créditos de ICMS."
   });
 
-  /* 4. Regime geral JÁ NA REFORMA, no ano escolhido */
+  /* 4. LUCRO REAL — é AQUI que o custo vira dedução.
+     Pergunta do Renato: "no presumido não tenho como colocar os custos para
+     desonerar os impostos". Está certo: no Presumido o IRPJ e a CSLL saem de
+     uma margem PRESUMIDA (8% e 12%), não do lucro que existiu, e o PIS/COFINS
+     é cumulativo, sem crédito nenhum. O regime em que combustível, manutenção
+     e pneus DE FATO abatem imposto é o Lucro Real: o IRPJ/CSLL incide sobre o
+     lucro que sobrou de verdade, e o PIS/COFINS vira não cumulativo (9,25%)
+     com crédito sobre os insumos. Numa transportadora de margem apertada,
+     isso costuma valer mais que o Presumido. */
+  if (margemReal != null) {
+    var lucroReal = Math.max(0, rec * margemReal);
+    var irpjR = lucroReal * 0.15;
+    var adicR = Math.max(0, lucroReal - 240000) * 0.10;
+    var csllR = lucroReal * 0.09;
+    var pisCofNaoCum = rec * 0.0925 - insumos * ((Number(cfg.pctCredito) || 0) / 100) * 0.0925;
+    out.cenarios.push({
+      nome: "Lucro Real",
+      imposto: irpjR + adicR + csllR + Math.max(0, pisCofNaoCum) + icms + patronal,
+      linhas: [
+        ["IRPJ 15% sobre o lucro real (" + (margemReal * 100).toFixed(1).replace(".", ",") + "% de margem)", irpjR],
+        ["Adicional de IRPJ", adicR],
+        ["CSLL 9% sobre o lucro real", csllR],
+        ["PIS/COFINS não cumulativo 9,25% sobre a receita", rec * 0.0925],
+        ["(−) crédito de PIS/COFINS sobre insumos", -(insumos * ((Number(cfg.pctCredito) || 0) / 100) * 0.0925)],
+        ["ICMS " + cfg.aliqIcms + "% com crédito outorgado de " + cfg.credOutorgado + "%", icms],
+        [patHoje.deson ? "Previdência com desoneração (CPRB)" : "Contribuição patronal sobre a folha", patronal]
+      ],
+      obs: "É o ÚNICO regime em que os custos abatem imposto de verdade: o IRPJ e a CSLL saem do lucro que realmente sobrou, "
+        + "e o PIS/COFINS passa a dar crédito sobre combustível, manutenção, pneus e pedágio. "
+        + "Quanto MENOR a margem real, melhor este cenário fica frente ao Presumido — que cobra sobre 8% de lucro mesmo que você tenha ganhado menos que isso. "
+        + "Em compensação exige escrituração contábil completa, e prejuízo em um ano só compensa 30% do lucro no ano seguinte."
+    });
+  }
+
+  /* 5. Regime geral JÁ NA REFORMA, no ano escolhido */
   var ft = trFatores(cfg.ano);
   var patReforma = trPatronal(rec, folha, cfg.ano);
   out.fatores = ft;
@@ -3881,7 +3920,7 @@ function trCenarios(rec, insumos, folha) {
 
 function trSimular() {
   var b = trBase();
-  var out = trCenarios(b.receita, b.insumos, b.folha);
+  var out = trCenarios(b.receita, b.insumos, b.folha, b.margem);
   out.base = b;
   return out;
 }
@@ -3896,7 +3935,7 @@ function trProjecao(patamares) {
   var pInsumo = b.insumos / b.receita, pFolha = b.folha / b.receita;
   return (patamares || []).map(function (rec) {
     var teto = rec > 4800000;
-    var r = trCenarios(rec, rec * pInsumo, rec * pFolha);
+    var r = trCenarios(rec, rec * pInsumo, rec * pFolha, b.margem);
     return {
       receita: rec, mes: rec / 12, teto: teto, sublimite: rec > 3600000,
       cenarios: teto ? r.cenarios.filter(function (c) { return c.nome.indexOf("Simples") < 0; }) : r.cenarios,
@@ -3931,7 +3970,7 @@ function trComparacao() {
   var pInsumo = b.insumos / b.receita, pFolha = b.folha / b.receita;
   r.virada = 0;
   for (var rec = Math.max(b.receita, 300000); rec <= 4800000; rec += 50000) {
-    var x = trCenarios(rec, rec * pInsumo, rec * pFolha);
+    var x = trCenarios(rec, rec * pInsumo, rec * pFolha, b.margem);
     var sN = x.cenarios.find(function (c) { return c.nome.indexOf("Simples Nacional") === 0; });
     var lP = x.cenarios.find(function (c) { return c.nome.indexOf("Lucro Presumido") === 0; });
     if (sN && lP && lP.imposto <= sN.imposto) { r.virada = rec; break; }
@@ -3961,6 +4000,8 @@ function trBlocoHTML() {
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
     + 'Compara <b>Simples Nacional</b>, <b>Simples Híbrido</b> (IBS/CBS por fora, LC 214/2025), <b>Lucro Presumido com as regras de hoje</b> e o <b>regime geral já na reforma</b>, ano a ano da transição, sobre a mesma base: '
     + 'a receita e os insumos das viagens dos últimos 12 meses lançadas no sistema. '
+    + 'Atenção a uma diferença que decide tudo: no <b>Presumido</b> combustível, manutenção e pneus <b>NÃO abatem imposto</b> — o IRPJ e a CSLL saem de uma margem presumida de 8% e 12%, e o PIS/COFINS é cumulativo, sem crédito. '
+    + 'Quem transforma custo em dedução é o <b>Lucro Real</b> (e, mais à frente, o IBS/CBS da reforma). '
     + '<b style="color:#E67E22;">Isto é simulação, não é a decisão.</b> As alíquotas de IBS/CBS ainda não foram definidas em lei, e a opção pelo híbrido é '
     + 'semestral e irretratável — o número final tem que ser conferido pelo contador com 12 meses reais de venda e compra.'
     + '</div>';
@@ -3981,6 +4022,8 @@ function trBlocoHTML() {
     + '<div style="font-size:10px;color:#666;">' + (b.receita ? (b.insumos / b.receita * 100).toFixed(1).replace(".", ",") : "0") + '% da receita</div></div>'
     + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Folha (CLT)</div><div style="font-size:17px;font-weight:800;color:#fff;">' + fmtR(b.folha) + '</div>'
     + '<div style="font-size:10px;color:#666;">não gera crédito</div></div>'
+    + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Margem real</div><div style="font-size:17px;font-weight:800;color:' + (b.margem < 0.08 ? "#E67E22" : "#fff") + ';">' + (b.margem * 100).toFixed(1).replace(".", ",") + '%</div>'
+    + '<div style="font-size:10px;color:#666;">' + (b.margem < 0.08 ? "abaixo da presunção de 8%" : "acima da presunção de 8%") + '</div></div>'
     + '<div><div style="font-size:10px;color:#777;text-transform:uppercase;">Faixa do Simples</div><div style="font-size:17px;font-weight:800;color:#fff;">' + s.faixa + 'ª</div>'
     + '<div style="font-size:10px;color:#666;">efetiva ' + (s.efetiva * 100).toFixed(2).replace(".", ",") + '%</div></div>'
     + '</div>'
@@ -19223,20 +19266,27 @@ function rfCanhLoteBlocoHTML() {
    pra saber se acabou é preciso achar a viagem real da mesma placa na mesma
    data (mesma regra da v343: data exata, senão até 2 dias, que é o desencontro
    normal entre o espelho da véspera e a entrega). */
+/* v414 — BUG CORRIGIDO: os selos das rotas apareciam TROCADOS entre dias.
+   Caso real (08/09): a rota de amanhã aparecia "✓ CONCLUÍDA" com 0/3 entregues
+   e a de hoje "EM ROTA" com 1/3, sem ninguém ter mexido em nada.
+   Causa: esta função IGNORAVA a viagem da própria linha (x.id !== prev.id) e
+   pegava a viagem MAIS PRÓXIMA em data, aceitando até 2 dias de diferença.
+   Com o mesmo caminhão rodando em dias seguidos, a linha de amanhã lia o
+   status da viagem de hoje (aprovada -> concluída) e a de hoje lia o status da
+   de amanhã (aguardando -> em rota). Os dados no banco estavam certos o tempo
+   todo; era só a leitura da tela.
+   Agora: usa a PRÓPRIA viagem da linha quando ela já tem status, e só recorre
+   a outra viagem quando for do MESMO DIA — nunca mais de outro dia. */
 function rfRotViagemRealDe(prev) {
   if (!prev || !prev.placa) return null;
-  var cands = (state.viagens || []).filter(function (x) {
-    return x.placa === prev.placa && String(x.id) !== String(prev.id) && x.statusMotorista;
+  var propria = (state.viagens || []).find(function (x) { return String(x.id) === String(prev.id); });
+  if (propria && propria.statusMotorista) return propria;
+  var mesmoDia = (state.viagens || []).filter(function (x) {
+    return x.placa === prev.placa && String(x.id) !== String(prev.id) && x.statusMotorista
+      && String(x.data || "") === String(prev.data || "");
   });
-  if (!cands.length) return null;
-  var alvo = new Date(String(prev.data || "") + "T00:00:00").getTime();
-  if (isNaN(alvo)) return cands[cands.length - 1];
-  var melhor = null, menor = 1e9;
-  cands.forEach(function (x) {
-    var d = Math.abs(new Date(String(x.data || "") + "T00:00:00").getTime() - alvo) / 86400000;
-    if (d < menor) { menor = d; melhor = x; }
-  });
-  return menor <= 2 ? melhor : null;
+  if (!mesmoDia.length) return null;
+  return mesmoDia[mesmoDia.length - 1];
 }
 
 // v272: a regional pode vir errada da planilha (aconteceu com Irecê marcado
