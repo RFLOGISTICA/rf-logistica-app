@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v415)</title>
+<title>RF Logística — Painel da Frota (v416)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v415">
+<meta name="rf-versao" content="v416">
 <meta name="rf-data" content="2026-09-10">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -10958,17 +10958,75 @@ function rfNfCargaDoEspelho(placa, data) {
     if (alvo) return alvo;
   }
   var cargas = szCargas();
+  var P = function (x) { return String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+  var D = function (x) { return String(x || "").slice(0, 10); };
+  var placaEsp = P(placa), dia = D(data);
+
+  /* v416: A PLACA DO ESPELHO NAO ESCOLHE O CAMINHAO.
+     Ate a v415 esta funcao procurava a carga pela placa lida no PDF e, nao
+     achando, CRIAVA uma caixa nova naquela placa. Como a Suzano preenche o
+     espelho com qualquer placa que esteja a mao, isso produzia uma caixa
+     fantasma num caminhao que nem viagem tinha no dia, enquanto o caminhao de
+     verdade ficava "esperando as notas" e o espelho nunca validava.
+     Caso real 10/09/2026: espelho do DT 1503614 veio com PLY0A97; quem rodou
+     foi o PKS6I42 do Luciano (roteirizacao). Nasceu a caixa orfa do PLY.
+     Agora quem manda e a ROTEIRIZACAO -- as viagens Suzano cadastradas naquele
+     dia. A placa do papel so e aceita quando ela de fato tem viagem no dia.
+     Nao dando pra decidir com seguranca, a nota entra SEM CAMINHAO (a tela ja
+     tem a lista "notas sem caminhao" com seletor) -- nunca num caminhao
+     inventado. */
+  var doDia = (state.viagens || []).filter(function (v) {
+    return String(v.cliente || "").indexOf("Suzano") === 0 && D(v.data) === dia;
+  });
+  var placaDestino = placaEsp, motivo = "";
+  if (dia && doDia.length) {
+    var bate = doDia.filter(function (v) { return P(v.placa) === placaEsp; })[0];
+    if (bate) {
+      placaDestino = P(bate.placa);
+    } else {
+      var temEspelho = function (pl) {
+        var c = cargas.filter(function (x) { return P(x.placa) === P(pl) && D(x.data) === dia; })[0];
+        return !!(c && (c.espelhos || []).length);
+      };
+      var vazias = doDia.filter(function (v) { return !temEspelho(v.placa); });
+      if (doDia.length === 1) {
+        placaDestino = P(doDia[0].placa);
+        motivo = "unica viagem do dia";
+      } else if (vazias.length === 1) {
+        placaDestino = P(vazias[0].placa);
+        motivo = "unico caminhao do dia ainda sem espelho";
+      } else {
+        placaDestino = "";
+        motivo = "mais de um caminhao possivel";
+      }
+      if (placaDestino) {
+        rfNfAvisoPlaca(placaEsp, placaDestino, dia, motivo);
+      } else {
+        rfNfAvisoPlaca(placaEsp, "", dia, motivo);
+      }
+    }
+  }
+
   var achou = cargas.filter(function (c) {
-    return String(c.placa || "").toUpperCase() === String(placa || "").toUpperCase()
-      && String(c.data || "") === String(data || "");
+    return P(c.placa) === placaDestino && D(c.data) === dia;
   })[0];
   if (achou) return achou;
   // v321: sem data no espelho, a carga nasce SEM data. Pôr hoje aqui foi o que
   // fez nota antiga aparecer como "NF de 29/08".
-  var nova = { id: uid(), criadoEm: Date.now(), data: data || "", placa: placa || "",
+  var nova = { id: uid(), criadoEm: Date.now(), data: data || "", placa: placaDestino || "",
                motorista: "", espelhos: [], status: "montando", criadaPeloEspelho: true };
   cargas.push(nova);
   return nova;
+}
+
+/* v416: registra, pra aparecer no resumo do lote, toda vez que a placa do
+   espelho foi ignorada. Sem isso a correcao seria silenciosa -- e o certo e a
+   pessoa VER que a Suzano mandou outra placa. */
+function rfNfAvisoPlaca(doEspelho, usada, dia, motivo) {
+  state._rfNfTrocaPlaca = (state._rfNfTrocaPlaca || []).concat([{
+    espelho: doEspelho || "(sem placa)", usada: usada || "",
+    dia: dia || "", motivo: motivo || "", quando: Date.now(),
+  }]);
 }
 
 /* v328: painel do ultimo lote. Fica na tela ate a pessoa fechar, com uma linha
@@ -11059,6 +11117,24 @@ function rfNfLoteHTML() {
   if (r.cargas && r.cargas.length) {
     h += '<div style="font-size:11px;color:#888;margin-top:8px;">Carregamento(s) afetado(s): ' + esc(r.cargas.join(", ")) + '</div>';
   }
+  /* v416: quando a placa do papel foi ignorada, isso APARECE. A correcao esta
+     certa, mas nao pode ser silenciosa. */
+  if (r.trocaPlaca && r.trocaPlaca.length) {
+    var vistos = {}, itens = [];
+    r.trocaPlaca.forEach(function (t) {
+      var k = t.espelho + ">" + t.usada + "|" + t.dia;
+      if (vistos[k]) return; vistos[k] = 1; itens.push(t);
+    });
+    h += '<div style="border:1px solid ' + GOLD + ';border-radius:8px;padding:8px 10px;margin-top:10px;font-size:12px;">'
+      + '<div style="color:' + GOLD + ';font-weight:800;margin-bottom:4px;">Placa do espelho ignorada — quem vale é a roteirização</div>';
+    itens.forEach(function (t) {
+      h += '<div style="color:#ddd;padding:2px 0;">O espelho dizia <b>' + esc(t.espelho) + '</b>'
+        + (t.usada ? ' — a carga entrou no <b>' + esc(t.usada) + '</b> (' + esc(t.motivo) + ')'
+                   : ' — não deu pra decidir (' + esc(t.motivo) + '), a nota ficou <b>sem caminhão</b>; escolha o caminhão na lista abaixo')
+        + '</div>';
+    });
+    h += '</div>';
+  }
   return h + '</div>';
 }
 
@@ -11077,6 +11153,7 @@ function rfNfAnexarEspelhos(input) {
      relatorio -- entrou, ja estava, ou recusada e por que -- e o relatorio fica
      na tela ate ser fechado. */
   var feitos = 0, notas = 0, recusadas = 0, cargas = {};
+  state._rfNfTrocaPlaca = [];   // v416: zera os avisos de placa deste lote
   var rel = { em: Date.now(), total: arqs.length, linhas: [] };
   var anota = function (nome, situacao, detalhe, cor) {
     rel.linhas.push({ arq: String(nome || "arquivo"), situacao: situacao, detalhe: detalhe || "", cor: cor });
@@ -11085,6 +11162,7 @@ function rfNfAnexarEspelhos(input) {
     if (i >= arqs.length) {
       rel.feitos = feitos; rel.notas = notas; rel.recusadas = recusadas;
       rel.cargas = Object.keys(cargas);
+      rel.trocaPlaca = (state._rfNfTrocaPlaca || []).slice();   // v416
       state._rfNfLote = rel;
       salvar(); render();
       return;
