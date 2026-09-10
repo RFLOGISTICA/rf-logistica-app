@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v413)</title>
+<title>RF Logística — Painel da Frota (v414)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v413">
+<meta name="rf-versao" content="v414">
 <meta name="rf-data" content="2026-09-10">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -4303,7 +4303,8 @@ function ctBlocoHTML() {
    tem que ser tratado". Entao a checagem nao e mais "cidade nova" -- e cidade
    que nao pertence as duas regionais que a RF opera.
 
-   A lista abaixo saiu do historico real: sao as cidades que a RF ja atendeu
+   v414: a lista abaixo e a OFICIAL do BID (58 destinos). Antes vinha do
+   historico real: sao as cidades que a RF ja atendeu
    com viagem marcada como CENTRO NORTE ou NORTE, mais as nomeadas na tabela
    do BID. Cidade que nao estiver aqui gera aviso -- pode ser destino novo
    legitimo dentro da regional, e nesse caso e so acrescentar na lista.
@@ -4314,14 +4315,24 @@ function ctBlocoHTML() {
 var RF_ROTAS_PROPRIAS = ["CENTRO NORTE", "NORTE"];
 
 var RF_CIDADES_ROTA = {
-  "CENTRO NORTE": ["FEIRA DE SANTANA", "ALAGOINHAS", "CATU", "CANDEIAS", "SANTO AMARO",
-    "SAO FRANCISCO DO CONDE", "SAO GONCALO DOS CAMPOS", "CONCEICAO DO JACUIPE",
-    "IRARA", "MATA DE SAO JOAO", "AMELIA RODRIGUES", "ARACAS", "ARAMARI", "ITANAGRA",
-    "SAO SEBASTIAO DO PASSE", "CORACAO DE MARIA", "SANTANOPOLIS"],
-  "NORTE": ["JUAZEIRO", "SENHOR DO BONFIM", "CAMPO FORMOSO", "JACOBINA", "VALENTE",
-    "SERRINHA", "FILADELFIA", "PINDOBACU", "CAPIM GROSSO", "MUNDO NOVO", "OUROLANDIA",
-    "RIACHAO DO JACUIPE", "SANTALUZ", "UAUA", "ABARE", "JAGUARARI", "ITIUBA",
-    "PONTO NOVO", "ANDORINHA", "CANSANCAO", "QUEIMADAS", "MONTE SANTO"]
+  /* v414: lista OFICIAL do BID (anexo BID_Rotas_Frete_Direto, aba Rotas CD
+     Salvador) -- 15 destinos na Centro Norte e 43 na Norte. Antes daqui a
+     lista era o historico do que a RF ja tinha rodado, e por isso o sistema
+     acusava cidade do proprio contrato (Madre de Deus, Casa Nova, Remanso,
+     Conceicao do Coite) como se fosse fora de rota. */
+  "CENTRO NORTE": ["ALAGOINHAS", "AMELIA RODRIGUES", "CANDEIAS", "CATU",
+    "CONCEICAO DA FEIRA", "CONCEICAO DO JACUIPE", "FEIRA DE SANTANA", "IRARA",
+    "MADRE DE DEUS", "MATA DE SAO JOAO", "SANTA BARBARA", "SANTO AMARO",
+    "SAO FRANCISCO DO CONDE", "SAO SEBASTIAO DO PASSE", "SAO GONCALO DOS CAMPOS"],
+  "NORTE": ["ABARE", "ANDORINHA", "ANTONIO GONCALVES", "BARROCAS",
+    "CALDEIRAO GRANDE", "CAMPO FORMOSO", "CANSANCAO", "CANUDOS", "CAPIM GROSSO",
+    "CASA NOVA", "CONCEICAO DO COITE", "CORACAO DE MARIA", "FILADELFIA", "ICHU",
+    "ITIUBA", "JACOBINA", "JAGUARARI", "JUAZEIRO", "LAMARAO", "MONTE SANTO",
+    "NORDESTINA", "NOVA FATIMA", "OUROLANDIA", "PE DE SERRA", "PINDOBACU",
+    "PONTO NOVO", "QUEIMADAS", "QUIJINGUE", "REMANSO", "RETIROLANDIA",
+    "RIACHAO DO JACUIPE", "SANTALUZ", "SAO JOSE DO JACUIPE", "SAUDE",
+    "SENHOR DO BONFIM", "SERRINHA", "SERROLANDIA", "SOBRADINHO", "TANQUINHO",
+    "UAUA", "VALENTE", "MUNDO NOVO"]
 };
 
 function rfCidadeNorm(t) {
