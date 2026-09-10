@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v414)</title>
+<title>RF Logística — Painel da Frota (v415)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v414">
+<meta name="rf-versao" content="v415">
 <meta name="rf-data" content="2026-09-10">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -4370,6 +4370,36 @@ function rfAceitarCidade(cidade, rota) {
   salvar(); render();
 }
 
+/* v415: a decisao sobre cidade fora de rota fica GRAVADA. Renato: o aviso
+   vermelho grande poluia a tela; o que ele quer e escolher, uma vez, se a RF
+   faz ou nao aquele destino -- e a linha some. As decisoes ficam em
+   state.config.cidadesDecisao e podem ser revistas no proprio bloco. */
+function rfCidadeDecisao(cidade) {
+  var n = rfCidadeNorm(cidade);
+  var d = (state.config && state.config.cidadesDecisao) || {};
+  return d[n] || null;
+}
+function rfDecidirCidade(cidade, decisao) {
+  var n = rfCidadeNorm(cidade);
+  if (!n) return;
+  if (!state.config) state.config = {};
+  if (!state.config.cidadesDecisao) state.config.cidadesDecisao = {};
+  state.config.cidadesDecisao[n] = {
+    decisao: decisao, quando: Date.now(),
+    quem: (state.sessao && (state.sessao.nome || state.sessao.email)) || ""
+  };
+  salvar(); render();
+}
+function rfDesfazerDecisaoCidade(cidade) {
+  var n = rfCidadeNorm(cidade);
+  if (state.config && state.config.cidadesDecisao) delete state.config.cidadesDecisao[n];
+  salvar(); render();
+}
+function rfToggleCidadesFora() {
+  state._cidadesForaAberto = !state._cidadesForaAberto;
+  render();
+}
+
 /* Banner do topo: varre espelho, roteirizacao e conferencia dos ultimos dias. */
 function rfAvisoCidadesNovasHTML() {
   var alvo = [];
@@ -4396,29 +4426,60 @@ function rfAvisoCidadesNovasHTML() {
     });
   } catch (e) { }
 
-  var vistas = {}, fora = [];
+  var vistas = {}, pendentes = [], decididas = [];
   alvo.forEach(function (a) {
     var n = rfCidadeNorm(a.cidade);
     if (!n || vistas[n] || !rfCidadeForaDaRota(n)) return;
-    vistas[n] = true; fora.push(a);
+    vistas[n] = true;
+    var d = rfCidadeDecisao(n);
+    if (d) { a.dec = d; decididas.push(a); } else pendentes.push(a);
   });
-  if (!fora.length) return "";
+  if (!pendentes.length && !decididas.length) return "";
 
-  return '<div style="border:2px solid #C0392B;background:#1a0b0b;border-radius:10px;padding:14px 16px;margin-bottom:14px;">'
-    + '<div style="font-size:13px;color:#C0392B;font-weight:800;text-transform:uppercase;letter-spacing:.5px;">\u26a0 ' + fora.length + ' cidade(s) fora das nossas rotas</div>'
-    + '<div style="font-size:11.5px;color:#bbb;margin:6px 0 10px 0;">'
-    + 'A RF opera <b>Centro Norte</b> e <b>Norte</b>. Estas cidades apareceram nos \u00faltimos 10 dias e n\u00e3o est\u00e3o em nenhuma das duas. '
-    + '<b>Trate antes de a carga subir no caminh\u00e3o</b>: confirme com a Suzano se existe acordo para esse destino e qual o pre\u00e7o. '
-    + 'Se pertencer a uma das nossas regionais, use o bot\u00e3o ao lado para acrescentar \u2014 ela para de avisar.'
+  var aberto = !!state._cidadesForaAberto || pendentes.length > 0 && state._cidadesForaAberto !== false;
+  aberto = !!state._cidadesForaAberto;
+
+  var cabec = '<div onclick="rfToggleCidadesFora()" style="cursor:pointer;display:flex;gap:8px;align-items:center;font-size:12px;color:#9a8f7a;">'
+    + '<span style="color:#D4A017;">' + (aberto ? "\u2212" : "+") + '</span>'
+    + '<span>Cidades fora das nossas rotas</span>'
+    + (pendentes.length
+      ? '<span style="background:#3a2a10;color:#D4A017;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;">' + pendentes.length + ' a decidir</span>'
+      : '<span style="color:#4c7a4c;font-size:11px;">tudo decidido</span>')
+    + '<span style="margin-left:auto;color:#666;font-size:11px;">' + (decididas.length ? decididas.length + ' j\u00e1 decidida(s)' : "") + '</span>'
+    + '</div>';
+
+  if (!aberto) {
+    return '<div style="border:1px solid #2b2b2b;background:#141414;border-radius:8px;padding:9px 12px;margin-bottom:12px;">' + cabec + '</div>';
+  }
+
+  function linha(a, decidida) {
+    var c = esc(String(a.cidade).replace(/\x27/g, ""));
+    var sel = decidida
+      ? '<span style="font-size:11px;color:' + (a.dec.decisao === "aceita" ? "#4c7a4c" : "#9a5a5a") + ';">'
+        + (a.dec.decisao === "aceita" ? "\u2713 atendemos" : "\u2715 n\u00e3o atendemos")
+        + (a.dec.quem ? " \u00b7 " + esc(a.dec.quem) : "") + '</span>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfDesfazerDecisaoCidade(\'' + c + '\')">rever</button>'
+      : '<button class="btn-outline" style="font-size:10px;padding:2px 7px;color:#4c7a4c;border-color:#3d5c3d;" onclick="rfDecidirCidade(\'' + c + '\',\'aceita\')" title="A RF faz esse destino mesmo fora das duas regionais">\u2713 Atendemos</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;color:#9a5a5a;border-color:#5c3d3d;" onclick="rfDecidirCidade(\'' + c + '\',\'recusada\')" title="N\u00e3o e nossa rota - tratar com a Suzano">\u2715 N\u00e3o</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + c + '\',\'CENTRO NORTE\')">+ C.Norte</button>'
+        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + c + '\',\'NORTE\')">+ Norte</button>';
+    return '<div style="font-size:12px;color:#ccc;padding:5px 0;border-bottom:1px solid #222;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="flex:1;min-width:180px;"><b>' + esc(a.cidade) + '</b>' + (a.cliente ? ' \u2014 ' + esc(a.cliente) : "")
+      + ' <span style="color:#777;">(' + esc(a.fonte) + ': ' + esc(a.onde) + ')</span></span>'
+      + sel + '</div>';
+  }
+
+  return '<div style="border:1px solid #2b2b2b;background:#141414;border-radius:8px;padding:11px 13px;margin-bottom:12px;">'
+    + cabec
+    + '<div style="font-size:11.5px;color:#8a8a8a;margin:8px 0 6px 0;">'
+    + 'A RF opera <b>Centro Norte</b> e <b>Norte</b> (lista do BID). Decida uma vez por cidade: <b>Atendemos</b> (fazemos mesmo fora da regional, preço a combinar com a Suzano), '
+    + '<b>N\u00e3o</b> (n\u00e3o \u00e9 nossa \u2014 tratar antes de a carga subir) ou acrescente \u00e0 regional se for do contrato. Depois de decidida, a cidade sai da lista de pend\u00eancias.'
     + '</div>'
-    + fora.map(function (a) {
-      return '<div style="font-size:12px;color:#ddd;padding:5px 0;border-bottom:1px solid #2a1010;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-        + '<span style="flex:1;"><b>' + esc(a.cidade) + '</b>' + (a.cliente ? ' \u2014 ' + esc(a.cliente) : "")
-        + ' <span style="color:#888;">(' + esc(a.fonte) + ': ' + esc(a.onde) + ')</span></span>'
-        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + esc(String(a.cidade).replace(/\x27/g, "")) + '\',\'CENTRO NORTE\')">+ Centro Norte</button>'
-        + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" onclick="rfAceitarCidade(\'' + esc(String(a.cidade).replace(/\x27/g, "")) + '\',\'NORTE\')">+ Norte</button>'
-        + '</div>';
-    }).join("")
+    + pendentes.map(function (a) { return linha(a, false); }).join("")
+    + (decididas.length
+      ? '<div style="font-size:11px;color:#666;margin-top:9px;margin-bottom:3px;">J\u00e1 decididas</div>'
+        + decididas.map(function (a) { return linha(a, true); }).join("")
+      : "")
     + '</div>';
 }
 function szCxToggle(k) {
