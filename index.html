@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v416)</title>
+<title>RF Logística — Painel da Frota (v417)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v416">
-<meta name="rf-data" content="2026-09-10">
+<meta name="rf-versao" content="v417">
+<meta name="rf-data" content="2026-09-14">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
@@ -5680,6 +5680,7 @@ function adicionarViagem(cliente) {
   state._viagemCaixa = cli || "(sem cliente)";   // abre a caixa onde ela acabou de cair
   state.viagens.push({
     id: uid(), placa: primeiraPlaca, cliente: cli, data: dataPadraoMes(), criadoEm: Date.now(),
+    dataCriacao: rfDataLocalISO(new Date()),   // v417: nasce hoje; `data` e' o inicio e pode mudar
     valorViagem: 0, km: 0, dias: 1,
     kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
     combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
@@ -6203,6 +6204,89 @@ function viagemDiasPelasDatas(v) {
   if (isNaN(ini) || isNaN(fim)) return null;
   // conta o dia de saída e o de chegada: sair e voltar no mesmo dia = 1 dia
   return Math.round((fim - ini) / 86400000) + 1;
+}
+/* ===================== v417: DATA DE CRIACAO x DATA DE INICIO ==============
+   A viagem nasce na roteirizacao (ex: sexta) e pode so SAIR outro dia (ex:
+   segunda). Ate a v416 existia uma data so, e a tela mostrava a da criacao --
+   o que jogava a viagem no mes errado e inflava os dias (a conta de diaria,
+   pernoite e rateio CLT sai de `dias`).
+
+   Regra decidida por Renato (14/09/2026): o que vale e' a DATA DE INICIO --
+   a saida real, seja a que o motorista confirmou no celular, seja a que a
+   equipe marcou na mao (o motorista as vezes viaja sem iniciar no app).
+
+     dataCriacao -> quando a viagem foi montada. Nunca muda.
+     data        -> data de INICIO. E' ela que define o mes, o custo e os dias.
+     dataFim     -> inalterada.                                                */
+function viagemDataCriacao(v) {
+  if (!v) return "";
+  if (v.dataCriacao) return String(v.dataCriacao).slice(0, 10);
+  // viagens antigas: nao tem o campo, mas tem o carimbo em ms da criacao
+  if (v.criadoEm) {
+    var d = new Date(Number(v.criadoEm));
+    if (!isNaN(d)) return rfDataLocalISO(d);
+  }
+  return String(v.data || "").slice(0, 10);
+}
+/* Converte um Date para AAAA-MM-DD no fuso do aparelho. toISOString() daria a
+   data em UTC e, no Brasil, viagem iniciada depois das 21h cairia no dia
+   seguinte -- exatamente o tipo de erro que esta funcao existe pra evitar. */
+function rfDataLocalISO(d) {
+  if (!d || isNaN(d)) return "";
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+/* Data em que o motorista confirmou a saida no celular (RPC
+   motorista_confirmar_inicio grava inicioRealMs). Vazio = nao confirmou. */
+function viagemDataInicioReal(v) {
+  if (!v || !v.inicioRealMs) return "";
+  return rfDataLocalISO(new Date(Number(v.inicioRealMs)));
+}
+/* Traz a data de inicio confirmada pelo motorista para o campo que vale.
+   Nao mexe em viagem de mes fechado nem em viagem ja trancada. */
+function viagemSincronizarInicio(v) {
+  if (!v || !v.inicioRealMs) return false;
+  var real = viagemDataInicioReal(v);
+  if (!real || real === String(v.data || "").slice(0, 10)) return false;
+  if (v.trancada) return false;
+  // checagem SILENCIOSA de mes fechado: podeAlterarViagem() dispara alert, e
+  // isso roda em lote no carregamento -- viraria uma fila de popups.
+  try { if (typeof mesFechado === "function" && mesFechado(v.data) && !ehAdmin()) return false; } catch (e) {}
+  if (!v.dataCriacao) v.dataCriacao = String(v.data || "").slice(0, 10);
+  v.data = real;
+  // fim PREVISTO que ficou antes da saida real nao vale mais: a viagem nem
+  // tinha comecado naquele dia. Melhor limpar do que deixar dias negativo.
+  if (v.dataFim && String(v.dataFim).slice(0, 10) < real) v.dataFim = "";
+  var d = viagemDiasPelasDatas(v);
+  if (d !== null && d >= 1) v.dias = d;
+  return true;
+}
+function rfViagensSincronizarInicios() {
+  var n = 0;
+  (state.viagens || []).forEach(function (v) { if (viagemSincronizarInicio(v)) n++; });
+  if (n) salvar();
+  return n;
+}
+/* Marcacao manual da equipe, pro caso do motorista que saiu sem iniciar no app. */
+function viagemMarcarInicio(viagemId, valor) {
+  var v = (state.viagens || []).find(function (x) { return String(x.id) === String(viagemId); });
+  if (!v) return;
+  if (!podeAlterarViagem(v)) return;
+  var hoje = rfDataLocalISO(new Date());
+  var nova = valor;
+  if (!nova) {
+    nova = prompt("Data em que a viagem realmente saiu (AAAA-MM-DD):", hoje);
+    if (!nova) return;
+  }
+  nova = String(nova).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nova)) { alert("Data invalida. Use AAAA-MM-DD."); return; }
+  if (!v.dataCriacao) v.dataCriacao = String(v.data || "").slice(0, 10);
+  v.data = nova;
+  if (v.dataFim && String(v.dataFim).slice(0, 10) < nova) v.dataFim = "";
+  v.inicioManual = true;
+  v.inicioMarcadoPor = (state.sessao && state.sessao.nome) || "";
+  var d = viagemDiasPelasDatas(v);
+  if (d !== null && d >= 1) v.dias = d;
+  salvar(); render();
 }
 function setViagemDataFim(viagemId, valor) {
   const v = (state.viagens || []).find((x) => String(x.id) === String(viagemId));
@@ -19535,6 +19619,8 @@ function rfRotBlocoHTML() {
     var g = grupos[k];
     var v = (state.viagens || []).find(function (x) { return String(x.id) === String(g.viagemId); }) || {};
     return { id: g.viagemId, placa: g.placa, data: v.data || g.data, rota: v.rota || "",
+             dataCriacao: viagemDataCriacao(v) || g.data, inicioReal: viagemDataInicioReal(v),
+             inicioManual: !!v.inicioManual,
              km: v.km || 0, valorViagem: v.valorViagem || 0,
              motoristaNaEpoca: v.motoristaNaEpoca || (state.veiculos.find(function (x) { return x.placa === g.placa; }) || {}).motorista || "",
              _itens: g.itens };
@@ -19578,7 +19664,20 @@ function rfRotBlocoHTML() {
             })()
         + '</div>'
         + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-          + '<span style="font-size:11px;color:#999;">' + (v.data ? new Date(v.data + "T00:00:00").toLocaleDateString("pt-BR") : "") + '</span>'
+          /* v417: a viagem e' montada num dia e pode sair em outro. Mostra as
+             duas datas quando diferem, e deixa a equipe marcar a saida real
+             quando o motorista viajou sem iniciar no celular. */
+          + (function () {
+              var br = function (d) { return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : ""; };
+              var criada = v.dataCriacao || "";
+              var inicio = String(v.data || "").slice(0, 10);
+              var igual = !criada || criada === inicio;
+              var origem = v.inicioReal ? "confirmado pelo motorista" : (v.inicioManual ? "marcado pela equipe" : "previsto");
+              return '<span style="font-size:11px;color:#999;" title="Criada em ' + esc(br(criada)) + ' — inicio ' + esc(origem) + '">'
+                + (igual ? br(inicio) : ('criada ' + br(criada) + ' · <b style="color:' + GOLD + ';">saiu ' + br(inicio) + '</b>'))
+                + '</span>'
+                + '<button class="btn-outline" style="font-size:10px;padding:2px 7px;" title="Marcar a data em que a viagem realmente saiu — use quando o motorista viajou sem iniciar no celular" onclick="viagemMarcarInicio(&#39;' + v.id + '&#39;,&#39;&#39;)">\u{25B6} data de saída</button>';
+            })()
           + (function () {
               var rotas = rfRotRotasDoCliente("Suzano");
               if (!rotas.length) return '<span style="font-size:11px;color:' + GOLD + ';">' + esc(v.rota || "") + '</span>';
@@ -20348,6 +20447,7 @@ function rfRotProcessarPlanilha(wb, dataPrev) {
     if (!viagem) {
       viagem = {
         id: uid(), placa: placa, cliente: "Suzano", rota: v.regional, data: dataPrev, criadoEm: Date.now(),
+        dataCriacao: rfDataLocalISO(new Date()),   // v417: dia em que a roteirizacao foi importada
         valorViagem: 0, km: rfRotKmEstimado(placa, v.regional), dias: 1,
         kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
         combustivelItens: [], outrosItens: [],
@@ -21332,6 +21432,10 @@ function gerarContextoAssistente() {
       + "O botao do topo da tela cria uma viagem SEM cliente, que aparece na caixa '(sem cliente)'; essa caixa tambem abre sozinha depois de criar. Se a pessoa disser que lancou uma viagem e nao sabe onde ela foi parar, mande ela olhar a caixa '(sem cliente)'.\n"
       + "SITUACAO POR CLIENTE EM " + mesLabel(state.mesAtivo) + ":\n" + (det || "- nenhuma viagem lancada neste mes");
   })();
+  /* v417: o assistente precisa saber que viagem tem DUAS datas, senao explica
+     errado quando alguem pergunta por que o mes mudou ou por que os dias
+     cairam. Regra permanente: toda novidade entra tambem aqui. */
+  const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   const blocoSync = _syncLigado
@@ -21976,6 +22080,7 @@ ${blocoDonoDaRota}
 ${blocoCaixasViagens}
 
 ${blocoExportViagens}
+${blocoDatasViagem}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -23841,7 +23946,18 @@ function renderTabela() {
                 ${rotas.map((r) => `<option ${v.rota === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
               </select>`; })() : ""}
             </td>
-            <td><input type="date" value="${v.data}" onchange="atualizarViagem('${v.id}','data',this.value)" style="min-width:120px;"></td>
+            <td><input type="date" value="${v.data}" onchange="atualizarViagem('${v.id}','data',this.value)" style="min-width:120px;" title="Data em que a viagem saiu. E' ela que define o mes, os dias e o custo.">
+              ${(function () {
+                /* v417: quando a viagem foi criada num dia e saiu em outro, a
+                   diferenca aparece aqui -- antes so existia uma data. */
+                const cri = viagemDataCriacao(v);
+                const ini = String(v.data || "").slice(0, 10);
+                if (!cri || cri === ini) return "";
+                const br = (d) => d.split("-").reverse().join("/");
+                const fonte = v.inicioRealMs ? "motorista confirmou" : (v.inicioManual ? "equipe marcou" : "");
+                return `<div style="font-size:9px;color:#888;" title="Data em que a viagem foi montada na roteirizacao">criada ${br(cri)}${fonte ? " · " + fonte : ""}</div>`;
+              })()}
+            </td>
             <td><input type="date" value="${esc(v.dataFim || "")}" onchange="setViagemDataFim('${v.id}',this.value)" style="min-width:120px;" title="Quando a viagem terminou. Preenchendo os dois, o campo Dias se calcula sozinho.">
               ${(function () {
                 const d = viagemDiasPelasDatas(v);
@@ -25687,6 +25803,11 @@ revalidarSessaoAoAbrir();
         const nFim = mtMarcarFimReal();
         if (nFim) console.log("[mateus] " + nFim + " viagem(ns) ganharam hora de fim");
       } catch (e) { console.error("[mateus fim real]", e); }
+      // v417: a data de inicio confirmada pelo motorista vira a data da viagem
+      try {
+        const nIni = rfViagensSincronizarInicios();
+        if (nIni) console.log("[viagens] " + nIni + " viagem(ns) tiveram a data ajustada pelo inicio real");
+      } catch (e) { console.error("[viagens inicio real]", e); }
       // v256: romaneio sem viagem casa sozinho com a viagem aberta da mesma placa
       try {
         const nVinc = rfRomaneiosAutoVincular();
