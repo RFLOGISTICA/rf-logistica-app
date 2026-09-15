@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v417)</title>
+<title>RF Logística — Painel da Frota (v419)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v417">
-<meta name="rf-data" content="2026-09-14">
+<meta name="rf-versao" content="v419">
+<meta name="rf-data" content="2026-09-15">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
@@ -4844,10 +4844,21 @@ function szViagemCaixaHTML(bx) {
             + (ok === notas.length && notas.length ? "\u2705 " : "\u2b1c ")
             + esc(e.recebedor || "?") + ' <span style="color:#888;">' + esc(e.cidade || "") + '</span>'
             + ' <span style="color:' + (ok === notas.length ? "#2E7D32" : "#C0392B") + ';">' + ok + '/' + notas.length + ' canhoto(s)</span>'
-            + (notas.length ? ' <span style="color:#666;font-size:11px;">' + notas.map(function (n) {
-              return n.nf ? "NF " + esc(n.nf)
-                : (n.remessa ? "remessa " + esc(n.remessa) : (n.pedido ? "pedido " + esc(n.pedido) : "sem n\u00famero"));
+            + (notas.length ? ' <span style="color:#666;font-size:11px;">' + notas.map(function (n, iN) {
+              if (n.nf) return "NF " + esc(n.nf);
+              if (n.remessa) return "remessa " + esc(n.remessa);
+              if (n.pedido) return "pedido " + esc(n.pedido);
+              /* v419: linha de nota SEM numero, sem remessa e sem pedido. Nao
+                 corresponde a CT-e nenhum -- e' cobranca de canhoto que nunca
+                 vai existir e que trava a viagem. Aqui a equipe apaga a linha. */
+              return "sem n\u00famero"
+                + (n.foto ? "" : ' <button class="btn-outline" style="font-size:9px;padding:1px 5px;color:#C0392B;border-color:#C0392B;" title="Esta linha nao tem NF, remessa nem pedido: apaga so ela, sem mexer nas outras notas nem nos canhotos" onclick="rfNotaVaziaRemover(&#39;' + esc(e.id) + '&#39;,' + iN + ')">\u2715</button>');
             }).join(" \u00b7 ") + '</span>' : "")
+            /* v418: carga que a roteirizacao previu mas que NAO foi embarcada.
+               Sem isto a parada fica cobrando canhoto pra sempre e a viagem
+               nunca fecha -- o unico botao era "Excluir esta caixa", que derruba
+               a viagem inteira. */
+            + (ok === 0 ? ' <button class="btn-outline" style="font-size:10px;padding:2px 7px;color:#C0392B;border-color:#C0392B;margin-left:4px;" title="A mercadoria nao veio no carregamento: tira esta parada da viagem" onclick="rfParadaNaoVeio(&#39;' + esc(e.id) + '&#39;)">\u2715 n\u00e3o veio</button>' : "")
             + '</div>';
         });
         h += '</div>';
@@ -4866,6 +4877,88 @@ function szViagemCaixaHTML(bx) {
    viagens dele, da mais nova pra mais antiga, cada uma com o mesmo conteudo
    de antes. O cabecalho da placa ja diz quantas viagens tem pendencia, pra
    nao precisar abrir pra saber. */
+/* ===================== v418: PARADA QUE NAO VEIO NO CARREGAMENTO ===========
+   A roteirizacao e montada na vespera, com a carteira que a Suzano liberou.
+   Na hora de carregar, uma remessa as vezes nao entra -- ficou no CD, foi
+   cancelada, nao coube. A parada continuava na viagem pedindo canhoto que
+   nunca ia existir, e a caixa ficava vermelha pra sempre.
+
+   Regra: so remove parada SEM NENHUM canhoto (se ja tem foto, a mercadoria
+   foi entregue e a exclusao seria perda de comprovante). O que foi removido
+   fica guardado em state.paradasNaoVieram, com quem tirou e quando, pra dar
+   pra reverter e pra explicar a diferenca contra o FOCRI depois.            */
+/* v419: apaga UMA linha de nota vazia da parada. So remove a linha que nao tem
+   NF, remessa, pedido nem foto -- qualquer coisa preenchida bloqueia. */
+function rfNotaVaziaRemover(entregaId, indice) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(entregaId); });
+  if (!e) { alert("Parada não encontrada."); return; }
+  var notas = e.notas || [];
+  var n = notas[indice];
+  if (!n) { alert("Nota não encontrada."); return; }
+  if (n.nf || n.remessa || n.pedido || n.foto) {
+    alert("Esta nota tem dados preenchidos — não é uma linha vazia.\n\nSó removo linha sem NF, sem remessa, sem pedido e sem canhoto.");
+    return;
+  }
+  if (notas.filter(function (x) { return x.nf || x.remessa || x.pedido || x.foto; }).length === 0) {
+    alert("Esta parada não tem nenhuma nota preenchida.\n\nSe a mercadoria não veio, use o botão \u2715 não veio para tirar a parada inteira.");
+    return;
+  }
+  if (!confirm("Apagar esta linha de nota sem número?\n\n" + (e.recebedor || "?") + " — " + (e.cidade || "")
+      + "\n\nAs outras notas e os canhotos ficam como estão.")) return;
+  e.notas = notas.filter(function (x, i) { return i !== indice; });
+  var falta = (e.notas || []).filter(function (x) { return !x.foto; }).length;
+  if (!falta && e.notas.length) {
+    e.status = "concluida";
+    if (!e.concluidaEm) e.concluidaEm = Date.now();
+  }
+  if (typeof rfEntregaSalvar === "function") { try { rfEntregaSalvar(e); } catch (err) { console.error("[nota vazia] remoto", err); } }
+  salvar(); render();
+}
+function rfParadaNaoVeio(entregaId) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(entregaId); });
+  if (!e) { alert("Parada não encontrada."); return; }
+  var notas = e.notas || [];
+  var comFoto = notas.filter(function (n) { return n.foto; }).length;
+  if (comFoto) {
+    alert("Esta parada já tem canhoto anexado — foi entregue.\n\nSe o canhoto está errado, apague a foto primeiro.");
+    return;
+  }
+  if (e.status === "concluida") { alert("Parada já concluída. Reabra antes de remover."); return; }
+  var quem = notas.map(function (n) {
+    return n.nf ? "NF " + n.nf : (n.remessa ? "remessa " + n.remessa : (n.pedido ? "pedido " + n.pedido : ""));
+  }).filter(Boolean).join(" · ");
+  if (!confirm("Tirar esta parada da viagem?\n\n" + (e.recebedor || "?") + " — " + (e.cidade || "")
+      + (quem ? "\n" + quem : "")
+      + "\n\nUse quando a mercadoria NÃO foi embarcada. A parada sai da viagem e deixa de cobrar canhoto.")) return;
+  var motivo = prompt("Motivo (opcional):", "Não embarcada no carregamento") || "";
+  if (!state.paradasNaoVieram) state.paradasNaoVieram = [];
+  state.paradasNaoVieram.push({
+    id: e.id,                       /* a uniao entre aparelhos casa por este id */
+    entrega: JSON.parse(JSON.stringify(e)),
+    motivo: motivo,
+    removidoEm: Date.now(),
+    removidoPor: (state.sessao && state.sessao.nome) || ""
+  });
+  state.entregas = (state.entregas || []).filter(function (x) { return String(x.id) !== String(entregaId); });
+  if (typeof rfEntregaDeletar === "function") { try { rfEntregaDeletar(entregaId); } catch (err) { console.error("[nao veio] remoto", err); } }
+  salvar(); render();
+}
+/* Desfaz: devolve pra viagem a ultima parada removida daquela placa/data. */
+function rfParadaNaoVeioDesfazer(placa, data) {
+  var lista = state.paradasNaoVieram || [];
+  for (var i = lista.length - 1; i >= 0; i--) {
+    var r = lista[i], e = r.entrega || {};
+    if (String(e.placa || "").toUpperCase() === String(placa).toUpperCase()
+        && String(e.dataPrevista || "").slice(0, 10) === String(data).slice(0, 10)) {
+      state.entregas = state.entregas || [];
+      if (!state.entregas.some(function (x) { return String(x.id) === String(e.id); })) state.entregas.push(e);
+      lista.splice(i, 1);
+      salvar(); render();
+      return;
+    }
+  }
+  alert("Nenhuma parada removida nesta viagem.");
+}
 function szPlacaToggle(p) {
   if (!state._szPlacas) state._szPlacas = {};
   state._szPlacas[p] = !state._szPlacas[p];
@@ -5025,6 +5118,7 @@ function salvar() {
     localStorage.setItem("rf-frota-viagensfim-v1", JSON.stringify(state.viagensFinalizadas));
     localStorage.setItem("rf-frota-romaneios-v1", JSON.stringify(state.romaneios));
     localStorage.setItem("rf-frota-entregas-v1", JSON.stringify(state.entregas || []));   // v267
+    localStorage.setItem("rf-frota-paradasnaovieram-v1", JSON.stringify(state.paradasNaoVieram || []));   // v418
     localStorage.setItem("rf-frota-caixasconf-v1", JSON.stringify(state.caixasConferencia));
     localStorage.setItem("rf-frota-clienteslocais-v1", JSON.stringify(state.clientesLocais));
     /* v259 — BUG ANTIGO CORRIGIDO: nada da aba Carregamento Suzano era gravado.
@@ -5063,6 +5157,7 @@ let state = {
   viagensFinalizadas: carregar("rf-frota-viagensfim-v1", () => []),
   romaneios: carregar("rf-frota-romaneios-v1", () => []),
   entregas: carregar("rf-frota-entregas-v1", () => []),   // v267
+  paradasNaoVieram: carregar("rf-frota-paradasnaovieram-v1", () => []),   // v418
   caixasConferencia: carregar("rf-frota-caixasconf-v1", () => []),
   clientesLocais: carregar("rf-frota-clienteslocais-v1", () => []),
   suzanoCargas: carregar("rf-frota-suzanocargas-v1", () => []),
@@ -21436,6 +21531,16 @@ function gerarContextoAssistente() {
      errado quando alguem pergunta por que o mes mudou ou por que os dias
      cairam. Regra permanente: toda novidade entra tambem aqui. */
   const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
+  /* v418: sem isto o assistente diz que a viagem tem N paradas quando ela tem
+     N-1, e nao sabe explicar por que o peso entregue nao bate com o FOCRI. */
+  const nv = (state.paradasNaoVieram || []);
+  const blocoNaoVieram = "PARADAS QUE NAO VIERAM NO CARREGAMENTO (v418): quando a roteirizacao previu uma parada mas a mercadoria nao foi embarcada, a equipe tira a parada pelo botao 'nao veio' na caixa da viagem (aba Carregamento Suzano). A parada sai da viagem e para de cobrar canhoto; o registro fica guardado com motivo, quem tirou e quando, e da pra devolver. So e possivel remover parada SEM canhoto. Total ja removido: "
+    + nv.length + (nv.length ? ". Ultimas: " + nv.slice(-8).map(function (r) {
+        var e = r.entrega || {};
+        return (e.recebedor || "?") + " (" + (e.cidade || "") + ", placa " + (e.placa || "") + ", " + (e.dataPrevista || "") + ")"
+          + (r.motivo ? " - " + r.motivo : "") + (r.removidoPor ? " - por " + r.removidoPor : "");
+      }).join(" | ") : "") + ".";
+  const blocoNotaVazia = "LINHA DE NOTA SEM NUMERO (v419): uma parada pode aparecer com mais notas do que os CT-e emitidos para ela -- linhas sem NF, sem remessa, sem pedido e sem canhoto, criadas quando o celular do motorista e o painel sincronizam com versoes diferentes da mesma parada. Elas cobram um canhoto que nunca vai existir e impedem a viagem de fechar. A equipe apaga cada uma pelo X ao lado de 'sem numero', na lista de paradas da caixa. So apaga linha totalmente vazia, e nunca a ultima nota preenchida da parada; quando a ultima linha vazia sai e todas as notas restantes tem canhoto, a parada fecha sozinha. Se o caso for a mercadoria nao ter sido embarcada, o certo e o botao 'nao veio', que tira a parada inteira.";
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   const blocoSync = _syncLigado
@@ -22081,6 +22186,8 @@ ${blocoCaixasViagens}
 
 ${blocoExportViagens}
 ${blocoDatasViagem}
+${blocoNaoVieram}
+${blocoNotaVazia}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -25559,7 +25666,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad"];
+  var CHAVES = ["veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram"];
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -25574,7 +25681,10 @@ revalidarSessaoAoAbrir();
      NOTA: até a v285 suzanoCargas (os espelhos da Suzano) NÃO subia pra nuvem
      nenhuma -- ficava só no aparelho onde foi lido. Era por isso que um espelho
      lido no tablet não existia no PC. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad"];
+  /* v418: paradasNaoVieram tambem entra por UNIAO. Quem tira a parada pode ser
+     o tablet enquanto o PC esta com a caixa antiga aberta; por substituicao o
+     PC devolveria a parada removida na proxima subida. */
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram"];
   /* v400: ficha de motorista e editada em mais de um aparelho (a recepcao
      preenche, o Renato confere). Uniao simples por id manteria SEMPRE a versao
      local e a edicao do outro aparelho nunca chegaria. Aqui vence a mais
@@ -25599,6 +25709,7 @@ revalidarSessaoAoAbrir();
     return local.concat(nuvem.filter(function (x) { return !x || x.id == null || !vistos[String(x.id)]; }));
   }
   var MAPA_LS = {
+    paradasNaoVieram: "rf-frota-paradasnaovieram-v1",   // v418
     veiculos: "rf-frota-veiculos-v4",
     dividas:  "rf-frota-dividas-v1",
     viagens:  "rf-frota-viagens-v1",
