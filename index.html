@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v419)</title>
+<title>RF Logística — Painel da Frota (v421)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v419">
-<meta name="rf-data" content="2026-09-15">
+<meta name="rf-versao" content="v421">
+<meta name="rf-data" content="2026-09-18">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
@@ -700,6 +700,215 @@
 <div id="root"></div>
 <script>
 "use strict";
+
+/* ===== v420: LOG DE ERRO NO BANCO ==========================================
+   Ate a v419 o sistema nao guardava erro nenhum. Quando alguma coisa quebrava
+   no aparelho de outra pessoa, o que chegava era o relato -- e foi assim que
+   tres versoes seguidas sairam em cima de hipotese errada no bug do upload de
+   documentos. Agora todo erro nao tratado (e toda promessa rejeitada) grava
+   uma linha em public.rf_logs com mensagem, tela, usuario, versao e aparelho.
+   Regras deste bloco, de proposito:
+   - NUNCA lanca excecao. Se falhar, falha calado e o app segue igual.
+   - Nao depende de nada do app. Usa o cliente que o rfGetClient ja criou
+     (window.__rfSB) e so o usa quando ele existir.
+   - Sem rede ou sem sessao, a linha fica numa fila no localStorage (max 50)
+     e sobe na proxima abertura.
+   - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
+   Consulta: Supabase > Table editor > rf_logs (so admin le).              */
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v421" };
+(function () {
+  var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
+
+  function lerFila() {
+    try { var j = localStorage.getItem(FILA); return j ? (JSON.parse(j) || []) : []; }
+    catch (e) { return []; }
+  }
+  function gravarFila(a) {
+    try { localStorage.setItem(FILA, JSON.stringify(a.slice(-MAX))); } catch (e) { }
+  }
+  function telaAtual() {
+    try {
+      if (window.state && window.state._telaInicial) return "tela inicial";
+      if (window.state && window.state.aba) return String(window.state.aba);
+    } catch (e) { }
+    return "";
+  }
+  function emailAtual() {
+    try {
+      if (window.__rfPerfil && window.__rfPerfil.email) return String(window.__rfPerfil.email);
+      var j = localStorage.getItem("rf-email-logado");
+      if (j) return String(j);
+    } catch (e) { }
+    return "";
+  }
+
+  function rfLogErro(tipo, mensagem, detalhe) {
+    try {
+      var f = lerFila();
+      f.push({
+        sistema: RF_SISTEMA.codigo,
+        versao: RF_SISTEMA.versao,
+        email: emailAtual(),
+        tela: telaAtual(),
+        tipo: String(tipo || "erro").slice(0, 40),
+        mensagem: String(mensagem == null ? "" : mensagem).slice(0, 1000),
+        detalhe: String(detalhe == null ? "" : detalhe).slice(0, 4000),
+        url: String(location.href).slice(0, 500),
+        agente: String(navigator.userAgent || "").slice(0, 300)
+      });
+      gravarFila(f);
+      setTimeout(rfLogFlush, 1200);
+    } catch (e) { }
+  }
+
+  function rfLogFlush() {
+    if (enviando) return;
+    var f = lerFila();
+    if (!f.length) return;
+    var sb = window.__rfSB;
+    if (!sb || !sb.from) return;
+    enviando = true;
+    var lote = f.slice(0, 20);
+    try {
+      sb.from("rf_logs").insert(lote).then(function (r) {
+        enviando = false;
+        if (r && r.error) return;
+        gravarFila(lerFila().slice(lote.length));
+        if (lerFila().length) setTimeout(rfLogFlush, 1500);
+      }, function () { enviando = false; });
+    } catch (e) { enviando = false; }
+  }
+
+  window.rfLogErro = rfLogErro;
+  window.rfLogFlush = rfLogFlush;
+
+  window.addEventListener("error", function (ev) {
+    try {
+      if (ev && ev.message) {
+        rfLogErro("js", ev.message,
+          (ev.filename || "") + ":" + (ev.lineno || 0) + ":" + (ev.colno || 0) +
+          ((ev.error && ev.error.stack) ? ("\n" + ev.error.stack) : ""));
+      }
+    } catch (e) { }
+  });
+  window.addEventListener("unhandledrejection", function (ev) {
+    try {
+      var r = ev && ev.reason;
+      rfLogErro("promessa", (r && (r.message || r.msg)) || String(r),
+        (r && r.stack) ? String(r.stack) : "");
+    } catch (e) { }
+  });
+
+  setInterval(rfLogFlush, 30000);
+  setTimeout(rfLogFlush, 6000);
+  try { console.log("%c" + RF_SISTEMA.codigo + " " + RF_SISTEMA.versao + " \u2014 log de erro ativo", "color:#D4A017"); } catch (e) { }
+})();
+/* ===== fim do bloco v420 =================================================== */
+
+/* ===== v421: UNIAO ITEM A ITEM (fim da sobrescrita entre duas pessoas) =====
+   O PROBLEMA: ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e
+   substituia a da nuvem. Se a Sandra editava uma viagem e o Marcelo editava
+   outra ao mesmo tempo, quem salvasse por ultimo apagava o trabalho do outro
+   -- sem erro, sem aviso. Ja tinha acontecido com as fichas de motorista, e a
+   correcao da v407 valeu SO pras fichas.
+   A REGRA AGORA, item a item: quem editou por ultimo vence; itens diferentes
+   sobrevivem os dois; item apagado nao ressuscita.
+   COMO: cada item ganha um carimbo atualizadoEm quando muda de verdade (o
+   salvar() compara com o ultimo instantaneo gravado, entao nenhuma tela
+   precisou ser alterada), e cada exclusao deixa uma lapide {id, removidoEm}
+   que tambem sincroniza. Item sem id nao entra na uniao -- nessas listas o
+   comportamento antigo continua, pra nunca arriscar perder o que nao da pra
+   identificar. Dado antigo sem carimbo vale 0, entao qualquer edicao nova
+   ganha dele: nao precisou migrar nada.                                     */
+function rfMapaPorId(lista) {
+  var m = {};
+  if (!Array.isArray(lista)) return m;
+  lista.forEach(function (x) { if (x && x.id != null) m[String(x.id)] = x; });
+  return m;
+}
+function rfListaTemId(lista) {
+  return Array.isArray(lista) && lista.every(function (x) { return x && x.id != null; });
+}
+function rfCarimbar(lista, snapAnterior, agora) {
+  var lapides = [], snapNovo = {};
+  if (!Array.isArray(lista)) return { lista: lista, lapides: lapides, snap: snapNovo };
+  lista.forEach(function (x) {
+    if (!x || x.id == null) return;
+    var k = String(x.id);
+    var antes = snapAnterior ? snapAnterior[k] : undefined;
+    var copia = {}; for (var kk in x) { if (kk !== "atualizadoEm") copia[kk] = x[kk]; }
+    var json;
+    try { json = JSON.stringify(copia); } catch (e) { return; }
+    if (antes === undefined || antes !== json) x.atualizadoEm = agora;
+    snapNovo[k] = json;
+  });
+  if (snapAnterior) {
+    Object.keys(snapAnterior).forEach(function (k) {
+      if (!(k in snapNovo)) lapides.push({ id: k, removidoEm: agora });
+    });
+  }
+  return { lista: lista, lapides: lapides, snap: snapNovo };
+}
+function rfUnirLista(local, nuvem, lapides) {
+  if (!Array.isArray(nuvem)) return local;
+  if (!Array.isArray(local)) return nuvem;
+  if (!rfListaTemId(local) || !rfListaTemId(nuvem)) return local;
+  var por = rfMapaPorId(nuvem);
+  local.forEach(function (x) {
+    var k = String(x.id), n = por[k];
+    if (!n) { por[k] = x; return; }
+    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) por[k] = x;
+  });
+  var lap = {};
+  (lapides || []).forEach(function (l) {
+    if (!l || l.id == null) return;
+    var k = String(l.id), t = Number(l.removidoEm || 0);
+    if (!(k in lap) || t > lap[k]) lap[k] = t;
+  });
+  return Object.keys(por).filter(function (k) {
+    if (!(k in lap)) return true;
+    return Number(por[k].atualizadoEm || 0) > lap[k];
+  }).map(function (k) { return por[k]; });
+}
+function rfUnirLapides(a, b, agora) {
+  var lap = {};
+  [].concat(a || [], b || []).forEach(function (l) {
+    if (!l || l.id == null) return;
+    var k = String(l.id), t = Number(l.removidoEm || 0);
+    if (!(k in lap) || t > lap[k]) lap[k] = t;
+  });
+  var corte = (agora || Date.now()) - 30 * 24 * 3600 * 1000;
+  return Object.keys(lap).filter(function (k) { return lap[k] >= corte; })
+    .map(function (k) { return { id: k, removidoEm: lap[k] }; });
+}
+/* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
+var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
+  "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram"];
+
+/* instantaneo do ultimo salvar, por chave: id -> json do item */
+window.__rfSnap = window.__rfSnap || {};
+
+/* chamado pelo salvar(): carimba o que mudou e acumula as lapides */
+function rfCarimbarTudo() {
+  try {
+    if (typeof state === "undefined" || !state) return;
+    var agora = Date.now();
+    if (!Array.isArray(state.lapides)) state.lapides = [];
+    RF_CHAVES_LISTA.forEach(function (c) {
+      if (!Array.isArray(state[c])) return;
+      var primeira = !(c in window.__rfSnap);
+      var r = rfCarimbar(state[c], primeira ? null : window.__rfSnap[c], agora);
+      window.__rfSnap[c] = r.snap;
+      if (r.lapides.length) {
+        r.lapides.forEach(function (l) { l.chave = c; });
+        state.lapides = rfUnirLapides(state.lapides, r.lapides, agora);
+      }
+    });
+  } catch (e) { try { window.rfLogErro && window.rfLogErro("carimbo", e && e.message, e && e.stack); } catch (e2) {} }
+}
+/* ===== fim do bloco v421 =================================================== */
+
 
 const GOLD = "#D4A017";
 const TIPOS = ["Toco", "3/4", "Cavalo Mecânico"];
@@ -5099,6 +5308,7 @@ function salvarSessaoLocal() {
   } catch (e) {}
 }
 function salvar() {
+  rfCarimbarTudo();   // v421: carimba o que mudou, antes de gravar
   window.__rfVerSalvo = (window.__rfVerSalvo || 0) + 1; // invalida cache do tanque de combustível (v69)
   try {
     localStorage.setItem("rf-frota-veiculos-v4", JSON.stringify(state.veiculos));
@@ -5136,10 +5346,12 @@ function salvar() {
     localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
     localStorage.setItem("rf-frota-motoristascad-v1", JSON.stringify(state.motoristasCad || []));   // v397
+    localStorage.setItem("rf-frota-lapides-v1", JSON.stringify(state.lapides || []));   // v421
   } catch (e) {}
 }
 
 let state = {
+  lapides: carregar("rf-frota-lapides-v1", () => []),   // v421
   veiculos: carregar("rf-frota-veiculos-v4", frotaInicial),
   dividas: carregar("rf-frota-dividas-v1", dividasIniciais),
   viagens: carregar("rf-frota-viagens-v1", () => []),
@@ -21543,6 +21755,8 @@ function gerarContextoAssistente() {
   const blocoNotaVazia = "LINHA DE NOTA SEM NUMERO (v419): uma parada pode aparecer com mais notas do que os CT-e emitidos para ela -- linhas sem NF, sem remessa, sem pedido e sem canhoto, criadas quando o celular do motorista e o painel sincronizam com versoes diferentes da mesma parada. Elas cobram um canhoto que nunca vai existir e impedem a viagem de fechar. A equipe apaga cada uma pelo X ao lado de 'sem numero', na lista de paradas da caixa. So apaga linha totalmente vazia, e nunca a ultima nota preenchida da parada; quando a ultima linha vazia sai e todas as notas restantes tem canhoto, a parada fecha sozinha. Se o caso for a mercadoria nao ter sido embarcada, o certo e o botao 'nao veio', que tira a parada inteira.";
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
+  /* v421: regra permanente -- toda versao nova alimenta o assistente. */
+  const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
     ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
     : "SINCRONIZACAO: DESLIGADA nesta sessao (o selo no canto mostra \"aguardando login\"). Os dados abaixo vieram do aparelho, podem estar desatualizados, e nada que for editado agora esta subindo pra nuvem. Avise isso antes de responder numeros.";
@@ -22180,6 +22394,8 @@ ${blocoCadMot}
 ${blocoFotos}
 
 ${blocoSync}
+
+${blocoUniao}
 ${blocoTela}
 ${blocoDonoDaRota}
 ${blocoCaixasViagens}
@@ -25666,7 +25882,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram"];
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram"];
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -25709,6 +25925,7 @@ revalidarSessaoAoAbrir();
     return local.concat(nuvem.filter(function (x) { return !x || x.id == null || !vistos[String(x.id)]; }));
   }
   var MAPA_LS = {
+    lapides: "rf-frota-lapides-v1",                     // v421
     paradasNaoVieram: "rf-frota-paradasnaovieram-v1",   // v418
     veiculos: "rf-frota-veiculos-v4",
     dividas:  "rf-frota-dividas-v1",
@@ -25876,17 +26093,35 @@ revalidarSessaoAoAbrir();
       }
       if (houveEdicaoLocal) { subirTudo(false); return; }
 
+      /* v421: as lapides entram PRIMEIRO -- sao elas que dizem o que foi
+         apagado, e a uniao das listas precisa delas pra nao ressuscitar item. */
+      var linhaLap = null;
+      linhas.forEach(function (l) { if (l.chave === "lapides") linhaLap = l; });
+      if (linhaLap && Array.isArray(linhaLap.valor)) {
+        state.lapides = rfUnirLapides(state.lapides, linhaLap.valor, Date.now());
+        ultimoEnviado.lapides = JSON.stringify(state.lapides);
+        try { localStorage.setItem(MAPA_LS.lapides, ultimoEnviado.lapides); } catch (e) {}
+      }
+
       linhas.forEach(function (linha) {
+        if (linha.chave === "lapides") return;                       // ja tratada acima
         if (CHAVES.indexOf(linha.chave) !== -1 && linha.valor != null) {
-          state[linha.chave] = linha.chave === "motoristasCad"
-            ? unirFichas(state[linha.chave], linha.valor)
-            : (CHAVES_UNIAO.indexOf(linha.chave) !== -1)
-            ? unirPorId(state[linha.chave], linha.valor)   // v286
+          /* v421: toda lista com id passa a ser unida ITEM A ITEM -- vence o
+             atualizadoEm maior. Isso substitui o unirFichas (que valia so pras
+             fichas de motorista) e o unirPorId (que mantinha sempre o local e
+             nunca trazia a edicao do outro aparelho). Objetos que nao sao lista
+             (config, tarifas, frotaMes) continuam como antes. */
+          state[linha.chave] = (RF_CHAVES_LISTA.indexOf(linha.chave) !== -1)
+            ? rfUnirLista(state[linha.chave], linha.valor, state.lapides)
             : linha.valor;
           ultimoEnviado[linha.chave] = JSON.stringify(state[linha.chave]);
           try { localStorage.setItem(MAPA_LS[linha.chave], ultimoEnviado[linha.chave]); } catch (e) {}
         }
       });
+      /* v421: o instantaneo do salvar precisa refletir o que veio da nuvem,
+         senao o proximo salvar carimbaria tudo como "mudou" e criaria lapide
+         falsa pra item que nunca existiu neste aparelho. */
+      try { window.__rfSnap = {}; rfCarimbarTudo(); } catch (e) {}
       // v118: dados reais confirmados no estado local — agora sim é seguro
       // permitir subida, e o cálculo de tanque/combustível precisa recalcular
       // do zero (senão fica mostrando "faltam Xl" com base em cache velho).
@@ -25992,17 +26227,40 @@ revalidarSessaoAoAbrir();
         else status("\u2601 sincronizado", "#2E7D32");
       });
     };
-    var iFichas = -1;
-    registros.forEach(function (r, i) { if (r.chave === "motoristasCad") iFichas = i; });
-    if (iFichas < 0) { enviar(); return; }
-    sb.from("painel_dados").select("valor").eq("chave", "motoristasCad").maybeSingle()
+    /* v421 -- GENERALIZA O QUE A v407 FEZ SO PRAS FICHAS. A subida continua
+       mandando a lista inteira, entao ela TEM que ser unida com a da nuvem
+       antes de sair: senao a edicao que o outro aparelho acabou de gravar e
+       substituida pela minha copia, que nao a contem. O ultimoEnviado impede
+       o outro aparelho de reenviar, entao o que se perde aqui nao volta nunca.
+       Agora vale pra todas as listas, nao so pra motoristasCad. */
+    var chavesLista = registros
+      .filter(function (r) { return RF_CHAVES_LISTA.indexOf(r.chave) !== -1; })
+      .map(function (r) { return r.chave; });
+    if (!chavesLista.length) { enviar(); return; }
+
+    sb.from("painel_dados").select("chave,valor").in("chave", chavesLista.concat(["lapides"]))
       .then(function (res) {
-        if (!res.error && res.data && Array.isArray(res.data.valor)) {
-          var unido = unirFichas(state.motoristasCad, res.data.valor);
-          state.motoristasCad = unido;
-          registros[iFichas].valor = unido;
-          ultimoEnviado.motoristasCad = JSON.stringify(unido);
-          try { localStorage.setItem(MAPA_LS.motoristasCad, ultimoEnviado.motoristasCad); } catch (e) {}
+        if (!res.error && Array.isArray(res.data)) {
+          var lapNuvem = null;
+          res.data.forEach(function (l) { if (l.chave === "lapides") lapNuvem = l.valor; });
+          if (Array.isArray(lapNuvem)) {
+            state.lapides = rfUnirLapides(state.lapides, lapNuvem, Date.now());
+          }
+          res.data.forEach(function (l) {
+            if (l.chave === "lapides" || !Array.isArray(l.valor)) return;
+            if (RF_CHAVES_LISTA.indexOf(l.chave) === -1) return;
+            var unido = rfUnirLista(state[l.chave], l.valor, state.lapides);
+            state[l.chave] = unido;
+            registros.forEach(function (r) { if (r.chave === l.chave) r.valor = unido; });
+            ultimoEnviado[l.chave] = JSON.stringify(unido);
+            try { localStorage.setItem(MAPA_LS[l.chave], ultimoEnviado[l.chave]); } catch (e) {}
+          });
+          var temLap = false;
+          registros.forEach(function (r) { if (r.chave === "lapides") { r.valor = state.lapides; temLap = true; } });
+          if (!temLap) registros.push({ chave: "lapides", valor: state.lapides, atualizado_em: agora });
+          ultimoEnviado.lapides = JSON.stringify(state.lapides);
+          try { localStorage.setItem(MAPA_LS.lapides, ultimoEnviado.lapides); } catch (e) {}
+          try { window.__rfSnap = {}; rfCarimbarTudo(); } catch (e) {}
         }
         enviar();
       })
