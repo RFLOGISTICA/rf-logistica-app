@@ -14372,7 +14372,7 @@ function rfAbastCard(a, souMotorista) {
         ${!souMotorista ? `<span style="font-size:13px; color:#ccc;">${esc(a.motoristaNome || "motorista")}</span>` : ""}
         <span style="font-size:13px; color:${GOLD}; font-weight:700;">${esc(a.placa || "—")}</span>
       </div>
-      ${editavel && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">✕ excluir</button>` : ""}
+      ${(editavel || a.status === "rejeitado") && souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">✕ excluir</button>` : ""}
       <button class="btn-outline" style="font-size:11px;padding:3px 8px;" title="Baixar todas as fotos deste abastecimento, já com nome identificado" onclick="rfAbastBaixarTodas('${a.id}')">⬇ Baixar fotos</button>
       ${!souMotorista ? `<button class="btn-del" style="font-size:11px;" onclick="removerAbastecimento('${a.id}')">🗑 Excluir</button>` : ""}
     </div>
@@ -21245,7 +21245,8 @@ function painelMotoristaHTML() {
         <button class="btn-gold" onclick="adicionarAbastecimento()">+ Novo abastecimento</button>
       </div>
       <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão e tire 3 fotos: painel (mostrando o KM), visor da bomba (o valor é lido sozinho) e a nota/comprovante. Todas obrigatórias. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
-      ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
+      ${meus.some((a) => a.status === "rejeitado") ? `<div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:#1A0E0E;border:1px solid #C0392B;border-radius:8px;"><span style="font-size:12px;color:#ddd;">Você tem <b style="color:#C0392B;">${meus.filter((a) => a.status === "rejeitado").length}</b> abastecimento(s) rejeitado(s). Eles não contam em nada.</span><button class="btn-del" style="font-size:12px;margin-left:auto;" onclick="rfAbastExcluirRejeitadosMotorista()">🗑 Excluir todos os rejeitados</button></div>` : ""}
+        ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
     </div>
 
     <div style="padding:0 24px 32px;">
@@ -21337,7 +21338,8 @@ function atualizarAbastecimento(id, campo, valor) {
 }
 function removerAbastecimento(id) {
   var _a = (state.abastecimentos || []).find((x) => String(x.id) === String(id));   // v245
-  if (_a && !podeAlterarData(_a.data, "Este abastecimento")) return;
+  // v422: rejeitado nao entra em custo nem hodometro -- apagar nao mexe em mes fechado
+  if (_a && _a.status !== "rejeitado" && !podeAlterarData(_a.data, "Este abastecimento")) return;
   if (!confirm("Remover este abastecimento?")) return;
   state.abastecimentos = (state.abastecimentos || []).filter((x) => String(x.id) !== String(id));
   render();
@@ -21440,6 +21442,20 @@ function rfAbastVincularManual(abastId, novoViagemId) {
   salvar(); render();
   rfAbastSalvarLinha(a);
   alert("✓ Abastecimento vinculado à viagem certa.");
+}
+/* v422: o motorista limpa de uma vez os abastecimentos REJEITADOS que ficam
+   entulhando a tela dele (caso real: Vagner com 7 lancamentos zerados
+   rejeitados em 22/09). Rejeitado nao entra em custo, combustivel da viagem
+   nem hodometro, entao apagar nao altera conta nenhuma. O banco so deixa o
+   motorista apagar o que e dele e que esta pendente ou rejeitado (RLS). */
+function rfAbastExcluirRejeitadosMotorista() {
+  var meus = abastecimentosDoMotorista().filter(function (a) { return a.status === "rejeitado"; });
+  if (!meus.length) return;
+  if (!confirm("Excluir " + meus.length + " abastecimento(s) rejeitado(s)? Eles não contam em nada e somem da sua lista.")) return;
+  var ids = meus.map(function (a) { return String(a.id); });
+  state.abastecimentos = (state.abastecimentos || []).filter(function (x) { return ids.indexOf(String(x.id)) < 0; });
+  render();
+  ids.forEach(function (id) { rfAbastDeletarLinha(id); });
 }
 function rejeitarAbastecimento(id) {
   const motivo = prompt("Motivo da rejeição (fica visível pro motorista) — opcional:", "") || "";
@@ -21787,7 +21803,7 @@ function gerarContextoAssistente() {
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   /* v422: regra permanente -- toda versao nova alimenta o assistente. */
-  const blocoLogos = "LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza).";
+  const blocoLogos = "LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
@@ -24573,6 +24589,7 @@ function renderTabela() {
           <button class="btn-gold" onclick="adicionarAbastecimento()">+ Novo abastecimento</button>
         </div>
         <div style="font-size:12px;color:#999;margin-bottom:16px;">Digite a placa do caminhão e tire 3 fotos: painel (mostrando o KM), visor da bomba (o valor é lido sozinho) e a nota/comprovante. Todas obrigatórias. Depois de enviar, fica <b style="color:${GOLD};">pendente</b> até a equipe confirmar.</div>
+        ${meus.some((a) => a.status === "rejeitado") ? `<div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:#1A0E0E;border:1px solid #C0392B;border-radius:8px;"><span style="font-size:12px;color:#ddd;">Você tem <b style="color:#C0392B;">${meus.filter((a) => a.status === "rejeitado").length}</b> abastecimento(s) rejeitado(s). Eles não contam em nada.</span><button class="btn-del" style="font-size:12px;margin-left:auto;" onclick="rfAbastExcluirRejeitadosMotorista()">🗑 Excluir todos os rejeitados</button></div>` : ""}
         ${meus.length === 0 ? `<div style="text-align:center;color:#777;padding:40px;border:1px dashed #333;border-radius:10px;">Nenhum abastecimento lançado ainda. Clique em "+ Novo abastecimento".</div>` : meus.map((a) => rfAbastCard(a, true)).join("")}
       `;
     } else {
