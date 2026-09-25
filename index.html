@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v432)</title>
+<title>RF Logística — Painel da Frota (v433)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v432">
+<meta name="rf-versao" content="v433">
 <meta name="rf-data" content="2026-09-25">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v432" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v433" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13469,6 +13469,7 @@ function rfFiscalCteAcompanhar(cargaId, espId, n) {
     if (j.averbacao) { ff.averbacao = j.averbacao; ff.averbErro = ""; }
     else if (precisaAverbar) ff.averbErro = j.atm_erro ? (typeof j.atm_erro === "string" ? j.atm_erro : JSON.stringify(j.atm_erro)).slice(0, 300) : "AT&M não respondeu";
     rfFiscalToca(o2.c);
+    if (!ff.xmlPath || !ff.pdfPath) rfFiscalRegistrar(cargaId, espId).catch(function () { });   // v433
   }).catch(function (err) {
     if (n < 20) setTimeout(function () { rfFiscalCteAcompanhar(cargaId, espId, n + 1); }, 5000);
   });
@@ -13591,7 +13592,14 @@ function rfFiscalMdfeAcompanhar(cargaId, n) {
       if (n < 20) { setTimeout(function () { rfFiscalMdfeAcompanhar(cargaId, n + 1); }, 4000); return; }
       mm.erro = "SEFAZ ainda não respondeu — toque em 'consultar'."; rfFiscalToca(c2); return;
     }
-    if (j.status_focus === "encerrado") { mm.status = "autorizado"; mm.encerrado = mm.encerrado || Date.now(); rfFiscalToca(c2); return; }
+    if (j.status_focus === "encerrado") {
+      mm.status = "autorizado"; mm.encerrado = mm.encerrado || Date.now();
+      if (!mm.chave && j.chave) { mm.chave = j.chave; mm.numero = j.numero; mm.serie = j.serie; mm.pdf = j.pdf; mm.xml = j.xml; }
+      rfFiscalToca(c2);
+      rfFiscalRegistrarEncerramento(mm.chave, mm.encerrado);   // v433
+      if (!mm.xmlPath || !mm.pdfPath) rfFiscalRegistrar(cargaId, null).catch(function () { });
+      return;
+    }
     if (j.status_focus !== "autorizado") {
       mm.status = "erro"; mm.erro = (j.sefaz ? "SEFAZ " + j.sefaz + ": " : "") + (j.mensagem || j.status_focus);
       rfFiscalToca(c2); return;
@@ -13600,6 +13608,7 @@ function rfFiscalMdfeAcompanhar(cargaId, n) {
     if (j.averbacao) mm.declaracao = j.averbacao;
     else if (declarar) mm.declErro = j.atm_erro ? (typeof j.atm_erro === "string" ? j.atm_erro : JSON.stringify(j.atm_erro)).slice(0, 300) : "AT&M não respondeu";
     rfFiscalToca(c2);
+    if (!mm.xmlPath || !mm.pdfPath) rfFiscalRegistrar(cargaId, null).catch(function () { });   // v433
   }).catch(function () { if (n < 20) setTimeout(function () { rfFiscalMdfeAcompanhar(cargaId, n + 1); }, 5000); });
 }
 function rfFiscalMdfeEncerrar(cargaId) {
@@ -13612,7 +13621,7 @@ function rfFiscalMdfeEncerrar(cargaId) {
   rfFiscalChamar({ acao: "mdfe_encerrar", ref: m.ref, cidade: String(cid).trim(), uf: "BA" }).then(function (j) {
     var c2 = szCarga(cargaId); if (!c2) return;
     var st = j.retorno && j.retorno.status;
-    if (j.ok && (st === "encerrado" || /encerrad/i.test(JSON.stringify(j.retorno)))) { c2.fiscalMdfe.encerrado = Date.now(); rfFiscalToca(c2); alert("MDF-e encerrado."); }
+    if (j.ok && (st === "encerrado" || /encerrad/i.test(JSON.stringify(j.retorno)))) { c2.fiscalMdfe.encerrado = Date.now(); rfFiscalToca(c2); rfFiscalRegistrarEncerramento(c2.fiscalMdfe.chave, c2.fiscalMdfe.encerrado); alert("MDF-e encerrado."); }
     else {
       // v431: pode ja estar encerrado (toque anterior chegou na SEFAZ mas a tela nao atualizou) -- consulta e acerta
       alert("A SEFAZ respondeu: " + JSON.stringify(j.retorno || j.erro || j).slice(0, 200) + "\n\nVou consultar a situação do MDF-e e atualizar a tela.");
@@ -13652,7 +13661,205 @@ function rfFiscalMdfeHTML(c, placa) {
       + (m.declaracao && m.declaracao.protocolo ? '✓ MDF-e declarado na AT&M · protocolo ' + esc(m.declaracao.protocolo) : '⚠ MDF-e ainda não declarado na AT&M' + (m.declErro ? ': ' + esc(m.declErro) : ""))
       + (c.fiscalCondutor ? ' · motorista ' + esc(c.fiscalCondutor.nome) : "") + (c.fiscalCiot ? ' · CIOT ' + esc(c.fiscalCiot) : " · sem CIOT") + '</div>';
   }
+  if (aut) h += '<div style="margin-top:7px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';font-weight:800;" onclick="rfFiscalEnviarAbrir(\'' + cid + '\')">📤 Enviar documentos (André / motorista)</button></div>';
   return h + '</div>';
+}
+
+/* v433 — DOCUMENTOS PARA ENVIO. Pedido do Renato: "quando tiver que enviar as
+   chaves e CT-e para o André e o motorista, onde baixamos todos?". Resposta:
+   1) todo CT-e/MDF-e emitido pelo app entra sozinho na tela de documentos
+      fiscais (como se tivesse sido importado), com XML e PDF guardados no
+      armazenamento do app -- o "Tudo desta viagem (ZIP)" ja sai com eles;
+   2) botao "📤 Enviar documentos" no quadro do MDF-e: ZIP + e-mail pronto
+      pro André, e os PDFs (DACTE/DAMDFE) direto no WhatsApp do motorista.
+   O XML/PDF vem pela funcao rf-fiscal (acao "arquivos"): o navegador do
+   tablet nao consegue baixar direto do armazenamento da Focus. */
+var RF_FISCAL_CACHE = {};
+function rfFiscalB64Blob(b64, tipo) {
+  var bin = atob(b64), u = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Blob([u], { type: tipo });
+}
+function rfFiscalSubir(caminho, blob, tipo) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) return false;
+    return sb.storage.from(RF_BUCKET).upload(caminho, blob, { contentType: tipo, upsert: true })
+      .then(function (r) { return !r.error; });
+  }).catch(function () { return false; });
+}
+// devolve o objeto fiscal ATUAL (depois de um sync o state pode ter sido trocado)
+function rfFiscalAlvo(cargaId, espId) {
+  var c = szCarga(cargaId); if (!c) return {};
+  if (espId == null) return { c: c, f: c.fiscalMdfe, tipo: "mdfe" };
+  var e = (c.espelhos || []).filter(function (x) { return String(x.id) === String(espId); })[0];
+  return { c: c, e: e, f: e && e.fiscal, tipo: "cte" };
+}
+function rfFiscalRegistrar(cargaId, espId) {
+  var a = rfFiscalAlvo(cargaId, espId), f = a.f;
+  if (!f || f.status !== "autorizado" || !f.ref || !f.chave) return Promise.resolve(null);
+  if (RF_FISCAL_CACHE[f.ref]) return Promise.resolve(RF_FISCAL_CACHE[f.ref]);
+  var tipo = a.tipo;
+  var jaGuardado = (f.xmlPath && f.pdfPath)
+    ? Promise.all([rfBaixarDoBucket(f.xmlPath), rfBaixarDoBucket(f.pdfPath)]).then(function (r) { return (r[0] && r[1]) ? { xml: r[0], pdf: r[1] } : null; })
+    : Promise.resolve(null);
+  return jaGuardado.then(function (ja) {
+    if (ja) return ja;
+    return rfFiscalChamar({ acao: "arquivos", ref: f.ref, tipo: tipo }).then(function (j) {
+      if (!j || !j.ok) throw new Error((j && j.erro) || "falha ao baixar os arquivos");
+      var xmlBlob = j.xml ? new Blob([j.xml], { type: "application/xml" }) : null;
+      var pdfBlob = j.pdf64 ? rfFiscalB64Blob(j.pdf64, "application/pdf") : null;
+      if (j.xml) {
+        var doc = rfFiscalLerXml(j.xml, tipo + "-" + (j.numero || f.numero || "") + ".xml");
+        if (doc) {
+          doc.origem = "app";
+          try { rfFiscalGuardar(doc, { ctes: 0, mdfes: 0, repetidos: 0, ignorados: 0, amarradas: 0 }); } catch (e) { }
+        }
+      }
+      var base = "fiscais/" + tipo + "-" + f.chave;
+      return Promise.all([
+        xmlBlob ? rfFiscalSubir(base + ".xml", xmlBlob, "application/xml") : false,
+        pdfBlob ? rfFiscalSubir(base + ".pdf", pdfBlob, "application/pdf") : false,
+      ]).then(function (ok) {
+        var a2 = rfFiscalAlvo(cargaId, espId);
+        if (a2.f) { if (ok[0]) a2.f.xmlPath = base + ".xml"; if (ok[1]) a2.f.pdfPath = base + ".pdf"; }
+        var d = rfFiscais().find(function (y) { return y.id === tipo + "-" + f.chave; });
+        if (d) { if (ok[0]) d.xmlPath = base + ".xml"; if (ok[1]) d.pdfPath = base + ".pdf"; d.atualizadoEm = Date.now(); }
+        if (a2.c) a2.c.atualizadoEm = Date.now();
+        salvar();
+        try { rfCanhLoteRecasar(true); } catch (e) { }
+        return { xml: xmlBlob, pdf: pdfBlob };
+      });
+    });
+  }).then(function (r) { if (r && r.pdf) RF_FISCAL_CACHE[f.ref] = r; return r; });
+}
+// encerramento feito pelo app vira o mesmo registro que o XML de evento do SimplesCTe
+function rfFiscalRegistrarEncerramento(chaveMdfe, quando) {
+  var ch = String(chaveMdfe || "").replace(/\D/g, "");
+  if (ch.length !== 44) return;
+  var id = "evt-enc-" + ch;
+  if (rfFiscais().some(function (x) { return x.id === id; })) return;
+  var dt = new Date((quando || Date.now()) - 3 * 3600e3).toISOString().slice(0, 10);
+  rfFiscais().push({ id: id, tipo: "evento", chave: ch, numero: "", serie: "", data: dt, encerradoEm: dt,
+    placa: "", motorista: "", ciot: "", cliente: "", cidade: "", uf: "", valor: 0, peso: 0,
+    nfes: [], ctes: [], arquivo: "encerrado pelo app", origem: "app", lidoEm: Date.now(), atualizadoEm: Date.now() });
+  salvar();
+}
+function rfFiscalNomeArq(s) { return String(s || "").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim().slice(0, 50); }
+function rfFiscalNfsDoEsp(e) {
+  var ns = (e.notas && e.notas.length ? e.notas : [{ chave: e.chave }]).map(function (n) {
+    var ch = String(n.chave || n.chaveNfe || "").replace(/\D/g, "");
+    return n.nf ? String(n.nf) : (ch.length === 44 ? String(parseInt(ch.slice(25, 34), 10)) : "");
+  }).filter(Boolean);
+  return ns.join(", ");
+}
+function rfFiscalEmailEnvio(c) {
+  var t = szEmisTotais(c), m = c.fiscalMdfe || {};
+  var dt = String(c.data || "").slice(0, 10).split("-").reverse().join("/");
+  var mot = (c.fiscalCondutor && c.fiscalCondutor.nome) || szEmisMotorista(c).nome || "";
+  var placa = (m.placa || c.placa || "");
+  var linhas = (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).map(function (e) {
+    var f = e.fiscal;
+    return "• CT-e " + f.numero + " — " + (e.cliente || "") + " — " + ((f.destino && f.destino.cidade) || e.cidade || "")
+      + " — NF " + rfFiscalNfsDoEsp(e) + " — frete " + fmtR(Number(e.valorFrete) || 0)
+      + "\n  Chave: " + f.chave
+      + (f.averbacao && f.averbacao.numero ? "\n  Averbação: " + f.averbacao.numero : "");
+  });
+  return "Bom dia, André! Tudo bem?\n\n"
+    + "Seguem os documentos da viagem de " + dt + " — placa " + placa + (mot ? ", motorista " + mot : "") + ".\n\n"
+    + (m.status === "autorizado" ? "MDF-e " + m.numero + "\nChave: " + m.chave + "\n" + (c.fiscalCiot ? "CIOT: " + c.fiscalCiot + "\n" : "") + "\n" : "")
+    + "CT-e (" + linhas.length + "):\n" + linhas.join("\n\n")
+    + "\n\nTotal de frete: " + fmtR(t.frete) + " · " + (Math.round(t.peso * 10) / 10).toLocaleString("pt-BR") + " kg · " + t.volumes + " volumes."
+    + "\n\nEm anexo, o DACTE e o XML de cada CT-e e o DAMDFE/XML do manifesto.\n\n"
+    + "Qualquer dúvida, é só avisar.\n\nAtenciosamente,\n\n"
+    + "Renato Couto\nDiretor de Operações\nRF Logística Transportes e Distribuição Ltda\n"
+    + "(75) 99971-7578 — comercial@rflogistica.com.br";
+}
+function rfFiscalEnviarAbrir(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  var esps = (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; });
+  var alvos = esps.map(function (e) { return { espId: e.id, rotulo: "CT-e " + e.fiscal.numero + " " + (e.cliente || ""), nomePdf: "DACTE " + e.fiscal.numero + " - " + rfFiscalNomeArq(e.cliente) + ".pdf", nomeXml: "CTe " + e.fiscal.numero + " - " + e.fiscal.chave + ".xml" }; });
+  var m = c.fiscalMdfe || {};
+  if (m.status === "autorizado") alvos.push({ espId: null, rotulo: "MDF-e " + m.numero, nomePdf: "DAMDFE " + m.numero + " - " + rfFiscalNomeArq(m.placa || c.placa) + ".pdf", nomeXml: "MDFe " + m.numero + " - " + m.chave + ".xml" });
+  var ov = document.getElementById("rfEnvioModal");
+  if (ov) ov.remove();
+  ov = document.createElement("div");
+  ov.id = "rfEnvioModal";
+  ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.82);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:16px;";
+  ov.innerHTML = '<div style="background:#111;border:1px solid ' + GOLD + ';border-radius:10px;max-width:560px;width:100%;padding:14px;color:#eee;font-size:13px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="color:' + GOLD + ';">📤 Documentos · ' + esc(m.placa || c.placa || "") + ' · ' + esc(String(c.data || "").slice(0, 10).split("-").reverse().join("/")) + '</b>'
+    + '<button class="btn-outline" style="font-size:11px;padding:2px 9px;" onclick="document.getElementById(\'rfEnvioModal\').remove()">Fechar</button></div>'
+    + '<div id="rfEnvioStatus" style="margin:10px 0;font-size:12px;color:#F2E600;">⏳ Buscando ' + alvos.length + ' documento(s)...</div>'
+    + '<div id="rfEnvioAcoes"></div></div>';
+  document.body.appendChild(ov);
+  var arquivos = [], falhas = [];
+  Promise.all(alvos.map(function (al) {
+    return rfFiscalRegistrar(cargaId, al.espId).then(function (r) {
+      if (!r || !r.pdf) { falhas.push(al.rotulo + " (sem PDF)"); }
+      if (r && r.pdf) arquivos.push({ pasta: al.espId == null ? "damdfe" : "dacte", nome: al.nomePdf, blob: r.pdf, pdf: true, mdfe: al.espId == null });
+      if (r && r.xml) arquivos.push({ pasta: "xml", nome: al.nomeXml, blob: r.xml, pdf: false });
+    }).catch(function (err) { falhas.push(al.rotulo + ": " + (err && err.message || err)); });
+  })).then(function () {
+    render();
+    // MDF-e primeiro na lista do motorista (é o que a fiscalização pede primeiro)
+    arquivos.sort(function (x, y) { return (y.mdfe ? 1 : 0) - (x.mdfe ? 1 : 0); });
+    window.__rfEnvio = { cargaId: cargaId, arquivos: arquivos, email: rfFiscalEmailEnvio(szCarga(cargaId) || c) };
+    var st = document.getElementById("rfEnvioStatus"), ac = document.getElementById("rfEnvioAcoes");
+    if (!st || !ac) return;
+    var nPdf = arquivos.filter(function (a) { return a.pdf; }).length, nXml = arquivos.length - nPdf;
+    st.style.color = falhas.length ? "#E67E22" : "#66BB6A";
+    st.innerHTML = (falhas.length ? "⚠ " : "✓ ") + nPdf + " PDF e " + nXml + " XML prontos." + (falhas.length ? "<br>Faltou: " + esc(falhas.join(" · ")) : "")
+      + (m.status !== "autorizado" ? '<br><span style="color:#E67E22;">O MDF-e ainda não foi emitido — só os CT-e vão no pacote.</span>' : "");
+    var bt = 'class="btn-outline" style="display:block;width:100%;text-align:left;font-size:13px;padding:9px 12px;margin:0 0 8px;';
+    ac.innerHTML = '<div style="font-size:11px;font-weight:800;color:#888;margin:4px 0 6px;">MOTORISTA</div>'
+      + '<button ' + bt + 'border-color:#25D366;color:#25D366;" onclick="rfFiscalEnviarMotorista()">📲 Mandar os PDFs (DAMDFE + DACTE) — abre o WhatsApp</button>'
+      + '<div style="font-size:11px;font-weight:800;color:#888;margin:8px 0 6px;">ANDRÉ</div>'
+      + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="rfFiscalEnviarZip()">⬇ Baixar ZIP (DACTE, DAMDFE, XML e espelho)</button>'
+      + '<button ' + bt + '" onclick="rfFiscalEnviarCopiar()">📋 Copiar o e-mail (anexe o ZIP no Gmail)</button>'
+      + '<textarea readonly style="width:100%;height:190px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(window.__rfEnvio.email) + '</textarea>';
+  });
+}
+function rfFiscalEnviarMotorista() {
+  var ev = window.__rfEnvio; if (!ev) return;
+  var c = szCarga(ev.cargaId) || {}, m = c.fiscalMdfe || {};
+  var pdfs = ev.arquivos.filter(function (a) { return a.pdf; });
+  if (!pdfs.length) { alert("Nenhum PDF disponível."); return; }
+  var files = pdfs.map(function (a) { return new File([a.blob], a.nome, { type: "application/pdf" }); });
+  var texto = "Documentos da viagem " + (m.placa || c.placa || "") + (m.numero ? " — MDF-e " + m.numero : "")
+    + ". Deixe no celular para mostrar na fiscalização.";
+  if (navigator.canShare && navigator.canShare({ files: files })) {
+    navigator.share({ files: files, title: "Documentos da viagem", text: texto }).catch(function (e) {
+      if (e && e.name !== "AbortError") alert("Não consegui abrir o compartilhamento: " + e.message);
+    });
+    return;
+  }
+  // sem compartilhamento de arquivo (computador): baixa um por um
+  pdfs.forEach(function (a, i) { setTimeout(function () { rfBaixarBlob(a.blob, a.nome); }, i * 600); });
+  alert("Este aparelho não compartilha arquivos direto. Baixei os " + pdfs.length + " PDF(s) — mande pelo WhatsApp Web anexando da pasta Downloads.");
+}
+function rfFiscalEnviarZip() {
+  var ev = window.__rfEnvio; if (!ev) return;
+  var c = szCarga(ev.cargaId) || {}, m = c.fiscalMdfe || {};
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) { alert("Não consegui carregar o compactador (ele baixa da internet na primeira vez)."); return; }
+    var zip = new JSZip();
+    ev.arquivos.forEach(function (a) { zip.file(a.pasta + "/" + a.nome, a.blob); });
+    var tarefas = (c.arquivos || []).map(function (a, ix) {
+      if (!a || !a.path) return null;
+      var nomeE = "espelho-" + (ix + 1) + "-" + rfFiscalNomeArq(a.nome || "arquivo");
+      if (!/\.(pdf|jpg|jpeg|png)$/i.test(nomeE)) nomeE += ".pdf";
+      return rfBaixarDoBucket(a.path).then(function (b) { if (b) zip.file("espelho/" + nomeE, b); });
+    }).filter(Boolean);
+    zip.file("email-andre.txt", ev.email);
+    Promise.all(tarefas).then(function () { return zip.generateAsync({ type: "blob" }); }).then(function (blob) {
+      rfBaixarBlob(blob, "RF_docs_" + rfFiscalNomeArq(m.placa || c.placa) + "_" + String(c.data || "").slice(0, 10).replace(/-/g, "") + ".zip");
+    });
+  });
+}
+function rfFiscalEnviarCopiar() {
+  var ev = window.__rfEnvio; if (!ev) return;
+  var ok = function () { alert("E-mail copiado. Cole no Gmail e anexe o ZIP."); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ev.email).then(ok, function () { alert("Não consegui copiar — selecione o texto na caixa e copie."); });
+  else alert("Selecione o texto na caixa e copie.");
 }
 
 function szEtapaAbrir(id) {
@@ -19557,6 +19764,13 @@ function rfFiscalExportarZIP(placa, data, oQue) {
           if (b) zip.file("xml/" + d.tipo + "-" + (d.numero || d.chave) + ".xml", b);
         }));
       });
+      // v433: DACTE/DAMDFE dos documentos emitidos pelo app
+      docs.forEach(function (d) {
+        if (!d.pdfPath) return;
+        tarefas.push(rfBaixarDoBucket(d.pdfPath).then(function (b) {
+          if (b) zip.file("pdf/" + (d.tipo === "cte" ? "DACTE " : "DAMDFE ") + (d.numero || d.chave) + ".pdf", b);
+        }));
+      });
     }
     /* v376: o ESPELHO da Suzano tambem entra no pacote. Ate a v375 o "tudo
        (ZIP)" levava canhotos e XML, mas nao o espelho -- e ele e o documento
@@ -22789,7 +23003,7 @@ function gerarContextoAssistente() {
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   /* v422: regra permanente -- toda versao nova alimenta o assistente. */
-  const blocoLogos = "EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
+  const blocoLogos = "ENVIO DE DOCUMENTOS (v433, 25/09/2026): todo CT-e e MDF-e emitido pelo app entra sozinho nos documentos fiscais da viagem, com XML e PDF (DACTE/DAMDFE) guardados; o encerramento feito pelo app tambem vira registro. No quadro do MDF-e ha o botao Enviar documentos: para o motorista manda os PDFs direto no WhatsApp (compartilhar do celular/tablet); para o Andre baixa um ZIP (DACTE, DAMDFE, XML e espelho) e copia o e-mail pronto com numero, chave, NF, frete e averbacao de cada CT-e e a chave do MDF-e. O Tudo desta viagem (ZIP) tambem passa a levar a pasta pdf/. EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
