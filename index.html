@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v425)</title>
+<title>RF Logística — Painel da Frota (v427)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v425">
+<meta name="rf-versao" content="v427">
 <meta name="rf-data" content="2026-09-25">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v425" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v427" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -9118,7 +9118,7 @@ function szLerCamera(cargaId, campo, inputId, eid) {
 
 var GO_CLIENTE = "Goiás Atacado";
 var GO_LOGO_COR = "data:image/jpeg;base64,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";
-var GO_LOGO_PB = "data:image/png;base64,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";
+var GO_LOGO_PB = "data:image/png;base64,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";   // v427: fundo transparente (rolo amarelo)
 
 function goCargas() { if (!Array.isArray(state.goiasCargas)) state.goiasCargas = []; return state.goiasCargas; }
 function goBips() { if (!Array.isArray(state.goiasBips)) state.goiasBips = []; return state.goiasBips; }
@@ -9128,7 +9128,7 @@ function goFmt(n, d) { return Number(n || 0).toLocaleString("pt-BR", { minimumFr
 /* ---- leitura do arquivo ---------------------------------------------------- */
 function goNum(v) {
   if (typeof v === "number") return v;
-  var s = String(v == null ? "" : v).trim().replace(/^P/i, "");
+  var s = String(v == null ? "" : v).trim().replace(/^(VL|P|V)/i, "");   // v426: "P11.11", "VL2523.25", "V.0221"
   if (!s) return 0;
   if (s.indexOf(",") >= 0) s = s.replace(/\./g, "").replace(",", ".");
   var n = parseFloat(s);
@@ -9157,7 +9157,12 @@ function goLinhasDoArquivo(bytes) {
   if ((zip || ole) && window.XLSX) {
     var wb = XLSX.read(bytes, { type: "array" });
     var sh = wb.Sheets[wb.SheetNames[0]];
-    return XLSX.utils.sheet_to_json(sh, { header: 1, raw: false, defval: "" });
+    /* v426: raw:TRUE. O .xls binario da Goias guarda o codigo de barras como
+       NUMERO; com raw:false o SheetJS devolve o texto formatado "1.78987E+13"
+       e o EAN se perde. A data vem como serial (46283), que goDataISO ja le. */
+    return XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: "" }).map(function (l) {
+      return l.map(function (x) { return typeof x === "number" ? (Number.isInteger(x) ? x.toFixed(0) : String(x)) : x; });
+    });
   }
   var txt = goTextoDeBytes(bytes);
   if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
@@ -9169,7 +9174,7 @@ function goLinhasDoArquivo(bytes) {
      aspas no meio ('TESOURA ... 7"COLOR'), e um leitor de CSV abriria um campo
      entre aspas ali e engoliria a linha inteira -- foi o que o teste pegou. */
   var linhas = txt.replace(/\r/g, "").split("\n").filter(function (l) { return l.trim() !== ""; });
-  if (linhas.length && linhas[0].indexOf("\t") >= 0) return linhas.map(function (l) { return l.split("\t"); });
+  if (txt.indexOf("\t") >= 0) return linhas.map(function (l) { return l.split("\t"); });
   return rfRotSepararTexto(txt);
 }
 function goMontarCarga(linhas, nomeArquivo) {
@@ -9199,7 +9204,7 @@ function goMontarCarga(linhas, nomeArquivo) {
         end: g(l, "ENDERENT"), bairro: g(l, "BAIRROENT"),
         cidade: mm ? mm[1] : (g(l, "PRACA") || est), uf: mm ? mm[2] : "BA",
         cep: g(l, "CEPENT"), seq: goNum(g(l, "NUMSEQENTREGA")) || 999,
-        obs: "", nfs: [], peds: [], peso: 0, itens: [], _miu: {}, _soltas: 0, _cx: [],
+        obs: "", nfs: [], peds: [], peso: 0, itens: [], _miu: {}, _soltas: 0, _cx: [], valor: 0, m3: 0, _vlnf: {},
       };
       ordemCli.push(codcli);
     }
@@ -9209,6 +9214,10 @@ function goMontarCarga(linhas, nomeArquivo) {
     if (nf && cli.nfs.indexOf(nf) < 0) cli.nfs.push(nf);
     if (ped && cli.peds.indexOf(ped) < 0) cli.peds.push(ped);
     cli.peso += goNum(g(l, "PESOTOTAL"));
+    /* v426: VOLUME do arquivo e a cubagem de UMA unidade (igual pra 3 ou 5
+       caixas do mesmo item), nao o total da linha -- por isso NAO e somado:
+       somar daria uma cubagem falsa. */
+    if (nf && g(l, "VLNF") && !(nf in cli._vlnf)) cli._vlnf[nf] = goNum(g(l, "VLNF"));   // valor da NF repete em toda linha
     var desc = g(l, "DESCRICAO"), qtcx = goNum(g(l, "QTCX")), qtun = goNum(g(l, "QTUN"));
     var ean = g(l, "CODAUXILIAR"); if (ean === "0") ean = "";
     var eans = [ean, g(l, "CODAUXILIAR2"), g(l, "CODAUXILIARTRIB")].filter(function (x) { return x && x !== "0"; }).join("|");
@@ -9217,6 +9226,9 @@ function goMontarCarga(linhas, nomeArquivo) {
     if (miu) {
       var nm = g(l, "NUMMIUDEZA") || ("M" + codcli);
       cli._miu[nm] = (cli._miu[nm] || 0) + 1;
+      cli._miuOs = cli._miuOs || {};
+      var os = g(l, "NUMOS");
+      if (os) { cli._miuOs[nm] = cli._miuOs[nm] || []; if (cli._miuOs[nm].indexOf(os) < 0) cli._miuOs[nm].push(os); }
     } else {
       for (var q = 0; q < qtcx; q++) cli._cx.push({ d: desc, e: ean });
       if (qtun > 0) cli._soltas += qtun;
@@ -9233,13 +9245,15 @@ function goMontarCarga(linhas, nomeArquivo) {
     var meus = [];
     c._cx.forEach(function (x) { meus.push({ c: cod(), k: c.k, t: "CX", d: x.d, e: x.e }); });
     Object.keys(c._miu).forEach(function (nm) {
-      meus.push({ c: cod(), k: c.k, t: "MIU", d: "caixa Goiás " + nm + " · " + c._miu[nm] + " produtos dentro", m: nm });
+      meus.push({ c: cod(), k: c.k, t: "MIU", d: "miudeza · caixa Goiás " + nm + " · " + c._miu[nm] + " produtos", m: nm, os: (c._miuOs || {})[nm] || [] });
     });
-    if (c._soltas > 0) meus.push({ c: cod(), k: c.k, t: "SOL", d: goFmt(c._soltas) + " unidade(s) soltas — juntar num saco" });
+    if (c._soltas > 0) meus.push({ c: cod(), k: c.k, t: "SOL", d: "soltos · " + goFmt(c._soltas) + " un — juntar num saco" });
     meus.forEach(function (v, i) { v.n = i + 1; v.tot = meus.length; });
     c.vols = meus.length;
     c.peso = Math.round(c.peso * 1000) / 1000;
-    delete c._cx; delete c._miu; delete c._soltas;
+    c.valor = Math.round(Object.keys(c._vlnf).reduce(function (s, k) { return s + c._vlnf[k]; }, 0) * 100) / 100;
+    c.m3 = Math.round(c.m3 * 1000) / 1000;
+    delete c._cx; delete c._miu; delete c._soltas; delete c._vlnf; delete c._miuOs;
     vols = vols.concat(meus);
   });
   return {
@@ -9281,9 +9295,9 @@ function goBipsDaCarga(cargaId, tipo) {
 }
 function goTotais(c) {
   var car = goBipsDaCarga(c.id, "c"), ent = goBipsDaCarga(c.id, "e");
-  var t = { clientes: c.clientes.length, cidades: 0, nfs: 0, peso: 0, vols: c.vols.length, cx: 0, miu: 0, sol: 0, carregados: 0, entregues: 0 };
+  var t = { clientes: c.clientes.length, cidades: 0, nfs: 0, peso: 0, valor: 0, m3: 0, vols: c.vols.length, cx: 0, miu: 0, sol: 0, carregados: 0, entregues: 0 };
   var cid = {};
-  c.clientes.forEach(function (x) { cid[x.cidade] = 1; t.nfs += x.nfs.length; t.peso += x.peso; });
+  c.clientes.forEach(function (x) { cid[x.cidade] = 1; t.nfs += x.nfs.length; t.peso += x.peso; t.valor += Number(x.valor) || 0; t.m3 += Number(x.m3) || 0; });
   t.cidades = Object.keys(cid).length;
   c.vols.forEach(function (v) {
     if (v.t === "CX") t.cx++; else if (v.t === "MIU") t.miu++; else t.sol++;
@@ -9308,6 +9322,16 @@ function goBipar(cargaId, tipo, codigo, kEsperado) {
   var vol = c.vols.find(function (v) { return v.c === cod; });
   // a etiqueta interna da caixa de miudeza (numero da Goias) tambem vale
   if (!vol) vol = c.vols.find(function (v) { return v.t === "MIU" && v.m === cod; });
+  /* v427: etiqueta AMARELA da propria Goias (fracionado), ex. VEN00522073140001
+     = "VEN005" + O.S. 52207314 + volume 0001. A O.S. casa com o NUMOS das
+     linhas de miudeza do arquivo. So vale se a O.S. apontar UMA caixa so. */
+  if (!vol && /^VEN\d{10,}$/i.test(cod)) {
+    var osLida = cod.replace(/^VEN\d{3}/i, "").slice(0, 8);
+    var achadas = c.vols.filter(function (v) { return v.t === "MIU" && ((v.os || []).indexOf(osLida) >= 0 || v.m === osLida); });
+    if (achadas.length === 1) vol = achadas[0];
+    else if (achadas.length > 1) return { ok: false, msg: "A etiqueta amarela da Goiás (O.S. " + osLida + ") serve para mais de uma caixa. Bipe a etiqueta RF." };
+    else return { ok: false, msg: "Etiqueta amarela da Goiás com O.S. " + osLida + " não é desta carga." };
+  }
   if (!vol) {
     var cliEan = [];
     c.clientes.forEach(function (x) { if (x.itens.some(function (it) { return it[3] && ("|" + it[3] + "|").indexOf("|" + cod + "|") >= 0; })) cliEan.push(x.fant); });
@@ -9416,7 +9440,14 @@ function goEtiquetaFormato() {
   return f === "100x150" ? { w: 100, h: 150 } : f === "100x75" ? { w: 100, h: 75 } : { w: 100, h: 50 };
 }
 function goSetEtiquetaFormato(v) { if (!state.config) state.config = {}; state.config.goEtiqueta = v; salvar(); render(); }
-function goImprimirEtiquetas(cargaId, k) {
+/* v427: a Goias pediu etiqueta AMARELA para o fracionado (miudeza e soltos,
+   o que vai em saco ou meia caixa). A impressora da RF e termica DIRETA: so
+   imprime preto, a cor vem do ROLO. Por isso a impressao sai em dois lotes --
+   caixas fechadas no rolo branco e fracionados no rolo amarelo -- e a etiqueta
+   do fracionado leva a faixa "FRACIONADO" em preto pra se destacar mesmo que
+   saia no rolo errado. grupo: "cx" | "fr" | vazio (tudo). */
+function goEhFracionado(v) { return v.t === "MIU" || v.t === "SOL"; }
+function goImprimirEtiquetas(cargaId, k, grupo) {
   var c = goCarga(cargaId); if (!c) return;
   var nParadas = c.clientes.length;
   /* ordem de CARREGAMENTO: a ultima parada sai primeiro da impressora, porque
@@ -9424,9 +9455,15 @@ function goImprimirEtiquetas(cargaId, k) {
   var clis = c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; });
   if (k) clis = clis.filter(function (x) { return x.k === k; });
   var lista = [];
-  clis.forEach(function (cl) { c.vols.forEach(function (v) { if (v.k === cl.k) lista.push({ v: v, cl: cl }); }); });
+  clis.forEach(function (cl) { c.vols.forEach(function (v) {
+    if (v.k !== cl.k) return;
+    if (grupo === "cx" && goEhFracionado(v)) return;
+    if (grupo === "fr" && !goEhFracionado(v)) return;
+    lista.push({ v: v, cl: cl });
+  }); });
   if (!lista.length) { alert("Nada para imprimir."); return; }
-  if (!k && !confirm("Imprimir " + lista.length + " etiqueta(s) da carga " + c.numcar + "?\n\nSaem na ordem de CARREGAMENTO: última parada primeiro.")) return;
+  var rolo = grupo === "fr" ? "\n\n🟨 COLOQUE O ROLO AMARELO na impressora (fracionados)." : grupo === "cx" ? "\n\n⬜ Use o rolo BRANCO (caixas fechadas)." : "";
+  if (!confirm("Imprimir " + lista.length + " etiqueta(s) da carga " + c.numcar + (k ? " — só " + (goCliente(c, k).fant || "") : "") + "?\n\nSaem na ordem de CARREGAMENTO: última parada primeiro." + rolo)) return;
   var F = goEtiquetaFormato(), alto = F.h >= 75;
   var w = window.open("", "_blank");
   if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
@@ -9437,7 +9474,7 @@ function goImprimirEtiquetas(cargaId, k) {
       + '<div class="cli">' + esc(String(cl.fant || cl.nome).slice(0, 34)) + '</div>'
       + '<div class="cid">' + esc(cl.cidade) + (alto && cl.bairro ? ' · ' + esc(cl.bairro) : '') + '</div>'
       + (alto ? '<div class="end">' + esc(String(cl.end || "").slice(0, 60)) + '</div>' : '')
-      + '<div class="vol"><b>VOL ' + v.n + '/' + v.tot + '</b> <span class="t t' + v.t + '">' + (v.t === "CX" ? "CAIXA" : v.t === "MIU" ? "MIUDEZA" : "SOLTOS") + '</span> ' + esc(String(v.d || "").slice(0, alto ? 70 : 44)) + '</div>'
+      + '<div class="vol"><b>VOL ' + v.n + '/' + v.tot + '</b> <span class="t t' + v.t + '">' + (v.t === "CX" ? "CAIXA" : "FRACIONADO") + '</span> ' + esc(String(v.d || "").slice(0, alto ? 70 : 44)) + '</div>'
       + '<div class="bc">' + goBarcodeSvg(v.c, alto ? 20 : 14) + '</div>'
       + '<div class="rod"><span class="cod">' + esc(v.c) + '</span><span>Carga ' + esc(c.numcar) + (c.placa ? ' · ' + esc(c.placa) : '') + ' · NF ' + esc(cl.nfs.slice(0, 3).join("/")) + '</span></div>'
       + '</div>';
@@ -9589,12 +9626,13 @@ function goCardHTML(c) {
     + ' Motorista <select onchange="goSetCampo(\'' + c.id + '\',\'motorista\',this.value)" style="font-weight:700;"><option value="">— escolha —</option>'
     + mots.map(function (n) { return '<option' + (n === c.motorista ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join("") + '</select>'
     + '<button onclick="goExcluir(\'' + c.id + '\')" style="margin-left:auto;font-size:11px;">🗑 excluir carga</button></div>'
-    + '<div style="font-size:12px;color:#ccc;margin-top:8px;">' + t.nfs + ' NF · ' + t.cx + ' caixas fechadas · ' + t.miu + ' caixas de miudeza · ' + t.sol + ' sacos de soltos · arquivo ' + esc(c.arquivo || "") + '</div></div>';
+    + '<div style="font-size:12px;color:#ccc;margin-top:8px;">' + (t.valor && typeof podeVerValoresFrete === "function" && podeVerValoresFrete() ? 'mercadoria R$ ' + goFmt(t.valor, 2) + ' (valor p/ averbação) · ' : '') + t.nfs + ' NF · ' + t.cx + ' caixas fechadas · ' + t.miu + ' caixas de miudeza · ' + t.sol + ' sacos de soltos · arquivo ' + esc(c.arquivo || "") + '</div></div>';
   // etiquetas
   h += '<div ' + box + '>' + tit("2", "Etiquetas")
-    + '<button onclick="goImprimirEtiquetas(\'' + c.id + '\')" style="background:' + GOLD + ';color:#000;font-weight:800;padding:8px 12px;">🖨 Imprimir todas (' + t.vols + ')</button> '
+    + '<button onclick="goImprimirEtiquetas(\'' + c.id + '\',\'\',\'cx\')" style="background:#fff;color:#000;font-weight:800;padding:8px 12px;">⬜ Caixas fechadas (' + t.cx + ') — rolo branco</button> '
+    + '<button onclick="goImprimirEtiquetas(\'' + c.id + '\',\'\',\'fr\')" style="background:#F2E600;color:#000;font-weight:800;padding:8px 12px;">🟨 Fracionados (' + (t.miu + t.sol) + ') — rolo amarelo</button> '
     + '<button onclick="goImprimirRomaneio(\'' + c.id + '\')" style="padding:8px 12px;">📄 Romaneio de carregamento</button>'
-    + '<div style="font-size:11px;color:#999;margin-top:6px;">Saem na ordem de carregamento (última parada primeiro). Soltos: juntar num saco por cliente e colar 1 etiqueta. Na miudeza, o número da caixa da Goiás também pode ser bipado.</div></div>';
+    + '<div style="font-size:11px;color:#999;margin-top:6px;">Impressora térmica: a cor vem do ROLO. Imprima as caixas no rolo branco e troque para o rolo amarelo nos fracionados (miudeza e soltos, que vão em saco ou meia caixa). Saem na ordem de carregamento (última parada primeiro). Na bipagem vale a etiqueta RF, o número da caixa de miudeza e a etiqueta amarela da Goiás (VEN…).</div></div>';
   // carregamento
   h += '<div ' + box + '>' + tit("3", "Bipar o carregamento")
     + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pc + '%;background:' + cor + ';"></div></div>'
@@ -9633,7 +9671,8 @@ function goCardHTML(c) {
     h += '<tr style="border-top:1px solid #333;"><td><b>' + cl.seq + '</b></td><td>' + esc(cl.fant) + (cl.obs ? '<div style="font-size:10px;color:#E67E22;">⚠ ' + esc(cl.obs) + '</div>' : '') + '</td><td>' + esc(cl.cidade) + '</td><td>' + esc(cl.nfs.join(", ")) + '</td>'
       + '<td style="text-align:right;">' + goFmt(cl.peso, 1) + '</td><td style="text-align:right;">' + tc.vols + '</td>'
       + '<td style="text-align:right;color:' + (ok ? "#4CAF50" : "#ccc") + ';font-weight:700;">' + tc.car + '</td><td style="text-align:right;">' + tc.ent + '</td>'
-      + '<td style="white-space:nowrap;"><button onclick="goImprimirEtiquetas(\'' + c.id + '\',\'' + cl.k + '\')" title="reimprimir etiquetas deste cliente">🖨</button> '
+      + '<td style="white-space:nowrap;"><button onclick="goImprimirEtiquetas(\'' + c.id + '\',\'' + cl.k + '\',\'cx\')" title="reimprimir as caixas deste cliente (rolo branco)">⬜</button>'
+      + (c.vols.some(function (v) { return v.k === cl.k && goEhFracionado(v); }) ? '<button onclick="goImprimirEtiquetas(\'' + c.id + '\',\'' + cl.k + '\',\'fr\')" title="reimprimir os fracionados deste cliente (rolo amarelo)" style="background:#F2E600;">🟨</button>' : '') + ' '
       + '<button onclick="state.goCliAberto=' + (aberto ? "''" : "'" + c.id + '|' + cl.k + "'") + ';render();">' + (aberto ? "▾" : "▸") + '</button></td></tr>';
     if (aberto) {
       var faltam = c.vols.filter(function (v) { return v.k === cl.k && !car[v.c]; });
@@ -22794,7 +22833,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v423: operação Goiás Atacado ---
   const blocoGoias = !podeVerAba("goiascarga") ? "" : (function () {
     const cargas = (state.goiasCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GOIÁS ATACADO (aba "Carregamento Goiás", v423): a Atacadista Goiás manda o arquivo da CARGA exportado do sistema dela (extensão .xls, mas por dentro é texto separado por tabulação, uma linha por item). A equipe importa o arquivo pelo botão "Importar carga" e o app monta sozinho, sem IA: os clientes na ordem de entrega que a Goiás já manda (NUMSEQENTREGA), as NF de cada um, o peso e os VOLUMES. Regra dos volumes: 1 volume por caixa fechada (QTCX), 1 volume por caixa de MIUDEZA (número NUMMIUDEZA da Goiás) e 1 volume por cliente para as unidades soltas, que devem ir juntas num saco. Cada volume ganha UMA ETIQUETA com parada, cliente, cidade, volume N/total e um código de barras próprio = número da carga + sequência de 5 dígitos. As etiquetas saem na ordem de CARREGAMENTO (última parada primeiro), na impressora térmica da RF (203 dpi, até 108 mm, formato padrão 100x50 mm, mudável na tela para 100x75 ou 100x150). POR QUE ETIQUETA E NÃO O CÓDIGO DO FABRICANTE: o mesmo produto vai para vários clientes na mesma carga, então o EAN diz o que é mas não de quem é — se alguém bipar o EAN o app avisa isso. Na miudeza, o número da caixa da própria Goiás também é aceito na bipagem. Na etiqueta de miudeza, "VOL 11/12" quer dizer volume 11 dos 12 do cliente, e "N produtos dentro" é quantos produtos diferentes estão dentro daquela caixa — não é contagem de volumes (esclarecido na v424). BIPAGEM: no carregamento cada volume bipado fica verde; etiqueta de outra carga é recusada. Na entrega escolhe-se o cliente da parada e volume de outro cliente é RECUSADO com "PARE"; volume não carregado também não entra. ROTA: o botão "Criar viagem e entregas no app" cria 1 viagem (cliente Goiás Atacado, placa escolhida) e 1 entrega por cliente com 1 canhoto por NF, no mesmo padrão da Suzano; nasce NÃO liberada e só aparece para o motorista depois de "Liberar para o motorista". Os bips ficam salvos um a um (lista goiasBips), então dois celulares podem bipar a mesma carga ao mesmo tempo sem apagar o trabalho do outro. LIMITE ATUAL: a bipagem é feita na tela da equipe (conferente); o motorista, no celular dele, vê a rota e anexa canhoto, mas ainda não bipa volume. O valor do frete da Goiás ainda não está cadastrado: a viagem nasce com frete zero.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GOIÁS ATACADO (aba "Carregamento Goiás", v423): a Atacadista Goiás manda o arquivo da CARGA exportado do sistema dela (extensão .xls, mas por dentro é texto separado por tabulação, uma linha por item). A equipe importa o arquivo pelo botão "Importar carga" e o app monta sozinho, sem IA: os clientes na ordem de entrega que a Goiás já manda (NUMSEQENTREGA), as NF de cada um, o peso e os VOLUMES. Regra dos volumes: 1 volume por caixa fechada (QTCX), 1 volume por caixa de MIUDEZA (número NUMMIUDEZA da Goiás) e 1 volume por cliente para as unidades soltas, que devem ir juntas num saco. Cada volume ganha UMA ETIQUETA com parada, cliente, cidade, volume N/total e um código de barras próprio = número da carga + sequência de 5 dígitos. As etiquetas saem na ordem de CARREGAMENTO (última parada primeiro), na impressora térmica da RF (203 dpi, até 108 mm, formato padrão 100x50 mm, mudável na tela para 100x75 ou 100x150). POR QUE ETIQUETA E NÃO O CÓDIGO DO FABRICANTE: o mesmo produto vai para vários clientes na mesma carga, então o EAN diz o que é mas não de quem é — se alguém bipar o EAN o app avisa isso. Na miudeza, o número da caixa da própria Goiás também é aceito na bipagem. Na etiqueta de miudeza, "VOL 11/12" quer dizer volume 11 dos 12 do cliente, e "N produtos dentro" é quantos produtos diferentes estão dentro daquela caixa — não é contagem de volumes (esclarecido na v424). BIPAGEM: no carregamento cada volume bipado fica verde; etiqueta de outra carga é recusada. Na entrega escolhe-se o cliente da parada e volume de outro cliente é RECUSADO com "PARE"; volume não carregado também não entra. ROTA: o botão "Criar viagem e entregas no app" cria 1 viagem (cliente Goiás Atacado, placa escolhida) e 1 entrega por cliente com 1 canhoto por NF, no mesmo padrão da Suzano; nasce NÃO liberada e só aparece para o motorista depois de "Liberar para o motorista". Os bips ficam salvos um a um (lista goiasBips), então dois celulares podem bipar a mesma carga ao mesmo tempo sem apagar o trabalho do outro. LIMITE ATUAL: a bipagem é feita na tela da equipe (conferente); o motorista, no celular dele, vê a rota e anexa canhoto, mas ainda não bipa volume. O valor do frete da Goiás ainda não está cadastrado: a viagem nasce com frete zero. FORMATOS DO ARQUIVO (v426): a Goiás manda às vezes texto separado por tabulação com extensão .xls e às vezes Excel .xls de verdade (binário); os dois entram pelo mesmo botão. O arquivo novo traz ainda VLNF (valor da NF, repetido em cada linha da nota — somado uma vez por nota), PVENDA e VOLUME; o app mostra, só para quem tem a permissão de ver valores, o valor da mercadoria da carga, que é o valor usado na averbação. VOLUME é a cubagem de UMA unidade do produto, não da linha, e por isso o app NÃO calcula cubagem da carga — se perguntarem, dizer que o arquivo não traz a cubagem total. ETIQUETA AMARELA (v427): a Goiás pediu que o FRACIONADO (miudeza e soltos, que vão em saco ou meia caixa) tenha etiqueta amarela. Como a impressora é térmica direta e só imprime preto, a cor vem do rolo: a tela tem dois botões, 'Caixas fechadas — rolo branco' e 'Fracionados — rolo amarelo', e cada cliente tem ⬜ e 🟨 para reimprimir. A etiqueta do fracionado leva a faixa preta FRACIONADO. Na bipagem o app aceita também a etiqueta amarela da própria Goiás, que tem código VEN005 + O.S. de 8 dígitos + volume (ex.: VEN00522073140001 = O.S. 52207314); a O.S. é casada com o NUMOS das linhas de miudeza do arquivo. As cargas não são só Rota Sul: já vieram cargas de Feira de Santana (1212978) e de Ribeira do Pombal (1213418).`;
     if (!cargas.length) return regra + "\nNenhuma carga da Goiás importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = goTotais(c);
