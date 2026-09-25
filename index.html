@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v424)</title>
+<title>RF Logística — Painel da Frota (v425)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v424">
+<meta name="rf-versao" content="v425">
 <meta name="rf-data" content="2026-09-25">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v424" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v425" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1099,6 +1099,15 @@ function rfLogoClienteHTML(nome, altura, apagada) {
   return '<span title="' + esc(nome) + '" style="display:inline-flex;align-items:center;justify-content:center;background:' + (RF_LOGOS_FUNDO[k] || "#fff")
     + ';border-radius:6px;padding:' + Math.round(h * 0.14) + 'px ' + Math.round(h * 0.28) + 'px;height:' + h + 'px;box-sizing:border-box;max-width:100%;'
     + (apagada ? "filter:grayscale(1);opacity:.45;" : "") + '"><img src="' + RF_LOGOS_CLIENTE[k] + '" alt="' + esc(nome) + '" style="height:100%;max-width:100%;object-fit:contain;display:block;"></span>';
+}
+/* v425: as caixas das AREAS da operacao de cada cliente (tela inicial e
+   seletor de areas) tambem levam a logo -- pedido do Renato: destaca. */
+var RF_LOGO_DA_ABA = { carregasuzano: "Suzano", cargamateus: "Mateus", goiascarga: "Goiás" };
+function rfLogoDaAbaHTML(id) {
+  var n = RF_LOGO_DA_ABA[id];
+  if (!n) return "";
+  var h = rfLogoClienteHTML(n, 30);
+  return h ? '<span style="display:block;margin-bottom:4px;">' + h + '</span>' : "";
 }
 /* ===== fim do bloco v422 ===================================================== */
 
@@ -15100,7 +15109,7 @@ function telaInicialHTML() {
              transition:border-color .15s, background .15s;"
       onmouseover="this.style.borderColor='${GOLD}'; this.style.background='rgba(25,20,8,0.92)';"
       onmouseout="this.style.borderColor='rgba(78,78,78,0.95)'; this.style.background='rgba(10,10,10,0.86)';">
-      <span>${a.label}</span>
+      ${rfLogoDaAbaHTML(a.id)}<span>${a.label}</span>
       ${desc ? `<span style="font-size:10.5px; color:#8a8a8a; font-weight:400; line-height:1.3;">${esc(desc)}</span>` : ""}
     </button>`;
   };
@@ -15200,7 +15209,7 @@ function painelTrocarAreaHTML() {
       + ' min-height:64px; display:flex; flex-direction:column; gap:4px; justify-content:center;"'
       + ' onmouseover="this.style.borderColor=\'' + GOLD + '\';"'
       + ' onmouseout="this.style.borderColor=\'' + borda + '\';">'
-      + '<span>' + a.label + (ativa ? ' <span style="font-size:10px;color:' + GOLD + ';">\u2022 voc\u00ea est\u00e1 aqui</span>' : '') + '</span>'
+      + rfLogoDaAbaHTML(a.id) + '<span>' + a.label + (ativa ? ' <span style="font-size:10px;color:' + GOLD + ';">\u2022 voc\u00ea est\u00e1 aqui</span>' : '') + '</span>'
       + (desc ? '<span style="font-size:10.5px; color:#8a8a8a; font-weight:400; line-height:1.3;">' + esc(desc) + '</span>' : '')
       + '</button>';
   };
@@ -22369,7 +22378,7 @@ function gerarContextoAssistente() {
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   /* v422: regra permanente -- toda versao nova alimenta o assistente. */
-  const blocoLogos = "LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
+  const blocoLogos = "LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
