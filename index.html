@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v427)</title>
+<title>RF Logística — Painel da Frota (v429)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v427">
+<meta name="rf-versao" content="v429">
 <meta name="rf-data" content="2026-09-25">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v427" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v429" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -8557,6 +8557,36 @@ function szLerEspelhoTexto(txt) {
   };
   var chave = (txt.match(/\b(\d{44})\b/) || [])[1] || "";
   var linhaNF = txt.match(/(\d{6,9})\s+(\d{1,3})\s+([A-Za-zÀ-ÿ ]{3,30}?)\s+([\d.,]+)\s+([\d.,]+)\s+([A-Z]{2})\s+([\d.,]+)/);
+  /* v428 -- BUG QUE JA CUSTOU TRES CT-e: um conhecimento da Suzano pode levar
+     DUAS OU MAIS notas pro mesmo destinatario (caso real: doc. 1567053, CRIATIVA,
+     NF 197148 e 197158 no mesmo bloco). O leitor pegava so a PRIMEIRA linha de NF
+     e a PRIMEIRA chave, e a tela de emissao mostrava uma nota so -- o CT-e saia
+     sem a segunda, sem averbacao e sem MDF-e pra ela. Agora le TODAS as linhas de
+     NF e TODAS as chaves do bloco, casando cada linha com a sua chave pelo numero
+     da NF que a propria chave carrega (posicoes 26-34). Os totais do conhecimento
+     (volumes, peso, mercadoria) passam a ser a SOMA das notas. */
+  var notas = [];
+  (function () {
+    var reL = /(\d{6,9})\s+(\d{1,3})\s+([A-Za-zÀ-ÿ ]{3,30}?)\s+([\d.,]+)\s+([\d.,]+)\s+([A-Z]{2})\s+([\d.,]+)/g, ml;
+    var chs = [];
+    (txt.match(/\b\d{44}\b/g) || []).forEach(function (k) { if (chs.indexOf(k) < 0 && szChaveValida(k)) chs.push(k); });
+    var usadas = {};
+    while ((ml = reL.exec(txt)) !== null) {
+      var nfN = String(parseInt(ml[1], 10));
+      if (notas.some(function (x) { return x.nfe === nfN; })) continue;
+      var ch = chs.filter(function (k) { return String(parseInt(k.slice(25, 34), 10)) === nfN; })[0] || "";
+      if (ch) usadas[ch] = 1;
+      notas.push({ nfe: nfN, chave: ch, produto: ml[3].trim(), qtdVolumes: Math.round(num(ml[4])), peso: num(ml[5]), valorMercadoria: num(ml[7]) });
+    }
+    // chave sem linha de NF lida (layout quebrado): entra so com o numero
+    chs.forEach(function (k) {
+      if (usadas[k]) return;
+      notas.push({ nfe: String(parseInt(k.slice(25, 34), 10)), chave: k, produto: "", qtdVolumes: 0, peso: 0, valorMercadoria: 0 });
+    });
+  })();
+  if (notas.length && !chave) chave = notas[0].chave;
+  if (notas.length && notas[0].chave) chave = notas[0].chave;
+  var somaN = function (campo) { return Math.round(notas.reduce(function (s, x) { return s + (Number(x[campo]) || 0); }, 0) * 1000) / 1000; };
   return {
     numDoc: pega(/N[°º]?\s*(\d{5,10})\s*\(Documento Transporte\)/i) || pega(/N[°º]?\s*de\s*Transporte\s*:?\s*(\d+)/i),
     cFrete: pega(/N[rº°]*\s*C\.?\s*Frete\s*:?\s*(\d+)/i),
@@ -8592,12 +8622,20 @@ function szLerEspelhoTexto(txt) {
     })(),
     endereco: direita("Endere[çc]o"),
     cidade: direita("Munic[íi]pio"),
+    /* v429: IE do destinatario -- a SEFAZ recusa o CT-e sem ela (rejeicao 232).
+       Fica na mesma linha do CNPJ, coluna da direita. Se o destinatario nao tem IE
+       a linha so traz a do remetente (Suzano), e essa e descartada. */
+    ieCliente: (function () {
+      var ie = String(direita("IE") || "").replace(/\D/g, "");
+      return (ie && ie !== "057402723" && ie !== "57402723") ? ie : "";
+    })(),
     chave: chave,
-    nfe: linhaNF ? linhaNF[1] : (szChavePartes(chave) ? String(parseInt(szChavePartes(chave).numero, 10)) : ""),
-    produto: linhaNF ? linhaNF[3].trim() : "",
-    qtdVolumes: linhaNF ? Math.round(num(linhaNF[4])) : 0,
-    peso: linhaNF ? num(linhaNF[5]) : 0,
-    valorMercadoria: linhaNF ? num(linhaNF[7]) : 0,
+    nfe: notas.length ? notas[0].nfe : (linhaNF ? linhaNF[1] : (szChavePartes(chave) ? String(parseInt(szChavePartes(chave).numero, 10)) : "")),
+    produto: notas.length ? notas[0].produto : (linhaNF ? linhaNF[3].trim() : ""),
+    qtdVolumes: notas.length > 1 ? somaN("qtdVolumes") : (linhaNF ? Math.round(num(linhaNF[4])) : 0),
+    peso: notas.length > 1 ? somaN("peso") : (linhaNF ? num(linhaNF[5]) : 0),
+    valorMercadoria: notas.length > 1 ? somaN("valorMercadoria") : (linhaNF ? num(linhaNF[7]) : 0),
+    notas: notas,   // v428: TODAS as NF do conhecimento
     valorFrete: num(pega(/Frete Valor Total\s*:?\s*([\d.,]+)/i)),
   };
 }
@@ -9009,7 +9047,7 @@ function szBipar(cargaId, campo, codigoDigitado, eidEsperado) {
   var soDigitos = cod.replace(/\D/g, "");
   if (soDigitos.length === SZ_CHAVE_TAM) {
     if (!szChaveValida(soDigitos)) return { ok: false, msg: "Chave de acesso inválida (dígito verificador não confere). Bipe de novo." };
-    var eChave = (c.espelhos || []).find(function (e) { return String(e.chave || "").replace(/\D/g, "") === soDigitos; });
+    var eChave = (c.espelhos || []).find(function (e) { return String(e.chave || "").replace(/\D/g, "") === soDigitos || (e.notas || []).some(function (n) { return n.chave === soDigitos; }); });
     if (!eChave) return { ok: false, msg: "Essa NF-e não faz parte desta carga." };
     return { ok: false, msg: "Chave da NF " + (eChave.nfe || "") + " (" + (eChave.cliente || "") + ") — bipe a etiqueta do volume, não o DANFE.", espelho: eChave };
   }
@@ -9759,6 +9797,7 @@ function szAplicarEspelho(cargaId, d, origem, silencioso) {
     if (d.cliente && e0.cliente !== d.cliente) e0.cliente = d.cliente;
     if (d.cidade && !e0.cidade) e0.cidade = d.cidade;
     if (d.dataEmissao && !e0.dataEmissao) e0.dataEmissao = d.dataEmissao;
+    if (d.ieCliente && !e0.ieCliente) { e0.ieCliente = d.ieCliente; jaEmOutra.carga.atualizadoEm = Date.now(); }   // v429
     avisa("Essa NF-e já estava lançada" + (jaEmOutra.carga.id !== c.id ? " em outro carregamento" : "") + " — atualizei os dados em vez de duplicar.");
     return false;
   }
@@ -9768,9 +9807,10 @@ function szAplicarEspelho(cargaId, d, origem, silencioso) {
   c.espelhos = c.espelhos || [];
   c.espelhos.push({
     id: uid(), numDoc: d.numDoc, cFrete: d.cFrete, nfe: d.nfe, chave: d.chave,
-    cliente: d.cliente, cnpjCliente: d.cnpjCliente, endereco: d.endereco, cidade: d.cidade,
+    cliente: d.cliente, cnpjCliente: d.cnpjCliente, ieCliente: d.ieCliente || "", endereco: d.endereco, cidade: d.cidade,
     produto: d.produto, qtdVolumes: d.qtdVolumes, peso: d.peso,
     valorMercadoria: d.valorMercadoria, valorFrete: d.valorFrete,
+    notas: (d.notas || []).length > 1 ? d.notas : undefined,   // v428: conhecimento com mais de uma NF
     placaEspelho: d.placa, motoristaEspelho: d.motorista, cpfMotoristaEspelho: d.cpfMotorista,
     dataEmissao: d.dataEmissao || "",   // v315: e por ela que se sabe QUE DIA o espelho cobre
     origemLeitura: origem || "", lidoEm: Date.now(),
@@ -9945,7 +9985,7 @@ function szEspelhoPorChave(chave) {
   if (!chave) return null;
   var achado = null;
   (szCargas() || []).some(function (cx) {
-    var e = (cx.espelhos || []).filter(function (x) { return x.chave === chave; })[0];
+    var e = (cx.espelhos || []).filter(function (x) { return x.chave === chave || (x.notas || []).some(function (n) { return n.chave === chave; }); })[0];
     if (e) { achado = { carga: cx, esp: e }; return true; }
     return false;
   });
@@ -9988,6 +10028,13 @@ function szAplicarArquivo(cargaId, txt, origem) {
       if (d.cliente && jaLido.cliente !== d.cliente) { jaLido.cliente = d.cliente; mudou = true; }
       if (d.cidade && jaLido.cidade !== d.cidade) { jaLido.cidade = d.cidade; mudou = true; }
       if (d.dataEmissao && !jaLido.dataEmissao) { jaLido.dataEmissao = d.dataEmissao; mudou = true; }
+      /* v428: espelho lido antes com UMA nota so, e o bloco tem mais -- completa. */
+      if ((d.notas || []).length > 1 && (d.notas || []).length > (jaLido.notas || [{}]).length) {
+        jaLido.notas = d.notas; jaLido.peso = d.peso; jaLido.valorMercadoria = d.valorMercadoria;
+        if (!(jaLido.etiquetas || []).length) jaLido.qtdVolumes = d.qtdVolumes;
+        mudou = true;
+        r.notasNovas = (r.notasNovas || []).concat(d.notas.slice(1).map(function (n) { return "NF " + n.nfe + " (" + (d.cliente || "") + ")"; }));
+      }
       if (mudou) r.corrigidas = (r.corrigidas || 0) + 1;
       r.repetidas++;
       if (achado.carga && achado.carga.id !== c.id) {
@@ -10046,6 +10093,7 @@ function szResumoLote(r, origem) {
     + (r.outraCarga ? " (" + r.outraCarga + " em outro carregamento)" : "")
     + (r.corrigidas ? " (" + r.corrigidas + " corrigida(s))" : ""));
   if (r.recusadas) partes.push("⚠ " + r.recusadas + " recusada(s)");
+  if ((r.notasNovas || []).length) partes.push("⚠ nota(s) que faltavam no conhecimento e agora entraram: " + r.notasNovas.join(", ") + " — confira se o CT-e já emitido tem essas chaves");   // v428
   if (!partes.length) partes.push("nada foi lançado");
   var txt = partes.join(" · ");
   if (origem) txt += " (" + origem + ")";
@@ -11595,7 +11643,19 @@ function rfNfConfExportar() {
 function rfNfEspelhos() {
   var out = [], vistas = {};   // v326: uma nota por CHAVE, mesmo repetida em duas cargas
   (state.suzanoCargas || []).forEach(function (c) {
+    /* v428: conhecimento com mais de uma NF vira uma linha por NF, pra que a
+       conferencia cobre o CT-e de CADA nota. O frete fica so na primeira (e o
+       frete do conhecimento inteiro); a soma por CT-e continua certa. */
+    var lista = [];
     (c.espelhos || []).forEach(function (e) {
+      if (!e) return;
+      if ((e.notas || []).length > 1) {
+        e.notas.forEach(function (n, i) {
+          lista.push(Object.assign({}, e, { nfe: n.nfe, chave: n.chave, qtdVolumes: n.qtdVolumes, valorFrete: i === 0 ? e.valorFrete : 0 }));
+        });
+      } else lista.push(e);
+    });
+    lista.forEach(function (e) {
       if (!e) return;
       var num = String(e.nfe || "").replace(/\D/g, "").replace(/^0+/, "");
       var _k = String(e.chave || ("nf" + num));
@@ -12979,8 +13039,14 @@ function szEmisConhecimentoHTML(e, i, total) {
     + '<div style="font-size:11px;color:#999;margin-bottom:6px;">' + esc(e.cidade || "?")
       + (e.cnpjCliente ? ' · CNPJ ' + esc(e.cnpjCliente) : "")
       + (e.endereco ? ' · ' + esc(e.endereco) : "") + '</div>'
-    + szEmisCampo("NF-e", e.nfe || "?", "#FFFFFF", false)
-    + szEmisCampo("Chave", chave || "(sem chave)", "#4FC3F7", true)
+    + ((e.notas || []).length > 1
+      ? '<div style="font-size:12px;font-weight:900;color:#000;background:#F2E600;border-radius:5px;padding:4px 8px;margin:4px 0;">⚠ ' + e.notas.length + ' NOTAS NESTE CONHECIMENTO — as ' + e.notas.length + ' chaves entram no MESMO CT-e</div>'
+        + e.notas.map(function (n) {
+            return szEmisCampo("NF-e", n.nfe + " · " + (Number(n.qtdVolumes) || 0) + " vol · " + (Number(n.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · " + fmtR(n.valorMercadoria), "#FFFFFF", false)
+              + szEmisCampo("Chave", n.chave || "(sem chave)", "#4FC3F7", true);
+          }).join("")
+      : szEmisCampo("NF-e", e.nfe || "?", "#FFFFFF", false)
+        + szEmisCampo("Chave", chave || "(sem chave)", "#4FC3F7", true))
     + szEmisCampo("Peso", (Number(e.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg", "#66BB6A", false)
     + szEmisCampo("Frete", fmtR(e.valorFrete), GOLD, false)
     + '<div style="font-size:10.5px;color:#777;margin-top:4px;">' + (Number(e.qtdVolumes) || 0) + ' volume(s) · mercadoria '
@@ -12988,7 +13054,10 @@ function szEmisConhecimentoHTML(e, i, total) {
     + (function () {
         var cd = szEmisCadeiaDaNota(e);
         if (!cd) return "";
-        return '<div style="font-size:10.5px;color:#4FC3F7;margin-top:3px;">🔗 CT-e ' + esc(cd.cte.numero || "?")
+        /* v428: CT-e ja emitido e importado -- confere se TODAS as notas estao nele. */
+        var faltam = (e.notas || []).filter(function (n) { return n.chave && (cd.cte.nfes || []).indexOf(n.chave) < 0; });
+        var alerta = faltam.length ? '<div style="font-size:12px;font-weight:900;color:#fff;background:#C0392B;border-radius:5px;padding:4px 8px;margin-top:4px;">✖ O CT-e ' + esc(cd.cte.numero || "?") + ' está SEM a(s) NF ' + faltam.map(function (n) { return n.nfe; }).join(", ") + '. Essa carga está sem CT-e e sem averbação: cancele o MDF-e, cancele o CT-e e emita de novo com todas as chaves.</div>' : "";
+        return alerta + '<div style="font-size:10.5px;color:#4FC3F7;margin-top:3px;">🔗 CT-e ' + esc(cd.cte.numero || "?")
           + (cd.mdfe ? ' · MDF-e ' + esc(cd.mdfe.numero || "?") + ' · placa ' + esc(cd.placa)
               + (cd.motorista ? ' · ' + esc(cd.motorista) : "") : ' · sem MDF-e importado') + '</div>';
       })()
@@ -13079,10 +13148,20 @@ function szEmisTexto(c) {
     L.push("Destinatário/Recebedor: " + (e.cliente || "?") + " — " + (e.cidade || "?"));
     L.push("CNPJ: " + (e.cnpjCliente || "?") + (e.endereco ? " · " + e.endereco : ""));
     L.push("Valor do frete: " + fmtR(e.valorFrete));
+    if ((e.notas || []).length > 1) {
+      L.push("⚠ " + e.notas.length + " NOTAS NESTE CONHECIMENTO — as " + e.notas.length + " chaves entram no MESMO CT-e:");
+      e.notas.forEach(function (n) {
+        L.push("NF-e nº " + n.nfe + " série 1 · " + (n.qtdVolumes || 0) + " volume(s) · "
+          + (Number(n.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · mercadoria " + fmtR(n.valorMercadoria));
+        L.push("Chave: " + (n.chave || "(sem chave lida)"));
+      });
+      L.push("TOTAL do CT-e: " + (e.qtdVolumes || 0) + " volume(s) · " + (Number(e.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · mercadoria " + fmtR(e.valorMercadoria));
+    } else {
     L.push("NF-e nº " + (e.nfe || "?") + " série 1 · " + (e.qtdVolumes || 0) + " volume(s) · "
       + (Number(e.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · mercadoria " + fmtR(e.valorMercadoria));
     L.push("Chave de acesso da NF-e:");
     L.push(String(e.chave || "").replace(/\D/g, "") || "(sem chave lida)");
+    }
     if (e.numDoc) L.push("(documento de transporte " + e.numDoc + (e.cFrete ? " · C. Frete " + e.cFrete : "") + ")");
     L.push("");
   });
@@ -13137,7 +13216,7 @@ function szEmisBlocoHTML() {
     + 'A roteirização sai primeiro e já cria a viagem de cada caminhão, então cada placa do dia abre aqui como uma caixa. '
     + 'Anexe o espelho <b>dentro da caixa do caminhão certo</b>: assim a placa vem da roteirização e não do papel da Suzano, '
     + 'que traz placa de referência e costuma vir trocada. Cada conhecimento mostra chave, peso e frete destacados, com cópia individual. '
-    + 'Esta tela não emite nada — o emissor continua sendo o SimplesCTe.'
+    + 'A partir da v429 dá pra <b>emitir o CT-e e o MDF-e aqui mesmo</b> (botões ⚡ em cada conhecimento), com averbação automática na AT&M — em fase de TESTE (homologação, sem valor fiscal). O SimplesCTe continua sendo o emissor oficial até o teste ser aprovado.'
     + '</div>'
     + '<button class="btn-outline" style="font-size:11px;" onclick="szEmisAverbar()" title="Cole as chaves dos CT-e já emitidos e receba o número da averbação de cada um">🔢 Números de averbação (40 dígitos)</button>'
     + ' <button class="btn-outline" style="font-size:11px;border-color:#4FC3F7;color:#4FC3F7;" onclick="szEmisConferirPelaCadeia()" title="Usa as MDF-e emitidas pela RF pra achar a placa real de cada nota, pela cadeia NF-e → CT-e → MDF-e">🔗 Conferir pelas MDF-e</button>'
@@ -13259,7 +13338,7 @@ function szEmisBlocoHTML() {
         });
         h += '</div>';
       }
-      (c.espelhos || []).forEach(function (e, i) { h += szEmisConhecimentoHTML(e, i, t.ctes); });
+      (c.espelhos || []).forEach(function (e, i) { h += szEmisConhecimentoHTML(e, i, t.ctes) + rfFiscalCteHTML(c, e); });   // v429: emissao pelo app
       h += '<div style="border:1px solid ' + GOLD + ';border-radius:8px;padding:9px 11px;background:rgba(212,160,23,0.06);">'
         + '<div style="font-size:11px;font-weight:800;color:' + GOLD + ';margin-bottom:5px;">FECHO — TOTAIS PARA O MDF-e</div>'
         + szEmisCampo("CT-e", String(t.ctes), "#FFFFFF", false)
@@ -13271,6 +13350,7 @@ function szEmisBlocoHTML() {
         + '<div style="font-size:10.5px;color:#bbb;">Seguro: ' + SZ_APOLICE.seguradora + ' · apólice ' + SZ_APOLICE.ramo + ' ' + SZ_APOLICE.numero + '</div>'
         + '<div style="font-size:10.5px;color:#E67E22;margin-top:6px;">Depois de emitir: averbar TODOS antes de o caminhão sair · o número da averbação são os 40 primeiros dígitos da chave de cada CT-e · só então transmitir o MDF-e com o CIOT.</div>'
         + '</div>';
+      h += rfFiscalMdfeHTML(c, bx.placa);   // v429
       h += '</div>';
     }
     h += '</div>';
@@ -13281,6 +13361,291 @@ function szEmisAbrir(k) {
   // v341: a chave e "PLACA|AAAA-MM-DD" da caixa, nao mais o id da carga
   state._szEmisAberto = (String(state._szEmisAberto) === String(k)) ? null : String(k);
   render();
+}
+
+/* ===== v429 — EMISSAO PELO PROPRIO APP (Focus NFe) + AVERBACAO AUTOMATICA (AT&M) =====
+   Renato contratou a Focus NFe (API de CT-e/MDF-e) em 25/09/2026 para testar por 30
+   dias, sem cancelar o SimplesCTe. O app NAO fala direto com a Focus nem com a AT&M:
+   quem fala e a funcao do servidor `rf-fiscal` (Supabase), que guarda o token da
+   Focus e a senha da AT&M numa tabela fechada. O app so manda os dados do espelho.
+   Fluxo de um conhecimento:
+     espelho -> [Emitir CT-e] -> Focus -> SEFAZ -> autorizado -> XML vai sozinho pra
+     AT&M -> volta o numero da averbacao -> fica gravado no conhecimento.
+   Fluxo da carga: todos os CT-e autorizados e averbados -> [Emitir MDF-e] com placa,
+   tara, motorista (nome+CPF da ficha), CIOT do SimplesCTe e os numeros de averbacao
+   -> SEFAZ -> MDF-e declarado na AT&M. Ao fim da viagem, [Encerrar MDF-e] -- a SEFAZ
+   recusa MDF-e novo na mesma placa enquanto o anterior estiver aberto (rejeicao 611).
+   Endereco completo do destinatario (bairro, CEP, codigo IBGE) o servidor busca pelo
+   CNPJ na BrasilAPI, porque o espelho da Suzano nao traz bairro nem CEP e corta o
+   nome da rua. IE do destinatario vem do espelho (lida a partir da v429).
+   AMBIENTE: comeca em HOMOLOGACAO (teste, sem valor fiscal). Em homologacao a AT&M
+   responde protocolo "TESTE" e nao gera averbacao de verdade. */
+var RF_FISCAL_FN = "/functions/v1/rf-fiscal";
+function rfFiscalChamar(corpo) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com o servidor");
+    return sb.auth.getSession().then(function (res) {
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) throw new Error("sessão expirada — saia e entre de novo");
+      return fetch(RF_SB_URL + RF_FISCAL_FN, {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(corpo),
+      }).then(function (r) { return r.json(); });
+    });
+  });
+}
+function rfFiscalToca(c) { if (c) c.atualizadoEm = Date.now(); salvar(); render(); }
+function rfFiscalAchaEsp(cargaId, espId) {
+  var c = szCarga(cargaId); if (!c) return {};
+  return { c: c, e: (c.espelhos || []).filter(function (x) { return String(x.id) === String(espId); })[0] };
+}
+function rfFiscalAmbTag(amb) {
+  return amb === "producao"
+    ? '<span style="font-size:9.5px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 6px;">PRODUÇÃO</span>'
+    : '<span style="font-size:9.5px;font-weight:900;color:#000;background:#F2E600;border-radius:4px;padding:1px 6px;" title="Ambiente de teste da SEFAZ: o documento sai com SEM VALOR FISCAL e a AT&M registra só como teste">HOMOLOGAÇÃO · sem valor fiscal</span>';
+}
+function rfFiscalCteEmitir(cargaId, espId) {
+  var o = rfFiscalAchaEsp(cargaId, espId), c = o.c, e = o.e;
+  if (!e) return;
+  var f = e.fiscal || {};
+  if (f.status === "autorizado") { alert("Este conhecimento já tem CT-e autorizado (nº " + f.numero + ")."); return; }
+  if (f.status === "enviando" || f.status === "processando") { alert("Já está em andamento — aguarde a resposta da SEFAZ."); return; }
+  var ie = String(e.ieCliente || "").replace(/\D/g, "");
+  if (!ie) {
+    var r = prompt("IE do destinatário " + (e.cliente || "") + "\n\nEstá no espelho, na linha do CNPJ, coluna da direita.\nDeixe VAZIO só se ele não tiver IE (não contribuinte).", "");
+    if (r === null) return;
+    ie = String(r).replace(/\D/g, "");
+    if (ie) e.ieCliente = ie;
+  }
+  var ntent = (Number(f.tentativa) || 0) + 1;
+  var ref = "rf-" + String(e.id).replace(/[^A-Za-z0-9]/g, "") + "-" + ntent;
+  e.fiscal = { status: "enviando", ref: ref, tentativa: ntent, em: Date.now(), por: (state.sessao && state.sessao.nome) || "" };
+  rfFiscalToca(c);
+  var dados = {
+    cliente: e.cliente, cnpjCliente: e.cnpjCliente, ieCliente: ie, endereco: e.endereco, cidade: e.cidade,
+    notas: e.notas || [], chave: e.chave, peso: e.peso, qtdVolumes: e.qtdVolumes,
+    valorMercadoria: e.valorMercadoria, valorFrete: e.valorFrete, produto: e.produto,
+  };
+  rfFiscalChamar({ acao: "cte_emitir", ref: ref, e: dados }).then(function (j) {
+    var o2 = rfFiscalAchaEsp(cargaId, espId); if (!o2.e) return;
+    var ff = o2.e.fiscal || {};
+    ff.amb = j.ambiente || ff.amb;
+    if (!j.ok) {
+      ff.status = "erro";
+      ff.erro = j.erro || (j.retorno && (j.retorno.mensagem || JSON.stringify(j.retorno.erros || j.retorno))) || "falha ao enviar";
+      o2.e.fiscal = ff; rfFiscalToca(o2.c); return;
+    }
+    ff.status = "processando"; ff.destino = j.destino || null;
+    o2.e.fiscal = ff; rfFiscalToca(o2.c);
+    rfFiscalCteAcompanhar(cargaId, espId, 0);
+  }).catch(function (err) {
+    var o2 = rfFiscalAchaEsp(cargaId, espId); if (!o2.e) return;
+    o2.e.fiscal.status = "erro"; o2.e.fiscal.erro = String(err && err.message || err);
+    rfFiscalToca(o2.c);
+  });
+}
+function rfFiscalCteAcompanhar(cargaId, espId, n) {
+  var o = rfFiscalAchaEsp(cargaId, espId); if (!o.e || !o.e.fiscal) return;
+  var f = o.e.fiscal;
+  var precisaAverbar = !(f.averbacao && f.averbacao.protocolo);
+  rfFiscalChamar({ acao: "cte_consultar", ref: f.ref, averbar: precisaAverbar }).then(function (j) {
+    var o2 = rfFiscalAchaEsp(cargaId, espId); if (!o2.e) return;
+    var ff = o2.e.fiscal;
+    ff.amb = j.ambiente || ff.amb;
+    if (j.status_focus === "processando_autorizacao" || !j.status_focus) {
+      if (n < 20) { setTimeout(function () { rfFiscalCteAcompanhar(cargaId, espId, n + 1); }, 4000); return; }
+      ff.status = "processando"; ff.erro = "SEFAZ ainda não respondeu — toque em 'consultar' daqui a pouco.";
+      rfFiscalToca(o2.c); return;
+    }
+    if (j.status_focus !== "autorizado") {
+      ff.status = "erro"; ff.erro = (j.sefaz ? "SEFAZ " + j.sefaz + ": " : "") + (j.mensagem || j.status_focus);
+      rfFiscalToca(o2.c); return;
+    }
+    ff.status = "autorizado"; ff.chave = j.chave; ff.numero = j.numero; ff.serie = j.serie; ff.pdf = j.pdf; ff.xml = j.xml;
+    ff.autorizadoEm = ff.autorizadoEm || Date.now(); ff.erro = "";
+    if (j.averbacao) { ff.averbacao = j.averbacao; ff.averbErro = ""; }
+    else if (precisaAverbar) ff.averbErro = j.atm_erro ? (typeof j.atm_erro === "string" ? j.atm_erro : JSON.stringify(j.atm_erro)).slice(0, 300) : "AT&M não respondeu";
+    rfFiscalToca(o2.c);
+  }).catch(function (err) {
+    if (n < 20) setTimeout(function () { rfFiscalCteAcompanhar(cargaId, espId, n + 1); }, 5000);
+  });
+}
+function rfFiscalCteHTML(c, e) {
+  var f = e.fiscal || {};
+  var cid = esc(String(c.id)), eid = esc(String(e.id));
+  var h = '<div style="border:1px dashed #333;border-radius:7px;padding:7px 9px;margin:-3px 0 9px;background:#070707;">'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+    + '<span style="font-size:10.5px;font-weight:800;color:#bbb;">CT-e pelo app</span>' + rfFiscalAmbTag(f.amb);
+  if (!f.status || f.status === "erro") {
+    h += '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#4FC3F7;color:#4FC3F7;margin-left:auto;" onclick="rfFiscalCteEmitir(\'' + cid + '\',\'' + eid + '\')">⚡ ' + (f.status === "erro" ? "Tentar de novo" : "Emitir CT-e") + '</button>';
+  } else if (f.status === "enviando" || f.status === "processando") {
+    h += '<span style="font-size:11px;color:#F2E600;margin-left:auto;">⏳ ' + (f.status === "enviando" ? "enviando..." : "aguardando a SEFAZ...") + '</span>'
+      + '<button class="btn-outline" style="font-size:10px;padding:1px 7px;" onclick="rfFiscalCteAcompanhar(\'' + cid + '\',\'' + eid + '\',15)">consultar</button>';
+  } else if (f.status === "autorizado") {
+    h += '<span style="font-size:11px;font-weight:800;color:#2E7D32;margin-left:auto;">✓ CT-e ' + esc(f.numero || "") + ' autorizado</span>'
+      + (f.pdf ? '<a href="' + esc(f.pdf) + '" target="_blank" rel="noopener" class="btn-outline" style="font-size:10px;padding:1px 7px;text-decoration:none;">DACTE</a>' : "")
+      + (f.xml ? '<a href="' + esc(f.xml) + '" target="_blank" rel="noopener" class="btn-outline" style="font-size:10px;padding:1px 7px;text-decoration:none;">XML</a>' : "");
+  }
+  h += '</div>';
+  if (f.status === "erro" && f.erro) h += '<div style="font-size:11px;color:#E57373;margin-top:5px;">✖ ' + esc(f.erro) + '</div>';
+  if (f.status === "autorizado") {
+    h += szEmisCampo("Chave CT-e", f.chave || "", "#4FC3F7", true);
+    if (f.averbacao && f.averbacao.protocolo) {
+      var ap = String(f.averbacao.apolice || "");
+      h += szEmisCampo("Averbação", f.averbacao.numero || "", "#66BB6A", true)
+        + '<div style="font-size:10.5px;color:#888;">AT&M protocolo ' + esc(f.averbacao.protocolo) + ' · ' + esc(f.averbacao.seguradora || "") + ' · apólice ' + esc(ap)
+        + (ap && ap !== SZ_APOLICE.numero ? ' <b style="color:#E67E22;">(a AT&M devolveu a apólice RC-DC; o certo é a RCTR-C ' + SZ_APOLICE.numero + ' — pendência com a NVZ)</b>' : "") + '</div>';
+    } else {
+      h += '<div style="font-size:11px;color:#E67E22;margin-top:4px;">⚠ Ainda sem averbação' + (f.averbErro ? ': ' + esc(f.averbErro) : "")
+        + ' <button class="btn-outline" style="font-size:10px;padding:1px 7px;" onclick="rfFiscalCteAcompanhar(\'' + cid + '\',\'' + eid + '\',19)">averbar agora</button></div>';
+    }
+    if (f.destino && f.destino.bairro) h += '<div style="font-size:10px;color:#666;margin-top:3px;">endereço usado: ' + esc([f.destino.logradouro, f.destino.numero, f.destino.bairro, f.destino.cidade + "/" + f.destino.uf, f.destino.cep].filter(Boolean).join(", ")) + '</div>';
+  }
+  return h + '</div>';
+}
+// ---- MDF-e da carga ----
+function rfFiscalFichaDoMotorista(nome) {
+  var alvo = rfConfNorm(String(nome || "").replace(/[._]/g, " "));
+  var toks = alvo.split(" ").filter(function (t) { return t.length > 3; });
+  var fichas = (state.motoristasCad || []).filter(function (f) { return f && f.mot && f.mot.nome; });
+  var cands = fichas.filter(function (f) {
+    var n = rfConfNorm(f.mot.nome), nt = n.split(" ");
+    var ult = toks[toks.length - 1] || "";
+    return (ult && nt.indexOf(ult) >= 0) && (toks[0] && nt[0] && (nt[0].slice(0, 3) === toks[0].slice(0, 3)));
+  });
+  return cands.length === 1 ? cands[0].mot : null;
+}
+function rfFiscalMdfeEmitir(cargaId, placa) {
+  var c = szCarga(cargaId); if (!c) return;
+  var esps = (c.espelhos || []);
+  var pend = esps.filter(function (e) { return !(e.fiscal && e.fiscal.status === "autorizado"); });
+  if (pend.length) { alert("Faltam " + pend.length + " CT-e autorizado(s) nesta carga. Emita todos antes do MDF-e."); return; }
+  var semAv = esps.filter(function (e) { return !(e.fiscal.averbacao && e.fiscal.averbacao.protocolo); });
+  if (semAv.length && !confirm(semAv.length + " CT-e ainda sem averbação. A apólice exige averbar TODOS antes da saída.\n\nEmitir o MDF-e mesmo assim?")) return;
+  var m = c.fiscalMdfe || {};
+  if (m.status === "autorizado" && !m.encerrado) { alert("Esta carga já tem MDF-e " + m.numero + " autorizado."); return; }
+  var mt = szEmisMotorista(c);
+  var ficha = rfFiscalFichaDoMotorista(mt.nome);
+  var cond = c.fiscalCondutor || (ficha ? { nome: ficha.nome, cpf: String(ficha.cpf || "").replace(/\D/g, "") } : null);
+  if (!cond || String(cond.cpf).length !== 11) {
+    var cpf = prompt("CPF do motorista " + (mt.nome || "") + " (não achei a ficha dele):", "");
+    if (cpf === null) return;
+    var nm = prompt("Nome completo do motorista, como sai no MDF-e:", (ficha && ficha.nome) || mt.nome || "");
+    if (nm === null) return;
+    cond = { nome: nm, cpf: String(cpf).replace(/\D/g, "") };
+  }
+  if (String(cond.cpf).length !== 11) { alert("CPF inválido."); return; }
+  var vv = (state.veiculos || []).filter(function (v) { return String(v.placa || "").toUpperCase() === String(placa || c.placa || "").toUpperCase(); })[0] || {};
+  var tara = Number(vv.taraKg) || 0;
+  if (!tara) {
+    var t = prompt("Tara do " + (placa || c.placa) + " em kg (está no CRLV). Fica guardada no cadastro do veículo:", "3750");
+    if (t === null) return;
+    tara = Math.round(parseFloat(String(t).replace(/\./g, "").replace(",", ".")) || 0);
+    if (!tara) { alert("Tara inválida."); return; }
+    if (vv.placa) { vv.taraKg = tara; vv.atualizadoEm = Date.now(); }
+  }
+  var capKg = Math.round((Number(vv.cargaUtilT) || 3.5) * 1000);
+  var ciot = prompt("CIOT desta viagem (12 dígitos, gerado no SimplesCTe).\nDeixe vazio se não tiver:", c.fiscalCiot || "");
+  if (ciot === null) return;
+  ciot = String(ciot).replace(/\D/g, "");
+  if (ciot && ciot.length !== 12) { alert("O CIOT tem 12 dígitos."); return; }
+  var ok = confirm("Emitir MDF-e\n\nPlaca: " + (placa || c.placa) + " · tara " + tara + " kg\nMotorista: " + cond.nome + " · CPF " + cond.cpf
+    + "\nCIOT: " + (ciot || "(sem)") + "\nCT-e: " + esps.length + "\nApólice RCTR-C " + SZ_APOLICE.numero);
+  if (!ok) return;
+  c.fiscalCondutor = cond; c.fiscalCiot = ciot;
+  var t = szEmisTotais(c);
+  var nt = (Number(m.tentativa) || 0) + 1;
+  var ref = "rfm-" + String(c.id).replace(/[^A-Za-z0-9]/g, "") + "-" + nt;
+  c.fiscalMdfe = { status: "enviando", ref: ref, tentativa: nt, em: Date.now(), placa: placa || c.placa, por: (state.sessao && state.sessao.nome) || "" };
+  rfFiscalToca(c);
+  rfFiscalChamar({
+    acao: "mdfe_emitir", ref: ref, placa: placa || c.placa, tara: tara, capKg: capKg, condutor: cond, ciot: ciot,
+    ctes: esps.map(function (e) {
+      var d = e.fiscal.destino || {};
+      return { chave: e.fiscal.chave, cidade: d.cidade || e.cidade, uf: d.uf || "BA", cep: d.cep || "", cmun: d.cmun || "",
+        averbacao: e.fiscal.averbacao ? e.fiscal.averbacao.numero : "" };
+    }),
+    valorCarga: t.mercadoria, peso: t.peso, frete: t.frete, produto: "PAPEL",
+  }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    var mm = c2.fiscalMdfe; mm.amb = j.ambiente || mm.amb;
+    if (!j.ok) {
+      mm.status = "erro"; mm.erro = j.erro || (j.retorno && (j.retorno.mensagem || JSON.stringify(j.retorno.erros || j.retorno))) || "falha ao enviar";
+      rfFiscalToca(c2); return;
+    }
+    mm.status = "processando"; rfFiscalToca(c2);
+    rfFiscalMdfeAcompanhar(cargaId, 0);
+  }).catch(function (err) { var c2 = szCarga(cargaId); if (!c2) return; c2.fiscalMdfe.status = "erro"; c2.fiscalMdfe.erro = String(err && err.message || err); rfFiscalToca(c2); });
+}
+function rfFiscalMdfeAcompanhar(cargaId, n) {
+  var c = szCarga(cargaId); if (!c || !c.fiscalMdfe) return;
+  var m = c.fiscalMdfe;
+  var declarar = !(m.declaracao && m.declaracao.protocolo);
+  rfFiscalChamar({ acao: "mdfe_consultar", ref: m.ref, declarar: declarar }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    var mm = c2.fiscalMdfe; mm.amb = j.ambiente || mm.amb;
+    if (j.status_focus === "processando_autorizacao" || !j.status_focus) {
+      if (n < 20) { setTimeout(function () { rfFiscalMdfeAcompanhar(cargaId, n + 1); }, 4000); return; }
+      mm.erro = "SEFAZ ainda não respondeu — toque em 'consultar'."; rfFiscalToca(c2); return;
+    }
+    if (j.status_focus === "encerrado") { mm.status = "autorizado"; mm.encerrado = mm.encerrado || Date.now(); rfFiscalToca(c2); return; }
+    if (j.status_focus !== "autorizado") {
+      mm.status = "erro"; mm.erro = (j.sefaz ? "SEFAZ " + j.sefaz + ": " : "") + (j.mensagem || j.status_focus);
+      rfFiscalToca(c2); return;
+    }
+    mm.status = "autorizado"; mm.chave = j.chave; mm.numero = j.numero; mm.serie = j.serie; mm.pdf = j.pdf; mm.xml = j.xml; mm.erro = "";
+    if (j.averbacao) mm.declaracao = j.averbacao;
+    else if (declarar) mm.declErro = j.atm_erro ? (typeof j.atm_erro === "string" ? j.atm_erro : JSON.stringify(j.atm_erro)).slice(0, 300) : "AT&M não respondeu";
+    rfFiscalToca(c2);
+  }).catch(function () { if (n < 20) setTimeout(function () { rfFiscalMdfeAcompanhar(cargaId, n + 1); }, 5000); });
+}
+function rfFiscalMdfeEncerrar(cargaId) {
+  var c = szCarga(cargaId); if (!c || !c.fiscalMdfe) return;
+  var m = c.fiscalMdfe;
+  var t = szEmisTotais(c);
+  var ult = String((t.cidades[t.cidades.length - 1]) || "FEIRA DE SANTANA");
+  var cid = prompt("Encerrar o MDF-e " + (m.numero || "") + ".\n\nMunicípio onde a viagem terminou:", ult);
+  if (cid === null || !String(cid).trim()) return;
+  rfFiscalChamar({ acao: "mdfe_encerrar", ref: m.ref, cidade: String(cid).trim(), uf: "BA" }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    var st = j.retorno && j.retorno.status;
+    if (j.ok && (st === "encerrado" || /encerrad/i.test(JSON.stringify(j.retorno)))) { c2.fiscalMdfe.encerrado = Date.now(); rfFiscalToca(c2); alert("MDF-e encerrado."); }
+    else alert("Não encerrou: " + JSON.stringify(j.retorno || j.erro || j).slice(0, 300));
+  }).catch(function (err) { alert("Erro: " + (err && err.message || err)); });
+}
+function rfFiscalMdfeHTML(c, placa) {
+  var esps = c.espelhos || [];
+  if (!esps.length) return "";
+  var aut = esps.filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).length;
+  var m = c.fiscalMdfe || {};
+  var cid = esc(String(c.id));
+  var h = '<div style="border:1px solid #4FC3F7;border-radius:8px;padding:9px 11px;margin-top:8px;background:rgba(79,195,247,0.05);">'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+    + '<span style="font-size:11px;font-weight:800;color:#4FC3F7;">MDF-e PELO APP</span>' + rfFiscalAmbTag(m.amb)
+    + '<span style="font-size:10.5px;color:#999;">' + aut + ' de ' + esps.length + ' CT-e autorizados</span>';
+  if ((!m.status || m.status === "erro" || m.encerrado) && aut === esps.length) {
+    h += '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#4FC3F7;color:#4FC3F7;margin-left:auto;" onclick="rfFiscalMdfeEmitir(\'' + cid + '\',\'' + esc(placa || "") + '\')">⚡ ' + (m.status === "erro" ? "Tentar de novo" : m.encerrado ? "Emitir novo MDF-e" : "Emitir MDF-e") + '</button>';
+  } else if (m.status === "enviando" || m.status === "processando") {
+    h += '<span style="font-size:11px;color:#F2E600;margin-left:auto;">⏳ aguardando a SEFAZ...</span>'
+      + '<button class="btn-outline" style="font-size:10px;padding:1px 7px;" onclick="rfFiscalMdfeAcompanhar(\'' + cid + '\',15)">consultar</button>';
+  } else if (m.status === "autorizado") {
+    h += '<span style="font-size:11px;font-weight:800;color:#2E7D32;margin-left:auto;">✓ MDF-e ' + esc(m.numero || "") + (m.encerrado ? ' · ENCERRADO' : ' autorizado') + '</span>'
+      + (m.pdf ? '<a href="' + esc(m.pdf) + '" target="_blank" rel="noopener" class="btn-outline" style="font-size:10px;padding:1px 7px;text-decoration:none;">DAMDFE</a>' : "")
+      + (!m.encerrado ? '<button class="btn-outline" style="font-size:10px;padding:1px 7px;border-color:#E67E22;color:#E67E22;" onclick="rfFiscalMdfeEncerrar(\'' + cid + '\')">Encerrar</button>' : "");
+  } else {
+    h += '<span style="font-size:10.5px;color:#777;margin-left:auto;">emita todos os CT-e primeiro</span>';
+  }
+  h += '</div>';
+  if (m.status === "erro" && m.erro) h += '<div style="font-size:11px;color:#E57373;margin-top:5px;">✖ ' + esc(m.erro)
+    + (/611|n[aã]o encerrad/i.test(m.erro) ? ' — há um MDF-e anterior desta placa ainda aberto: encerre-o antes (no SimplesCTe, se foi emitido lá).' : "") + '</div>';
+  if (m.status === "autorizado") {
+    h += szEmisCampo("Chave MDF-e", m.chave || "", "#4FC3F7", true);
+    h += '<div style="font-size:10.5px;color:' + (m.declaracao && m.declaracao.protocolo ? "#66BB6A" : "#E67E22") + ';">'
+      + (m.declaracao && m.declaracao.protocolo ? '✓ MDF-e declarado na AT&M · protocolo ' + esc(m.declaracao.protocolo) : '⚠ MDF-e ainda não declarado na AT&M' + (m.declErro ? ': ' + esc(m.declErro) : ""))
+      + (c.fiscalCondutor ? ' · motorista ' + esc(c.fiscalCondutor.nome) : "") + (c.fiscalCiot ? ' · CIOT ' + esc(c.fiscalCiot) : " · sem CIOT") + '</div>';
+  }
+  return h + '</div>';
 }
 
 function szEtapaAbrir(id) {
@@ -22417,7 +22782,7 @@ function gerarContextoAssistente() {
   const blocoExportViagens = "PLANILHA DE VIAGENS: o Excel da aba Viagens (ferramenta gerar_planilha, aba \"viagens\") exporta SOMENTE o mes ativo do painel (" + mesLabel(state.mesAtivo) + "), aplicando os mesmos filtros de placa, cliente e pagamento que estao na tela. A viagem entra no mes pela DATA DE SAIDA, nunca pela data de pagamento -- viagem que rodou num mes e foi paga no mes seguinte continua pertencendo ao mes em que rodou. A planilha traz Data Saida e Data Fim nas duas primeiras colunas. Se a pessoa quiser outro mes, diga pra ela trocar o mes no topo do painel antes de exportar.";
   const _syncLigado = !!window.__rfDadosCarregados;
   /* v422: regra permanente -- toda versao nova alimenta o assistente. */
-  const blocoLogos = "LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
+  const blocoLogos = "EMISSAO PELO APP (v429, EM TESTE): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
