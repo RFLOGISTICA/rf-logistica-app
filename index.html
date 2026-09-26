@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v441)</title>
+<title>RF Logística — Painel da Frota (v443)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v441">
+<meta name="rf-versao" content="v443">
 <meta name="rf-data" content="2026-09-26">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v441" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v443" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5899,7 +5899,9 @@ function dvTelaHTML() {
 function dvContextoAssistente() {
   var cx = dvCaixas().slice(0, 15);
   if (!cx.length) return "DOCUMENTOS DA VIAGEM (v435): nenhuma viagem com documento ainda.";
-  return "ICONES DAS AREAS (v438/v439): na tela inicial e no seletor de areas, as caixas sem logo de cliente ganharam icone 3D realista (Fluent Emoji 3D da Microsoft, licenca MIT) num selo preto com borda dourada (Suzano, Goias e Mateus continuam com a logo do cliente).\n"
+  return "NAVEGACAO (v443): o botao Trocar de area leva direto a tela inicial inteira, com todas as areas (nao abre mais a janela menor por cima).\n"
+    + "ASSISTENTE NA TELA INICIAL (v442): a bolha do assistente passou a aparecer tambem na tela inicial (antes so aparecia depois de abrir uma area).\n"
+    + "ICONES DAS AREAS (v438/v439): na tela inicial e no seletor de areas, as caixas sem logo de cliente ganharam icone 3D realista (Fluent Emoji 3D da Microsoft, licenca MIT) num selo preto com borda dourada (Suzano, Goias e Mateus continuam com a logo do cliente).\n"
     + "TELA DE LOGIN (v437): tela nova com a logo e uma estrada animada; lembra o ultimo e-mail no aparelho (caixa Lembrar meu e-mail) e ai so pede a senha, com o link Trocar de conta; tem olho para mostrar a senha e aviso de Caps Lock.\n"
     + "DOCUMENTOS DA VIAGEM (aba propria desde a v435, 26/09/2026; e-mail do Andre enxuto na v436): uma caixa por viagem (placa + data) reunindo tudo o que vai para a Suzano. "
     + "Botao '1. Saida' = PDFs (DAMDFE+DACTE) para o motorista pelo WhatsApp e o e-mail do Andre; botao '2. Viagem concluida' = o mesmo e-mail com os canhotos. "
@@ -16615,7 +16617,16 @@ function tituloDaArea(totais) {
    Agora a janela é uma camada própria, montada na hora, e o app só é
    redesenhado uma vez, quando a área nova é escolhida. O desfoque de fundo
    (backdrop-filter) também saiu: no Android ele custa caro sobre a tela toda. */
+/* v443: Renato quer navegar sempre pela TELA INTEIRA de áreas (a mesma que
+   aparece ao atualizar), e não pela janela menor por cima da área aberta --
+   era essa janela que ele via como "a tela fechando". "Trocar de área" agora
+   leva direto à tela inicial, aberta do topo. A janela antiga fica guardada
+   em rfTrocarAreaJanela() caso queira voltar a ela. */
 function abrirTrocarArea() {
+  fecharTrocarArea();
+  voltarTelaInicial();
+}
+function rfTrocarAreaJanela() {
   state._trocarArea = false;
   fecharTrocarArea();
   var ov = document.createElement("div");
@@ -23539,6 +23550,17 @@ function render() {
     if (!state._naTelaInicial) { try { window.scrollTo(0, 0); } catch (e) { } }
     state._naTelaInicial = true;
     try { if (!document.getElementById("rfTrocaArea")) document.body.style.overflow = ""; } catch (e) { }
+    /* v442: a tela inicial saía do render() antes do trecho que desenha a bolha
+       do assistente -- então nela o assistente simplesmente não existia (desde a
+       v248). Agora ele aparece aqui também, com o mesmo arrasto e o mesmo selo. */
+    if (root0 && podeUsarAssistente()) {
+      try {
+        root0.insertAdjacentHTML("beforeend", assistenteWidgetHTML());
+        rfBolhaArrastavel();
+        var cm0 = document.getElementById("chatMsgs");
+        if (cm0) cm0.scrollTop = cm0.scrollHeight;
+      } catch (e) { }
+    }
     return;
   }
   state._naTelaInicial = false;   // v441
