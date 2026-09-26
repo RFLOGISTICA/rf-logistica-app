@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v440)</title>
+<title>RF Logística — Painel da Frota (v441)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v440">
+<meta name="rf-versao" content="v441">
 <meta name="rf-data" content="2026-09-26">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v440" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v441" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -23531,8 +23531,17 @@ function render() {
   if (state._telaInicial === undefined) state._telaInicial = true;
   if (state._telaInicial) {
     if (root0) root0.innerHTML = telaInicialHTML();
+    /* v441: a tela inicial nao passa pela restauracao de rolagem do fim do
+       render(), entao herdava a rolagem da area de onde se voltava -- abria
+       ja rolada, sem a logo, e parecia "curta" ate atualizar. Ao ENTRAR na
+       tela inicial, ela sempre abre do topo; redesenhos enquanto se esta nela
+       (sincronizacao) mantem onde a pessoa estava. */
+    if (!state._naTelaInicial) { try { window.scrollTo(0, 0); } catch (e) { } }
+    state._naTelaInicial = true;
+    try { if (!document.getElementById("rfTrocaArea")) document.body.style.overflow = ""; } catch (e) { }
     return;
   }
+  state._naTelaInicial = false;   // v441
   const scrollY = window.scrollY;
   const oldWrap = document.getElementById("tabela-wrap");
   const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
