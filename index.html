@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v436)</title>
+<title>RF Logística — Painel da Frota (v437)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v436">
+<meta name="rf-versao" content="v437">
 <meta name="rf-data" content="2026-09-26">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v436" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v437" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5819,7 +5819,8 @@ function dvTelaHTML() {
 function dvContextoAssistente() {
   var cx = dvCaixas().slice(0, 15);
   if (!cx.length) return "DOCUMENTOS DA VIAGEM (v435): nenhuma viagem com documento ainda.";
-  return "DOCUMENTOS DA VIAGEM (aba propria desde a v435, 26/09/2026; e-mail do Andre enxuto na v436): uma caixa por viagem (placa + data) reunindo tudo o que vai para a Suzano. "
+  return "TELA DE LOGIN (v437): tela nova com a logo e uma estrada animada; lembra o ultimo e-mail no aparelho (caixa Lembrar meu e-mail) e ai so pede a senha, com o link Trocar de conta; tem olho para mostrar a senha e aviso de Caps Lock.\n"
+    + "DOCUMENTOS DA VIAGEM (aba propria desde a v435, 26/09/2026; e-mail do Andre enxuto na v436): uma caixa por viagem (placa + data) reunindo tudo o que vai para a Suzano. "
     + "Botao '1. Saida' = PDFs (DAMDFE+DACTE) para o motorista pelo WhatsApp e o e-mail do Andre; botao '2. Viagem concluida' = o mesmo e-mail com os canhotos. "
     + "REGRA DO E-MAIL DO ANDRE (v436, pedido do Renato): so CT-e com numero, cliente, NF, CHAVE e o PDF (DACTE) -- SEM MDF-e, SEM averbacao, SEM XML, SEM espelho, SEM frete. Na janela ele escolhe quais CT-e vao (um ou todos) e marca se o CIOT vai (padrao: nao vai). "
     + "O PDF (e os canhotos) podem ir anexados (ZIP) ou como LINKS no proprio e-mail, validos por " + DV_LINK_DIAS + " dias, sem login (link assinado do Supabase, so daqueles arquivos). "
@@ -15733,24 +15734,183 @@ function logout() {
   } catch (e) {}
   salvarSessaoLocal(); render();
 }
+/* v437 — TELA DE LOGIN NOVA. Renato: "está com aparência antiga, veja o que
+   pode fazer para me surpreender". A tela antiga era um cartão cinza com dois
+   campos. A nova:
+   - lado esquerdo (tablet deitado / PC): a LOGO com o brilho dourado que ele
+     gosta (o mesmo da tela inicial, v252) e uma ESTRADA animada em perspectiva,
+     com as faixas douradas correndo em direção ao horizonte;
+   - lado direito: o acesso, em vidro escuro, com saudação pela hora do dia;
+   - lembra o último e-mail neste aparelho e já põe o cursor na senha
+     ("Bem-vindo de volta"), olho para mostrar a senha, aviso de CAPS LOCK,
+     botão com carregamento e o erro "treme" quando a senha está errada;
+   - no celular em pé vira uma coluna só, com a estrada ao fundo;
+   - quem pediu menos movimento no aparelho (prefers-reduced-motion) vê a
+     estrada parada.
+   IDs loginEmail, loginSenha, loginBtn e loginErro mantidos: fazerLogin() e
+   carregarPerfilEEntrar() continuam exatamente iguais. */
+function rfLoginEmailSalvo() {
+  try { return localStorage.getItem("rf-login-ultimo-email") || ""; } catch (e) { return ""; }
+}
+function rfLoginEntrar() {
+  var em = document.getElementById("loginEmail"), se = document.getElementById("loginSenha");
+  var email = em ? em.value : "", senha = se ? se.value : "";
+  var lembrar = document.getElementById("loginLembrar");
+  try {
+    if (lembrar && lembrar.checked && String(email).trim()) localStorage.setItem("rf-login-ultimo-email", String(email).trim());
+    if (lembrar && !lembrar.checked) localStorage.removeItem("rf-login-ultimo-email");
+  } catch (e) { }
+  fazerLogin(email, senha);
+}
+function rfLoginOlho() {
+  var se = document.getElementById("loginSenha"), b = document.getElementById("loginOlho");
+  if (!se) return;
+  var mostrar = se.type === "password";
+  se.type = mostrar ? "text" : "password";
+  if (b) { b.setAttribute("aria-label", mostrar ? "Esconder senha" : "Mostrar senha"); b.innerHTML = mostrar ? RF_LOGIN_ICO.olhoFechado : RF_LOGIN_ICO.olho; }
+  se.focus();
+}
+function rfLoginCaps(ev) {
+  var av = document.getElementById("loginCaps");
+  if (!av || !ev || !ev.getModifierState) return;
+  av.style.display = ev.getModifierState("CapsLock") ? "flex" : "none";
+}
+function rfLoginTrocarConta() {
+  try { localStorage.removeItem("rf-login-ultimo-email"); } catch (e) { }
+  var root = document.getElementById("root");
+  if (root) { root.innerHTML = telaLogin(); var pi = document.getElementById("loginEmail"); if (pi) pi.focus(); }
+}
+var RF_LOGIN_ICO = {
+  email: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg>',
+  cadeado: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>',
+  olho: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  olhoFechado: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.1 4.1M6.6 6.6C3.7 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
+  seta: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
+};
 function telaLogin() {
+  var salvo = rfLoginEmailSalvo();
+  var h = new Date().getHours();
+  var saud = h < 5 ? "Boa madrugada" : h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+  var hoje = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  hoje = hoje.charAt(0).toUpperCase() + hoje.slice(1);
+  var logo = (typeof RF_LOGO_SRC !== "undefined" && RF_LOGO_SRC) ? RF_LOGO_SRC : "";
+  var ver = (typeof RF_SISTEMA !== "undefined" ? RF_SISTEMA.codigo + " " + RF_SISTEMA.versao : "");
   return `
-  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:#000; padding:24px;">
-    <div style="background:#0D0D0D; border:1px solid ${GOLD}; border-radius:14px; padding:32px; width:100%; max-width:360px; text-align:center; box-shadow:0 8px 40px rgba(0,0,0,.6);">
-      <div style="font-size:24px; font-weight:800; color:#fff;">RF Logística</div>
-      <div style="font-size:11px; color:${GOLD}; letter-spacing:2px; margin:4px 0 22px;">PAINEL DA FROTA</div>
-      <div style="font-size:13px; color:#999; margin-bottom:10px; text-align:left;">E-mail</div>
-      <input id="loginEmail" type="email" autocomplete="username" placeholder="seu@email.com"
-        onkeydown="if(event.key==='Enter'){document.getElementById('loginSenha').focus();}"
-        style="width:100%; font-size:15px; padding:12px; border:1px solid #333; border-radius:10px; background:#000; color:#fff; box-sizing:border-box;">
-      <div style="font-size:13px; color:#999; margin:12px 0 10px; text-align:left;">Senha</div>
-      <input id="loginSenha" type="password" autocomplete="current-password" placeholder="••••••••"
-        onkeydown="if(event.key==='Enter'){fazerLogin(document.getElementById('loginEmail').value, this.value);}"
-        style="width:100%; font-size:15px; padding:12px; border:1px solid #333; border-radius:10px; background:#000; color:#fff; box-sizing:border-box;">
-      <div id="loginErro" style="display:none; color:#C0392B; font-size:12px; margin-top:10px; text-align:left;"></div>
-      <button id="loginBtn" class="btn-gold" style="width:100%; padding:12px; font-size:15px; margin-top:14px;" onclick="fazerLogin(document.getElementById('loginEmail').value, document.getElementById('loginSenha').value)">Entrar</button>
-      <div style="font-size:10px; color:#555; margin-top:16px;">Acesso liberado pelo administrador.</div>
-    </div>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    .rfl{position:fixed;inset:0;display:grid;grid-template-columns:1.15fr 1fr;background:#000;font-family:Poppins,'Helvetica Neue',Arial,sans-serif;color:#EDEDED;overflow:hidden}
+    .rfl *{box-sizing:border-box}
+    .rfl-marca{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:16vh 32px 40px;background:#000}
+    .rfl-estrada{position:absolute;left:0;right:0;bottom:0;height:56%;perspective:260px;perspective-origin:50% 0%;overflow:hidden;
+      -webkit-mask-image:linear-gradient(180deg,transparent 0%,#000 38%);mask-image:linear-gradient(180deg,transparent 0%,#000 38%)}
+    .rfl-pista{position:absolute;left:50%;bottom:0;width:640px;margin-left:-320px;height:420%;transform:rotateX(72deg);transform-origin:50% 100%;
+      background:linear-gradient(90deg,rgba(212,160,23,.9) 0 4px,#0b0b0b 4px calc(100% - 4px),rgba(212,160,23,.9) calc(100% - 4px));
+      box-shadow:0 0 60px rgba(212,160,23,.25)}
+    .rfl-pista::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(180deg,rgba(255,255,255,.025) 0 2px,transparent 2px 90px);animation:rflFaixa 1s linear infinite}
+    .rfl-pista::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:12px;margin-left:-6px;background:repeating-linear-gradient(180deg,#D4A017 0 70px,transparent 70px 150px);
+      box-shadow:0 0 18px rgba(212,160,23,.5);animation:rflFaixa2 .75s linear infinite}
+    @keyframes rflFaixa{from{background-position:0 0}to{background-position:0 90px}}
+    @keyframes rflFaixa2{from{background-position:0 0}to{background-position:0 150px}}
+    .rfl-brilho{position:absolute;z-index:1;left:50%;top:38%;width:min(760px,110%);height:340px;transform:translate(-50%,-50%);
+      background:radial-gradient(closest-side,rgba(212,160,23,.75),rgba(212,160,23,.25) 55%,transparent 100%);filter:blur(10px);animation:rflPulsa 5s ease-in-out 1.2s infinite}
+    @keyframes rflPulsa{0%,100%{opacity:.8;transform:translate(-50%,-50%) scale(1)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.06)}}
+    .rfl-logo{position:relative;z-index:2;width:min(640px,92%);height:auto;mix-blend-mode:screen;filter:brightness(1.12) saturate(1.12) contrast(1.05);
+      animation:rflSurge 1.1s cubic-bezier(.2,.8,.2,1) both}
+    @keyframes rflSurge{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:1;transform:none}}
+    .rfl-lema{position:relative;z-index:2;margin-top:18px;font-size:12px;letter-spacing:6px;color:#D4A017;font-weight:600;text-transform:uppercase;text-align:center;animation:rflSurge 1.1s .25s both}
+    .rfl-regiao{position:relative;z-index:2;margin-top:14px;font-size:11px;letter-spacing:3px;color:#8a7a52;text-transform:uppercase;animation:rflSurge 1.1s .4s both}
+    .rfl-acesso{position:relative;display:flex;align-items:center;justify-content:center;padding:32px;background:linear-gradient(180deg,#070707,#000);border-left:1px solid rgba(212,160,23,.18)}
+    .rfl-card{width:100%;max-width:400px;animation:rflSurge .9s .15s cubic-bezier(.2,.8,.2,1) both}
+    .rfl-data{font-size:12px;color:#8d8d8d;margin-bottom:6px}
+    .rfl-ola{font-size:30px;font-weight:700;color:#fff;line-height:1.15;margin:0}
+    .rfl-sub{font-size:14px;color:#9b9b9b;margin:8px 0 28px}
+    .rfl-campo{position:relative;margin-bottom:16px}
+    .rfl-campo label{display:block;font-size:12px;font-weight:600;color:#bdbdbd;margin:0 0 7px 2px;letter-spacing:.3px}
+    .rfl-caixa{display:flex;align-items:center;gap:10px;height:54px;padding:0 14px;border:1px solid #2c2c2c;border-radius:14px;background:#0f0f0f;transition:border-color .2s,box-shadow .2s,background .2s}
+    .rfl-caixa:focus-within{border-color:#D4A017;background:#121008;box-shadow:0 0 0 4px rgba(212,160,23,.14)}
+    .rfl-caixa svg{color:#7c7c7c;flex:none}.rfl-caixa:focus-within>svg{color:#D4A017}
+    .rfl input.rfl-in{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:#fff;font-size:16px;font-family:inherit;padding:0}
+    .rfl input.rfl-in::placeholder{color:#555}
+    .rfl-olho{flex:none;display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin-right:-6px;border:0;border-radius:10px;background:transparent;color:#8a8a8a;cursor:pointer}
+    .rfl-olho:hover{color:#D4A017;background:rgba(212,160,23,.08)}
+    .rfl-caps{display:none;align-items:center;gap:6px;margin-top:7px;font-size:12px;color:#E6B422}
+    .rfl-linha{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 20px;font-size:13px;color:#a0a0a0}
+    .rfl-linha label{display:flex;align-items:center;gap:8px;cursor:pointer}
+    .rfl-linha input[type=checkbox]{width:17px;height:17px;accent-color:#D4A017;margin:0}
+    .rfl-troca{border:0;background:none;color:#D4A017;font-size:13px;font-family:inherit;cursor:pointer;padding:0}
+    #loginErro{color:#FF6B5B;font-size:13px;margin:-6px 0 14px;padding:10px 12px;border-radius:10px;background:rgba(192,57,43,.12);border:1px solid rgba(192,57,43,.35);animation:rflTreme .42s}
+    @keyframes rflTreme{0%,100%{transform:none}20%{transform:translateX(-7px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
+    .rfl-btn{position:relative;width:100%;height:56px;border:0;border-radius:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;
+      font-family:inherit;font-size:16px;font-weight:700;color:#111;letter-spacing:.3px;overflow:hidden;
+      background:linear-gradient(135deg,#F2C94C 0%,#D4A017 45%,#B8860B 100%);box-shadow:0 10px 30px -8px rgba(212,160,23,.6),inset 0 1px 0 rgba(255,255,255,.35);transition:transform .15s,box-shadow .2s}
+    .rfl-btn::before{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.45),transparent);transform:skewX(-20deg);animation:rflBrilho 3.6s 1.5s ease-in-out infinite}
+    @keyframes rflBrilho{0%{left:-60%}35%,100%{left:130%}}
+    .rfl-btn:hover{transform:translateY(-1px);box-shadow:0 14px 34px -8px rgba(212,160,23,.75),inset 0 1px 0 rgba(255,255,255,.35)}
+    .rfl-btn:active{transform:translateY(1px)}
+    .rfl-btn:disabled{cursor:wait;filter:saturate(.7) brightness(.9)}
+    .rfl-btn:disabled::after{content:"";width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(0,0,0,.25);border-top-color:#111;animation:rflGira .7s linear infinite}
+    @keyframes rflGira{to{transform:rotate(360deg)}}
+    .rfl-rodape{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:26px;padding-top:18px;border-top:1px solid #1b1b1b;font-size:11.5px;color:#666}
+    .rfl-selo{display:flex;align-items:center;gap:6px;color:#8a7a52}
+    .rfl-selo i{width:7px;height:7px;border-radius:50%;background:#3fbf6a;box-shadow:0 0 8px #3fbf6a}
+    @media (max-width:860px),(orientation:portrait) and (max-width:1100px){
+      .rfl{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow:auto;position:fixed}
+      .rfl-marca{padding:40px 20px 34px;min-height:auto}
+      .rfl-estrada{height:100%;opacity:.6}.rfl-brilho{top:50%;height:220px}
+      .rfl-logo{width:min(420px,86%)}
+      .rfl-regiao{margin-top:10px;font-size:10px}
+      .rfl-acesso{border-left:0;border-top:1px solid rgba(212,160,23,.18);padding:26px 20px 30px;align-items:flex-start}
+      .rfl-ola{font-size:25px}.rfl-sub{margin-bottom:22px}
+    }
+    @media (prefers-reduced-motion:reduce){.rfl *,.rfl *::before,.rfl *::after{animation:none!important}}
+  </style>
+  <div class="rfl">
+    <section class="rfl-marca" aria-hidden="true">
+      <div class="rfl-estrada"><div class="rfl-pista"></div></div>
+      <div class="rfl-brilho"></div>
+      ${logo ? `<img class="rfl-logo" src="${logo}" alt="">` : `<div class="rfl-logo" style="font-size:48px;font-weight:800;color:#D4A017;text-align:center;">RF LOGÍSTICA</div>`}
+      <div class="rfl-regiao">Bahia · Nordeste</div>
+    </section>
+    <section class="rfl-acesso">
+      <div class="rfl-card">
+        <div class="rfl-data">${esc(hoje)}</div>
+        <h1 class="rfl-ola">${saud}${salvo ? "," : "!"}<br>${salvo ? "bem-vindo de volta." : "Acesse o painel da frota."}</h1>
+        <p class="rfl-sub">${salvo ? "Entrando como <b style=\"color:#ddd;font-weight:600;\">" + esc(salvo) + "</b>" : "Use o e-mail e a senha liberados pelo administrador."}</p>
+
+        <div class="rfl-campo" ${salvo ? 'style="display:none"' : ""}>
+          <label for="loginEmail">E-mail</label>
+          <div class="rfl-caixa">${RF_LOGIN_ICO.email}
+            <input id="loginEmail" class="rfl-in" type="email" inputmode="email" autocomplete="username" placeholder="seu@rflogistica.com.br" value="${esc(salvo)}"
+              onkeydown="if(event.key==='Enter'){document.getElementById('loginSenha').focus();}">
+          </div>
+        </div>
+
+        <div class="rfl-campo">
+          <label for="loginSenha">Senha</label>
+          <div class="rfl-caixa">${RF_LOGIN_ICO.cadeado}
+            <input id="loginSenha" class="rfl-in" type="password" autocomplete="current-password" placeholder="Sua senha"
+              onkeydown="rfLoginCaps(event);if(event.key==='Enter'){rfLoginEntrar();}" onkeyup="rfLoginCaps(event)">
+            <button type="button" id="loginOlho" class="rfl-olho" aria-label="Mostrar senha" onclick="rfLoginOlho()">${RF_LOGIN_ICO.olho}</button>
+          </div>
+          <div id="loginCaps" class="rfl-caps">⇪ Caps Lock está ligado</div>
+        </div>
+
+        <div class="rfl-linha">
+          <label><input type="checkbox" id="loginLembrar" ${salvo ? "checked" : "checked"}> Lembrar meu e-mail</label>
+          ${salvo ? '<button type="button" class="rfl-troca" onclick="rfLoginTrocarConta()">Trocar de conta</button>' : ""}
+        </div>
+
+        <div id="loginErro" style="display:none;"></div>
+
+        <button id="loginBtn" class="rfl-btn" onclick="rfLoginEntrar()">Entrar ${RF_LOGIN_ICO.seta}</button>
+
+        <div class="rfl-rodape">
+          <span>Acesso liberado pelo administrador</span>
+          <span class="rfl-selo"><i></i>${esc(ver)}</span>
+        </div>
+      </div>
+    </section>
   </div>`;
 }
 // ---- Gestão de usuários (admin) — lê/grava direto na tabela profiles ----
@@ -23244,7 +23404,7 @@ function render() {
   garantirMotoristas();
   if (!sessaoValida()) {
     const rootL = document.getElementById("root");
-    if (rootL) { rootL.innerHTML = telaLogin(); const pi = document.getElementById("loginEmail"); if (pi) pi.focus(); }
+    if (rootL) { rootL.innerHTML = telaLogin(); const pi = document.getElementById(rfLoginEmailSalvo() ? "loginSenha" : "loginEmail"); if (pi) pi.focus(); }   // v437
     return;
   }
   guardAba();
