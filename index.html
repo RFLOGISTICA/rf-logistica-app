@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v435)</title>
+<title>RF Logística — Painel da Frota (v436)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v435">
+<meta name="rf-versao" content="v436">
 <meta name="rf-data" content="2026-09-26">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v435" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v436" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5439,38 +5439,77 @@ function dvArquivos(bx, completo) {
   });
 }
 
-function dvEmail(bx, s, completo) {
-  var mot = dvMotorista(bx, s.pack);
-  var verFrete = podeVerValoresFrete();
-  var m = s.mdfes[0];
-  var linhas = s.ctes.map(function (d) {
-    var nfs = (d.nfes || []).map(dvNfDaChave).filter(Boolean).join(", ");
-    return "• CT-e " + d.numero + " — " + (d.cliente || "") + (d.cidade ? " — " + d.cidade : "")
-      + (nfs ? " — NF " + nfs : "") + (verFrete && d.valor ? " — frete " + fmtR(d.valor) : "");
+/* v436 — E-MAIL DO ANDRÉ ENXUTO. Renato: "está muito poluído, ele quer a chave
+   do CT-e e o PDF; não quer averbação, não quer MDF-e nem CIOT". E pediu duas
+   escolhas: mandar UM CT-e ou TODOS, e mandar o CIOT ou não.
+   Então o pacote do André passou a ser só: para cada CT-e marcado, número,
+   cliente, NF, CHAVE e o PDF (DACTE). CIOT só entra se marcado. No pacote da
+   viagem concluída entram também os canhotos das NF dos CT-e marcados.
+   MDF-e, averbação, XML e espelho saíram do e-mail e do ZIP do André.
+   O envio ao MOTORISTA não mudou: ele precisa do DAMDFE na fiscalização. */
+
+/* CT-e da viagem com o PDF e os canhotos de cada um. */
+function dvCtesDaViagem(bx, s) {
+  var can = s.can;
+  return s.ctes.map(function (d) {
+    var pdf = d.pdfPath || "";
+    if (!pdf && bx.carga) {
+      (bx.carga.espelhos || []).forEach(function (e) {
+        if (!pdf && e.fiscal && e.fiscal.chave === d.chave && e.fiscal.pdfPath) pdf = e.fiscal.pdfPath;
+      });
+    }
+    var nfs = (d.nfes || []).map(dvNfDaChave).filter(Boolean);
+    var canh = can.filter(function (c) { return c.nf && nfs.indexOf(String(c.nf).replace(/^0+/, "")) >= 0; });
+    return { d: d, chave: d.chave, numero: d.numero, cliente: d.cliente || "", cidade: d.cidade || "", nfs: nfs, pdf: pdf, canhotos: canh };
+  }).sort(function (a, b) { return (Number(a.numero) || 0) - (Number(b.numero) || 0); });
+}
+function dvSelecionados(ev) {
+  return ev.ctes.filter(function (c) { return ev.sel[c.chave]; });
+}
+/* Arquivos que vão para o André, conforme a seleção. */
+function dvArquivosAndre(ev) {
+  var out = [];
+  dvSelecionados(ev).forEach(function (c) {
+    if (c.pdf) out.push({ path: c.pdf, nome: "DACTE " + c.numero + " - " + rfFiscalNomeArq(c.cliente) + ".pdf", pasta: "", chave: c.chave, tipo: "pdf" });
+    if (ev.completo) {
+      c.canhotos.forEach(function (k) {
+        if (!k.foto) return;
+        var ext = (String(k.foto).match(/\.(jpe?g|png|webp|pdf)$/i) || [".jpg"])[0];
+        out.push({ path: k.foto, nome: "Canhoto NF " + k.nf + ext, pasta: "canhotos/", chave: c.chave, nf: k.nf, tipo: "canhoto" });
+      });
+    }
   });
-  var falta = s.can.filter(function (c) { return !c.foto; });
-  var t = "Bom dia, André! Tudo bem?\n\n"
-    + (completo ? "Seguem os documentos da viagem concluída de " : "Seguem os documentos da viagem de ")
-    + dvDataBr(bx.data) + " — placa " + bx.placa + (mot ? ", motorista " + mot : "") + ".\n\n"
-    + (m ? "MDF-e " + (m.numero || "") + "\nChave: " + (m.chave || "") + "\n"
-      + (m.ciot ? "CIOT: " + m.ciot + "\n" : "")
-      + ((m.averbacoes || []).length ? "Averbação: " + m.averbacoes.join(", ") + "\n" : "") + "\n" : "")
-    + "CT-e (" + linhas.length + "):\n" + linhas.join("\n");
-  if (completo) {
-    t += "\n\nCanhotos: " + s.comFoto + " de " + s.can.length + " anexados.";
-    if (falta.length) t += " Pendentes: " + falta.map(function (c) { return c.nf ? "NF " + c.nf : (c.recebedor || "?"); }).join(", ") + ".";
-    t += "\n\nEm anexo: DACTE, DAMDFE, XML, espelho e canhotos.";
-  } else {
-    t += "\n\nEm anexo: DACTE, DAMDFE e XML.";
-  }
-  return t + "\n\nAtenciosamente,\n\nRenato Couto\nRF Logística Transportes e Distribuição Ltda\n(75) 99971-7578";
+  return out;
+}
+function dvEmail(ev) {
+  var sel = dvSelecionados(ev);
+  var L = ev.links || {};
+  var blocos = sel.map(function (c) {
+    var t = "CT-e " + c.numero + " — " + c.cliente + (c.nfs.length ? " — NF " + c.nfs.join(", ") : "")
+      + "\nChave: " + c.chave;
+    if (c.pdf && L[c.pdf]) t += "\nPDF: " + L[c.pdf];
+    if (ev.completo) {
+      c.canhotos.forEach(function (k) {
+        t += "\nCanhoto NF " + k.nf + ": " + (k.foto ? (L[k.foto] || "em anexo") : "pendente");
+      });
+    }
+    return t;
+  });
+  var temLinks = Object.keys(L).length > 0;
+  return "Bom dia, André!\n\n"
+    + (ev.completo ? "Segue a viagem concluída de " : "Segue" + (sel.length > 1 ? "m os CT-e" : " o CT-e") + " da viagem de ")
+    + dvDataBr(ev.data) + " — placa " + ev.placa + ".\n\n"
+    + blocos.join("\n\n")
+    + (ev.ciot && ev.ciotNum ? "\n\nCIOT: " + ev.ciotNum : "")
+    + (temLinks ? "\n\n(links válidos até " + ev.validade + ")" : "\n\nPDF" + (ev.completo ? " e canhotos" : "") + " em anexo.")
+    + "\n\nAtenciosamente,\nRenato Couto\nRF Logística";
 }
 
-/* ---- janela de envio (mesmo desenho da v433) ---- */
+/* ---- janela de envio ---- */
 function dvAbrirEnvio(k, completo) {
   var bx = dvCaixa(k);
   if (!bx) { alert("Viagem não encontrada."); return; }
-  var titulo = (completo ? "✅ Pacote completo" : "📤 Saída") + " · " + bx.placa + " · " + dvDataBr(bx.data);
+  var titulo = (completo ? "✅ Viagem concluída" : "📤 Saída") + " · " + bx.placa + " · " + dvDataBr(bx.data);
   var ov = document.getElementById("dvEnvioModal");
   if (ov) ov.remove();
   ov = document.createElement("div");
@@ -5483,44 +5522,86 @@ function dvAbrirEnvio(k, completo) {
     + '<div id="dvEnvioAcoes"></div></div>';
   document.body.appendChild(ov);
 
-  dvArquivos(bx, completo).then(function (r) {
-    var s = r.s, arqs = r.arquivos;
-    window.__dvEnvio = { k: k, completo: completo, arquivos: arqs, email: dvEmail(bx, s, completo), placa: bx.placa, data: bx.data };
-    var st = document.getElementById("dvEnvioStatus"), ac = document.getElementById("dvEnvioAcoes");
-    if (!st || !ac) return;
-    var nPdf = arqs.filter(function (a) { return a.tipo === "pdf"; }).length;
-    var nXml = arqs.filter(function (a) { return a.tipo === "xml"; }).length;
-    var nCan = arqs.filter(function (a) { return a.tipo === "canhoto"; }).length;
-    var nEsp = arqs.filter(function (a) { return a.tipo === "espelho"; }).length;
-    var avisos = [];
-    if (!s.ctes.length) avisos.push("nenhum CT-e desta viagem no sistema");
-    if (!s.mdfes.length) avisos.push("MDF-e não está no sistema");
-    if (s.ctes.length && !nPdf) avisos.push("sem DACTE/DAMDFE em PDF — documentos emitidos no SimplesCTe vêm só com XML; o PDF sai de lá");
-    if (completo && s.comFoto < s.can.length) avisos.push("faltam " + (s.can.length - s.comFoto) + " canhoto(s)");
-    if (completo && s.mdfes.some(function (m) { return !m.encerrado; })) avisos.push("MDF-e ainda em aberto");
-    st.style.color = avisos.length ? "#E67E22" : "#66BB6A";
-    st.innerHTML = (avisos.length ? "⚠ " : "✓ ") + nPdf + " PDF · " + nXml + " XML" + (nEsp ? " · " + nEsp + " espelho" : "")
-      + (completo ? " · " + nCan + " canhoto(s)" : "")
-      + (avisos.length ? "<br>" + esc(avisos.join(" · ")) : "");
-    var bt = 'class="btn-outline" style="display:block;width:100%;text-align:left;font-size:13px;padding:9px 12px;margin:0 0 8px;';
-    ac.innerHTML = (!completo
-        ? '<div style="font-size:11px;font-weight:800;color:#888;margin:4px 0 6px;">MOTORISTA</div>'
-          + '<button ' + bt + 'border-color:#25D366;color:#25D366;" onclick="dvEnviarMotorista()">📲 Mandar os PDFs (DAMDFE + DACTE) — abre o WhatsApp</button>'
-        : "")
-      + '<div style="font-size:11px;font-weight:800;color:#888;margin:8px 0 6px;">SUZANO (ANDRÉ)</div>'
-      + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="dvBaixarZip()">⬇ Baixar ZIP ' + (completo ? "(tudo, com canhotos)" : "(DACTE, DAMDFE, XML e espelho)") + '</button>'
-      + (completo ? '<button ' + bt + '" onclick="rfFiscalExportarPDF(\'' + esc(bx.placa) + '\',\'' + esc(bx.data) + '\')">⬇ Canhotos num PDF só</button>' : "")
-      + '<button ' + bt + '" onclick="dvGerarLinks()">🔗 Links para a Suzano baixar (válidos ' + DV_LINK_DIAS + ' dias, sem login)</button>'
-      + '<button ' + bt + '" onclick="dvCopiarEmail()">📋 Copiar o e-mail</button>'
-      + '<textarea id="dvEnvioTexto" readonly style="width:100%;height:200px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(window.__dvEnvio.email) + '</textarea>';
+  dvArquivos(bx, false).then(function (r) {
+    var s = dvSituacao(bx);   // de novo: o registro dos emitidos pode ter acabado de gravar o PDF
+    var ctes = dvCtesDaViagem(bx, s);
+    var sel = {};
+    ctes.forEach(function (c) { sel[c.chave] = true; });
+    var ciotNum = (s.mdfes.filter(function (m) { return m.ciot; })[0] || {}).ciot || "";
+    window.__dvEnvio = {
+      k: k, completo: completo, placa: bx.placa, data: bx.data,
+      arquivosMotorista: r.arquivos.filter(function (a) { return a.tipo === "pdf"; }),
+      ctes: ctes, sel: sel, ciot: false, ciotNum: ciotNum, links: {}, validade: ""
+    };
+    dvEnvioDesenhar();
   }).catch(function (e) {
     var st = document.getElementById("dvEnvioStatus");
     if (st) { st.style.color = "#C0392B"; st.textContent = "Falhou ao reunir os documentos: " + ((e && e.message) || e); }
   });
 }
+function dvEnvioDesenhar() {
+  var ev = window.__dvEnvio; if (!ev) return;
+  var st = document.getElementById("dvEnvioStatus"), ac = document.getElementById("dvEnvioAcoes");
+  if (!st || !ac) return;
+  var sel = dvSelecionados(ev);
+  var semPdf = sel.filter(function (c) { return !c.pdf; });
+  var avisos = [];
+  if (!ev.ctes.length) avisos.push("nenhum CT-e desta viagem no sistema");
+  if (semPdf.length) avisos.push("CT-e " + semPdf.map(function (c) { return c.numero; }).join(", ") + " sem PDF no sistema (emitido no SimplesCTe — o PDF sai de lá)");
+  if (ev.completo) {
+    var falta = [];
+    sel.forEach(function (c) { c.canhotos.forEach(function (k) { if (!k.foto) falta.push(k.nf); }); });
+    if (falta.length) avisos.push("canhoto pendente: NF " + falta.join(", "));
+  }
+  st.style.color = avisos.length ? "#E67E22" : "#66BB6A";
+  st.innerHTML = (avisos.length ? "⚠ " + esc(avisos.join(" · ")) : "✓ " + sel.length + " CT-e selecionado(s)")
+    + (Object.keys(ev.links).length ? '<br><span style="color:#66BB6A;">✓ links gerados, válidos até ' + esc(ev.validade) + '</span>' : "");
+
+  var bt = 'class="btn-outline" style="display:block;width:100%;text-align:left;font-size:13px;padding:9px 12px;margin:0 0 8px;';
+  var chk = 'style="width:18px;height:18px;accent-color:' + GOLD + ';"';
+  var h = "";
+  if (!ev.completo) {
+    h += '<div style="font-size:11px;font-weight:800;color:#888;margin:4px 0 6px;">MOTORISTA</div>'
+      + '<button ' + bt + 'border-color:#25D366;color:#25D366;" onclick="dvEnviarMotorista()">📲 Mandar os PDFs (DAMDFE + DACTE) — abre o WhatsApp</button>';
+  }
+  h += '<div style="font-size:11px;font-weight:800;color:#888;margin:10px 0 6px;">ANDRÉ — O QUE VAI</div>'
+    + '<div style="background:#0A0A0A;border:1px solid #2b2b2b;border-radius:8px;padding:8px 10px;margin-bottom:8px;">'
+    + '<label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:700;padding:4px 0;border-bottom:1px solid #1c1c1c;">'
+    + '<input type="checkbox" ' + chk + (sel.length === ev.ctes.length && ev.ctes.length ? " checked" : "") + ' onchange="dvSelTodos(this.checked)"> Todos os CT-e (' + ev.ctes.length + ')</label>'
+    + ev.ctes.map(function (c) {
+      return '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:5px 0;">'
+        + '<input type="checkbox" ' + chk + (ev.sel[c.chave] ? " checked" : "") + ' onchange="dvSelCte(\'' + esc(c.chave) + '\',this.checked)">'
+        + '<span><b>CT-e ' + esc(c.numero) + '</b> — ' + esc(c.cliente) + (c.nfs.length ? ' <span style="color:#888;">NF ' + esc(c.nfs.join(", ")) + '</span>' : "")
+        + (c.pdf ? "" : ' <span style="color:#E67E22;font-size:11px;">sem PDF</span>') + '</span></label>';
+    }).join("")
+    + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:6px 0 2px;border-top:1px solid #1c1c1c;margin-top:4px;">'
+    + '<input type="checkbox" ' + chk + (ev.ciot ? " checked" : "") + (ev.ciotNum ? "" : " disabled") + ' onchange="dvSetCiot(this.checked)"> Enviar o CIOT'
+    + (ev.ciotNum ? ' <span style="color:#888;">(' + esc(ev.ciotNum) + ')</span>' : ' <span style="color:#666;">(sem CIOT no MDF-e)</span>') + '</label>'
+    + '</div>'
+    + '<button ' + bt + '" onclick="dvGerarLinks()">🔗 Colocar os links do PDF' + (ev.completo ? " e dos canhotos" : "") + ' no e-mail (sem anexar)</button>'
+    + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="dvBaixarZip()">⬇ Baixar ' + (ev.completo ? "PDF + canhotos" : "os PDF") + ' (ZIP) para anexar</button>'
+    + '<button ' + bt + '" onclick="dvCopiarEmail()">📋 Copiar o e-mail</button>'
+    + '<textarea id="dvEnvioTexto" readonly style="width:100%;height:190px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(dvEmail(ev)) + '</textarea>';
+  ac.innerHTML = h;
+}
+function dvSelTodos(v) {
+  var ev = window.__dvEnvio; if (!ev) return;
+  ev.ctes.forEach(function (c) { ev.sel[c.chave] = !!v; });
+  dvEnvioDesenhar();
+}
+function dvSelCte(chave, v) {
+  var ev = window.__dvEnvio; if (!ev) return;
+  ev.sel[chave] = !!v;
+  dvEnvioDesenhar();
+}
+function dvSetCiot(v) {
+  var ev = window.__dvEnvio; if (!ev) return;
+  ev.ciot = !!v;
+  dvEnvioDesenhar();
+}
 function dvEnviarMotorista() {
   var ev = window.__dvEnvio; if (!ev) return;
-  var pdfs = ev.arquivos.filter(function (a) { return a.tipo === "pdf"; });
+  var pdfs = ev.arquivosMotorista || [];
   if (!pdfs.length) { alert("Nenhum DACTE/DAMDFE em PDF nesta viagem.\n\nSe foi emitido no SimplesCTe, baixe o PDF de lá e mande pelo WhatsApp."); return; }
   Promise.all(pdfs.map(function (a) { return rfBaixarDoBucket(a.path).then(function (b) { return b ? new File([b], a.nome, { type: "application/pdf" }) : null; }); }))
     .then(function (files) {
@@ -5539,19 +5620,18 @@ function dvEnviarMotorista() {
 }
 function dvBaixarZip() {
   var ev = window.__dvEnvio; if (!ev) return;
-  if (!ev.arquivos.length) { alert("Nenhum arquivo guardado para esta viagem."); return; }
+  var arqs = dvArquivosAndre(ev);
+  if (!arqs.length) { alert(dvSelecionados(ev).length ? "Os CT-e marcados não têm PDF no sistema." : "Marque pelo menos um CT-e."); return; }
   rfFiscalZipLib().then(function (JSZip) {
     if (!JSZip) { alert("Não consegui carregar o compactador (ele baixa da internet na primeira vez)."); return; }
     var zip = new JSZip(), faltou = [];
-    Promise.all(ev.arquivos.map(function (a) {
-      return rfBaixarDoBucket(a.path).then(function (b) { if (b) zip.file(a.pasta + "/" + a.nome, b); else faltou.push(a.nome); });
+    Promise.all(arqs.map(function (a) {
+      return rfBaixarDoBucket(a.path).then(function (b) { if (b) zip.file(a.pasta + a.nome, b); else faltou.push(a.nome); });
     })).then(function () {
-      zip.file("email-andre.txt", ev.email);
-      if (faltou.length) zip.file("NAO_BAIXOU.txt", "Arquivos que estao no sistema mas nao baixaram agora:\n" + faltou.join("\n"));
       return zip.generateAsync({ type: "blob" });
     }).then(function (blob) {
-      rfBaixarBlob(blob, "RF_" + (ev.completo ? "completo_" : "saida_") + ev.placa + "_" + String(ev.data || "").replace(/-/g, "") + ".zip");
-      if (faltou.length) alert("ZIP gerado, mas " + faltou.length + " arquivo(s) não baixaram — estão listados no NAO_BAIXOU.txt.");
+      rfBaixarBlob(blob, "RF_CTe_" + ev.placa + "_" + String(ev.data || "").replace(/-/g, "") + ".zip");
+      if (faltou.length) alert("ZIP gerado, mas não baixaram: " + faltou.join(", "));
     });
   });
 }
@@ -5562,34 +5642,28 @@ function dvCopiarTexto(txt, okMsg) {
 }
 function dvCopiarEmail() {
   var ev = window.__dvEnvio; if (!ev) return;
-  var tx = document.getElementById("dvEnvioTexto");
-  dvCopiarTexto(tx ? tx.value : ev.email, "E-mail copiado. Cole no Gmail e anexe o ZIP (ou use os links).");
+  if (!dvSelecionados(ev).length) { alert("Marque pelo menos um CT-e."); return; }
+  dvCopiarTexto(dvEmail(ev), "E-mail copiado. Cole no Gmail e mande.");
 }
-/* Links assinados: a Suzano abre cada arquivo pelo navegador, sem login e sem
-   ver mais nada do sistema. Expiram sozinhos em DV_LINK_DIAS dias. */
+/* Links assinados: o André abre o PDF pelo navegador, sem login e sem ver
+   mais nada do sistema. Expiram sozinhos em DV_LINK_DIAS dias. */
 function dvGerarLinks() {
   var ev = window.__dvEnvio; if (!ev) return;
-  if (!ev.arquivos.length) { alert("Nenhum arquivo guardado para esta viagem."); return; }
+  var arqs = dvArquivosAndre(ev);
+  if (!arqs.length) { alert(dvSelecionados(ev).length ? "Os CT-e marcados não têm PDF no sistema." : "Marque pelo menos um CT-e."); return; }
   var st = document.getElementById("dvEnvioStatus");
   if (st) { st.style.color = "#F2E600"; st.textContent = "⏳ Gerando os links..."; }
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexão com o servidor."); return; }
     var seg = DV_LINK_DIAS * 86400;
-    return Promise.all(ev.arquivos.map(function (a) {
+    return Promise.all(arqs.map(function (a) {
+      if (ev.links[a.path]) return null;
       return sb.storage.from(RF_BUCKET).createSignedUrl(a.path, seg)
-        .then(function (r) { return (r && !r.error && r.data) ? a.nome + "\n" + r.data.signedUrl : null; })
-        .catch(function () { return null; });
-    })).then(function (lst) {
-      var ok = lst.filter(Boolean);
-      var validade = new Date(Date.now() + seg * 1000).toLocaleDateString("pt-BR");
-      var bloco = "\n\nLinks para download (válidos até " + validade + "):\n\n" + ok.join("\n\n");
-      ev.email = ev.email.split("\n\nLinks para download")[0] + bloco;
-      var tx = document.getElementById("dvEnvioTexto");
-      if (tx) tx.value = ev.email;
-      if (st) {
-        st.style.color = ok.length === ev.arquivos.length ? "#66BB6A" : "#E67E22";
-        st.textContent = "✓ " + ok.length + " de " + ev.arquivos.length + " link(s) no e-mail abaixo, válidos até " + validade + ". Copie o e-mail e mande — não precisa anexar.";
-      }
+        .then(function (r) { if (r && !r.error && r.data) ev.links[a.path] = r.data.signedUrl; })
+        .catch(function () { });
+    })).then(function () {
+      ev.validade = new Date(Date.now() + seg * 1000).toLocaleDateString("pt-BR");
+      dvEnvioDesenhar();
     });
   });
 }
@@ -5745,9 +5819,10 @@ function dvTelaHTML() {
 function dvContextoAssistente() {
   var cx = dvCaixas().slice(0, 15);
   if (!cx.length) return "DOCUMENTOS DA VIAGEM (v435): nenhuma viagem com documento ainda.";
-  return "DOCUMENTOS DA VIAGEM (aba propria desde a v435, 26/09/2026): uma caixa por viagem (placa + data) reunindo tudo o que vai para a Suzano. "
-    + "Botao '1. Saida' = PDFs (DAMDFE+DACTE) para o motorista pelo WhatsApp e ZIP + e-mail pro Andre; botao '2. Viagem concluida' = pacote completo com espelho e canhotos. "
-    + "Os dois geram LINKS de download para a Suzano, validos por " + DV_LINK_DIAS + " dias, sem login (link assinado do Supabase, so para os arquivos daquela viagem). "
+  return "DOCUMENTOS DA VIAGEM (aba propria desde a v435, 26/09/2026; e-mail do Andre enxuto na v436): uma caixa por viagem (placa + data) reunindo tudo o que vai para a Suzano. "
+    + "Botao '1. Saida' = PDFs (DAMDFE+DACTE) para o motorista pelo WhatsApp e o e-mail do Andre; botao '2. Viagem concluida' = o mesmo e-mail com os canhotos. "
+    + "REGRA DO E-MAIL DO ANDRE (v436, pedido do Renato): so CT-e com numero, cliente, NF, CHAVE e o PDF (DACTE) -- SEM MDF-e, SEM averbacao, SEM XML, SEM espelho, SEM frete. Na janela ele escolhe quais CT-e vao (um ou todos) e marca se o CIOT vai (padrao: nao vai). "
+    + "O PDF (e os canhotos) podem ir anexados (ZIP) ou como LINKS no proprio e-mail, validos por " + DV_LINK_DIAS + " dias, sem login (link assinado do Supabase, so daqueles arquivos). "
     + "No topo ha a busca de canhoto por numero de NF em todas as viagens (ver, baixar, enviar). CT-e/MDF-e emitidos no SimplesCTe entram so com XML (o PDF sai do SimplesCTe); os emitidos pelo app tem DACTE/DAMDFE. "
     + "Situacao das 15 viagens mais recentes:\n"
     + cx.map(function (bx) {
