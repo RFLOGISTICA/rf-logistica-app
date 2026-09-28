@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v454)</title>
+<title>RF Logística — Painel da Frota (v455)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v454">
+<meta name="rf-versao" content="v455">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v454" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v455" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15410,7 +15410,16 @@ function exDesfazer(extId, linId) {
       c.atualizadoEm = Date.now();
     }
   }
+  var vv = o.l.vinc;
   delete o.l.vinc;
+  if (vv && vv.demonstrativo && (vv.demonstrativo.recibos || []).length) {
+    /* v455: volta a mostrar as medições já lidas, para refazer a baixa sem reenviar a imagem */
+    var recs = JSON.parse(JSON.stringify(vv.demonstrativo.recibos));
+    recs.forEach(function (r) { delete r.vid; delete r.jaUsado; delete r.vidManual; });
+    var arqs = vv.demonstrativo.arquivos && vv.demonstrativo.arquivos.length ? vv.demonstrativo.arquivos : (vv.demonstrativo.arquivo ? [vv.demonstrativo.arquivo] : []);
+    state._exDemo = { lin: o.l.id, recibos: exDemoCasar(recs, o.l.id), arquivos: arqs, arquivo: arqs[0] || "", lidas: arqs.length || 1, total: 0 };
+    state._exAberta = o.l.id;
+  }
   exSalvar(o.e);
 }
 function exExcluirExtrato(extId) {
@@ -15594,7 +15603,7 @@ function exTelaHTML() {
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v455: recibo que ja entrou na baixa de OUTRO credito aparece como 'ja baixado no credito de dd/mm (R$ X) -- nao entra de novo' e fica de fora da baixa, com aviso de que talvez a medicao nao seja a deste deposito (caso de 28/09: a medicao de R$ 47.260 foi lida no credito de 01/09 de R$ 48.386,56). Desfazer uma baixa feita por medicao reabre a conferencia com os recibos ja lidos, para refazer sem reenviar a imagem. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
@@ -15649,11 +15658,27 @@ function exDemoViaIA(b64, mime) {
   });
 }
 /* casa cada recibo com uma viagem em aberto: mesma placa; prefere frete igual; desempata pela data */
-function exDemoCasar(recibos) {
+/* v455: recibo (código do cliente) que já entrou na baixa de OUTRO crédito.
+   Caso real 28/09: a medição de R$ 47.260 foi baixada no crédito de 18/09 e depois
+   lida de novo no crédito de 01/09 (R$ 48.386,56) -- as viagens já quitadas
+   apareciam como "sem viagem no sistema", sem dizer onde tinham sido baixadas. */
+function exRecibosUsados(excetoLin) {
+  var m = {};
+  exTodasLinhas().forEach(function (x) {
+    var v = x.l.vinc;
+    if (!v || !v.demonstrativo || x.l.id === excetoLin) return;
+    (v.demonstrativo.recibos || []).forEach(function (r) { if (r.recibo) m[String(r.recibo)] = { data: x.l.data, valor: x.l.valor, desc: x.l.desc }; });
+  });
+  return m;
+}
+function exDemoCasar(recibos, linId) {
+  var usados = exRecibosUsados(linId);
+  (recibos || []).forEach(function (r) { r.jaUsado = r.recibo && usados[String(r.recibo)] ? usados[String(r.recibo)] : null; });
   var rec = exRecebidoPorViagem(), usadas = {};
   var abertas = exViagensAbertas();
   (recibos || []).forEach(function (r) {
     var placa = exNormPlaca(r.placa), ini = exDataISO(r.inicio) || exDataISO(r.fim);
+    if (r.jaUsado) { r.vid = ""; return; }
     var cands = abertas.filter(function (v) { return exPlacaParecida(v.placa, placa) && !usadas[String(v.id)]; });
     var dias = function (v) { if (!ini || !v.data) return 999; return Math.abs((new Date(String(v.data).slice(0, 10)) - new Date(ini)) / 86400000); };
     cands.sort(function (a, b) {
@@ -15701,7 +15726,7 @@ function exDemoLer(input, extId, linId) {
     input.value = "";
     if (!acum.recibos.length) { state._exDemo = { lin: linId, erro: "não encontrei recibos. " + erros.join(" · ") }; render(); return; }
     acum.recibos.forEach(function (r) { delete r.vid; });
-    acum.recibos = exDemoCasar(acum.recibos);
+    acum.recibos = exDemoCasar(acum.recibos, linId);
     acum.arquivo = acum.arquivos[0] || "";
     acum.erros = erros;
     state._exDemo = acum; render();
@@ -15717,11 +15742,12 @@ function exDemoHTML(e, l) {
   if (d.erro) return '<div style="font-size:12px;color:#E57373;margin-top:8px;">✖ ' + esc(d.erro) + '</div>';
   var rec = exRecebidoPorViagem(), eid = esc(e.id), lid = esc(l.id);
   var abertas = exViagensAbertas();
-  var tPagar = 0, tFrete = 0, tDesc = 0, semViagem = 0, nDif = 0, tDifF = 0;
+  var tPagar = 0, tFrete = 0, tDesc = 0, semViagem = 0, nDif = 0, tDifF = 0, nUsados = 0, usadoEm = {};
   var inp = 'font-size:11px;padding:3px 5px;background:#111;color:#ddd;border:1px solid #333;border-radius:5px;';
   var linhas = d.recibos.map(function (r, i) {
     tPagar += r.aPagar || 0; tFrete += r.valorFrete || 0; tDesc += exDemoDesc(r);
-    if (!r.vid) semViagem++;
+    if (r.jaUsado) nUsados++;
+    else if (!r.vid) semViagem++;
     var v = r.vid ? (state.viagens || []).filter(function (x) { return String(x.id) === r.vid; })[0] : null;
     var falta = v ? exFaltaViagem(v, rec) : 0, dif = v ? Math.round((falta - r.valorFrete) * 100) / 100 : 0;
     /* v454: a lista traz primeiro as viagens da mesma placa (ou parecida -- a leitura
@@ -15735,6 +15761,11 @@ function exDemoHTML(e, l) {
       + (mesma.length ? '<optgroup label="mesma placa">' + mesma.map(op).join("") + '</optgroup>' : "")
       + (outras.length ? '<optgroup label="outras viagens em aberto">' + outras.map(op).join("") + '</optgroup>' : "")
       + '</select>';
+    if (r.jaUsado) {
+      usadoEm[exDataBr(r.jaUsado.data) + " (" + fmtR(r.jaUsado.valor) + ")"] = 1;
+      sel = '<div style="padding:5px 7px;border:1px solid #5a2626;border-radius:5px;background:rgba(192,57,43,0.10);color:#E57373;font-size:11px;">'
+        + 'já baixado no crédito de <b>' + exDataBr(r.jaUsado.data) + '</b> (' + fmtR(r.jaUsado.valor) + ') — não entra de novo</div>';
+    }
     var difHTML = "";
     if (v && Math.abs(dif) >= 0.05) {
       nDif++; tDifF += dif;
@@ -15769,6 +15800,7 @@ function exDemoHTML(e, l) {
     + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;"><tr><th ' + th + '>Recibo</th><th ' + th + '>Placa / motorista</th><th ' + th + '>Frete / período</th><th ' + th + '>Valor frete</th><th ' + th + '>Descontos</th><th ' + th + '>A pagar</th><th ' + th + '>Viagem no sistema</th></tr>' + linhas + '</table></div>'
     + '<div style="font-size:12px;color:#ddd;margin-top:8px;line-height:1.6;">fretes <b>' + fmtR(tFrete) + '</b> − descontos <b>' + fmtR(tDesc) + '</b> = a pagar <b>' + fmtR(tPagar) + '</b>'
     + '<br>crédito no banco <b>' + fmtR(l.valor) + '</b> · ' + (Math.abs(difBanco) < 0.05 ? '<b style="color:#66BB6A;">bate com as medições ✓</b>' : '<b style="color:#E57373;">diferença ' + fmtR(difBanco) + '</b>' + (difBanco > 0 ? ' — falta medição: toque em "+ acrescentar outra imagem"' : ""))
+    + (nUsados ? '<br><span style="color:#E57373;font-weight:800;">⚠ ' + nUsados + ' de ' + d.recibos.length + ' recibo(s) desta medição já foram baixados no crédito de ' + Object.keys(usadoEm).join(", ") + '. Confira se esta é a medição certa para este crédito.</span>' : "")
     + (semViagem ? '<br><span style="color:#E57373;">' + semViagem + ' recibo(s) sem viagem — escolha a viagem na lista (tem todas as viagens em aberto) ou deixe sem, fica registrado.</span>' : "")
     + (nDif ? '<br><span style="color:#FFB74D;">' + nDif + ' viagem(ns) com frete do cliente diferente do sistema (total ' + fmtR(tDifF) + ') — escolha em cada uma se cobra ou aceita, e justifique.</span>'
         + '<br><button class="btn-outline" style="font-size:10.5px;padding:2px 8px;" onclick="exDemoAceitarTodas()">aceitar o valor do cliente em todas</button>' : "")
@@ -15789,8 +15821,9 @@ function exDemoBaixa(extId, linId) {
   if (!ehAdmin()) return;
   var o = exLinha(extId, linId), d = state._exDemo; if (!o.l || !d || d.lin !== linId || !d.recibos) return;
   var rec = exRecebidoPorViagem();
-  var ids = [], aloc = {}, soma = 0, tPagar = 0, tDesc = 0, sem = [], difFrete = [], falhas = [];
+  var ids = [], aloc = {}, soma = 0, tPagar = 0, tDesc = 0, sem = [], difFrete = [], falhas = [], usadosB = [];
   d.recibos.forEach(function (r) {
+    if (r.jaUsado) { usadosB.push(r.recibo); return; }
     tPagar += r.aPagar || 0; tDesc += exDemoDesc(r);
     if (!r.vid) { sem.push("recibo " + (r.recibo || "?") + " " + (r.placa || "") + " " + fmtR(r.aPagar)); return; }
     if (ids.indexOf(r.vid) !== -1) { falhas.push("a mesma viagem foi escolhida em dois recibos (" + (r.recibo || "?") + ")"); return; }
@@ -15807,6 +15840,8 @@ function exDemoBaixa(extId, linId) {
     ids.push(r.vid); aloc[r.vid] = Math.round(val * 100) / 100; soma += val;
   });
   if (falhas.length) { alert(falhas.join("\n")); return; }
+  if (usadosB.length && !ids.length) { alert("Todos os recibos ligados desta medição já foram baixados em outro crédito. Esta não é a medição deste depósito."); return; }
+  if (usadosB.length && !confirm(usadosB.length + " recibo(s) já baixados em outro crédito vão ficar de fora. Continuar só com os outros?")) return;
   if (!ids.length) { alert("Nenhum recibo ficou ligado a uma viagem."); return; }
   tPagar = Math.round(tPagar * 100) / 100; tDesc = Math.round(tDesc * 100) / 100; soma = Math.round(soma * 100) / 100;
   var difBanco = Math.round((o.l.valor - tPagar) * 100) / 100, just = "";
