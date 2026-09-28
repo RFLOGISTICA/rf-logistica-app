@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v449)</title>
+<title>RF Logística — Painel da Frota (v451)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v449">
+<meta name="rf-versao" content="v451">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v449" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v451" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15231,7 +15231,22 @@ function exImportar(input) {
 }
 /* ---- vínculos ---- */
 function exTodasLinhas() { var o = []; exLista().forEach(function (e) { (e.linhas || []).forEach(function (l) { o.push({ e: e, l: l }); }); }); return o; }
-function exViagensRecebidas() { var m = {}; exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (v && v.tipo === "viagens") (v.ids || []).forEach(function (id) { m[String(id)] = x; }); }); return m; }
+/* v450: quanto já entrou de cada viagem. Vínculo antigo (sem "aloc") conta a viagem inteira;
+   vínculo com recebimento parcial guarda em "aloc" quanto foi para cada viagem. */
+function exRecebidoPorViagem() {
+  var m = {}, porId = {};
+  (state.viagens || []).forEach(function (v) { if (v && v.id != null) porId[String(v.id)] = Number(v.valorViagem) || 0; });
+  exTodasLinhas().forEach(function (x) {
+    var v = x.l.vinc; if (!v || v.tipo !== "viagens") return;
+    (v.ids || []).forEach(function (id) {
+      var k = String(id), val = v.aloc && v.aloc[k] != null ? Number(v.aloc[k]) : (porId[k] || 0);
+      m[k] = Math.round(((m[k] || 0) + val) * 100) / 100;
+    });
+  });
+  return m;
+}
+function exFaltaViagem(v, rec) { rec = rec || exRecebidoPorViagem(); return Math.round(((Number(v.valorViagem) || 0) - (rec[String(v.id)] || 0)) * 100) / 100; }
+function exViagensRecebidas() { var m = {}, rec = exRecebidoPorViagem(); (state.viagens || []).forEach(function (v) { if (v && rec[String(v.id)] && exFaltaViagem(v, rec) < 0.05) m[String(v.id)] = 1; }); return m; }
 function exComprasPagas() { var m = {}; exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (v && v.tipo === "compra") m[String(v.id)] = x; }); return m; }
 function exCompraRestante(c) {
   var alvo = ccValorNF(c) || Number(c.valor) || 0;
@@ -15246,12 +15261,13 @@ function exCandCompras(l) {
   });
 }
 function exViagensAbertas() {
-  var rec = exViagensRecebidas();
-  return (state.viagens || []).filter(function (v) { return v && v.id != null && !rec[String(v.id)] && (Number(v.valorViagem) || 0) > 0; })
+  var rec = exRecebidoPorViagem();
+  return (state.viagens || []).filter(function (v) { return v && v.id != null && (Number(v.valorViagem) || 0) > 0 && exFaltaViagem(v, rec) >= 0.05; })
     .sort(function (a, b) { return String(b.data || "").localeCompare(String(a.data || "")); });
 }
 function exCandViagens(l) {
-  return exViagensAbertas().filter(function (v) { return Math.abs((Number(v.valorViagem) || 0) - l.valor) < 0.05; });
+  var rec = exRecebidoPorViagem();
+  return exViagensAbertas().filter(function (v) { return Math.abs(exFaltaViagem(v, rec) - l.valor) < 0.05; });
 }
 function exNormNome(x) { return String(x || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim(); }
 function exSugCategoria(l) {
@@ -15335,16 +15351,29 @@ function exVincViagens(extId, linId, ids) {
   var o = exLinha(extId, linId); if (!o.l) return;
   ids = ids || (state._exSelV && state._exSelV.lin === linId ? state._exSelV.ids : []);
   if (!ids.length) { alert("Marque a(s) viagem(ns) deste recebimento."); return; }
-  var soma = 0;
-  (state.viagens || []).forEach(function (v) { if (ids.indexOf(String(v.id)) !== -1) soma += Number(v.valorViagem) || 0; });
-  soma = Math.round(soma * 100) / 100;
-  var dif = Math.round((o.l.valor - soma) * 100) / 100, obs = "";
+  var rec = exRecebidoPorViagem();
+  var sel = (state.viagens || []).filter(function (v) { return ids.indexOf(String(v.id)) !== -1; })
+    .sort(function (a, b) { return String(a.data || "").localeCompare(String(b.data || "")); });
+  var soma = Math.round(sel.reduce(function (a, v) { return a + Math.max(0, exFaltaViagem(v, rec)); }, 0) * 100) / 100;
+  var dif = Math.round((o.l.valor - soma) * 100) / 100, obs = "", parcial = false;
   if (Math.abs(dif) >= 0.05) {
-    obs = prompt("Recebido " + fmtR(o.l.valor) + " x viagens " + fmtR(soma) + " (diferença " + fmtR(dif) + ").\nExplique a diferença (retenção, desconto, adiantamento...):", "");
-    if (obs == null || !String(obs).trim()) return;
+    var campo = document.getElementById("ex-just-" + linId);
+    obs = campo ? String(campo.value || "").trim() : String(state._exJust || "").trim();
+    var cx = document.getElementById("ex-parc-" + linId);
+    parcial = dif < 0 && !!(cx ? cx.checked : state._exParc);
+    if (!obs) { alert("Escreva a justificativa da diferença de " + fmtR(dif) + " no campo abaixo das viagens."); if (campo) campo.focus(); return; }
   }
-  o.l.vinc = { tipo: "viagens", ids: ids.map(String), soma: soma, dif: dif, obs: String(obs || "").trim(), por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug;
-  state._exAberta = ""; state._exSelV = null;
+  /* aloc: quanto deste crédito vai para cada viagem. No recebimento parcial o
+     dinheiro cobre as viagens mais antigas primeiro e a última fica com o saldo em aberto. */
+  var aloc = {}, resta = o.l.valor;
+  sel.forEach(function (v, i) {
+    var falta = Math.max(0, exFaltaViagem(v, rec));
+    var val = parcial ? Math.min(falta, Math.max(0, resta)) : falta;
+    if (!parcial && i === sel.length - 1 && dif > 0) val = falta;
+    aloc[String(v.id)] = Math.round(val * 100) / 100; resta -= val;
+  });
+  o.l.vinc = { tipo: "viagens", ids: ids.map(String), aloc: aloc, soma: soma, dif: dif, parcial: parcial, obs: obs, por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug;
+  state._exAberta = ""; state._exSelV = null; state._exJust = ""; state._exParc = false;
   exSalvar(o.e);
 }
 function exAceitarSug(extId, linId) {
@@ -15407,11 +15436,18 @@ function exAbrir(linId) {
 }
 
 /* ---- tela ---- */
-function exViagemRot(v) { return exDataBr(String(v.data || "").slice(0, 10)) + " · " + esc(v.cliente || "?") + " · " + esc(v.placa || "") + (v.rota ? " · " + esc(v.rota) : "") + " · <b>" + fmtR(v.valorViagem) + "</b>"; }
+function exViagemRot(v, rec) {
+  var falta = exFaltaViagem(v, rec), tot = Number(v.valorViagem) || 0;
+  return exDataBr(String(v.data || "").slice(0, 10)) + " · " + esc(v.cliente || "?") + " · " + esc(v.placa || "") + (v.rota ? " · " + esc(v.rota) : "") + " · <b>" + fmtR(tot) + "</b>"
+    + (falta < tot - 0.04 && falta > 0.04 ? ' <span style="color:#FFB74D;">(já recebeu ' + fmtR(tot - falta) + ', falta ' + fmtR(falta) + ')</span>' : "");
+}
 function exVincTexto(l) {
   var v = l.vinc; if (!v) return "";
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
-  if (v.tipo === "viagens") return (v.ids || []).length + " viagem(ns) · " + fmtR(v.soma) + (Math.abs(v.dif || 0) >= 0.05 ? ' · <span style="color:#E57373;">diferença ' + fmtR(v.dif) + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
+  if (v.tipo === "viagens" && v.demonstrativo) return (v.ids || []).length + " viagem(ns) quitada(s) pelo demonstrativo · fretes " + fmtR(v.soma) + ' · <span style="color:#FFB74D;">descontos ' + fmtR(v.descontos || 0) + '</span>'
+    + (v.demonstrativo.arquivo ? ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(v.demonstrativo.arquivo) + '\')" style="color:#4FC3F7;">demonstrativo</a>' : "")
+    + ((v.obs || "").indexOf("sem viagem no sistema") !== -1 ? ' · <span style="color:#E57373;">há recibo sem viagem</span>' : "");
+  if (v.tipo === "viagens") return (v.ids || []).length + " viagem(ns) · " + fmtR(v.soma) + (Math.abs(v.dif || 0) >= 0.05 ? ' · <span style="color:' + (v.parcial ? "#FFB74D" : "#E57373") + ';">diferença ' + fmtR(v.dif) + (v.parcial ? " — saldo continua a receber" : "") + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
   return esc(v.categoria) + (v.obs ? " — " + esc(v.obs) : "");
 }
 function exLinhaHTML(e, l) {
@@ -15466,11 +15502,18 @@ function exPainelEntrada(e, l) {
   var filtroCli = state._exCli || "";
   var clientes = {}; vs.forEach(function (v) { if (v.cliente) clientes[v.cliente] = 1; });
   var lista = vs.filter(function (v) { return !filtroCli || v.cliente === filtroCli || selIds.indexOf(String(v.id)) !== -1; }).slice(0, 120);
-  var soma = 0; vs.forEach(function (v) { if (selIds.indexOf(String(v.id)) !== -1) soma += Number(v.valorViagem) || 0; });
+  var rec = exRecebidoPorViagem();
+  var soma = 0; vs.forEach(function (v) { if (selIds.indexOf(String(v.id)) !== -1) soma += Math.max(0, exFaltaViagem(v, rec)); });
+  soma = Math.round(soma * 100) / 100;
   var dif = Math.round((l.valor - soma) * 100) / 100;
   var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;">'
-    + '<div style="font-size:10.5px;color:#66BB6A;font-weight:800;margin-bottom:4px;">RECEITA DE VIAGEM — marque as viagens pagas neste crédito</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
+    + '<label style="font-size:12px;padding:5px 12px;font-weight:800;border:1px solid #66BB6A;color:#66BB6A;border-radius:6px;cursor:pointer;">📄 Ler demonstrativo de pagamento do cliente'
+    + '<input type="file" accept="image/*" style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label>'
+    + '<span style="font-size:10.5px;color:#888;">a imagem que o cliente manda com o depósito (ex.: JDL) — o sistema acha as viagens e dá baixa com os descontos</span></div>'
+    + exDemoHTML(e, l)
+    + '<div style="font-size:10.5px;color:#66BB6A;font-weight:800;margin:8px 0 4px;">OU MARQUE À MÃO AS VIAGENS PAGAS NESTE CRÉDITO</div>'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
     + '<select ' + sel + ' onchange="state._exCli=this.value;render()"><option value="">todos os clientes</option>' + Object.keys(clientes).sort().map(function (c) { return '<option' + (c === filtroCli ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>'
     + '<span style="font-size:11.5px;color:#ddd;">marcadas <b>' + selIds.length + '</b> · soma <b>' + fmtR(soma) + '</b> · recebido <b>' + fmtR(l.valor) + '</b> · '
@@ -15479,9 +15522,14 @@ function exPainelEntrada(e, l) {
     + '<div style="max-height:260px;overflow:auto;border:1px solid #1d1d1d;border-radius:6px;padding:4px 6px;">'
     + (lista.length ? lista.map(function (v) {
         var id = esc(String(v.id)), on = selIds.indexOf(String(v.id)) !== -1;
-        return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "") + ' onchange="exSelViagem(\'' + lid + '\',\'' + id + '\',this.checked)"> ' + exViagemRot(v) + '</label>';
+        return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "") + ' onchange="exSelViagem(\'' + lid + '\',\'' + id + '\',this.checked)"> ' + exViagemRot(v, rec) + '</label>';
       }).join("") : '<div style="font-size:11px;color:#777;">nenhuma viagem em aberto.</div>')
     + '</div>'
+    + (selIds.length && Math.abs(dif) >= 0.05 ? '<div style="margin-top:8px;border:1px solid #5a2626;border-radius:6px;padding:8px 10px;background:rgba(192,57,43,0.08);">'
+        + '<div style="font-size:11px;color:#E57373;font-weight:800;margin-bottom:5px;">DIFERENÇA DE ' + fmtR(dif) + ' — justifique antes de ligar</div>'
+        + '<input id="ex-just-' + lid + '" value="' + esc(state._exJust || "") + '" oninput="state._exJust=this.value" placeholder="' + (dif < 0 ? "ex.: o restante será pago à parte / retenção / desconto" : "ex.: pagamento a mais / adiantamento") + '" style="font-size:12px;padding:6px 8px;background:#111;color:#eee;border:1px solid #444;border-radius:6px;width:100%;box-sizing:border-box;">'
+        + (dif < 0 ? '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:#ddd;margin-top:6px;cursor:pointer;"><input id="ex-parc-' + lid + '" type="checkbox" style="width:auto;margin:0;"' + (state._exParc ? " checked" : "") + ' onchange="state._exParc=this.checked"> o restante (' + fmtR(-dif) + ') ainda vai ser pago — deixar a viagem em aberto com esse saldo</label>' : "")
+        + '</div>' : "")
     + '<div style="margin-top:8px;"><div style="font-size:10.5px;color:#aaa;font-weight:800;margin-bottom:4px;">OU NÃO É RECEITA DE VIAGEM</div>'
     + '<select id="ex-cat-' + lid + '" ' + sel + '><option value="">— origem —</option>' + EX_CAT_ENTRADA.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("") + '</select> '
     + '<input id="ex-obs-' + lid + '" placeholder="observação" ' + sel.replace("width:auto", "width:220px") + '> '
@@ -15545,10 +15593,158 @@ function exTelaHTML() {
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
+/* ============ v451 — DEMONSTRATIVO DE PAGAMENTO DO CLIENTE ===================
+   Renato (28/09/2026): a JDL paga várias viagens num depósito só e manda uma
+   IMAGEM com um recibo por viagem (placa, motorista, destino, início/fim, valor
+   do frete e os descontos: adiantamento, abastecimento, vale, impostos, e o
+   "valor a ser pago"). "Você tem que criar uma forma de dar baixa."
+   Na entrada do extrato: "Ler demonstrativo" -> a função ler-demonstrativo-pagamento
+   lê a imagem -> cada recibo é casado com a viagem (mesma placa, frete igual,
+   data mais próxima) -> conferência: soma "a pagar" x crédito do banco ->
+   "dar baixa": as viagens ficam QUITADAS pelo valor cheio do frete (o que foi
+   descontado é abastecimento/adiantamento/vale/imposto, não dívida do cliente)
+   e os descontos ficam registrados no vínculo. */
+function exNormPlaca(p) { return String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function exArquivoBase64(file) {
+  var ler = function (blob) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { var s = String(fr.result || ""); res({ b64: s.slice(s.indexOf(",") + 1), mime: blob.type || "image/jpeg" }); };
+      fr.onerror = function () { rej(new Error("não consegui ler a imagem")); };
+      fr.readAsDataURL(blob);
+    });
+  };
+  if (file.size <= 3000000) return ler(file);
+  return rfComprimirImagem(file, 3000, 2500000).then(ler);   // tabela larga: não reduzir demais
+}
+function exDemoViaIA(b64, mime) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com o servidor");
+    return sb.auth.getSession().then(function (res) {
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) throw new Error("sessão expirada — saia e entre de novo");
+      return fetch(RF_SB_URL + "/functions/v1/ler-demonstrativo-pagamento", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ imagemBase64: b64, mimeType: mime })
+      }).then(function (r) { return r.json().then(function (j) { if (!r.ok || (j && (j.error || j.erro))) throw new Error((j && (j.error || j.erro)) || ("servidor respondeu " + r.status)); return j; }); });
+    });
+  });
+}
+/* casa cada recibo com uma viagem em aberto: mesma placa; prefere frete igual; desempata pela data */
+function exDemoCasar(recibos) {
+  var rec = exRecebidoPorViagem(), usadas = {};
+  var abertas = exViagensAbertas();
+  (recibos || []).forEach(function (r) {
+    var placa = exNormPlaca(r.placa), ini = exDataISO(r.inicio) || exDataISO(r.fim);
+    var cands = abertas.filter(function (v) { return exNormPlaca(v.placa) === placa && !usadas[String(v.id)]; });
+    var dias = function (v) { if (!ini || !v.data) return 999; return Math.abs((new Date(String(v.data).slice(0, 10)) - new Date(ini)) / 86400000); };
+    cands.sort(function (a, b) {
+      var fa = Math.abs(exFaltaViagem(a, rec) - r.valorFrete) < 0.05 ? 0 : 1, fb = Math.abs(exFaltaViagem(b, rec) - r.valorFrete) < 0.05 ? 0 : 1;
+      return fa - fb || dias(a) - dias(b);
+    });
+    var v = cands[0];
+    if (v && (Math.abs(exFaltaViagem(v, rec) - r.valorFrete) < 0.05 || dias(v) <= 4)) { r.vid = String(v.id); usadas[r.vid] = 1; }
+    else r.vid = "";
+  });
+  return recibos;
+}
+function exDemoLer(input, extId, linId) {
+  if (!ehAdmin()) return;
+  var file = input.files && input.files[0]; if (!file) return;
+  if (!/^image\//.test(file.type || "")) { alert("Mande a IMAGEM do demonstrativo (foto ou print). Se veio em PDF, tire um print da tabela."); input.value = ""; return; }
+  state._exDemo = { lin: linId, lendo: true }; render();
+  var arquivo = "";
+  ccSubir([file], "extratos", "demonstrativo-" + linId).then(function (p) { arquivo = p[0] && p[0].path; }).catch(function () { })
+    .then(function () { return exArquivoBase64(file); })
+    .then(function (a) { return exDemoViaIA(a.b64, a.mime); })
+    .then(function (j) {
+      var recibos = (j && j.recibos) || [];
+      if (!recibos.length) throw new Error("não encontrei recibos na imagem. Confira se é o demonstrativo de pagamento.");
+      state._exDemo = { lin: linId, recibos: exDemoCasar(recibos), total: Number(j.total) || 0, arquivo: arquivo };
+      input.value = ""; render();
+    })
+    .catch(function (e) { state._exDemo = { lin: linId, erro: String(e.message || e) }; input.value = ""; render(); });
+}
+function exDemoTrocar(i, vid) { if (state._exDemo && state._exDemo.recibos && state._exDemo.recibos[i]) { state._exDemo.recibos[i].vid = vid; render(); } }
+function exDemoDesc(r) { return Math.round(((r.adiantamento || 0) + (r.abastecimento || 0) + (r.vale || 0) + (r.impostos || 0)) * 100) / 100; }
+function exDemoHTML(e, l) {
+  var d = state._exDemo;
+  if (!d || d.lin !== l.id) return "";
+  if (d.lendo) return '<div style="font-size:12px;color:#F2E600;margin-top:8px;">⏳ lendo o demonstrativo...</div>';
+  if (d.erro) return '<div style="font-size:12px;color:#E57373;margin-top:8px;">✖ ' + esc(d.erro) + '</div>';
+  var rec = exRecebidoPorViagem(), eid = esc(e.id), lid = esc(l.id);
+  var abertas = exViagensAbertas();
+  var tPagar = 0, tFrete = 0, tDesc = 0, semViagem = 0, freteDif = 0;
+  var linhas = d.recibos.map(function (r, i) {
+    tPagar += r.aPagar || 0; tFrete += r.valorFrete || 0; tDesc += exDemoDesc(r);
+    if (!r.vid) semViagem++;
+    var v = r.vid ? (state.viagens || []).filter(function (x) { return String(x.id) === r.vid; })[0] : null;
+    if (v && Math.abs(exFaltaViagem(v, rec) - r.valorFrete) >= 0.05) freteDif++;
+    var opts = abertas.filter(function (x) { return exNormPlaca(x.placa) === exNormPlaca(r.placa) || String(x.id) === r.vid; });
+    var sel = '<select onchange="exDemoTrocar(' + i + ',this.value)" style="font-size:11px;padding:3px 5px;background:#111;color:#ddd;border:1px solid #333;border-radius:5px;width:auto;max-width:100%;">'
+      + '<option value="">— sem viagem no sistema —</option>'
+      + opts.map(function (x) { return '<option value="' + esc(String(x.id)) + '"' + (String(x.id) === r.vid ? " selected" : "") + '>' + exDataBr(String(x.data || "").slice(0, 10)) + " · " + esc(x.placa || "") + (x.rota ? " · " + esc(x.rota) : "") + " · " + fmtR(exFaltaViagem(x, rec)) + '</option>'; }).join("")
+      + '</select>';
+    var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11px;color:#ccc;vertical-align:top;"';
+    return '<tr><td ' + td + '>' + esc(r.recibo || "") + '</td><td ' + td + '><b style="color:#fff;">' + esc(r.placa || "") + '</b><br><span style="color:#888;">' + esc(r.motorista || "") + '</span></td>'
+      + '<td ' + td + '>' + esc(r.descricao || "") + '<br><span style="color:#888;">' + esc(r.inicio || "") + ' a ' + esc(r.fim || "") + '</span></td>'
+      + '<td ' + td + ' align="right">' + fmtR(r.valorFrete) + '</td><td ' + td + ' align="right" title="adiantamento ' + fmtR(r.adiantamento) + ' · abastecimento ' + fmtR(r.abastecimento) + ' · vale ' + fmtR(r.vale) + ' · impostos ' + fmtR(r.impostos) + '">− ' + fmtR(exDemoDesc(r)) + '</td>'
+      + '<td ' + td + ' align="right"><b style="color:#66BB6A;">' + fmtR(r.aPagar) + '</b></td>'
+      + '<td ' + td + '>' + sel + (v && Math.abs(exFaltaViagem(v, rec) - r.valorFrete) >= 0.05 ? '<div style="color:#FFB74D;">frete no sistema ' + fmtR(exFaltaViagem(v, rec)) + '</div>' : "") + '</td></tr>';
+  }).join("");
+  tPagar = Math.round(tPagar * 100) / 100; tFrete = Math.round(tFrete * 100) / 100; tDesc = Math.round(tDesc * 100) / 100;
+  var difBanco = Math.round((l.valor - tPagar) * 100) / 100;
+  var th = 'style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;"';
+  return '<div style="margin-top:10px;border:1px solid #2d4a31;border-radius:8px;padding:9px 11px;background:#0b130c;">'
+    + '<div style="font-size:11px;color:#66BB6A;font-weight:800;margin-bottom:6px;">DEMONSTRATIVO LIDO — ' + d.recibos.length + ' recibo(s)' + (d.arquivo ? ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(d.arquivo) + '\')" style="color:#4FC3F7;">ver imagem</a>' : "") + '</div>'
+    + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;"><tr><th ' + th + '>Recibo</th><th ' + th + '>Placa / motorista</th><th ' + th + '>Frete / período</th><th ' + th + '>Valor frete</th><th ' + th + '>Descontos</th><th ' + th + '>A pagar</th><th ' + th + '>Viagem no sistema</th></tr>' + linhas + '</table></div>'
+    + '<div style="font-size:12px;color:#ddd;margin-top:8px;line-height:1.6;">fretes <b>' + fmtR(tFrete) + '</b> − descontos <b>' + fmtR(tDesc) + '</b> = a pagar <b>' + fmtR(tPagar) + '</b>'
+    + (d.total ? ' · total do demonstrativo <b>' + fmtR(d.total) + '</b>' + (Math.abs(d.total - tPagar) >= 0.05 ? ' <span style="color:#E57373;">(não bate com a soma dos recibos — confira a leitura)</span>' : "") : "")
+    + '<br>crédito no banco <b>' + fmtR(l.valor) + '</b> · ' + (Math.abs(difBanco) < 0.05 ? '<b style="color:#66BB6A;">bate com o demonstrativo ✓</b>' : '<b style="color:#E57373;">diferença ' + fmtR(difBanco) + '</b> — talvez falte outra imagem do mesmo depósito')
+    + (semViagem ? '<br><span style="color:#E57373;">' + semViagem + ' recibo(s) sem viagem no sistema — escolha a viagem ou deixe sem, fica registrado.</span>' : "")
+    + (freteDif ? '<br><span style="color:#FFB74D;">' + freteDif + ' viagem(ns) com frete diferente do recibo — a baixa usa o valor do sistema.</span>' : "")
+    + '</div>'
+    + (Math.abs(difBanco) >= 0.05 ? '<input id="ex-demo-just-' + lid + '" value="' + esc(state._exDemoJust || "") + '" oninput="state._exDemoJust=this.value" placeholder="justifique a diferença com o banco (obrigatório)" style="font-size:12px;padding:6px 8px;background:#111;color:#eee;border:1px solid #444;border-radius:6px;width:100%;box-sizing:border-box;margin-top:6px;">' : "")
+    + '<div style="margin-top:8px;display:flex;gap:8px;"><button class="btn-outline" style="font-size:12px;padding:5px 14px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="exDemoBaixa(\'' + eid + '\',\'' + lid + '\')">✓ dar baixa nas viagens</button>'
+    + '<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="state._exDemo=null;render()">descartar leitura</button></div>'
+    + '</div>';
+}
+function exDemoBaixa(extId, linId) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId), d = state._exDemo; if (!o.l || !d || d.lin !== linId || !d.recibos) return;
+  var rec = exRecebidoPorViagem();
+  var ids = [], aloc = {}, soma = 0, tPagar = 0, tDesc = 0, sem = [];
+  d.recibos.forEach(function (r) {
+    tPagar += r.aPagar || 0; tDesc += exDemoDesc(r);
+    if (!r.vid) { sem.push("recibo " + (r.recibo || "?") + " " + (r.placa || "") + " " + fmtR(r.aPagar)); return; }
+    if (ids.indexOf(r.vid) !== -1) return;
+    var v = (state.viagens || []).filter(function (x) { return String(x.id) === r.vid; })[0]; if (!v) return;
+    var falta = Math.max(0, exFaltaViagem(v, rec));
+    ids.push(r.vid); aloc[r.vid] = falta; soma += falta;
+  });
+  if (!ids.length) { alert("Nenhum recibo ficou ligado a uma viagem."); return; }
+  tPagar = Math.round(tPagar * 100) / 100; tDesc = Math.round(tDesc * 100) / 100; soma = Math.round(soma * 100) / 100;
+  var difBanco = Math.round((o.l.valor - tPagar) * 100) / 100, just = "";
+  if (Math.abs(difBanco) >= 0.05) {
+    var c = document.getElementById("ex-demo-just-" + linId);
+    just = c ? String(c.value || "").trim() : "";
+    if (!just) { alert("O crédito do banco (" + fmtR(o.l.valor) + ") não bate com o demonstrativo (" + fmtR(tPagar) + "). Escreva a justificativa no campo abaixo da tabela."); if (c) c.focus(); return; }
+  }
+  var obs = "demonstrativo do cliente: " + d.recibos.length + " recibo(s), fretes − descontos " + fmtR(tDesc) + " (adiantamento/abastecimento/vale/impostos) = " + fmtR(tPagar)
+    + (sem.length ? "; sem viagem no sistema: " + sem.join(", ") : "") + (just ? "; " + just : "");
+  o.l.vinc = { tipo: "viagens", ids: ids, aloc: aloc, soma: soma, dif: Math.round((o.l.valor - soma) * 100) / 100, descontos: tDesc, obs: obs,
+    demonstrativo: { arquivo: d.arquivo || "", recibos: d.recibos }, por: ccQuem(), em: new Date().toISOString() };
+  delete o.l.sug;
+  state._exDemo = null; state._exDemoJust = ""; state._exAberta = ""; state._exSelV = null;
+  exSalvar(o.e);
+}
+/* ============ fim v451 ====================================================== */
+
 /* ============ fim v448 — CONCILIAÇÃO BANCÁRIA =============================== */
 
 /* v433 — DOCUMENTOS PARA ENVIO. Pedido do Renato: "quando tiver que enviar as
