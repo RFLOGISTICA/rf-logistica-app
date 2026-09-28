@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v445)</title>
+<title>RF Logística — Painel da Frota (v446)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v445">
+<meta name="rf-versao" content="v446">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v445" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v446" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5899,7 +5899,8 @@ function dvTelaHTML() {
 function dvContextoAssistente() {
   var cx = dvCaixas().slice(0, 15);
   if (!cx.length) return "DOCUMENTOS DA VIAGEM (v435): nenhuma viagem com documento ainda.";
-  return "EMISSAO DIRETA NA SEFAZ (v445, 28/09/2026): o app passou a emitir CT-e e MDF-e DIRETO na SEFAZ (SVRS, autorizador da Bahia), sem a Focus, assinando com o certificado A1 da RF. "
+  return "PRODUCAO LIGADA (v446, 28/09/2026): a emissao direta na SEFAZ foi colocada em PRODUCAO no dia 28/09/2026 -- CT-e e MDF-e emitidos pelo app saem com valor fiscal na SERIE 3; a Focus (serie 2) fica de garantia: se der problema, clicar 'usar Focus' no quadro do CT-e ou do MDF-e daquela carga. Onde fica: aba Carregamento Suzano, etapa 3 Emissao de CT-e, anexar o espelho no caminhao, abrir o roteiro; embaixo de cada conhecimento o quadro 'CT-e pelo app' tem o botao Emitir CT-e, a etiqueta PRODUCAO e a linha 'Emissor desta carga: SEFAZ direto (serie 3) · usar Focus'. Com todos os CT-e autorizados aparece Emitir MDF-e no quadro do MDF-e. Na v445 a etiqueta de um documento ainda nao emitido mostrava HOMOLOGACAO por engano; corrigido. "
+    + "EMISSAO DIRETA NA SEFAZ (v445, 28/09/2026): o app passou a emitir CT-e e MDF-e DIRETO na SEFAZ (SVRS, autorizador da Bahia), sem a Focus, assinando com o certificado A1 da RF. "
     + "SERIE PROPRIA 3 para CT-e e MDF-e (a Focus continua na serie 2, as numeracoes nao se cruzam). A resposta e na hora: autorizado ja volta com chave, protocolo, XML e o PDF (DACTE/DAMDFE, gerado pelo proprio sistema). "
     + "Averbacao do CT-e e declaracao do MDF-e na AT&M saem sozinhas em producao. Cada carga mostra o emissor no quadro do MDF-e (padrao: SEFAZ direto) e tem o link 'usar Focus' como reserva. "
     + "Novidades: botao CANCELAR para CT-e/MDF-e emitidos pela SEFAZ direta (motivo com 15+ letras; CT-e so ate 7 dias e com o MDF-e cancelado ou encerrado antes); se a SEFAZ nao responder, o botao consultar busca a situacao e monta XML/PDF sem emitir de novo. "
@@ -14050,6 +14051,8 @@ function rfFiscalAchaEsp(cargaId, espId) {
   return { c: c, e: (c.espelhos || []).filter(function (x) { return String(x.id) === String(espId); })[0] };
 }
 function rfFiscalAmbTag(amb) {
+  // v446: documento ainda nao emitido -> Focus e SEFAZ direto estao os dois em PRODUCAO desde 28/09/2026
+  if (!amb) return '<span style="font-size:9.5px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 6px;" title="O documento sai com valor fiscal">PRODUÇÃO</span>';
   return amb === "producao"
     ? '<span style="font-size:9.5px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 6px;">PRODUÇÃO</span>'
     : '<span style="font-size:9.5px;font-weight:900;color:#000;background:#F2E600;border-radius:4px;padding:1px 6px;" title="Ambiente de teste da SEFAZ: o documento sai com SEM VALOR FISCAL e a AT&M registra só como teste">HOMOLOGAÇÃO · sem valor fiscal</span>';
@@ -14146,6 +14149,7 @@ function rfFiscalCteHTML(c, e) {
       + rfSefazBotoesArq(f) + (f.emissor === "sefaz" ? '<button class="btn-outline" style="font-size:10px;padding:1px 7px;border-color:#E57373;color:#E57373;" onclick="rfSefazCancelar(\'' + cid + '\',\'' + eid + '\')">Cancelar</button>' : "");
   }
   h += '</div>';
+  if (!f.status || f.status === "erro" || f.status === "cancelado") h += rfSefazEmissorHTML(c);   // v446: mostra por onde vai sair, ao lado do Emitir
   if (f.status === "erro" && f.erro) h += '<div style="font-size:11px;color:#E57373;margin-top:5px;">✖ ' + esc(f.erro) + '</div>';
   if (f.status === "autorizado") {
     h += szEmisCampo("Chave CT-e", f.chave || "", "#4FC3F7", true);
