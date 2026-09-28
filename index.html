@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v443)</title>
+<title>RF Logística — Painel da Frota (v444)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v443">
-<meta name="rf-data" content="2026-09-26">
+<meta name="rf-versao" content="v444">
+<meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v443" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v444" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5899,7 +5899,8 @@ function dvTelaHTML() {
 function dvContextoAssistente() {
   var cx = dvCaixas().slice(0, 15);
   if (!cx.length) return "DOCUMENTOS DA VIAGEM (v435): nenhuma viagem com documento ainda.";
-  return "NAVEGACAO (v443): o botao Trocar de area leva direto a tela inicial inteira, com todas as areas (nao abre mais a janela menor por cima).\n"
+  return "CT-e AUTOMATICO NA VIAGEM (v444): CT-e emitido pelo app entra sozinho na viagem -- recebe a placa da carga (o XML do CT-e nao traz placa), fica vinculado a viagem da mesma placa e data, e se alguma NF nao tiver parada a parada e criada na hora. Nao precisa mais importar o XML do CT-e emitido pelo app.\n"
+    + "NAVEGACAO (v443): o botao Trocar de area leva direto a tela inicial inteira, com todas as areas (nao abre mais a janela menor por cima).\n"
     + "ASSISTENTE NA TELA INICIAL (v442): a bolha do assistente passou a aparecer tambem na tela inicial (antes so aparecia depois de abrir uma area).\n"
     + "ICONES DAS AREAS (v438/v439): na tela inicial e no seletor de areas, as caixas sem logo de cliente ganharam icone 3D realista (Fluent Emoji 3D da Microsoft, licenca MIT) num selo preto com borda dourada (Suzano, Goias e Mateus continuam com a logo do cliente).\n"
     + "TELA DE LOGIN (v437): tela nova com a logo e uma estrada animada; lembra o ultimo e-mail no aparelho (caixa Lembrar meu e-mail) e ai so pede a senha, com o link Trocar de conta; tem olho para mostrar a senha e aviso de Caps Lock.\n"
@@ -14367,6 +14368,20 @@ function rfFiscalRegistrar(cargaId, espId) {
         if (a2.f) { if (ok[0]) a2.f.xmlPath = base + ".xml"; if (ok[1]) a2.f.pdfPath = base + ".pdf"; }
         var d = rfFiscais().find(function (y) { return y.id === tipo + "-" + f.chave; });
         if (d) { if (ok[0]) d.xmlPath = base + ".xml"; if (ok[1]) d.pdfPath = base + ".pdf"; d.atualizadoEm = Date.now(); }
+        /* v444: CT-e emitido pelo app ja nasce AMARRADO a viagem. O XML do CT-e
+           nao traz placa (so o MDF-e traz), entao entre emitir o CT-e e emitir o
+           MDF-e o documento ficava "sem viagem" e a equipe acabava importando o
+           XML de novo na mao. A placa e a data vem da propria carga de onde ele
+           foi emitido; e se alguma NF ainda nao tiver parada (carga que nao veio
+           da roteirizacao), a parada e criada na hora, pronta pro canhoto. */
+        try {
+          if (d && tipo === "cte" && a2.c) {
+            if (!d.placa && a2.c.placa) d.placa = String(a2.c.placa).toUpperCase();
+            var vgAuto = rfFiscalViagemDo(d);
+            if (vgAuto && !d.viagemId) d.viagemId = vgAuto.id;
+            rfFiscalCriarParadas(d.chave, true);
+          }
+        } catch (eAuto) { console.warn("[v444] amarrar CT-e", eAuto); }
         if (a2.c) a2.c.atualizadoEm = Date.now();
         salvar();
         try { rfCanhLoteRecasar(true); } catch (e) { }
