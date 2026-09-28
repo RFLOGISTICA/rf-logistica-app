@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v451)</title>
+<title>RF Logística — Painel da Frota (v452)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v451">
+<meta name="rf-versao" content="v452">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v451" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v452" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15510,8 +15510,8 @@ function exPainelEntrada(e, l) {
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;">'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
     + '<label style="font-size:12px;padding:5px 12px;font-weight:800;border:1px solid #66BB6A;color:#66BB6A;border-radius:6px;cursor:pointer;">📄 Ler demonstrativo de pagamento do cliente'
-    + '<input type="file" accept="image/*" style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label>'
-    + '<span style="font-size:10.5px;color:#888;">a imagem que o cliente manda com o depósito (ex.: JDL) — o sistema acha as viagens e dá baixa com os descontos</span></div>'
+    + '<input type="file" accept="image/*" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label>'
+    + '<span style="font-size:10.5px;color:#888;">as imagens de medição que o cliente manda com o depósito (ex.: JDL) — pode escolher várias de uma vez</span></div>'
     + exDemoHTML(e, l)
     + '<div style="font-size:10.5px;color:#66BB6A;font-weight:800;margin:8px 0 4px;">OU MARQUE À MÃO AS VIAGENS PAGAS NESTE CRÉDITO</div>'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
@@ -15593,7 +15593,7 @@ function exTelaHTML() {
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
@@ -15653,29 +15653,51 @@ function exDemoCasar(recibos) {
   });
   return recibos;
 }
+/* v452: o mesmo depósito pode vir em VÁRIAS imagens (uma medição por imagem).
+   Pode escolher várias de uma vez, ou mandar uma depois da outra: os recibos se
+   somam na mesma conferência; recibo repetido (mesmo código) entra uma vez só. */
 function exDemoLer(input, extId, linId) {
   if (!ehAdmin()) return;
-  var file = input.files && input.files[0]; if (!file) return;
-  if (!/^image\//.test(file.type || "")) { alert("Mande a IMAGEM do demonstrativo (foto ou print). Se veio em PDF, tire um print da tabela."); input.value = ""; return; }
-  state._exDemo = { lin: linId, lendo: true }; render();
-  var arquivo = "";
-  ccSubir([file], "extratos", "demonstrativo-" + linId).then(function (p) { arquivo = p[0] && p[0].path; }).catch(function () { })
-    .then(function () { return exArquivoBase64(file); })
-    .then(function (a) { return exDemoViaIA(a.b64, a.mime); })
-    .then(function (j) {
-      var recibos = (j && j.recibos) || [];
-      if (!recibos.length) throw new Error("não encontrei recibos na imagem. Confira se é o demonstrativo de pagamento.");
-      state._exDemo = { lin: linId, recibos: exDemoCasar(recibos), total: Number(j.total) || 0, arquivo: arquivo };
-      input.value = ""; render();
-    })
-    .catch(function (e) { state._exDemo = { lin: linId, erro: String(e.message || e) }; input.value = ""; render(); });
+  var files = Array.prototype.slice.call(input.files || []); if (!files.length) return;
+  var ruim = files.filter(function (f) { return !/^image\//.test(f.type || ""); });
+  if (ruim.length) { alert("Mande as IMAGENS das medições (foto ou print). Se veio em PDF, tire um print da tabela."); input.value = ""; return; }
+  var ant = state._exDemo && state._exDemo.lin === linId && state._exDemo.recibos ? state._exDemo : null;
+  var acum = { lin: linId, recibos: ant ? ant.recibos.slice() : [], total: ant ? ant.total : 0, arquivos: ant ? (ant.arquivos || []).slice() : [], lidas: ant ? ant.lidas || 1 : 0 };
+  state._exDemo = { lin: linId, lendo: true, msg: "lendo " + files.length + " imagem(ns)..." }; render();
+  var erros = [];
+  files.reduce(function (p, file, i) {
+    return p.then(function () {
+      var arquivo = "";
+      return ccSubir([file], "extratos", "demonstrativo-" + linId + "-" + Date.now() + "-" + i).then(function (r) { arquivo = r[0] && r[0].path; }).catch(function () { })
+        .then(function () { return exArquivoBase64(file); })
+        .then(function (a) { return exDemoViaIA(a.b64, a.mime); })
+        .then(function (j) {
+          var recs = (j && j.recibos) || [];
+          if (!recs.length) { erros.push((file.name || "imagem " + (i + 1)) + ": sem recibos"); return; }
+          var ja = {}; acum.recibos.forEach(function (r) { if (r.recibo) ja[r.recibo] = 1; });
+          recs.forEach(function (r) { if (!r.recibo || !ja[r.recibo]) { r.arquivo = arquivo; acum.recibos.push(r); } });
+          acum.total = Math.round((acum.total + (Number(j.total) || 0)) * 100) / 100;
+          if (arquivo) acum.arquivos.push(arquivo);
+          acum.lidas++;
+        })
+        .catch(function (e) { erros.push((file.name || "imagem " + (i + 1)) + ": " + (e.message || e)); });
+    });
+  }, Promise.resolve()).then(function () {
+    input.value = "";
+    if (!acum.recibos.length) { state._exDemo = { lin: linId, erro: "não encontrei recibos. " + erros.join(" · ") }; render(); return; }
+    acum.recibos.forEach(function (r) { delete r.vid; });
+    acum.recibos = exDemoCasar(acum.recibos);
+    acum.arquivo = acum.arquivos[0] || "";
+    acum.erros = erros;
+    state._exDemo = acum; render();
+  });
 }
 function exDemoTrocar(i, vid) { if (state._exDemo && state._exDemo.recibos && state._exDemo.recibos[i]) { state._exDemo.recibos[i].vid = vid; render(); } }
 function exDemoDesc(r) { return Math.round(((r.adiantamento || 0) + (r.abastecimento || 0) + (r.vale || 0) + (r.impostos || 0)) * 100) / 100; }
 function exDemoHTML(e, l) {
   var d = state._exDemo;
   if (!d || d.lin !== l.id) return "";
-  if (d.lendo) return '<div style="font-size:12px;color:#F2E600;margin-top:8px;">⏳ lendo o demonstrativo...</div>';
+  if (d.lendo) return '<div style="font-size:12px;color:#F2E600;margin-top:8px;">⏳ ' + esc(d.msg || "lendo o demonstrativo...") + '</div>';
   if (d.erro) return '<div style="font-size:12px;color:#E57373;margin-top:8px;">✖ ' + esc(d.erro) + '</div>';
   var rec = exRecebidoPorViagem(), eid = esc(e.id), lid = esc(l.id);
   var abertas = exViagensAbertas();
@@ -15701,11 +15723,14 @@ function exDemoHTML(e, l) {
   var difBanco = Math.round((l.valor - tPagar) * 100) / 100;
   var th = 'style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;"';
   return '<div style="margin-top:10px;border:1px solid #2d4a31;border-radius:8px;padding:9px 11px;background:#0b130c;">'
-    + '<div style="font-size:11px;color:#66BB6A;font-weight:800;margin-bottom:6px;">DEMONSTRATIVO LIDO — ' + d.recibos.length + ' recibo(s)' + (d.arquivo ? ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(d.arquivo) + '\')" style="color:#4FC3F7;">ver imagem</a>' : "") + '</div>'
+    + '<div style="font-size:11px;color:#66BB6A;font-weight:800;margin-bottom:6px;">MEDIÇÕES LIDAS — ' + (d.lidas || 1) + ' imagem(ns), ' + d.recibos.length + ' recibo(s)'
+    + (d.arquivos || []).map(function (a, i) { return ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(a) + '\')" style="color:#4FC3F7;">imagem ' + (i + 1) + '</a>'; }).join("")
+    + ' · <label style="color:#66BB6A;cursor:pointer;text-decoration:underline;">+ acrescentar outra imagem<input type="file" accept="image/*" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label></div>'
+    + ((d.erros || []).length ? '<div style="font-size:11px;color:#E57373;margin-bottom:6px;">✖ ' + esc(d.erros.join(" · ")) + '</div>' : "")
     + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;"><tr><th ' + th + '>Recibo</th><th ' + th + '>Placa / motorista</th><th ' + th + '>Frete / período</th><th ' + th + '>Valor frete</th><th ' + th + '>Descontos</th><th ' + th + '>A pagar</th><th ' + th + '>Viagem no sistema</th></tr>' + linhas + '</table></div>'
     + '<div style="font-size:12px;color:#ddd;margin-top:8px;line-height:1.6;">fretes <b>' + fmtR(tFrete) + '</b> − descontos <b>' + fmtR(tDesc) + '</b> = a pagar <b>' + fmtR(tPagar) + '</b>'
-    + (d.total ? ' · total do demonstrativo <b>' + fmtR(d.total) + '</b>' + (Math.abs(d.total - tPagar) >= 0.05 ? ' <span style="color:#E57373;">(não bate com a soma dos recibos — confira a leitura)</span>' : "") : "")
-    + '<br>crédito no banco <b>' + fmtR(l.valor) + '</b> · ' + (Math.abs(difBanco) < 0.05 ? '<b style="color:#66BB6A;">bate com o demonstrativo ✓</b>' : '<b style="color:#E57373;">diferença ' + fmtR(difBanco) + '</b> — talvez falte outra imagem do mesmo depósito')
+    + (d.total ? ' · total das medições <b>' + fmtR(d.total) + '</b>' + (Math.abs(d.total - tPagar) >= 0.05 ? ' <span style="color:#E57373;">(não bate com a soma dos recibos — confira a leitura)</span>' : "") : "")
+    + '<br>crédito no banco <b>' + fmtR(l.valor) + '</b> · ' + (Math.abs(difBanco) < 0.05 ? '<b style="color:#66BB6A;">bate com as medições ✓</b>' : '<b style="color:#E57373;">diferença ' + fmtR(difBanco) + '</b>' + (difBanco > 0 ? ' — falta medição: toque em "+ acrescentar outra imagem"' : ""))
     + (semViagem ? '<br><span style="color:#E57373;">' + semViagem + ' recibo(s) sem viagem no sistema — escolha a viagem ou deixe sem, fica registrado.</span>' : "")
     + (freteDif ? '<br><span style="color:#FFB74D;">' + freteDif + ' viagem(ns) com frete diferente do recibo — a baixa usa o valor do sistema.</span>' : "")
     + '</div>'
@@ -15738,7 +15763,7 @@ function exDemoBaixa(extId, linId) {
   var obs = "demonstrativo do cliente: " + d.recibos.length + " recibo(s), fretes − descontos " + fmtR(tDesc) + " (adiantamento/abastecimento/vale/impostos) = " + fmtR(tPagar)
     + (sem.length ? "; sem viagem no sistema: " + sem.join(", ") : "") + (just ? "; " + just : "");
   o.l.vinc = { tipo: "viagens", ids: ids, aloc: aloc, soma: soma, dif: Math.round((o.l.valor - soma) * 100) / 100, descontos: tDesc, obs: obs,
-    demonstrativo: { arquivo: d.arquivo || "", recibos: d.recibos }, por: ccQuem(), em: new Date().toISOString() };
+    demonstrativo: { arquivo: d.arquivo || "", arquivos: d.arquivos || [], recibos: d.recibos }, por: ccQuem(), em: new Date().toISOString() };
   delete o.l.sug;
   state._exDemo = null; state._exDemoJust = ""; state._exAberta = ""; state._exSelV = null;
   exSalvar(o.e);
