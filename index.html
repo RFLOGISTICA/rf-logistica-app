@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v456)</title>
+<title>RF Logística — Painel da Frota (v457)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v456">
+<meta name="rf-versao" content="v457">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v456" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v457" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14897,12 +14897,29 @@ function ccNovaHTML() {
     + '<button class="btn-outline" style="font-size:12px;padding:6px 12px;" onclick="ccNovaAbrir(false)">cancelar</button></div>'
     + '</div>';
 }
+/* v457: carrega os abastecimentos (se ainda não vieram) e refaz uma vez as sugestões dos
+   extratos importados antes, para aparecerem "PIX para motorista" e "abastecimento pago ao posto" */
+function exPrepararSugestoes() {
+  if (!state._exAbastPedido && typeof rfAbastCarregar === "function") { state._exAbastPedido = true; try { rfAbastCarregar(); } catch (e) { } }
+  if (!(state.abastecimentos || []).length) return;
+  var mudou = false;
+  exLista().forEach(function (e) {
+    if ((e.sugV || 0) >= 457) return;
+    (e.linhas || []).forEach(function (l) { if (!l.vinc && l.sug && l.sug.tipo === "outro") delete l.sug; });
+    exAutoVincular(e); e.sugV = 457; e.atualizadoEm = Date.now(); mudou = true;
+  });
+  if (mudou) setTimeout(function () { salvar(); }, 0);
+}
 function ccAbasHTML() {   // v448
   var t = state._ccTela || "compras";
   var b = function (id, rot) { return '<button onclick="state._ccTela=\'' + id + '\';render()" style="font-size:13px;padding:7px 16px;font-weight:800;border-radius:6px 6px 0 0;cursor:pointer;border:1px solid ' + (t === id ? GOLD : "#333") + ';border-bottom:none;background:' + (t === id ? "rgba(212,160,23,0.12)" : "#0d0d0d") + ';color:' + (t === id ? GOLD : "#999") + ';">' + rot + '</button>'; };
-  return '<div style="display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:12px;">' + b("compras", "🛒 Compras") + (ehAdmin() ? b("extrato", "🏦 Extrato bancário") : "") + '</div>';
+  return '<div style="display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:12px;flex-wrap:wrap;">' + b("compras", "🛒 Compras") + (ehAdmin() ? b("extrato", "🏦 Extrato bancário") + b("motoristas", "⛽ Motoristas") : "") + '</div>';
 }
 function ccTelaHTML() {
+  if ((state._ccTela === "extrato" || state._ccTela === "motoristas") && ehAdmin()) exPrepararSugestoes();
+  if (state._ccTela === "motoristas" && ehAdmin()) {
+    return '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">🧾 Conciliação</div>' + ccAbasHTML() + exMotTelaHTML();
+  }
   if (state._ccTela === "extrato" && ehAdmin()) {
     return '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">🧾 Conciliação</div>'
       + '<div style="font-size:12px;color:#888;margin-bottom:10px;">Extrato do banco x compras e receitas de viagem: cada saída tem que ter compra (ou categoria) e cada entrada tem que ter viagem (ou origem).</div>'
@@ -15294,6 +15311,11 @@ function exClienteDoCredito(l) {
 function exAutoVincular(ext) {
   (ext.linhas || []).forEach(function (l) {
     if (l.vinc) return;
+    if (l.valor < 0 && typeof exMotDoTexto === "function") {   // v457
+      var mot = exMotDoTexto(l.desc);
+      if (mot) { l.sug = { tipo: "motorista", motorista: mot, finalidade: "Combustível" }; return; }
+      if (exEhPosto(l)) { var ab = exCandAbast(l); if (ab.length === 1) { l.sug = { tipo: "abastecimento", id: String(ab[0].id) }; return; } }
+    }
     var cat = exSugCategoria(l);
     if (cat) { l.sug = { tipo: "outro", categoria: cat }; return; }
     if (l.valor < 0) { var cc = exCandCompras(l); if (cc.length === 1) l.sug = { tipo: "compra", id: cc[0].id }; }
@@ -15376,8 +15398,20 @@ function exVincViagens(extId, linId, ids) {
   state._exAberta = ""; state._exSelV = null; state._exJust = ""; state._exParc = false;
   exSalvar(o.e);
 }
+function exAplicarSugSimples(l) {   // v457: sugestões que viram vínculo sem mexer em compra/viagem
+  var s = l.sug, agora = new Date().toISOString();
+  if (!s) return false;
+  if (s.tipo === "outro") l.vinc = { tipo: "outro", categoria: s.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: agora };
+  else if (s.tipo === "motorista") l.vinc = { tipo: "motorista", motorista: s.motorista, finalidade: s.finalidade || "Combustível", obs: "sugerido pelo sistema", por: ccQuem(), em: agora };
+  else if (s.tipo === "abastecimento") {
+    var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(s.id); })[0]; if (!a) return false;
+    l.vinc = { tipo: "abastecimento", id: String(a.id), motorista: a.motoristaNome || "", placa: a.placa || "", valorAbast: Number(a.valor) || 0, dataAbast: a.data || "", dif: Math.round((Math.abs(l.valor) - (Number(a.valor) || 0)) * 100) / 100, obs: "sugerido pelo sistema", por: ccQuem(), em: agora };
+  } else return false;
+  delete l.sug; return true;
+}
 function exAceitarSug(extId, linId) {
   var o = exLinha(extId, linId); if (!o.l || !o.l.sug) return;
+  if (o.l.sug.tipo === "motorista" || o.l.sug.tipo === "abastecimento") { if (!ehAdmin()) return; if (exAplicarSugSimples(o.l)) exSalvar(o.e); return; }
   if (o.l.sug.tipo === "outro") { if (!ehAdmin()) return; o.l.vinc = { tipo: "outro", categoria: o.l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug; exSalvar(o.e); return; }
   if (o.l.sug.tipo === "compra") exVincCompra(extId, linId, o.l.sug.id);
   else exVincViagens(extId, linId, o.l.sug.ids);
@@ -15385,13 +15419,11 @@ function exAceitarSug(extId, linId) {
 function exConfirmarSugCategorias(extId) {   // v449: confirma de uma vez as categorias sugeridas (posto, rendimento...)
   if (!ehAdmin()) return;
   var alvo = extId === "todos" ? exLista() : exLista().filter(function (e) { return e.id === extId; });
-  var n = 0; alvo.forEach(function (e) { (e.linhas || []).forEach(function (l) { if (!l.vinc && l.sug && l.sug.tipo === "outro") n++; }); });
-  if (!n || !confirm("Confirmar " + n + " sugestão(ões) de categoria (combustível, rendimento, transferência entre contas, motorista...)?")) return;
-  var agora = new Date().toISOString();
+  var simples = function (l) { return !l.vinc && l.sug && (l.sug.tipo === "outro" || l.sug.tipo === "motorista" || l.sug.tipo === "abastecimento"); };
+  var n = 0; alvo.forEach(function (e) { (e.linhas || []).forEach(function (l) { if (simples(l)) n++; }); });
+  if (!n || !confirm("Confirmar " + n + " sugestão(ões) (PIX para motorista, abastecimento pago ao posto, rendimento, transferência entre contas...)?")) return;
   alvo.forEach(function (e) {
-    (e.linhas || []).forEach(function (l) {
-      if (!l.vinc && l.sug && l.sug.tipo === "outro") { l.vinc = { tipo: "outro", categoria: l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: agora }; delete l.sug; }
-    });
+    (e.linhas || []).forEach(function (l) { if (simples(l)) exAplicarSugSimples(l); });
     e.atualizadoEm = Date.now();
   });
   salvar(); render();
@@ -15456,6 +15488,8 @@ function exViagemRot(v, rec) {
 }
 function exVincTexto(l) {
   var v = l.vinc; if (!v) return "";
+  if (v.tipo === "motorista") return "⛽ PIX para o motorista <b>" + esc(exMotNomeBonito(v.motorista)) + "</b> · " + esc(v.finalidade || "Combustível");
+  if (v.tipo === "abastecimento") return "⛽ abastecimento pago ao posto · " + esc(exMotNomeBonito(v.motorista)) + " · " + esc(v.placa || "") + " · " + exDataBr(String(v.dataAbast || "").slice(0, 10)) + " · " + fmtR(v.valorAbast) + (Math.abs(v.dif || 0) >= 0.05 ? ' <span style="color:#FFB74D;">(diferença ' + fmtR(v.dif) + ')</span>' : "");
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
   if (v.tipo === "viagens" && v.demonstrativo) return (v.ids || []).length + " viagem(ns) quitada(s) pelo demonstrativo · fretes " + fmtR(v.soma) + ' · <span style="color:#FFB74D;">descontos ' + fmtR(v.descontos || 0) + '</span>'
     + (v.demonstrativo.arquivo ? ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(v.demonstrativo.arquivo) + '\')" style="color:#4FC3F7;">demonstrativo</a>' : "")
@@ -15467,7 +15501,7 @@ function exVincTexto(l) {
 function exLinhaHTML(e, l) {
   var ent = l.valor > 0, eid = esc(e.id), lid = esc(l.id), aberta = state._exAberta === l.id;
   var btn = function (t, fn, cor) { return '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;' + (cor ? "border-color:" + cor + ";color:" + cor + ";" : "") + '" onclick="' + fn + '">' + t + '</button>'; };
-  var semCompra = !ent && !l.vinc && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro");
+  var semCompra = !ent && !l.vinc && !exCandCompras(l).length && !(l.sug && l.sug.tipo !== "compra");
   var h = '<div style="border:1px solid ' + (l.vinc ? "#1f3a24" : semCompra ? "#5a2626" : "#262626") + ';border-radius:7px;padding:7px 10px;margin-bottom:6px;background:' + (l.vinc ? "#0b130c" : "#0d0d0d") + ';">'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
     + '<span style="font-size:11px;color:#888;width:70px;">' + exDataBr(l.data) + '</span>'
@@ -15481,7 +15515,9 @@ function exLinhaHTML(e, l) {
     h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;">';
     if (semCompra) h += '<span style="font-size:10px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 6px;">SAÍDA SEM COMPRA LANÇADA</span>';
     if (l.sug) {
-      var st = l.sug.tipo === "outro" ? esc(l.sug.categoria) : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
+      var st = l.sug.tipo === "motorista" ? "PIX para o motorista <b>" + esc(exMotNomeBonito(l.sug.motorista)) + "</b> (combustível)"
+        : l.sug.tipo === "abastecimento" ? (function () { var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(l.sug.id); })[0]; return a ? "abastecimento pago ao posto: " + exMotAbastRot(a) : ""; })()
+        : l.sug.tipo === "outro" ? esc(l.sug.categoria) : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
         : (function () { var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(l.sug.ids[0]); })[0]; return v ? "viagem " + exViagemRot(v) : ""; })();
       if (st) h += '<span style="font-size:11px;color:#F2E600;">sugestão: ' + st + '</span>' + btn("✓ confirmar", "exAceitarSug('" + eid + "','" + lid + "')", "#66BB6A");
     }
@@ -15496,6 +15532,7 @@ function exPainelSaida(e, l) {
   var cand = exCandCompras(l);
   var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;display:grid;gap:8px;">';
+  h += exPainelMotorista(e, l);   // v457
   h += '<div><div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:4px;">COMPRA LANÇADA NA CONCILIAÇÃO</div>'
     + (abertas.length ? '<select id="ex-cp-' + lid + '" ' + sel + '>' + abertas.map(function (c) {
         var ok = cand.indexOf(c) !== -1;
@@ -15560,14 +15597,14 @@ function exTelaHTML() {
   linhas.forEach(function (x) {
     var l = x.l;
     if (l.valor > 0) { t.ent += l.valor; if (l.vinc) t.entC += l.valor; } else { t.sai += -l.valor; if (l.vinc) t.saiC += -l.valor; }
-    if (!l.vinc) { t.pend++; if (l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro")) t.semCompra++; }
+    if (!l.vinc) { t.pend++; if (l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo !== "compra")) t.semCompra++; }
   });
   var vis = linhas.filter(function (x) {
     var l = x.l;
     if (filtro === "pendentes") return !l.vinc;
     if (filtro === "entradas") return l.valor > 0;
     if (filtro === "saidas") return l.valor < 0;
-    if (filtro === "semcompra") return !l.vinc && l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro");
+    if (filtro === "semcompra") return !l.vinc && l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo !== "compra");
     if (filtro === "conciliados") return !!l.vinc;
     return true;
   });
@@ -15601,7 +15638,7 @@ function exTelaHTML() {
     + tile("SAÍDA SEM COMPRA", "#C0392B", t.semCompra, "gasto que não passou pela conciliação", "semcompra")
     + tile("CONCILIADOS", "#66BB6A", linhas.length - t.pend, "de " + linhas.length + " lançamentos", "conciliados")
     + '</div>'
-    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo === "outro"; }).length;
+    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo !== "compra" && x.l.sug.tipo !== "viagens"; }).length;
         return n ? '<div style="margin-bottom:8px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#66BB6A;color:#66BB6A;" onclick="exConfirmarSugCategorias(\'' + esc(sel) + '\')">✓ confirmar as ' + n + ' sugestões de categoria</button></div>' : ""; })()
     + '<div style="font-size:11px;color:#777;margin-bottom:8px;">saldo do período (entradas − saídas): <b style="color:#ddd;">' + fmtR(t.ent - t.sai) + '</b> · mostrando ' + vis.length + ' lançamento(s)'
     + ' · <a href="javascript:void(0)" style="color:#4FC3F7;" onclick="state._exFiltro=\'todos\';render()">ver todos</a></div>';
@@ -15609,7 +15646,7 @@ function exTelaHTML() {
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v455: recibo que ja entrou na baixa de OUTRO credito aparece como 'ja baixado no credito de dd/mm (R$ X) -- nao entra de novo' e fica de fora da baixa, com aviso de que talvez a medicao nao seja a deste deposito (caso de 28/09: a medicao de R$ 47.260 foi lida no credito de 01/09 de R$ 48.386,56). Desfazer uma baixa feita por medicao reabre a conferencia com os recibos ja lidos, para refazer sem reenviar a imagem. v456: RECEBIMENTO FORA DO EXTRATO -- para viagem paga em partes quando o extrato do primeiro pagamento nao esta no sistema (ex.: CDJ Express pagou 80% na saida em 23/07 e o restante em setembro). Botao '+ Recebimento fora do extrato' na aba Extrato bancario: escolhe a viagem, o valor (atalhos 80%, 20%, 50%, 'o que falta'), a data e uma observacao; vira uma linha do extrato especial 'Fora do extrato (lancado a mao)' e a viagem passa a mostrar 'ja recebeu X = 80%, falta Y'. O credito do restante e ligado normalmente e a viagem fecha 100%. Desfazer esse lancamento apaga a linha. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v455: recibo que ja entrou na baixa de OUTRO credito aparece como 'ja baixado no credito de dd/mm (R$ X) -- nao entra de novo' e fica de fora da baixa, com aviso de que talvez a medicao nao seja a deste deposito (caso de 28/09: a medicao de R$ 47.260 foi lida no credito de 01/09 de R$ 48.386,56). Desfazer uma baixa feita por medicao reabre a conferencia com os recibos ja lidos, para refazer sem reenviar a imagem. v456: RECEBIMENTO FORA DO EXTRATO -- para viagem paga em partes quando o extrato do primeiro pagamento nao esta no sistema (ex.: CDJ Express pagou 80% na saida em 23/07 e o restante em setembro). Botao '+ Recebimento fora do extrato' na aba Extrato bancario: escolhe a viagem, o valor (atalhos 80%, 20%, 50%, 'o que falta'), a data e uma observacao; vira uma linha do extrato especial 'Fora do extrato (lancado a mao)' e a viagem passa a mostrar 'ja recebeu X = 80%, falta Y'. O credito do restante e ligado normalmente e a viagem fecha 100%. Desfazer esse lancamento apaga a linha. v457: CONTA DO MOTORISTA (combustivel) -- no extrato, uma saida pode ser ligada como 'PIX para o motorista' (vai para a conta dele, com finalidade: combustivel, diaria, pedagio, manutencao na estrada, outros) ou como 'pagamento direto ao posto', casada com o abastecimento que o motorista lancou no app (mesmo valor, ate 3 dias). O sistema sugere sozinho: nome do motorista no PIX (login Antonio.Jose casa com ANTONIO JOSE GUIMARAES SILVA) e PIX a posto com um unico abastecimento do mesmo valor; o botao de confirmar em lote vale para essas sugestoes. Aba nova Conciliacao > Motoristas: por motorista e mes, adiantado (PIX de combustivel) x abastecimentos lancados, menos os pagos direto ao posto = comprovado com o adiantamento; saldo > 0 = falta comprovar/devolver, < 0 = pagou do bolso (RF deve). Lista tambem os pagamentos a posto sem abastecimento ligado. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
@@ -15945,6 +15982,172 @@ function exManHTML() {
     + '<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="exManAbrir(false)">cancelar</button></div></div>';
 }
 /* ============ fim v456 ====================================================== */
+
+/* ============ v457 — CONTA DO MOTORISTA (combustível) ========================
+   Renato (28/09/2026): "às vezes temos que colocar o valor na conta do motorista,
+   quase sempre para combustível — como consolidar esses valores?"
+   Dois jeitos de pagar combustível aparecem no extrato:
+     - PIX para o MOTORISTA (adiantamento): vira crédito na "conta" dele;
+     - PIX/pagamento direto ao POSTO: casa com o abastecimento que o motorista
+       lançou no app (mesmo valor, até 3 dias de diferença).
+   O motorista lança todo abastecimento no app (foto da bomba). Então, por motorista:
+     comprovado com o adiantamento = abastecimentos lançados − os pagos direto ao posto
+     saldo = adiantado − comprovado  (>0: falta comprovar/devolver; <0: pagou do bolso).
+   Tudo calculado a partir dos vínculos do extrato; os abastecimentos não são alterados. */
+var EX_MOT_FINS = ["Combustível", "Diária / alimentação", "Pedágio", "Manutenção na estrada", "Outros"];
+function exMotLogins() {
+  var m = {};
+  try { (loginsMotoristas() || []).forEach(function (n) { if (n) m[n] = 1; }); } catch (e) { }
+  (state.abastecimentos || []).forEach(function (a) { if (a.motoristaNome) m[a.motoristaNome] = 1; });
+  return Object.keys(m).sort(function (a, b) { return a.localeCompare(b, "pt-BR"); });
+}
+function exMotNomeBonito(login) { return String(login || "").split(/[.\s_]+/).filter(Boolean).map(function (p) { return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase(); }).join(" "); }
+/* login "Antonio.Jose" casa com "PIX ENVIADO · ANTONIO JOSE GUIMARAES SILVA": todas as partes do login aparecem como palavra */
+function exMotDoTexto(desc) {
+  var palavras = " " + exNormNome(desc).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ") + " ", achou = "", melhor = 0;
+  exMotLogins().forEach(function (lg) {
+    var partes = exNormNome(lg).split(/[.\s_]+/).filter(function (p) { return p.length >= 3; });
+    if (partes.length < 2) return;
+    var lista = palavras.trim().split(" ");
+    /* aceita erro de digitação no nome (JEFSON x JEFERSON): até 2 letras de diferença em palavra de 6+ letras */
+    var tem = function (p) { return palavras.indexOf(" " + p + " ") !== -1 || (p.length >= 6 && lista.some(function (w) { return Math.abs(w.length - p.length) <= 2 && w[0] === p[0] && exLev(w, p) <= 2; })); };
+    if (partes.every(tem) && partes.length > melhor) { achou = lg; melhor = partes.length; }
+  });
+  return achou;
+}
+function exLev(a, b) {
+  var m = [], i, j;
+  for (i = 0; i <= b.length; i++) m[i] = [i];
+  for (j = 0; j <= a.length; j++) m[0][j] = j;
+  for (i = 1; i <= b.length; i++) for (j = 1; j <= a.length; j++)
+    m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (b[i - 1] === a[j - 1] ? 0 : 1));
+  return m[b.length][a.length];
+}
+function exAbastLigados() { var m = {}; exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (v && v.tipo === "abastecimento") m[String(v.id)] = x; }); return m; }
+function exDiasEntre(a, b) { return Math.round((new Date(String(a).slice(0, 10)) - new Date(String(b).slice(0, 10))) / 86400000); }
+function exCandAbast(l, larga) {
+  var lig = exAbastLigados(), v = Math.abs(l.valor);
+  return (state.abastecimentos || []).filter(function (a) {
+    if (!a || a.status === "rejeitado" || lig[String(a.id)] || !a.data) return false;
+    var d = exDiasEntre(a.data, l.data);
+    if (larga) return d >= -7 && d <= 7;
+    return Math.abs((Number(a.valor) || 0) - v) < 0.06 && d >= -3 && d <= 3;
+  }).sort(function (a, b) { return Math.abs((Number(a.valor) || 0) - v) - Math.abs((Number(b.valor) || 0) - v) || Math.abs(exDiasEntre(a.data, l.data)) - Math.abs(exDiasEntre(b.data, l.data)); });
+}
+function exEhPosto(l) { return /\bPOSTO\b|AUTO POSTO|DERIVADOS DE PETROLEO|COMBUSTIV|\bREDE JG\b/.test(exNormNome(l.desc)); }
+function exVincMotorista(extId, linId, login, fim) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l) return;
+  login = login || (document.getElementById("ex-mot-" + linId) || {}).value;
+  fim = fim || (document.getElementById("ex-motfim-" + linId) || {}).value || "Combustível";
+  if (!login) { alert("Escolha o motorista."); return; }
+  o.l.vinc = { tipo: "motorista", motorista: login, finalidade: fim, por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug;
+  state._exAberta = "";
+  exSalvar(o.e);
+}
+function exVincAbast(extId, linId, abastId) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l) return;
+  abastId = abastId || (document.getElementById("ex-ab-" + linId) || {}).value;
+  var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(abastId); })[0];
+  if (!a) { alert("Escolha o abastecimento."); return; }
+  var dif = Math.round((Math.abs(o.l.valor) - (Number(a.valor) || 0)) * 100) / 100;
+  o.l.vinc = { tipo: "abastecimento", id: String(a.id), motorista: a.motoristaNome || "", placa: a.placa || "", valorAbast: Number(a.valor) || 0, dataAbast: a.data || "", dif: dif, por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug;
+  state._exAberta = "";
+  exSalvar(o.e);
+}
+function exMotAbastRot(a) { return exDataBr(String(a.data || "").slice(0, 10)) + " · " + esc(exMotNomeBonito(a.motoristaNome)) + " · " + esc(a.placa || "") + " · " + fmtR(a.valor) + (a.status === "pendente" ? " (pendente)" : ""); }
+function exPainelMotorista(e, l) {
+  var eid = esc(e.id), lid = esc(l.id);
+  var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
+  var mot = exMotDoTexto(l.desc), logins = exMotLogins();
+  var cands = exCandAbast(l), largas = exCandAbast(l, true).filter(function (a) { return cands.indexOf(a) === -1; }).slice(0, 60);
+  var h = '<div><div style="font-size:10.5px;color:#FFB74D;font-weight:800;margin-bottom:4px;">⛽ PIX PARA O MOTORISTA (vai para a conta dele)</div>'
+    + '<select id="ex-mot-' + lid + '" ' + sel + '><option value="">— motorista —</option>' + logins.map(function (n) { return '<option value="' + esc(n) + '"' + (n === mot ? " selected" : "") + '>' + esc(exMotNomeBonito(n)) + '</option>'; }).join("") + '</select> '
+    + '<select id="ex-motfim-' + lid + '" ' + sel + '>' + EX_MOT_FINS.map(function (f) { return '<option>' + esc(f) + '</option>'; }).join("") + '</select> '
+    + '<button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#FFB74D;color:#FFB74D;" onclick="exVincMotorista(\'' + eid + '\',\'' + lid + '\')">ligar ao motorista</button></div>';
+  h += '<div><div style="font-size:10.5px;color:#FFB74D;font-weight:800;margin-bottom:4px;">⛽ PAGAMENTO DIRETO AO POSTO (casa com o abastecimento lançado)</div>'
+    + (cands.length + largas.length ? '<select id="ex-ab-' + lid + '" ' + sel + '>'
+      + (cands.length ? '<optgroup label="mesmo valor">' + cands.map(function (a) { return '<option value="' + esc(String(a.id)) + '">' + exMotAbastRot(a) + '</option>'; }).join("") + '</optgroup>' : "")
+      + (largas.length ? '<optgroup label="outros abastecimentos da semana">' + largas.map(function (a) { return '<option value="' + esc(String(a.id)) + '">' + exMotAbastRot(a) + '</option>'; }).join("") + '</optgroup>' : "")
+      + '</select> <button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#FFB74D;color:#FFB74D;" onclick="exVincAbast(\'' + eid + '\',\'' + lid + '\')">ligar ao abastecimento</button>'
+      : '<span style="font-size:11px;color:#777;">nenhum abastecimento lançado perto desta data.</span>') + '</div>';
+  return h;
+}
+/* ---- aba "Motoristas" ---- */
+function exMotPeriodo(data, per) { if (!per || per === "tudo") return true; return String(data || "").slice(0, 7) === per; }
+function exMotContas(per) {
+  var c = {};
+  var conta = function (lg) { lg = lg || "(sem motorista)"; if (!c[lg]) c[lg] = { login: lg, adiant: 0, adiantOutros: 0, lancado: 0, direto: 0, pend: 0, itensAd: [], itensAb: [], itensDir: [] }; return c[lg]; };
+  exTodasLinhas().forEach(function (x) {
+    var v = x.l.vinc; if (!v || !exMotPeriodo(x.l.data, per)) return;
+    if (v.tipo === "motorista") {
+      var k = conta(v.motorista);
+      if ((v.finalidade || "Combustível") === "Combustível") k.adiant += Math.abs(x.l.valor); else k.adiantOutros += Math.abs(x.l.valor);
+      k.itensAd.push(x);
+    }
+  });
+  var lig = exAbastLigados();
+  (state.abastecimentos || []).forEach(function (a) {
+    if (!a || a.status === "rejeitado" || !exMotPeriodo(a.data, per)) return;
+    var k = conta(a.motoristaNome);
+    k.lancado += Number(a.valor) || 0; if (a.status === "pendente") k.pend++;
+    if (lig[String(a.id)]) { k.direto += Number(a.valor) || 0; k.itensDir.push(a); } else k.itensAb.push(a);
+  });
+  return Object.keys(c).map(function (k) {
+    var o = c[k];
+    o.comprovado = Math.round((o.lancado - o.direto) * 100) / 100;
+    o.saldo = Math.round((o.adiant - o.comprovado) * 100) / 100;
+    return o;
+  }).filter(function (o) { return o.adiant || o.adiantOutros || o.lancado; })
+    .sort(function (a, b) { return Math.abs(b.saldo) - Math.abs(a.saldo); });
+}
+function exMotTelaHTML() {
+  var per = state._exMotPer == null ? hojeISO().slice(0, 7) : state._exMotPer;
+  var meses = {}; exTodasLinhas().forEach(function (x) { if (x.l.data) meses[String(x.l.data).slice(0, 7)] = 1; });
+  (state.abastecimentos || []).forEach(function (a) { if (a.data) meses[String(a.data).slice(0, 7)] = 1; });
+  meses[hojeISO().slice(0, 7)] = 1;
+  var contas = exMotContas(per);
+  var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;"';
+  var postoSemAbast = exTodasLinhas().filter(function (x) { return x.l.valor < 0 && exMotPeriodo(x.l.data, per) && exEhPosto(x.l) && !(x.l.vinc && x.l.vinc.tipo === "abastecimento"); });
+  var tAd = 0, tCp = 0; contas.forEach(function (o) { tAd += o.adiant; tCp += o.comprovado; });
+  var h = '<div style="font-size:12px;color:#888;margin-bottom:10px;">Conta de combustível de cada motorista: o que a RF mandou para a conta dele (PIX ligado ao motorista no extrato) contra os abastecimentos que ele lançou no app. Abastecimento pago direto ao posto não entra na conta do motorista.</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">'
+    + '<select ' + sel + ' onchange="state._exMotPer=this.value;render()">' + Object.keys(meses).sort().reverse().map(function (m) { return '<option value="' + m + '"' + (per === m ? " selected" : "") + '>' + m.slice(5) + "/" + m.slice(0, 4) + '</option>'; }).join("")
+    + '<option value="tudo"' + (per === "tudo" ? " selected" : "") + '>todo o período</option></select>'
+    + '<span style="font-size:11.5px;color:#ddd;">adiantado p/ combustível <b>' + fmtR(tAd) + '</b> · comprovado <b>' + fmtR(tCp) + '</b></span>'
+    + '<span style="font-size:11px;color:#777;">(só entra o que já foi importado do extrato e ligado)</span></div>';
+  if (!contas.length) h += '<div style="font-size:12px;color:#777;">Nada no período. Ligue no extrato os PIX para motorista ("ligar a compra / categoria" → ⛽ PIX para o motorista).</div>';
+  var th = 'style="padding:6px 8px;font-size:10px;color:#999;text-align:right;border-bottom:1px solid #333;"';
+  h += contas.length ? '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;"><tr><th ' + th.replace("right", "left") + '>Motorista</th><th ' + th + '>Adiantado (PIX)</th><th ' + th + '>Abastec. lançados</th><th ' + th + '>Pago direto ao posto</th><th ' + th + '>Comprovado c/ adiantamento</th><th ' + th + '>Saldo</th></tr>'
+    + contas.map(function (o) {
+        var td = 'style="padding:6px 8px;font-size:12px;color:#ddd;text-align:right;border-bottom:1px solid #1d1d1d;"';
+        var aberto = state._exMotAberto === o.login;
+        var saldoTxt = Math.abs(o.saldo) < 0.05 ? '<span style="color:#66BB6A;">zerado ✓</span>'
+          : o.saldo > 0 ? '<b style="color:#E57373;">' + fmtR(o.saldo) + '</b><div style="font-size:10px;color:#E57373;">falta comprovar / devolver</div>'
+          : '<b style="color:#4FC3F7;">' + fmtR(-o.saldo) + '</b><div style="font-size:10px;color:#4FC3F7;">pagou do bolso — RF deve</div>';
+        var r = '<tr style="cursor:pointer;" onclick="state._exMotAberto=state._exMotAberto===\'' + esc(o.login) + '\'?\'\':\'' + esc(o.login) + '\';render()">'
+          + '<td ' + td.replace("right", "left") + '><b>' + (aberto ? "▾ " : "▸ ") + esc(exMotNomeBonito(o.login)) + '</b>' + (o.pend ? '<div style="font-size:10px;color:#F2E600;">' + o.pend + ' abastecimento(s) pendente(s)</div>' : "") + (o.adiantOutros ? '<div style="font-size:10px;color:#888;">+ ' + fmtR(o.adiantOutros) + ' p/ diária/outros</div>' : "") + '</td>'
+          + '<td ' + td + '>' + fmtR(o.adiant) + '</td><td ' + td + '>' + fmtR(o.lancado) + '</td><td ' + td + '>− ' + fmtR(o.direto) + '</td><td ' + td + '>' + fmtR(o.comprovado) + '</td><td ' + td + '>' + saldoTxt + '</td></tr>';
+        if (aberto) {
+          var li = function (t) { return '<div style="font-size:11px;color:#aaa;padding:1px 0;">' + t + '</div>'; };
+          r += '<tr><td colspan="6" style="padding:6px 12px 10px;border-bottom:1px solid #222;background:#0b0b0b;">'
+            + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">'
+            + '<div><div style="font-size:10.5px;color:#FFB74D;font-weight:800;">PIX PARA O MOTORISTA</div>' + (o.itensAd.map(function (x) { return li(exDataBr(x.l.data) + " · " + fmtR(Math.abs(x.l.valor)) + " · " + esc(x.l.vinc.finalidade || "")); }).join("") || li("—")) + '</div>'
+            + '<div><div style="font-size:10.5px;color:#FFB74D;font-weight:800;">ABASTECIMENTOS COM O DINHEIRO DELE</div>' + (o.itensAb.map(function (a) { return li(exMotAbastRot(a)); }).join("") || li("—")) + '</div>'
+            + '<div><div style="font-size:10.5px;color:#FFB74D;font-weight:800;">PAGOS DIRETO AO POSTO</div>' + (o.itensDir.map(function (a) { return li(exMotAbastRot(a)); }).join("") || li("—")) + '</div>'
+            + '</div></td></tr>';
+        }
+        return r;
+      }).join("") + '</table></div>' : "";
+  if (postoSemAbast.length) {
+    h += '<div style="margin-top:14px;font-size:11px;color:#E57373;font-weight:800;">⚠ PAGAMENTOS A POSTO SEM ABASTECIMENTO LIGADO (' + postoSemAbast.length + ' · ' + fmtR(postoSemAbast.reduce(function (s, x) { return s + Math.abs(x.l.valor); }, 0)) + ')</div>'
+      + '<div style="font-size:11px;color:#888;margin-bottom:4px;">Combustível pago pela RF que ainda não foi casado com um abastecimento lançado pelo motorista — ligue no extrato ou cobre o lançamento.</div>'
+      + postoSemAbast.map(function (x) { return '<div style="font-size:11.5px;color:#ccc;">' + exDataBr(x.l.data) + ' · ' + esc(x.l.desc) + ' · <b>' + fmtR(Math.abs(x.l.valor)) + '</b>' + (x.l.vinc ? ' <span style="color:#888;">(hoje: ' + exVincTexto(x.l) + ')</span>' : "") + '</div>'; }).join("");
+  }
+  return h;
+}
+/* ============ fim v457 ====================================================== */
 
 /* ============ fim v448 — CONCILIAÇÃO BANCÁRIA =============================== */
 
