@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v448)</title>
+<title>RF Logística — Painel da Frota (v449)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v448">
+<meta name="rf-versao" content="v449">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v448" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v449" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15079,10 +15079,103 @@ function exLerTextoPDF(txt) {
   });
   return out;
 }
+/* v448: extrato em PDF lido por COLUNA (posição x de cada texto), não por linha.
+   No PDF "Entradas e Saídas" do Itaú a razão social quebra em duas linhas, uma
+   acima e outra abaixo da data, e a leitura por linha perdia o nome. Aqui cada
+   texto vai para a coluna do cabeçalho (Data, Lançamentos, Razão Social,
+   CNPJ/CPF, Valor, Saldo) e para o lançamento cuja data está mais perto na
+   vertical. Linhas só de SALDO (sem valor) são descartadas. */
+function exPdfItens(file) {
+  return new Promise(function (resolve, reject) {
+    if (!window.pdfjsLib) { reject(new Error("leitor de PDF não carregou (verifique a internet)")); return; }
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    file.arrayBuffer().then(function (buf) {
+      return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    }).then(function (doc) {
+      var ps = [];
+      for (var i = 1; i <= Math.min(doc.numPages, 60); i++) ps.push(i);
+      return Promise.all(ps.map(function (n) {
+        return doc.getPage(n).then(function (pg) { return pg.getTextContent(); }).then(function (tc) {
+          return tc.items.map(function (it) { return { x: it.transform[4], y: it.transform[5], s: String(it.str || "") }; })
+            .filter(function (o) { return o.s.trim(); });
+        });
+      }));
+    }).then(resolve).catch(reject);
+  });
+}
+function exLerPDFColunas(paginas) {
+  var norm = function (x) { return String(x).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim(); };
+  var out = [], saldos = [], dRe = /^\d{2}\/\d{2}\/\d{4}$/, mRe = /^-?[\d.]+,\d{2}$/;
+  var C = null;   // colunas do cabeçalho; a página seguinte (sem cabeçalho) usa as mesmas
+  (paginas || []).forEach(function (its) {
+    var head = its.filter(function (o) { return norm(o.s) === "data"; })[0];
+    var abaixo = its;
+    if (head) {
+      var naLinha = its.filter(function (o) { return Math.abs(o.y - head.y) < 2; });
+      var col = function (re) { var o = naLinha.filter(function (o) { return re.test(norm(o.s)); })[0]; return o ? o.x : null; };
+      var C2 = { data: head.x, lanc: col(/^lancamento/), razao: col(/^razao|^nome|^favorecido/), cnpj: col(/^cnpj|^cpf/), valor: col(/^valor/), saldo: col(/^saldo/) };
+      if (C2.valor != null) { C = C2; abaixo = its.filter(function (o) { return o.y < head.y - 2; }); }
+    }
+    if (!C) return;
+    var ancoras = abaixo.filter(function (o) { return Math.abs(o.x - C.data) < 8 && dRe.test(o.s.trim()); })
+      .map(function (o) { return { y: o.y, data: o.s.trim(), lanc: [], razao: [], cnpj: [], valor: "", saldo: "" }; });
+    if (!ancoras.length) return;
+    var colDe = function (o) {
+      var s = o.s.trim();
+      if (mRe.test(s)) return C.saldo != null && o.x >= C.saldo - 6 ? "saldo" : "valor";
+      var cands = [["cnpj", C.cnpj], ["razao", C.razao], ["lanc", C.lanc]].filter(function (c) { return c[1] != null && o.x >= c[1] - 4; });
+      return cands.length ? cands[0][0] : "lanc";
+    };
+    abaixo.forEach(function (o) {
+      var s = o.s.trim();
+      if (Math.abs(o.x - C.data) < 8 && dRe.test(s)) return;
+      var melhor = null, dist = 1e9;
+      ancoras.forEach(function (a) { var d = Math.abs(a.y - o.y); if (d < dist) { dist = d; melhor = a; } });
+      if (!melhor || dist > 9) return;
+      var c = colDe(o);
+      if (c === "valor" || c === "saldo") melhor[c] = s;
+      else melhor[c].push({ y: o.y, x: o.x, s: s });
+    });
+    ancoras.forEach(function (a) {
+      var junta = function (arr) { return arr.sort(function (p, q) { return q.y - p.y || p.x - q.x; }).map(function (p) { return p.s; }).join(" ").replace(/\s+/g, " ").trim(); };
+      if (!a.valor) {
+        if (a.saldo) saldos.push({ data: exDataISO(a.data), rot: junta(a.lanc), valor: exNumBR(a.saldo) });
+        return;
+      }
+      var lanc = junta(a.lanc), razao = junta(a.razao), cp = junta(a.cnpj);
+      var v = exNumBR(a.valor);
+      if (!isFinite(v) || !v) return;
+      out.push({ data: exDataISO(a.data), desc: lanc + (razao ? " · " + razao : ""), valor: v, doc: "", cp: cp });
+    });
+  });
+  out.saldos = saldos;
+  return out;
+}
+/* confere a leitura com os saldos diários que o próprio banco imprime:
+   saldo anterior + lançamentos do dia = saldo do dia seguinte impresso */
+function exConferirSaldos(linhas, saldos) {
+  if (!saldos || saldos.length < 2) return null;
+  var ini = saldos.filter(function (x) { return /anterior/i.test(x.rot); })[0];
+  var dias = saldos.filter(function (x) { return /dispon|dia$/i.test(x.rot); }).sort(function (a, b) { return a.data.localeCompare(b.data); });
+  if (!ini || !dias.length) return null;
+  var atual = ini.valor, dataAtual = ini.data, erros = [];
+  dias.forEach(function (d) {
+    var soma = 0;
+    linhas.forEach(function (l) { if (l.data > dataAtual && l.data <= d.data) soma += l.valor; });
+    var calc = Math.round((atual + soma) * 100) / 100;
+    if (Math.abs(calc - d.valor) >= 0.02) erros.push(exDataBr(d.data) + ": banco " + fmtR(d.valor) + " x lido " + fmtR(calc));
+    atual = d.valor; dataAtual = d.data;
+  });
+  return { ok: !erros.length, dias: dias.length, erros: erros, saldoIni: ini.valor, saldoFim: dias[dias.length - 1].valor };
+}
 function exLerArquivo(file) {
   var nome = String(file.name || "").toLowerCase();
   if (/\.ofx$|\.qfx$/.test(nome)) return file.text().then(exLerOFX);
-  if (/\.pdf$/.test(nome) || file.type === "application/pdf") return rfCrlvExtrairTexto(file, 40).then(exLerTextoPDF);
+  if (/\.pdf$/.test(nome) || file.type === "application/pdf") return exPdfItens(file).then(function (pags) {
+    var r = exLerPDFColunas(pags);
+    if (r.length) return r;
+    return rfCrlvExtrairTexto(file, 40).then(exLerTextoPDF);   // PDF sem cabeçalho de colunas: leitura por linha
+  });
   if (/\.csv$|\.txt$/.test(nome)) return file.text().then(function (t) {
     var sep = (t.split("\n")[0].match(/;/g) || []).length >= (t.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
     return exLerTabela(t.split(/\r?\n/).map(function (l) { return l.split(sep).map(function (c) { return c.replace(/^"|"$/g, ""); }); })) || [];
@@ -15109,21 +15202,27 @@ function exImportar(input) {
   state._exMsg = "lendo o extrato..."; render();
   exLerArquivo(file).then(function (linhas) {
     if (!linhas || !linhas.length) throw new Error("não encontrei lançamentos. Prefira o arquivo OFX (Money/Quicken) ou o Excel do banco.");
-    var ja = {};
-    exLista().forEach(function (e) { (e.linhas || []).forEach(function (l) { ja[exChave(l)] = 1; }); });
-    var novos = linhas.filter(function (l) { return !ja[exChave(l)]; });
+    var ja = {}, visto = {};
+    exLista().forEach(function (e) { (e.linhas || []).forEach(function (l) { var k = exChave(l); ja[k] = (ja[k] || 0) + 1; }); });
+    /* dois lançamentos iguais no mesmo dia (mesmo valor e mesmo favorecido) são dois lançamentos:
+       só descarta as ocorrências que já existiam em extratos importados antes */
+    var novos = linhas.filter(function (l) { var k = exChave(l); visto[k] = (visto[k] || 0) + 1; return visto[k] > (ja[k] || 0); });
+    var conf = exConferirSaldos(linhas, linhas.saldos);
     var id = "ex" + Date.now();
     var datas = linhas.map(function (l) { return l.data; }).sort();
     var ext = {
       id: id, banco: String(banco).trim(), arquivoNome: file.name, importadoEm: new Date().toISOString(), por: ccQuem(),
       periodoIni: datas[0], periodoFim: datas[datas.length - 1],
-      linhas: novos.map(function (l, i) { return { id: id + "-" + i, data: l.data, desc: l.desc, valor: l.valor, doc: l.doc }; })
+      linhas: novos.map(function (l, i) { return { id: id + "-" + i, data: l.data, desc: l.desc, valor: l.valor, doc: l.doc, cp: l.cp || "" }; }),
+      conferencia: conf
     };
     return ccSubir([file], "extratos", id).then(function (p) { ext.arquivo = p[0] && p[0].path; }).catch(function () { }).then(function () {
       if (!ext.linhas.length) { state._exMsg = "Todos os " + linhas.length + " lançamentos deste arquivo já estavam importados."; input.value = ""; render(); return; }
       exLista().unshift(ext);
       state._exSel = id;
-      state._exMsg = "✓ " + ext.linhas.length + " lançamento(s) importado(s)" + (linhas.length > ext.linhas.length ? " (" + (linhas.length - ext.linhas.length) + " repetido(s) ignorado(s))" : "") + ". Confira as sugestões automáticas abaixo.";
+      state._exMsg = "✓ " + ext.linhas.length + " lançamento(s) importado(s)" + (linhas.length > ext.linhas.length ? " (" + (linhas.length - ext.linhas.length) + " repetido(s) ignorado(s))" : "")
+        + (conf ? (conf.ok ? " · leitura conferida com " + conf.dias + " saldos diários do banco" : " · ATENÇÃO: a soma não bateu com o saldo do banco em " + conf.erros.length + " dia(s)") : "")
+        + ". Confira as sugestões automáticas abaixo.";
       exAutoVincular(ext);
       input.value = "";
       ext.atualizadoEm = Date.now(); salvar(); render();
@@ -15154,9 +15253,33 @@ function exViagensAbertas() {
 function exCandViagens(l) {
   return exViagensAbertas().filter(function (v) { return Math.abs((Number(v.valorViagem) || 0) - l.valor) < 0.05; });
 }
+function exNormNome(x) { return String(x || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim(); }
+function exSugCategoria(l) {
+  var d = exNormNome(l.desc), cp = String(l.cp || "").replace(/\D/g, "");
+  if (cp === "24916554000100" || /RF LOGISTICA TRANSPORTES/.test(d)) return "Transferência entre contas";
+  if (l.valor > 0) return /RENDIMENTO/.test(d) ? "Rendimento" : "";
+  if (/TARIFA|PACOTE DE SERV|MANUTENCAO CONTA/.test(d)) return "Tarifa bancária";
+  if (/\bPOSTO\b|AUTO POSTO|DERIVADOS DE PETROLEO|COMBUSTIV/.test(d)) return "Combustível";
+  if (/\bDAS\b|SIMPLES NACIONAL|RECEITA FEDERAL|DARF|SEFAZ|DAE\b/.test(d)) return "Imposto / DAS";
+  var nomes = {};
+  (state.motoristasCad || []).forEach(function (f) { var n = exNormNome(f && f.mot && f.mot.nome); if (n.split(" ").length >= 2) nomes[n] = 1; });
+  if (Object.keys(nomes).some(function (n) { return d.indexOf(n) !== -1; })) return "Pagamento de motorista";
+  return "";
+}
+function exClienteDoCredito(l) {
+  var d = exNormNome(l.desc), achou = "";
+  (state.viagens || []).forEach(function (v) {
+    var c = String(v.cliente || ""); if (!c || achou) return;
+    var partes = exNormNome(c).split(/[\/ ]+/).filter(function (p) { return p.length >= 2; });
+    if (partes.some(function (p) { return new RegExp("\\b" + p + "\\b").test(d); })) achou = c;
+  });
+  return achou;
+}
 function exAutoVincular(ext) {
   (ext.linhas || []).forEach(function (l) {
     if (l.vinc) return;
+    var cat = exSugCategoria(l);
+    if (cat) { l.sug = { tipo: "outro", categoria: cat }; return; }
     if (l.valor < 0) { var cc = exCandCompras(l); if (cc.length === 1) l.sug = { tipo: "compra", id: cc[0].id }; }
     else { var vv = exCandViagens(l); if (vv.length === 1) l.sug = { tipo: "viagens", ids: [vv[0].id] }; }
   });
@@ -15226,8 +15349,23 @@ function exVincViagens(extId, linId, ids) {
 }
 function exAceitarSug(extId, linId) {
   var o = exLinha(extId, linId); if (!o.l || !o.l.sug) return;
+  if (o.l.sug.tipo === "outro") { if (!ehAdmin()) return; o.l.vinc = { tipo: "outro", categoria: o.l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug; exSalvar(o.e); return; }
   if (o.l.sug.tipo === "compra") exVincCompra(extId, linId, o.l.sug.id);
   else exVincViagens(extId, linId, o.l.sug.ids);
+}
+function exConfirmarSugCategorias(extId) {   // v449: confirma de uma vez as categorias sugeridas (posto, rendimento...)
+  if (!ehAdmin()) return;
+  var alvo = extId === "todos" ? exLista() : exLista().filter(function (e) { return e.id === extId; });
+  var n = 0; alvo.forEach(function (e) { (e.linhas || []).forEach(function (l) { if (!l.vinc && l.sug && l.sug.tipo === "outro") n++; }); });
+  if (!n || !confirm("Confirmar " + n + " sugestão(ões) de categoria (combustível, rendimento, transferência entre contas, motorista...)?")) return;
+  var agora = new Date().toISOString();
+  alvo.forEach(function (e) {
+    (e.linhas || []).forEach(function (l) {
+      if (!l.vinc && l.sug && l.sug.tipo === "outro") { l.vinc = { tipo: "outro", categoria: l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: agora }; delete l.sug; }
+    });
+    e.atualizadoEm = Date.now();
+  });
+  salvar(); render();
 }
 function exDesfazer(extId, linId) {
   if (!ehAdmin()) return;
@@ -15261,7 +15399,12 @@ function exExcluirExtrato(extId) {
   if (state._exSel === extId) state._exSel = "";
   salvar(); render();
 }
-function exAbrir(linId) { state._exAberta = state._exAberta === linId ? "" : linId; state._exSelV = null; render(); }
+function exAbrir(linId) {
+  state._exAberta = state._exAberta === linId ? "" : linId; state._exSelV = null;
+  var l = null; exLista().forEach(function (e) { (e.linhas || []).forEach(function (x) { if (x.id === linId) l = x; }); });
+  state._exCli = l && l.valor > 0 ? exClienteDoCredito(l) : "";
+  render();
+}
 
 /* ---- tela ---- */
 function exViagemRot(v) { return exDataBr(String(v.data || "").slice(0, 10)) + " · " + esc(v.cliente || "?") + " · " + esc(v.placa || "") + (v.rota ? " · " + esc(v.rota) : "") + " · <b>" + fmtR(v.valorViagem) + "</b>"; }
@@ -15274,11 +15417,11 @@ function exVincTexto(l) {
 function exLinhaHTML(e, l) {
   var ent = l.valor > 0, eid = esc(e.id), lid = esc(l.id), aberta = state._exAberta === l.id;
   var btn = function (t, fn, cor) { return '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;' + (cor ? "border-color:" + cor + ";color:" + cor + ";" : "") + '" onclick="' + fn + '">' + t + '</button>'; };
-  var semCompra = !ent && !l.vinc && !exCandCompras(l).length;
+  var semCompra = !ent && !l.vinc && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro");
   var h = '<div style="border:1px solid ' + (l.vinc ? "#1f3a24" : semCompra ? "#5a2626" : "#262626") + ';border-radius:7px;padding:7px 10px;margin-bottom:6px;background:' + (l.vinc ? "#0b130c" : "#0d0d0d") + ';">'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
     + '<span style="font-size:11px;color:#888;width:70px;">' + exDataBr(l.data) + '</span>'
-    + '<span style="font-size:12px;color:#ddd;flex:1;min-width:180px;">' + esc(l.desc) + '</span>'
+    + '<span style="font-size:12px;color:#ddd;flex:1;min-width:180px;">' + esc(l.desc) + (l.cp ? ' <span style="font-size:10.5px;color:#777;">' + esc(l.cp) + '</span>' : "") + '</span>'
     + '<span style="font-size:13px;font-weight:900;color:' + (ent ? "#66BB6A" : "#E57373") + ';min-width:110px;text-align:right;">' + (ent ? "+ " : "− ") + fmtR(Math.abs(l.valor)) + '</span>'
     + '</div>';
   if (l.vinc) {
@@ -15288,7 +15431,7 @@ function exLinhaHTML(e, l) {
     h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;">';
     if (semCompra) h += '<span style="font-size:10px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 6px;">SAÍDA SEM COMPRA LANÇADA</span>';
     if (l.sug) {
-      var st = l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
+      var st = l.sug.tipo === "outro" ? esc(l.sug.categoria) : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
         : (function () { var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(l.sug.ids[0]); })[0]; return v ? "viagem " + exViagemRot(v) : ""; })();
       if (st) h += '<span style="font-size:11px;color:#F2E600;">sugestão: ' + st + '</span>' + btn("✓ confirmar", "exAceitarSug('" + eid + "','" + lid + "')", "#66BB6A");
     }
@@ -15355,14 +15498,14 @@ function exTelaHTML() {
   linhas.forEach(function (x) {
     var l = x.l;
     if (l.valor > 0) { t.ent += l.valor; if (l.vinc) t.entC += l.valor; } else { t.sai += -l.valor; if (l.vinc) t.saiC += -l.valor; }
-    if (!l.vinc) { t.pend++; if (l.valor < 0 && !exCandCompras(l).length) t.semCompra++; }
+    if (!l.vinc) { t.pend++; if (l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro")) t.semCompra++; }
   });
   var vis = linhas.filter(function (x) {
     var l = x.l;
     if (filtro === "pendentes") return !l.vinc;
     if (filtro === "entradas") return l.valor > 0;
     if (filtro === "saidas") return l.valor < 0;
-    if (filtro === "semcompra") return !l.vinc && l.valor < 0 && !exCandCompras(l).length;
+    if (filtro === "semcompra") return !l.vinc && l.valor < 0 && !exCandCompras(l).length && !(l.sug && l.sug.tipo === "outro");
     if (filtro === "conciliados") return !!l.vinc;
     return true;
   });
@@ -15383,7 +15526,9 @@ function exTelaHTML() {
         return '<option value="' + esc(e.id) + '"' + (sel === e.id ? " selected" : "") + '>' + esc(e.banco) + " · " + exDataBr(e.periodoIni) + " a " + exDataBr(e.periodoFim) + " · " + c + "/" + n + " conciliados</option>";
       }).join("") + '<option value="todos"' + (sel === "todos" ? " selected" : "") + '>todos os extratos</option></select>'
     + (sel !== "todos" && alvo[0] ? (alvo[0].arquivo ? '<a href="javascript:void(0)" onclick="ccVer(\'' + esc(alvo[0].arquivo) + '\')" style="color:#4FC3F7;font-size:11px;">📎 arquivo original</a>' : "")
-      + '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;border-color:#9a4a4a;color:#9a4a4a;" onclick="exExcluirExtrato(\'' + esc(alvo[0].id) + '\')">excluir extrato</button>' : "")
+      + '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;border-color:#9a4a4a;color:#9a4a4a;" onclick="exExcluirExtrato(\'' + esc(alvo[0].id) + '\')">excluir extrato</button>'
+      + (alvo[0].conferencia ? (alvo[0].conferencia.ok ? '<span style="font-size:11px;color:#66BB6A;">✓ leitura conferida com ' + alvo[0].conferencia.dias + ' saldos diários do banco</span>'
+          : '<span style="font-size:11px;color:#E57373;" title="' + esc(alvo[0].conferencia.erros.join(" | ")) + '">⚠ a soma não bateu com o saldo do banco em ' + alvo[0].conferencia.erros.length + ' dia(s)</span>') : "") : "")
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
     + tile("ENTRADAS", "#66BB6A", fmtR(t.ent), "conciliado " + fmtR(t.entC), "entradas")
@@ -15392,13 +15537,15 @@ function exTelaHTML() {
     + tile("SAÍDA SEM COMPRA", "#C0392B", t.semCompra, "gasto que não passou pela conciliação", "semcompra")
     + tile("CONCILIADOS", "#66BB6A", linhas.length - t.pend, "de " + linhas.length + " lançamentos", "conciliados")
     + '</div>'
+    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo === "outro"; }).length;
+        return n ? '<div style="margin-bottom:8px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#66BB6A;color:#66BB6A;" onclick="exConfirmarSugCategorias(\'' + esc(sel) + '\')">✓ confirmar as ' + n + ' sugestões de categoria</button></div>' : ""; })()
     + '<div style="font-size:11px;color:#777;margin-bottom:8px;">saldo do período (entradas − saídas): <b style="color:#ddd;">' + fmtR(t.ent - t.sai) + '</b> · mostrando ' + vis.length + ' lançamento(s)'
     + ' · <a href="javascript:void(0)" style="color:#4FC3F7;" onclick="state._exFiltro=\'todos\';render()">ver todos</a></div>';
   return h + (vis.length ? vis.slice(0, 300).map(function (x) { return exLinhaHTML(x.e, x.l); }).join("") : '<div style="font-size:12px;color:#777;">Nada nesse filtro.</div>');
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
