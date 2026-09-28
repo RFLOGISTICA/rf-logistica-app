@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v457)</title>
+<title>RF Logística — Painel da Frota (v458)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v457">
+<meta name="rf-versao" content="v458">
 <meta name="rf-data" content="2026-09-28">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v457" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v458" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15561,8 +15561,8 @@ function exPainelEntrada(e, l) {
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;">'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
     + '<label style="font-size:12px;padding:5px 12px;font-weight:800;border:1px solid #66BB6A;color:#66BB6A;border-radius:6px;cursor:pointer;">📄 Ler demonstrativo de pagamento do cliente'
-    + '<input type="file" accept="image/*" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label>'
-    + '<span style="font-size:10.5px;color:#888;">as imagens de medição que o cliente manda com o depósito (ex.: JDL) — pode escolher várias de uma vez</span></div>'
+    + '<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label>'
+    + '<span style="font-size:10.5px;color:#888;">imagem ou PDF das medições/relatório de pagamento que o cliente manda (ex.: JDL) — pode escolher vários de uma vez</span></div>'
     + exDemoHTML(e, l)
     + '<div style="font-size:10.5px;color:#66BB6A;font-weight:800;margin:8px 0 4px;">OU MARQUE À MÃO AS VIAGENS PAGAS NESTE CRÉDITO</div>'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
@@ -15646,7 +15646,7 @@ function exTelaHTML() {
 }
 function exContextoAssistente() {
   var ls = exTodasLinhas(), pend = ls.filter(function (x) { return !x.l.vinc; });
-  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v455: recibo que ja entrou na baixa de OUTRO credito aparece como 'ja baixado no credito de dd/mm (R$ X) -- nao entra de novo' e fica de fora da baixa, com aviso de que talvez a medicao nao seja a deste deposito (caso de 28/09: a medicao de R$ 47.260 foi lida no credito de 01/09 de R$ 48.386,56). Desfazer uma baixa feita por medicao reabre a conferencia com os recibos ja lidos, para refazer sem reenviar a imagem. v456: RECEBIMENTO FORA DO EXTRATO -- para viagem paga em partes quando o extrato do primeiro pagamento nao esta no sistema (ex.: CDJ Express pagou 80% na saida em 23/07 e o restante em setembro). Botao '+ Recebimento fora do extrato' na aba Extrato bancario: escolhe a viagem, o valor (atalhos 80%, 20%, 50%, 'o que falta'), a data e uma observacao; vira uma linha do extrato especial 'Fora do extrato (lancado a mao)' e a viagem passa a mostrar 'ja recebeu X = 80%, falta Y'. O credito do restante e ligado normalmente e a viagem fecha 100%. Desfazer esse lancamento apaga a linha. v457: CONTA DO MOTORISTA (combustivel) -- no extrato, uma saida pode ser ligada como 'PIX para o motorista' (vai para a conta dele, com finalidade: combustivel, diaria, pedagio, manutencao na estrada, outros) ou como 'pagamento direto ao posto', casada com o abastecimento que o motorista lancou no app (mesmo valor, ate 3 dias). O sistema sugere sozinho: nome do motorista no PIX (login Antonio.Jose casa com ANTONIO JOSE GUIMARAES SILVA) e PIX a posto com um unico abastecimento do mesmo valor; o botao de confirmar em lote vale para essas sugestoes. Aba nova Conciliacao > Motoristas: por motorista e mes, adiantado (PIX de combustivel) x abastecimentos lancados, menos os pagos direto ao posto = comprovado com o adiantamento; saldo > 0 = falta comprovar/devolver, < 0 = pagou do bolso (RF deve). Lista tambem os pagamentos a posto sem abastecimento ligado. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
+  return "CONCILIACAO BANCARIA (aba Conciliacao > Extrato bancario, v448, 28/09/2026): Renato quer, na quinzena ou no fim do mes, importar o EXTRATO da conta (OFX, Excel/CSV ou PDF) e conciliar cada lancamento: SAIDA ligada a uma compra da conciliacao (vira o comprovante da compra e pode fechar a compra) ou a uma categoria (motorista, folha, imposto, tarifa, divida fixa, transferencia, retirada...); ENTRADA ligada a uma ou mais VIAGENS (receita, soma do valorViagem; diferenca exige explicacao, ex. retencao) ou a outra origem. Saida sem compra lancada aparece como 'SAIDA SEM COMPRA LANCADA' e pode virar compra com um clique ('criar compra com esta saida', que fica marcada como saida no banco sem compra). Lancamento repetido entre extratos e ignorado na importacao. v449: o PDF 'Entradas e Saidas' do Itau e lido por coluna (data, lancamento, razao social, CNPJ/CPF, valor) e a leitura e conferida com os saldos diarios impressos pelo banco; o sistema sugere categoria sozinho (transferencia para a propria RF, posto = combustivel, rendimento, tarifa, imposto, nome de motorista cadastrado = pagamento de motorista) e, numa entrada, ja filtra as viagens do cliente que aparece no nome do pagador. v450: quando o recebido nao bate com a soma das viagens, aparece na propria tela um campo obrigatorio de JUSTIFICATIVA da diferenca e, se veio a menos, a opcao 'o restante ainda vai ser pago': a viagem continua em aberto com o saldo (ex.: viagem de R$ 7.192 com R$ 7.000 recebidos fica devendo R$ 192) e aparece de novo na lista, com 'ja recebeu / falta', para ligar ao proximo credito. Sem marcar essa opcao a diferenca e dada como encerrada (retencao, desconto) com a justificativa. v451: DEMONSTRATIVO DE PAGAMENTO -- a JDL paga varias viagens num deposito so e manda uma imagem com um recibo por viagem (placa, motorista, destino, inicio/fim, valor do frete, adiantamento, abastecimento, vale, impostos e valor a ser pago). Na entrada do extrato o botao 'Ler demonstrativo de pagamento do cliente' le a imagem (Edge Function ler-demonstrativo-pagamento), casa cada recibo com a viagem da mesma placa (frete igual e data mais proxima), mostra fretes - descontos = a pagar e compara com o credito do banco; 'dar baixa nas viagens' deixa as viagens QUITADAS pelo valor cheio do frete e registra os descontos. Se o credito nao bate com o demonstrativo, pede justificativa (pode faltar outra imagem do mesmo deposito). v452: ONDE ANEXAR AS MEDICOES DA JDL: aba Conciliacao > Extrato bancario > no credito da JDL, 'ligar a viagens / origem' > 'Ler demonstrativo de pagamento do cliente'. Aceita VARIAS imagens de uma vez (uma medicao por imagem) ou uma depois da outra ('+ acrescentar outra imagem'); os recibos se somam e recibo repetido entra uma vez so. Todas as imagens ficam guardadas no lancamento. v454: a leitura da imagem as vezes troca letras/numeros parecidos na placa (Q/O/D/0, 8/3/B, 1/I) -- o casamento aceita placa 'parecida' (1 caractere de diferenca depois de igualar esses pares) e mostra 'lida X -> Y'; a lista de viagem de cada recibo traz primeiro a mesma placa e depois TODAS as viagens em aberto; cada recibo tem a conferencia frete - descontos = a pagar ('confere' ou 'conta nao fecha -- confira a leitura'); o total impresso lido pela IA nao e mais usado (vale a soma dos recibos contra o credito do banco); e em cada viagem com frete diferente escolhe-se 'cobrar a diferenca' (fica em aberto) ou 'aceitar o valor do cliente' (com justificativa), ou 'aceitar em todas'. v455: recibo que ja entrou na baixa de OUTRO credito aparece como 'ja baixado no credito de dd/mm (R$ X) -- nao entra de novo' e fica de fora da baixa, com aviso de que talvez a medicao nao seja a deste deposito (caso de 28/09: a medicao de R$ 47.260 foi lida no credito de 01/09 de R$ 48.386,56). Desfazer uma baixa feita por medicao reabre a conferencia com os recibos ja lidos, para refazer sem reenviar a imagem. v456: RECEBIMENTO FORA DO EXTRATO -- para viagem paga em partes quando o extrato do primeiro pagamento nao esta no sistema (ex.: CDJ Express pagou 80% na saida em 23/07 e o restante em setembro). Botao '+ Recebimento fora do extrato' na aba Extrato bancario: escolhe a viagem, o valor (atalhos 80%, 20%, 50%, 'o que falta'), a data e uma observacao; vira uma linha do extrato especial 'Fora do extrato (lancado a mao)' e a viagem passa a mostrar 'ja recebeu X = 80%, falta Y'. O credito do restante e ligado normalmente e a viagem fecha 100%. Desfazer esse lancamento apaga a linha. v457: CONTA DO MOTORISTA (combustivel) -- no extrato, uma saida pode ser ligada como 'PIX para o motorista' (vai para a conta dele, com finalidade: combustivel, diaria, pedagio, manutencao na estrada, outros) ou como 'pagamento direto ao posto', casada com o abastecimento que o motorista lancou no app (mesmo valor, ate 3 dias). O sistema sugere sozinho: nome do motorista no PIX (login Antonio.Jose casa com ANTONIO JOSE GUIMARAES SILVA) e PIX a posto com um unico abastecimento do mesmo valor; o botao de confirmar em lote vale para essas sugestoes. Aba nova Conciliacao > Motoristas: por motorista e mes, adiantado (PIX de combustivel) x abastecimentos lancados, menos os pagos direto ao posto = comprovado com o adiantamento; saldo > 0 = falta comprovar/devolver, < 0 = pagou do bolso (RF deve). Lista tambem os pagamentos a posto sem abastecimento ligado. v458: 'Ler demonstrativo de pagamento do cliente' aceita PDF (cada pagina vira imagem no proprio aparelho e e lida) alem de foto/print, e le relatorio de pagamento de qualquer cliente (nao so o modelo JDL). Se o arquivo for so o COMPROVANTE do pagamento (PIX/TED) ele nao traz a lista de viagens: o sistema avisa e as viagens sao marcadas a mao. v453: na baixa pela medicao cada viagem recebe o FRETE DO RECIBO do cliente; se o cliente pagou frete menor que o lancado no sistema, a diferenca fica EM ABERTO na viagem (aparece como 'ja recebeu / falta') para cobrar -- a nao ser que se marque 'aceitar o valor do cliente e encerrar essas diferencas'. Caso real: deposito JDL de 18/09 (R$ 47.260,00, 7 recibos 14171-14177) tem 4 viagens com frete da JDL menor que o do app, total R$ 225,60 (QDH7D61 25-26/08 Seabra R$ 168,00; QDG7J21 27/08 R$ 43,20; QDE8A82 31/08, OTQ9H46 26/08 e 01/09 R$ 4,80 cada). v454: na leitura das medicoes, a lista 'viagem no sistema' traz primeiro as da mesma placa (ou placa parecida -- a leitura da imagem as vezes troca Q/O/D, 8/3 -- ex.: leu QDE8A32 e ODH7D61 no lugar de QDE8A82 e QDH7D61) e depois TODAS as viagens em aberto, para escolher qualquer uma. Em cada viagem com frete diferente aparece a escolha 'cobrar a diferenca (fica em aberto)' ou 'aceitar o valor do cliente' e um campo de justificativa (obrigatoria para aceitar); ha tambem 'aceitar o valor do cliente em todas'. O total impresso na imagem nao e mais usado na conferencia (a IA as vezes soma subtotais); vale a soma dos recibos contra o credito do banco. So o admin importa e concilia extrato. Situacao: "
     + exLista().length + " extrato(s), " + ls.length + " lancamentos, " + pend.length + " pendentes"
     + (pend.length ? " (ex.: " + pend.slice(0, 8).map(function (x) { return exDataBr(x.l.data) + " " + x.l.desc + " " + fmtR(x.l.valor); }).join("; ") + ")" : "") + ".";
 }
@@ -15739,39 +15739,84 @@ function exDemoCasar(recibos, linId) {
 /* v452: o mesmo depósito pode vir em VÁRIAS imagens (uma medição por imagem).
    Pode escolher várias de uma vez, ou mandar uma depois da outra: os recibos se
    somam na mesma conferência; recibo repetido (mesmo código) entra uma vez só. */
+/* v458: PDF também -- cada página vira uma imagem (pdf.js no próprio aparelho) e é lida
+   como as fotos. O PDF original é guardado uma vez no lançamento. */
+function exPdfParaImagens(file, maxPag) {
+  return new Promise(function (resolve, reject) {
+    if (!window.pdfjsLib) { reject(new Error("leitor de PDF não carregou (verifique a internet)")); return; }
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    file.arrayBuffer().then(function (buf) { return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise; }).then(function (doc) {
+      var n = Math.min(doc.numPages, maxPag || 12), out = [], k = 1;
+      var prox = function () {
+        if (k > n) { resolve(out); return; }
+        doc.getPage(k).then(function (pg) {
+          var v1 = pg.getViewport({ scale: 1 });
+          var esc2 = Math.min(3, Math.max(1.5, 2200 / Math.max(v1.width, 1)));
+          var vp = pg.getViewport({ scale: esc2 });
+          var cv = document.createElement("canvas"); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+          var ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+          return pg.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
+            return new Promise(function (res) { cv.toBlob(function (b) { res(b); }, "image/jpeg", 0.85); });
+          }).then(function (b) { if (b) { b.name = (file.name || "pdf") + " · pág. " + k; out.push(b); } k++; prox(); });
+        }).catch(reject);
+      };
+      prox();
+    }).catch(reject);
+  });
+}
+function exEhPdf(f) { return /pdf/i.test(f.type || "") || /\.pdf$/i.test(f.name || ""); }
+/* v452: o mesmo depósito pode vir em VÁRIAS imagens (uma medição por imagem).
+   Pode escolher várias de uma vez, ou mandar uma depois da outra: os recibos se
+   somam na mesma conferência; recibo repetido (mesmo código) entra uma vez só. */
 function exDemoLer(input, extId, linId) {
   if (!ehAdmin()) return;
   var files = Array.prototype.slice.call(input.files || []); if (!files.length) return;
-  var ruim = files.filter(function (f) { return !/^image\//.test(f.type || ""); });
-  if (ruim.length) { alert("Mande as IMAGENS das medições (foto ou print). Se veio em PDF, tire um print da tabela."); input.value = ""; return; }
+  var ruim = files.filter(function (f) { return !/^image\//.test(f.type || "") && !exEhPdf(f); });
+  if (ruim.length) { alert("Mande imagem (foto/print) ou PDF do demonstrativo."); input.value = ""; return; }
   var ant = state._exDemo && state._exDemo.lin === linId && state._exDemo.recibos ? state._exDemo : null;
   var acum = { lin: linId, recibos: ant ? ant.recibos.slice() : [], total: ant ? ant.total : 0, arquivos: ant ? (ant.arquivos || []).slice() : [], lidas: ant ? ant.lidas || 1 : 0 };
-  state._exDemo = { lin: linId, lendo: true, msg: "lendo " + files.length + " imagem(ns)..." }; render();
-  var erros = [];
+  state._exDemo = { lin: linId, lendo: true, msg: "lendo " + files.length + " arquivo(s)..." }; render();
+  var erros = [], naoDemo = 0;
   files.reduce(function (p, file, i) {
     return p.then(function () {
       var arquivo = "";
       return ccSubir([file], "extratos", "demonstrativo-" + linId + "-" + Date.now() + "-" + i).then(function (r) { arquivo = r[0] && r[0].path; }).catch(function () { })
-        .then(function () { return exArquivoBase64(file); })
-        .then(function (a) { return exDemoViaIA(a.b64, a.mime); })
-        .then(function (j) {
-          var recs = (j && j.recibos) || [];
-          if (!recs.length) { erros.push((file.name || "imagem " + (i + 1)) + ": sem recibos"); return; }
-          var ja = {}; acum.recibos.forEach(function (r) { if (r.recibo) ja[r.recibo] = 1; });
-          recs.forEach(function (r) { if (!r.recibo || !ja[r.recibo]) { r.arquivo = arquivo; acum.recibos.push(r); } });
-          acum.total = Math.round((acum.total + (Number(j.total) || 0)) * 100) / 100;
-          if (arquivo) acum.arquivos.push(arquivo);
-          acum.lidas++;
+        .then(function () { return exEhPdf(file) ? exPdfParaImagens(file) : [file]; })
+        .then(function (imgs) {
+          if (!imgs.length) { erros.push((file.name || "arquivo") + ": PDF sem páginas"); return; }
+          var achouAlgo = false;
+          return imgs.reduce(function (q, img, pi) {
+            return q.then(function () {
+              state._exDemo = { lin: linId, lendo: true, msg: "lendo " + (file.name || "arquivo") + (imgs.length > 1 ? " — página " + (pi + 1) + " de " + imgs.length : "") + "..." }; render();
+              return exArquivoBase64(img).then(function (a) { return exDemoViaIA(a.b64, a.mime); }).then(function (j) {
+                var recs = (j && j.recibos) || [];
+                if (!recs.length) return;
+                achouAlgo = true;
+                var ja = {}; acum.recibos.forEach(function (r) { if (r.recibo) ja[r.recibo] = 1; });
+                recs.forEach(function (r) { if (!r.recibo || !ja[r.recibo]) { r.arquivo = arquivo; acum.recibos.push(r); } });
+                acum.total = Math.round((acum.total + (Number(j.total) || 0)) * 100) / 100;
+              }).catch(function (e) {
+                if (/nao_legivel/.test(String(e.message || e))) return;   // página sem tabela de fretes: só ignora
+                erros.push((file.name || "arquivo") + (imgs.length > 1 ? " pág. " + (pi + 1) : "") + ": " + (e.message || e));
+              });
+            });
+          }, Promise.resolve()).then(function () {
+            if (achouAlgo) { if (arquivo) acum.arquivos.push(arquivo); acum.lidas++; }
+            else naoDemo++;
+          });
         })
-        .catch(function (e) { erros.push((file.name || "imagem " + (i + 1)) + ": " + (e.message || e)); });
+        .catch(function (e) { erros.push((file.name || "arquivo " + (i + 1)) + ": " + (e.message || e)); });
     });
   }, Promise.resolve()).then(function () {
     input.value = "";
-    if (!acum.recibos.length) { state._exDemo = { lin: linId, erro: "não encontrei recibos. " + erros.join(" · ") }; render(); return; }
+    if (!acum.recibos.length) {
+      state._exDemo = { lin: linId, erro: (naoDemo ? "Não achei lista de viagens/fretes no arquivo. Se for só o COMPROVANTE do pagamento (PIX/TED), ele não diz quais viagens foram pagas — marque as viagens à mão logo abaixo. " : "Não achei recibos. ") + (erros.length ? erros.join(" · ") : "") };
+      render(); return;
+    }
     acum.recibos.forEach(function (r) { delete r.vid; });
     acum.recibos = exDemoCasar(acum.recibos, linId);
     acum.arquivo = acum.arquivos[0] || "";
-    acum.erros = erros;
+    acum.erros = erros.concat(naoDemo ? [naoDemo + " arquivo(s) sem lista de fretes (ex.: comprovante de PIX) — ignorado(s)"] : []);
     state._exDemo = acum; render();
   });
 }
@@ -15838,7 +15883,7 @@ function exDemoHTML(e, l) {
   return '<div style="margin-top:10px;border:1px solid #2d4a31;border-radius:8px;padding:9px 11px;background:#0b130c;">'
     + '<div style="font-size:11px;color:#66BB6A;font-weight:800;margin-bottom:6px;">MEDIÇÕES LIDAS — ' + (d.lidas || 1) + ' imagem(ns), ' + d.recibos.length + ' recibo(s)'
     + (d.arquivos || []).map(function (a, i) { return ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(a) + '\')" style="color:#4FC3F7;">imagem ' + (i + 1) + '</a>'; }).join("")
-    + ' · <label style="color:#66BB6A;cursor:pointer;text-decoration:underline;">+ acrescentar outra imagem<input type="file" accept="image/*" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label></div>'
+    + ' · <label style="color:#66BB6A;cursor:pointer;text-decoration:underline;">+ acrescentar outra imagem ou PDF<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="exDemoLer(this,\'' + eid + '\',\'' + lid + '\')"></label></div>'
     + ((d.erros || []).length ? '<div style="font-size:11px;color:#E57373;margin-bottom:6px;">✖ ' + esc(d.erros.join(" · ")) + '</div>' : "")
     + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;"><tr><th ' + th + '>Recibo</th><th ' + th + '>Placa / motorista</th><th ' + th + '>Frete / período</th><th ' + th + '>Valor frete</th><th ' + th + '>Descontos</th><th ' + th + '>A pagar</th><th ' + th + '>Viagem no sistema</th></tr>' + linhas + '</table></div>'
     + '<div style="font-size:12px;color:#ddd;margin-top:8px;line-height:1.6;">fretes <b>' + fmtR(tFrete) + '</b> − descontos <b>' + fmtR(tDesc) + '</b> = a pagar <b>' + fmtR(tPagar) + '</b>'
