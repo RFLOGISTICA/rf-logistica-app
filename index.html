@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v468)</title>
+<title>RF Logística — Painel da Frota (v469)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v468">
+<meta name="rf-versao" content="v469">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v468" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v469" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -16358,14 +16358,68 @@ function mdCasar(recibos, cliente) {
     if (r.jaMedido || r.jaBaixado) return;
     var placa = exNormPlaca(r.placa), ini = exDataISO(r.inicio) || exDataISO(r.fim);
     var cands = abertas.filter(function (v) { return exPlacaParecida(v.placa, placa) && !usadas[String(v.id)]; });
-    var dias = function (v) { if (!ini || !v.data) return 999; return Math.abs((new Date(String(v.data).slice(0, 10)) - new Date(ini)) / 86400000); };
+    /* v469: a data da viagem no sistema pode ter ido para o dia da foto do KM de saída
+       (caso real: Vagner, QDG7I41, cadastrada 14/09 e com data 22/09). Conta também a
+       data em que a viagem foi cadastrada e, se o motorista bate, aceita até 10 dias. */
+    var d1 = function (x) { return x ? Math.abs((new Date(String(x).slice(0, 10)) - new Date(ini)) / 86400000) : 999; };
+    var dias = function (v) { if (!ini) return 999; return Math.min(d1(v.data), d1(v.dataCriacao)); };
+    var mesmoMot = function (v) { return mdMotoristaBate(r.motorista, motoristaDaViagem ? motoristaDaViagem(v) : (v.motoristaNaEpoca || "")); };
     cands.sort(function (a, b) {
-      return dias(a) - dias(b) || Math.abs((Number(a.valorViagem) || 0) - r.valorFrete) - Math.abs((Number(b.valorViagem) || 0) - r.valorFrete);
+      return (mesmoMot(a) ? 0 : 1) - (mesmoMot(b) ? 0 : 1) || dias(a) - dias(b) || Math.abs((Number(a.valorViagem) || 0) - r.valorFrete) - Math.abs((Number(b.valorViagem) || 0) - r.valorFrete);
     });
     var v = cands[0];
-    if (v && (dias(v) <= 5 || Math.abs((Number(v.valorViagem) || 0) - r.valorFrete) < 0.05)) { r.vid = String(v.id); usadas[r.vid] = 1; }
+    if (v && (dias(v) <= 5 || (mesmoMot(v) && dias(v) <= 10) || Math.abs((Number(v.valorViagem) || 0) - r.valorFrete) < 0.05)) { r.vid = String(v.id); usadas[r.vid] = 1; }
   });
   return recibos;
+}
+// primeiro nome do recibo ("Vagner Dantas Santos") contra o login ("Vagner.Dantas")
+function mdMotoristaBate(nomeRecibo, nomeViagem) {
+  var a = normTxt(String(nomeRecibo || "").split(/\s+/)[0] || ""), b = String(nomeViagem || "").split(/[.\s_]+/).map(function (x) { return normTxt(x); });
+  return !!(a && a.length >= 3 && b.indexOf(a) >= 0);
+}
+function mdCandidatosDepois(md, r) {
+  var placa = exNormPlaca(r.placa);
+  var l = (state.viagens || []).filter(function (v) { return v.cliente === md.cliente && !v.medicao; });
+  l.sort(function (a, b) { return (exPlacaParecida(a.placa, placa) ? 0 : 1) - (exPlacaParecida(b.placa, placa) ? 0 : 1) || String(b.data).localeCompare(String(a.data)); });
+  return l.slice(0, 40);
+}
+function mdVincularDepois(medId, i) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(medId), r = md && md.recibos ? md.recibos[i] : null; if (!r) return;
+  var sel = document.getElementById("md-vinc-" + medId + "-" + i), vid = sel ? sel.value : "";
+  if (!vid) { alert("Escolha a viagem."); return; }
+  var v = mdViagem(vid); if (!v) return;
+  if (v.medicao) { alert("Essa viagem já está em outra medição."); return; }
+  var dif = mdDivergencia(r, v), trat = "", motivo = "";
+  if (Math.abs(dif) >= 0.05) {
+    var t = prompt("Valor diferente: sistema " + fmtR(v.valorViagem) + " × medição " + fmtR(r.valorFrete) + " = " + fmtR(dif) + ".\n\nTratamento:\n1 = aceitar o valor da medição (corrige a viagem)\n2 = manter o sistema e cobrar a diferença\n3 = contestar a medição", "1");
+    if (t === null) return;
+    trat = ({ "1": "aceitar", "2": "cobrar", "3": "contestar" })[String(t).trim()];
+    if (!trat) { alert("Digite 1, 2 ou 3."); return; }
+    motivo = prompt("Justificativa da divergência:", trat === "aceitar" ? "km da medição" : "");
+    if (motivo === null || !String(motivo).trim()) { alert("A justificativa é obrigatória."); return; }
+    motivo = String(motivo).trim();
+  }
+  var agora = new Date().toISOString(), antes = Number(v.valorViagem) || 0;
+  r.vid = String(v.id); delete r.foraMotivo; r.vinculadoDepois = { por: ccQuem(), em: agora };
+  if (trat) { r.trat = trat; r.difMotivo = motivo; }
+  v.medicao = { id: md.id, ref: md.ref, recibo: r.recibo || "", valorFrete: r.valorFrete, aPagar: r.aPagar, kmMedicao: r.kmRodado || 0,
+    desc: { adiantamento: r.adiantamento || 0, abastecimento: r.abastecimento || 0, vale: r.vale || 0, impostos: r.impostos || 0 }, em: agora };
+  if (trat) {
+    md.difs = md.difs || [];
+    md.difs.push({ vid: String(v.id), recibo: r.recibo || "", placa: v.placa, data: v.data, sistema: antes, medicao: r.valorFrete, dif: dif, trat: trat, motivo: motivo,
+      status: trat === "aceitar" ? "resolvida" : "aberta", por: ccQuem(), em: agora });
+    if (trat === "aceitar") { v.valorEstimado = antes; v.valorViagem = r.valorFrete; v.medicao.aceita = true; }
+    v.medicao.divergencia = { dif: dif, trat: trat, motivo: motivo };
+  }
+  if ((Number(r.abastecimento) || 0) > 0) {
+    v.combustivelItens = v.combustivelItens || [];
+    var chave = md.id + ":" + (r.recibo || "");
+    if (!v.combustivelItens.some(function (x) { return x && x.origemMedicao === chave; }))
+      v.combustivelItens.push({ id: uid(), valor: Number(r.abastecimento), litros: 0, desc: "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + md.ref + ", recibo " + (r.recibo || "?"), origemMedicao: chave });
+  }
+  md.atualizadoEm = Date.now();
+  salvar(); render();
 }
 function mdTrocar(i, vid) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) { d.recibos[i].vid = vid; d.recibos[i].vidManual = true; render(); } }
 function mdDifSet(i, campo, val, re) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) d.recibos[i][campo] = val; if (re) render(); }
@@ -16595,11 +16649,14 @@ function mdCardHTML(md) {
   var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11px;color:#ccc;"';
   h += '<div style="overflow:auto;margin-top:8px;"><table style="width:100%;border-collapse:collapse;min-width:760px;"><tr>'
     + ["Recibo", "Placa", "Motorista", "Destino", "Início", "KM", "Frete", "Descontos", "A pagar", "Viagem"].map(function (c) { return '<th style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;">' + c + '</th>'; }).join("") + '</tr>'
-    + (md.recibos || []).map(function (r) {
+    + (md.recibos || []).map(function (r, ri) {
       var v = r.vid ? mdViagem(r.vid) : null;
       return '<tr><td ' + td + '>' + esc(r.recibo || "") + '</td><td ' + td + '>' + esc(r.placa || "") + '</td><td ' + td + '>' + esc(r.motorista || "") + '</td><td ' + td + '>' + esc(r.descricao || "") + '</td><td ' + td + '>' + esc(r.inicio || "") + '</td><td ' + td + '>' + (r.kmRodado || "") + '</td>'
         + '<td ' + td + ' align="right">' + fmtR(r.valorFrete) + '</td><td ' + td + ' align="right">' + fmtR(exDemoDesc(r)) + '</td><td ' + td + ' align="right"><b>' + fmtR(r.aPagar) + '</b></td>'
-        + '<td ' + td + '>' + (v ? exDataBr(String(v.data || "").slice(0, 10)) + ' · ' + esc(v.placa) + (v.medicao && v.medicao.divergencia ? ' <span style="color:#FFB74D;">(divergência)</span>' : ' <span style="color:#66BB6A;">✓</span>') : '<span style="color:#E57373;">' + esc(r.foraMotivo || "sem viagem no sistema") + '</span>') + '</td></tr>';
+        + '<td ' + td + '>' + (v ? exDataBr(String(v.data || "").slice(0, 10)) + ' · ' + esc(v.placa) + (v.medicao && v.medicao.divergencia ? ' <span style="color:#FFB74D;">(divergência)</span>' : ' <span style="color:#66BB6A;">✓</span>') : '<span style="color:#E57373;">' + esc(r.foraMotivo || "sem viagem no sistema") + '</span>'
+          + (!r.foraMotivo && md.status !== "paga" ? '<br><select id="md-vinc-' + esc(md.id) + '-' + ri + '" style="font-size:11px;padding:2px 4px;background:#111;color:#eee;border:1px solid #333;border-radius:5px;max-width:230px;"><option value="">escolher a viagem...</option>'
+            + mdCandidatosDepois(md, r).map(function (c) { return '<option value="' + esc(c.id) + '">' + exDataBr(String(c.data || "").slice(0, 10)) + ' · ' + esc(c.placa) + ' · ' + esc(motoristaDaViagem ? motoristaDaViagem(c) : "") + ' · ' + fmtR(c.valorViagem) + '</option>'; }).join("")
+            + '</select> <button class="btn-outline" style="font-size:10.5px;padding:1px 8px;border-color:#66BB6A;color:#66BB6A;" onclick="mdVincularDepois(\'' + esc(md.id) + '\',' + ri + ')">vincular</button>' : "")) + '</td></tr>';
     }).join("") + '</table></div>';
   if ((md.difs || []).length) {
     h += '<div style="margin-top:8px;padding:8px 10px;border:1px solid #5a4a26;border-radius:8px;background:rgba(255,183,77,0.05);"><div style="font-size:11px;font-weight:800;color:#FFB74D;margin-bottom:4px;">DIVERGÊNCIAS</div>'
@@ -16668,7 +16725,7 @@ function mdContextoAssistente() {
         + (mdDifsAbertas(m).length ? " · " + mdDifsAbertas(m).length + " divergência(s) em aberto" : "");
     });
     var tt = ttLista().map(function (t) { return "- " + t.cliente + ": " + (t.tipo === "km" ? "R$ " + t.valor + "/km (Toco)" + (t.km34 !== "" && t.km34 != null ? " e R$ " + t.km34 + "/km (3/4)" : "") : "adicional de R$ " + t.valor + " por viagem") + " para saídas de " + (t.de || "sempre") + " até " + (t.ate || "sem data de fim") + (t.obs ? " (" + t.obs + ")" : ""); });
-    return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado.\n"
+    return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado. v469: o casamento recibo→viagem aceita placa com um caractere diferente (a leitura confunde I e J), usa também a data em que a viagem foi cadastrada e, se o primeiro nome do motorista bate, aceita até 10 dias de diferença; recibo que ficou \"sem viagem no sistema\" tem, no card da medição, um seletor para escolher a viagem e o botão vincular (pede tratamento e justificativa se o valor divergir).\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
       + scContextoAssistente()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
