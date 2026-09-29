@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v464)</title>
+<title>RF Logística — Painel da Frota (v465)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v464">
+<meta name="rf-versao" content="v465">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v464" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v465" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13214,9 +13214,8 @@ function rfNfLimparRepetidas() {
 }
 
 function rfNfIrParaCte(chaveGrupo) {
-  state._szEtapa = "fiscal";
   state._fiscalAberto = chaveGrupo || "";
-  render();
+  szFerrAbrir("cte", "xml");   // v465
   setTimeout(function () {
     if (typeof document === "undefined") return;
     var el = document.getElementById("rf-fiscal-topo");
@@ -13276,7 +13275,7 @@ function rfNfConfHTML() {
     var dup = linha("#C0392B", "MESMA NF em mais de um CT-e", "Frete cobrado duas vezes pela mesma nota. Isso é conferido CT-e contra CT-e, sem depender de espelho.", r.nfDuplicada, function (x) {
       return '<div style="font-size:12px;color:#ddd;padding:4px 0;border-top:1px solid #1E1E1E;">NF ' + esc(x.nf) + ' · ' + esc(x.cliente || "") + ' — CT-e ' + esc(x.ctes) + (x.dia ? ' · ' + esc(x.dia) : "") + '</div>';
     });
-    return h + barra + dup + '<div style="color:#888;padding:16px;border:1px dashed #333;border-radius:8px;">Nenhum espelho lido ainda. Anexe o PDF no botão acima, ou pela etapa 2 (Conferência) dentro do carregamento — dá no mesmo, é o mesmo espelho nos dois lugares. O app lê o texto do arquivo, sem IA e sem custo.</div>';
+    return h + barra + dup + '<div style="color:#888;padding:16px;border:1px dashed #333;border-radius:8px;">Nenhum espelho lido ainda. Anexe o PDF no botão acima, ou pela ferramenta Carregamento, dentro do carregamento — dá no mesmo, é o mesmo espelho nos dois lugares. O app lê o texto do arquivo, sem IA e sem custo.</div>';
   }
 
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'
@@ -13303,7 +13302,7 @@ function rfNfConfHTML() {
   };
   var btnCte = function (x) {
     if (!x.chaveGrupo) return "";
-    return ' <button class="btn-outline" style="font-size:10px;padding:1px 6px;" onclick="rfNfIrParaCte(&#39;' + esc(x.chaveGrupo) + '&#39;)" title="Abre a etapa 3 já com essa viagem expandida">🚚 ver CT-e</button>';
+    return ' <button class="btn-outline" style="font-size:10px;padding:1px 6px;" onclick="rfNfIrParaCte(&#39;' + esc(x.chaveGrupo) + '&#39;)" title="Abre o CT-e (XML por viagem) já com essa viagem expandida">🚚 ver CT-e</button>';
   };
   var viagemTxt = function (x) {
     var t = [x.placa, x.dia].filter(function (y) { return y; }).join(" · ");
@@ -14003,7 +14002,7 @@ function szEmisBlocoHTML() {
   h += szEmisOrfasHTML();
 
   if (!caixas.length) {
-    return h + '<div style="font-size:11px;color:#777;">Nenhuma viagem da Suzano roteirizada e nenhum espelho lido. Importe a roteirização na etapa 1 — as caixas dos caminhões aparecem aqui sozinhas.</div>';
+    return h + '<div style="font-size:11px;color:#777;">Nenhuma viagem da Suzano roteirizada e nenhum espelho lido. Importe a roteirização na ferramenta Roteirização — as caixas dos caminhões aparecem aqui sozinhas.</div>';
   }
 
   caixas.slice(0, 20).forEach(function (bx) {
@@ -14063,7 +14062,7 @@ function szEmisBlocoHTML() {
     dv.forEach(function (x) { h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + esc(x) + '</div>'; });
     if (dv.nota) h += '<div style="margin-top:6px;font-size:10.5px;color:#888;">ℹ ' + esc(dv.nota) + '</div>';
     if (dv.nota2) h += '<div style="margin-top:4px;font-size:10.5px;color:#888;">ℹ ' + esc(dv.nota2) + '</div>';
-    if (semChave) h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave + ' nota(s) sem chave de 44 dígitos — resolva na etapa NF da Suzano.</div>';
+    if (semChave) h += '<div style="margin-top:6px;font-size:11px;color:#E67E22;">⚠ ' + semChave + ' nota(s) sem chave de 44 dígitos — resolva na Conferência Suzano.</div>';
 
     // anexar direto nesta caixa: o destino ja esta decidido pela placa
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">'
@@ -14127,7 +14126,8 @@ function szEmisBlocoHTML() {
         + '<div style="font-size:10.5px;color:#bbb;">Seguro: ' + SZ_APOLICE.seguradora + ' · apólice ' + SZ_APOLICE.ramo + ' ' + SZ_APOLICE.numero + '</div>'
         + '<div style="font-size:10.5px;color:#E67E22;margin-top:6px;">Depois de emitir: averbar TODOS antes de o caminhão sair · o número da averbação são os 40 primeiros dígitos da chave de cada CT-e · só então transmitir o MDF-e com o CIOT.</div>'
         + '</div>';
-      h += rfFiscalMdfeHTML(c, bx.placa);   // v429
+      if (state.__szSemMdfe) h += '<div style="margin-top:8px;font-size:11.5px;color:#4FC3F7;">O MDF-e desta carga fica na ferramenta <a href="javascript:void(0)" style="color:#4FC3F7;font-weight:800;" onclick="szFerrAbrir(&#39;mdfe&#39;,&#39;emitir&#39;)">MDF-e →</a></div>';   // v465
+      else h += rfFiscalMdfeHTML(c, bx.placa);   // v429
       h += '</div>';
     }
     h += '</div>';
@@ -16694,8 +16694,8 @@ function rfFiscalEnviarCopiar() {
 }
 
 function szEtapaAbrir(id) {
-  state._szEtapa = (state._szEtapa === id) ? null : id;   // uma etapa por vez
-  render();
+  // v465: as etapas viraram ferramentas -- quem ainda chama a etapa cai na ferramenta certa
+  szFerrAbrir(SZ_ETAPA_PARA_FERR[id] || null, id === "fiscal" ? "xml" : (id === "emis" ? "emitir" : null));
 }
 
 // Situacao de cada etapa. Tudo dentro de try/catch de proposito: um erro de
@@ -16843,6 +16843,275 @@ function szTelaEtapasHTML() {
     h += szEtapaConteudo(aberta);
   }
   return h;
+}
+
+/* ===================== v465 — ABA SUZANO EM FERRAMENTAS =====================
+   Pedido do Renato (29/09/2026, aprovado por imagem): a aba estava confusa para
+   quem não conhece o sistema -- seis etapas escondidas dentro de um "resumo",
+   o pacote do contador e a lista de caminhões sempre abertos embaixo, e CT-e,
+   MDF-e e CIOT misturados na mesma tela. "Se amanhã eu monetizar esse sistema
+   terei dificuldade para mostrar as ferramentas."
+   Agora a aba abre numa TELA INICIAL com 8 ferramentas em 3 grupos, cada uma
+   com nome, o que faz e a pendência. Tocada, a ferramenta ocupa a tela sozinha,
+   com "Voltar" e abas internas. CT-e, MDF-e e CIOT têm caixa própria. O botão
+   "Por caminhão" mostra a visão de caixas por placa que já existia.
+   NADA foi removido: cada bloco antigo foi para a ferramenta certa. */
+var SZ_FERR = [
+  { id: "rot",  n: 1, grupo: "OPERAÇÃO DO DIA",    nome: "Roteirização",            desc: "Do FOCRI aos caminhões, rota e e-mail" },
+  { id: "carg", n: 2, grupo: "OPERAÇÃO DO DIA",    nome: "Carregamento",            desc: "Bipar volumes e liberar o caminhão" },
+  { id: "canh", n: 3, grupo: "OPERAÇÃO DO DIA",    nome: "Entregas e canhotos",     desc: "Fotos do canhoto, em lote ou por parada" },
+  { id: "cte",  n: 4, grupo: "DOCUMENTOS FISCAIS", nome: "CT-e",                    desc: "Emitir, averbar e importar o XML" },
+  { id: "mdfe", n: 5, grupo: "DOCUMENTOS FISCAIS", nome: "MDF-e",                   desc: "Emitir, encerrar e acompanhar" },
+  { id: "ciot", n: 6, grupo: "DOCUMENTOS FISCAIS", nome: "CIOT",                    desc: "Número da ANTT de cada viagem" },
+  { id: "conf", n: 7, grupo: "CONTROLE",           nome: "Conferência Suzano",      desc: "NF x espelho x CT-e x canhoto" },
+  { id: "arq",  n: 8, grupo: "CONTROLE",           nome: "Arquivos e contabilidade", desc: "Originais guardados e ZIP do contador" },
+];
+var SZ_FERR_SUBS = {
+  cte:  [["emitir", "Emitir"], ["xml", "XML por viagem"]],
+  mdfe: [["aberto", "Em aberto"], ["emitir", "Emitir"], ["encerrados", "Encerrados"]],
+  ciot: [["sem", "Sem CIOT"], ["com", "Com CIOT"]],
+};
+// etapas antigas -> ferramenta nova (links internos que ainda chamam a etapa)
+var SZ_ETAPA_PARA_FERR = { rot: "rot", conf: "carg", emis: "cte", fiscal: "cte", canh: "canh", confnf: "conf" };
+
+function szFerrAbrir(id, sub) {
+  state._szModo = "ferramenta";
+  state._szFerr = id || null;
+  if (id) {
+    if (!state._szFerrSub) state._szFerrSub = {};
+    if (sub) state._szFerrSub[id] = sub;
+  }
+  try { window.scrollTo(0, 0); } catch (e) { }
+  render();
+}
+function szFerrSub(id, sub) {
+  if (!state._szFerrSub) state._szFerrSub = {};
+  state._szFerrSub[id] = sub;
+  render();
+}
+function szFerrSubAtual(id) {
+  var subs = SZ_FERR_SUBS[id]; if (!subs) return "";
+  var s = (state._szFerrSub || {})[id];
+  return subs.some(function (x) { return x[0] === s; }) ? s : subs[0][0];
+}
+function szModoTrocar(m) { state._szModo = m; state._szFerr = null; render(); }
+
+// MDF-e da operação, um por linha, com a viagem e a situação
+function szMdfeLista() {
+  var out = [];
+  try {
+    rfFiscais().forEach(function (d) {
+      if (d.tipo !== "mdfe") return;
+      var pEf = rfFiscalPlacaDoDoc(d) || {};
+      var placa = pEf.placa || d.placa || "";
+      var enc = !!rfFiscalEncerramentoDe(d.chave);
+      var vg = (state.viagens || []).find(function (v) { return v.placa === placa && String(v.data || "") === String(d.data || ""); })
+        || pEf.viagem || null;
+      var terminou = !!(vg && (vg.dataFim || vg.fotoKmChegada || vg.statusMotorista === "aprovada" || vg.statusMotorista === "aguardando_equipe"));
+      var carga = (state.suzanoCargas || []).find(function (c) { return c.fiscalMdfe && c.fiscalMdfe.chave && c.fiscalMdfe.chave === d.chave; }) || null;
+      out.push({ d: d, numero: d.numero || "?", data: d.data || "", placa: placa, motorista: d.motorista || (vg ? motoristaDaViagem(vg) : "") || "",
+        ctes: (d.ctes || []).length, ciot: d.ciot || (carga && carga.fiscalCiot) || "", encerrado: enc, terminou: terminou, carga: carga });
+    });
+  } catch (e) { console.error("[szMdfeLista]", e); }
+  return out.sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || (Number(b.numero) - Number(a.numero)); });
+}
+function szFerrSituacao() {
+  var s = szEtapaSituacao();
+  var md = szMdfeLista();
+  var abertos = md.filter(function (m) { return !m.encerrado; });
+  var aEncerrar = abertos.filter(function (m) { return m.terminou; }).length;
+  var semCiot = md.filter(function (m) { return !m.ciot; }).length;
+  var arq = 0, docs = 0;
+  try { arq = rfArqTodos().length; docs = (rfFiscais() || []).length; } catch (e) { }
+  var travadas = 0;
+  try { var mt = /(\d+) carga/.exec((s.emis || {}).txt || ""); if (mt && (s.emis || {}).cor === "#C0392B") travadas = Number(mt[1]); } catch (e) { }
+  return {
+    base: s, travadas: travadas, mdfeAbertos: abertos.length, mdfeAEncerrar: aEncerrar, semCiot: semCiot,
+    rot: s.rot, carg: s.conf, canh: s.canh, cte: s.emis, conf: s.confnf,
+    mdfe: abertos.length
+      ? { txt: abertos.length + " em aberto" + (aEncerrar ? " · " + aEncerrar + " para encerrar" : ""), cor: aEncerrar ? "#C0392B" : GOLD }
+      : { txt: md.length ? "todos encerrados" : "nenhum MDF-e", cor: md.length ? "#2E7D32" : "#777" },
+    ciot: semCiot ? { txt: semCiot + " manifesto(s) sem CIOT", cor: GOLD } : { txt: md.length ? "todos com CIOT" : "nenhum manifesto", cor: md.length ? "#2E7D32" : "#777" },
+    arq: { txt: docs + " documento(s) · " + arq + " original(is)", cor: "#888" },
+  };
+}
+
+function szFerrHomeHTML() {
+  var st = szFerrSituacao();
+  var kpi = function (rot, val, cor) {
+    return '<div><div style="font-size:12px;color:#999;">' + rot + '</div><div style="font-size:26px;font-weight:800;color:' + cor + ';line-height:1.2;">' + val + '</div></div>';
+  };
+  var h = '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:12px;padding:12px 18px;margin-bottom:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;">'
+    + kpi("Rotas montadas", st.base.rotas, "#fff")
+    + kpi("Cargas travadas p/ emitir", st.travadas, st.travadas ? "#C0392B" : "#2E7D32")
+    + kpi("MDF-e em aberto", st.mdfeAbertos, st.mdfeAbertos ? "#C0392B" : "#2E7D32")
+    + kpi("Sem CIOT", st.semCiot, st.semCiot ? GOLD : "#2E7D32")
+    + kpi("Canhotos faltando", st.base.canhotosFalta, st.base.canhotosFalta ? "#C0392B" : "#2E7D32")
+    + '</div>';
+  var grupos = [];
+  SZ_FERR.forEach(function (f) { if (grupos.indexOf(f.grupo) < 0) grupos.push(f.grupo); });
+  grupos.forEach(function (g) {
+    h += '<div style="font-size:12px;font-weight:800;color:#888;letter-spacing:.6px;margin:4px 0 8px;">' + g + '</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:18px;">';
+    SZ_FERR.filter(function (f) { return f.grupo === g; }).forEach(function (f) {
+      var s = st[f.id] || { txt: "", cor: "#777" };
+      h += '<div onclick="szFerrAbrir(&#39;' + f.id + '&#39;)" role="button" style="cursor:pointer;background:#141414;border:1px solid #2A2A2A;border-left:5px solid ' + s.cor + ';border-radius:12px;padding:14px 16px;min-height:132px;display:flex;flex-direction:column;justify-content:space-between;">'
+        + '<div><div style="font-size:12px;color:#5F5E5A;">' + f.n + '</div>'
+        + '<div style="font-size:21px;font-weight:800;color:#fff;line-height:1.2;">' + esc(f.nome) + '</div>'
+        + '<div style="font-size:12.5px;color:#999;margin-top:4px;">' + esc(f.desc) + '</div></div>'
+        + (s.txt ? '<div style="margin-top:10px;"><span style="display:inline-block;font-size:11.5px;font-weight:800;color:' + s.cor + ';border:1.5px solid ' + s.cor + ';border-radius:14px;padding:2px 11px;">' + esc(s.txt) + '</span></div>' : "")
+        + '</div>';
+    });
+    h += '</div>';
+  });
+  h += '<div style="font-size:11px;color:#666;">Cada caixa mostra o que falta; sem pendência, fica verde. Toque para abrir a ferramenta em tela cheia.</div>';
+  return h;
+}
+
+function szMdfeTabelaHTML(lista, vazio) {
+  if (!lista.length) return '<div style="color:#777;padding:18px;border:1px dashed #333;border-radius:10px;">' + vazio + '</div>';
+  var h = '<div style="overflow-x:auto;"><table style="min-width:900px;"><thead><tr>'
+    + '<th>MDF-e</th><th>Data</th><th>Placa</th><th>Motorista</th><th style="text-align:right;">CT-e</th><th>CIOT</th><th>Situação</th><th></th></tr></thead><tbody>';
+  lista.forEach(function (m) {
+    var sit = m.encerrado ? '<span style="color:#2E7D32;font-weight:800;">Encerrado</span>'
+      : m.terminou ? '<span style="color:#C0392B;font-weight:800;">Viagem terminou — encerrar</span>'
+      : '<span style="color:' + GOLD + ';font-weight:800;">Em rota</span>';
+    var acao = "";
+    if (!m.encerrado) {
+      acao = m.carga
+        ? '<button style="font-size:11px;font-weight:800;background:' + (m.terminou ? "#C0392B" : "transparent") + ';color:' + (m.terminou ? "#fff" : "#E67E22") + ';border:1px solid ' + (m.terminou ? "#C0392B" : "#E67E22") + ';border-radius:7px;padding:4px 11px;cursor:pointer;" onclick="rfFiscalMdfeEncerrar(&#39;' + esc(String(m.carga.id)) + '&#39;)">Encerrar agora</button>'
+        : '<span style="font-size:10.5px;color:#888;" title="Este MDF-e foi emitido fora do app. Encerre no emissor e importe aqui o XML do evento (…EncMdfe-procEvento.xml).">encerrar no SimplesCTe e importar o XML do evento</span>';
+    }
+    h += '<tr><td><b>' + esc(String(m.numero)) + '</b></td><td>' + esc(String(m.data).split("-").reverse().join("/")) + '</td>'
+      + '<td>' + esc(m.placa || "—") + '</td><td>' + esc(m.motorista || "—") + '</td>'
+      + '<td style="text-align:right;">' + m.ctes + '</td>'
+      + '<td style="color:' + (m.ciot ? "#ddd" : GOLD) + ';">' + esc(m.ciot || "sem CIOT") + '</td>'
+      + '<td>' + sit + '</td><td style="text-align:right;">' + acao + '</td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+function szMdfeEmitirHTML() {
+  var caixas = [];
+  try { caixas = szEmisCaixas() || []; } catch (e) { }
+  var h = '<div style="font-size:12px;color:#999;margin-bottom:10px;">O MDF-e sai depois que todos os CT-e da carga estão autorizados. Um quadro por caminhão; o CT-e se emite na ferramenta <a href="javascript:void(0)" style="color:' + GOLD + ';" onclick="szFerrAbrir(&#39;cte&#39;,&#39;emitir&#39;)">CT-e</a>.</div>';
+  var n = 0;
+  caixas.slice(0, 20).forEach(function (bx) {
+    var c = bx.carga;
+    if (!c || !(c.espelhos || []).length) return;
+    n++;
+    h += '<div style="background:#0A0A0A;border:1px solid #222;border-radius:10px;padding:11px 13px;margin-bottom:10px;">'
+      + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="font-size:17px;font-weight:800;color:#fff;">' + esc(bx.placa || "sem placa") + '</span>'
+      + '<span style="font-size:12px;color:#999;">' + esc(bx.data ? bx.data.split("-").reverse().join("/") : "sem data") + '</span>'
+      + '<span style="font-size:12px;color:#bbb;">' + esc((szEmisMotorista(c) || {}).nome || "sem motorista") + '</span></div>'
+      + rfFiscalMdfeHTML(c, bx.placa) + '</div>';
+  });
+  if (!n) h += '<div style="color:#777;padding:18px;border:1px dashed #333;border-radius:10px;">Nenhuma carga com notas para manifestar. As cargas aparecem aqui quando o espelho é anexado no CT-e.</div>';
+  return h;
+}
+function szCiotInformar(cargaId) {
+  var c = szCarga(cargaId); if (!c) return;
+  var v = prompt("CIOT desta viagem (gerado no SimplesCTe em Novo CIOT / Frota própria).\nDeixe vazio para apagar:", c.fiscalCiot || "");
+  if (v === null) return;
+  c.fiscalCiot = String(v).replace(/\s+/g, "");
+  salvar(); render();
+}
+function szCiotHTML(sub) {
+  var md = szMdfeLista();
+  var lista = md.filter(function (m) { return sub === "com" ? !!m.ciot : !m.ciot; });
+  // cargas do app que ainda vão manifestar: o CIOT entra no MDF-e na hora de emitir
+  var pend = [];
+  try {
+    (szEmisCaixas() || []).forEach(function (bx) {
+      var c = bx.carga;
+      if (!c || !(c.espelhos || []).length) return;
+      if (c.fiscalMdfe && c.fiscalMdfe.status === "autorizado") return;
+      pend.push({ c: c, placa: bx.placa, data: bx.data });
+    });
+  } catch (e) { }
+  var h = '<div style="background:#1A1206;border:1px solid ' + GOLD + ';border-radius:10px;padding:10px 13px;margin-bottom:12px;font-size:12px;color:#ddd;line-height:1.6;">'
+    + 'O CIOT é o número da ANTT que vai dentro do MDF-e. Enquanto a integração direta com a ANTT não é liberada, ele é gerado no <b>SimplesCTe</b> (Novo CIOT / Frota própria). '
+    + 'Informe o número aqui <b>antes de emitir o MDF-e</b> pelo app; o MDF-e que vem por XML já traz o CIOT dentro.</div>';
+  if (sub !== "com" && pend.length) {
+    h += '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin:4px 0 8px;letter-spacing:.5px;">CARGAS QUE VÃO MANIFESTAR PELO APP</div><div style="overflow-x:auto;"><table style="min-width:640px;"><thead><tr><th>Placa</th><th>Data</th><th>Motorista</th><th>CIOT</th><th></th></tr></thead><tbody>';
+    pend.forEach(function (p) {
+      h += '<tr><td><b>' + esc(p.placa || "—") + '</b></td><td>' + esc(String(p.data || "").split("-").reverse().join("/")) + '</td><td>' + esc((szEmisMotorista(p.c) || {}).nome || "—") + '</td>'
+        + '<td style="color:' + (p.c.fiscalCiot ? "#ddd" : GOLD) + ';">' + esc(p.c.fiscalCiot || "não informado") + '</td>'
+        + '<td style="text-align:right;"><button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="szCiotInformar(&#39;' + esc(String(p.c.id)) + '&#39;)">' + (p.c.fiscalCiot ? "Alterar" : "Informar CIOT") + '</button></td></tr>';
+    });
+    h += '</tbody></table></div><div style="height:14px;"></div>';
+  }
+  h += '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin:4px 0 8px;letter-spacing:.5px;">' + (sub === "com" ? "MANIFESTOS COM CIOT" : "MANIFESTOS JÁ EMITIDOS SEM CIOT") + '</div>';
+  h += szMdfeTabelaHTML(lista, sub === "com" ? "Nenhum manifesto com CIOT ainda." : "Todos os manifestos têm CIOT.");
+  return h;
+}
+
+function szFerrConteudo(id) {
+  var sub = szFerrSubAtual(id);
+  if (id === "rot") return '<div style="margin-bottom:10px;"><button class="btn-outline" style="font-size:11px;" onclick="rfRotExportarPrevistas()" title="Tira do app a roteirização que está valendo: veículos, paradas, notas e canhotos, nas três abas do modelo">⬇ Exportar roteirização vigente (Excel)</button></div>'
+    + szTelaPlano() + szTelaRoteirizador() + rfRotBlocoHTML();   // v465: os originais guardados foram para Arquivos e contabilidade
+  if (id === "carg") return szTelaEquipe();
+  if (id === "canh") return rfCanhLoteBlocoHTML();
+  if (id === "conf") return rfNfConfHTML();
+  if (id === "arq") return ctBlocoHTML() + rfArqBlocoHTML();
+  if (id === "cte") {
+    if (sub === "xml") return rfFiscalBlocoHTML();
+    state.__szSemMdfe = true;
+    try { return szEmisBlocoHTML(); } finally { state.__szSemMdfe = false; }
+  }
+  if (id === "mdfe") {
+    if (sub === "emitir") return szMdfeEmitirHTML();
+    var md = szMdfeLista();
+    return sub === "encerrados"
+      ? szMdfeTabelaHTML(md.filter(function (m) { return m.encerrado; }), "Nenhum MDF-e encerrado ainda.")
+      : szMdfeTabelaHTML(md.filter(function (m) { return !m.encerrado; }), "Nenhum MDF-e em aberto. ✓");
+  }
+  if (id === "ciot") return szCiotHTML(sub);
+  return "";
+}
+function szFerrTelaHTML(id) {
+  var f = SZ_FERR.filter(function (x) { return x.id === id; })[0];
+  if (!f) return szFerrHomeHTML();
+  var subs = SZ_FERR_SUBS[id] || [], atual = szFerrSubAtual(id);
+  var cont = {};
+  if (id === "mdfe") { var md = szMdfeLista(); cont.aberto = md.filter(function (m) { return !m.encerrado; }).length; cont.encerrados = md.filter(function (m) { return m.encerrado; }).length; }
+  if (id === "ciot") { var md2 = szMdfeLista(); cont.sem = md2.filter(function (m) { return !m.ciot; }).length; cont.com = md2.filter(function (m) { return !!m.ciot; }).length; }
+  var h = '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:14px;">'
+    + '<button onclick="szFerrAbrir(null)" style="font-size:14px;font-weight:700;padding:8px 16px;border-radius:9px;background:#141414;color:#eee;border:1px solid #333;cursor:pointer;">← Voltar</button>'
+    + '<div><div style="font-size:26px;font-weight:800;color:' + GOLD + ';line-height:1.1;">' + esc(f.nome) + '</div>'
+    + '<div style="font-size:13px;color:#999;">' + esc(f.desc) + '</div></div>';
+  if (id === "mdfe" || (id === "cte" && atual === "xml")) {
+    h += '<label style="margin-left:auto;cursor:pointer;font-size:13px;font-weight:800;background:' + GOLD + ';color:#000;padding:8px 16px;border-radius:9px;">+ Importar XML'
+      + '<input type="file" multiple style="display:none" onchange="rfFiscalImportar(this)"></label>';
+  }
+  h += '</div>';
+  if (subs.length) {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">';
+    subs.forEach(function (s) {
+      var on = s[0] === atual;
+      h += '<button onclick="szFerrSub(&#39;' + id + '&#39;,&#39;' + s[0] + '&#39;)" style="cursor:pointer;font-size:13.5px;font-weight:800;padding:7px 16px;border-radius:18px;border:1px solid ' + (on ? GOLD : "#333") + ';background:' + (on ? GOLD : "#141414") + ';color:' + (on ? "#000" : "#aaa") + ';">'
+        + s[1] + (cont[s[0]] != null ? ' <span style="opacity:.8;">' + cont[s[0]] + '</span>' : "") + '</button>';
+    });
+    h += '</div>';
+  }
+  return h + szFerrConteudo(id);
+}
+function szAbaSuzanoHTML() {
+  var modo = state._szModo === "caminhao" ? "caminhao" : "ferramenta";
+  var tog = function (m, rot) {
+    var on = modo === m;
+    return '<button onclick="szModoTrocar(&#39;' + m + '&#39;)" style="cursor:pointer;font-size:13px;font-weight:800;padding:7px 16px;border-radius:18px;border:none;background:' + (on ? GOLD : "transparent") + ';color:' + (on ? "#000" : "#999") + ';">' + rot + '</button>';
+  };
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">'
+    + '<div><div style="font-size:24px;font-weight:800;color:' + GOLD + ';">🏭 Operação Suzano</div>'
+    + (modo === "ferramenta" && !state._szFerr ? '<div style="font-size:13px;color:#888;">Escolha a ferramenta. Cada uma abre sozinha, em tela cheia.</div>' : "") + '</div>'
+    + '<div style="display:flex;background:#141414;border:1px solid #2A2A2A;border-radius:22px;padding:3px;">' + tog("ferramenta", "Por ferramenta") + tog("caminhao", "Por caminhão") + '</div></div>';
+  var aviso = "";
+  try { aviso = rfAvisoCidadesNovasHTML() || ""; } catch (e) { }
+  h += aviso;
+  if (modo === "caminhao") return h + szCaixasCaminhaoHTML();
+  if (state._szFerr) return h + szFerrTelaHTML(state._szFerr);
+  return h + szFerrHomeHTML();
 }
 
 function szTelaEquipe() {
@@ -26085,6 +26354,14 @@ function gerarContextoAssistente() {
   /* v417: o assistente precisa saber que viagem tem DUAS datas, senao explica
      errado quando alguem pergunta por que o mes mudou ou por que os dias
      cairam. Regra permanente: toda novidade entra tambem aqui. */
+  const blocoSuzanoFerr = (function () {
+    let pend = "";
+    try {
+      const st = szFerrSituacao();
+      pend = SZ_FERR.map((f) => "  " + f.n + ". " + f.nome + " — " + ((st[f.id] || {}).txt || "sem pendência")).join("\n");
+    } catch (e) { pend = "  (não consegui montar a situação)"; }
+    return "ABA OPERAÇÃO SUZANO (v465 — reorganizada em FERRAMENTAS, aprovada pelo Renato): a aba 'Carregamento Suzano' abre numa tela inicial com 8 ferramentas em 3 grupos. OPERAÇÃO DO DIA: 1 Roteirização (FOCRI → caminhões, rota, e-mail, exportar), 2 Carregamento (bipar volumes, anexar espelho, liberar o caminhão), 3 Entregas e canhotos (fotos em lote ou por parada). DOCUMENTOS FISCAIS, cada um com caixa própria: 4 CT-e (abas Emitir — roteiro de digitação, emissão pelo app, averbação — e XML por viagem), 5 MDF-e (abas Em aberto, Emitir, Encerrados; botão Encerrar agora para MDF-e emitido pelo app; emitido fora do app se encerra no SimplesCTe e importa o XML do evento), 6 CIOT (manifestos sem/com CIOT e o botão Informar CIOT nas cargas que vão manifestar pelo app — o CIOT ainda é gerado no SimplesCTe). CONTROLE: 7 Conferência Suzano (NF x espelho x CT-e x canhoto), 8 Arquivos e contabilidade (ZIP de XML do contador e originais guardados). No topo há o botão 'Por caminhão', que mostra uma caixa por placa. As antigas 'etapas' (Roteirização, Conferência, Emissão de CT-e, Fiscal, Canhotos, NF da Suzano) viraram essas ferramentas — se alguém falar em 'etapa 5', é a Conferência Suzano; 'Fiscal' é CT-e > XML por viagem. Quando perguntarem onde fazer algo da Suzano, diga o NOME da ferramenta. Situação agora:\n" + pend;
+  })();
   const blocoDonoViagem = "DONO DA VIAGEM (v462, regra do Renato): a viagem e' do MOTORISTA (login), nunca da placa. O dono fica gravado em motoristaNaEpoca -- ao enviar a viagem para um login, esse login vira o dono; ao trocar o motorista de um caminhao na aba Frota, as viagens antigas daquela placa ficam com quem as fez (o motorista anterior ou o login para quem foram enviadas) e NAO passam para o motorista novo. Se perguntarem de quem e' uma viagem, responda pelo motoristaNaEpoca, nunca pelo motorista atual do caminhao.";
   const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
   /* v418: sem isto o assistente diz que a viagem tem N paradas quando ela tem
@@ -26769,6 +27046,7 @@ ${blocoDonoDaRota}
 ${blocoCaixasViagens}
 
 ${blocoExportViagens}
+${blocoSuzanoFerr}
 ${blocoDonoViagem}
 ${blocoDatasViagem}
 ${blocoNaoVieram}
@@ -29095,24 +29373,8 @@ function renderTabela() {
   }
   if (state.aba === "carregasuzano") {
     /* v228.1: renderTabela() ESCREVE em wrap.innerHTML — não devolve HTML.
-       Na v228 eu usei `return` aqui, então a tela era montada e descartada:
-       a aba abria em branco. Mesmo padrão das outras abas. */
-    wrap.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
-        <div style="font-size:20px; font-weight:800; color:${GOLD};">🏭 Carregamento Suzano</div>
-      </div>
-      <div style="border:2px solid ${GOLD};border-radius:12px;background:#12100A;margin-bottom:14px;overflow:hidden;">
-        <div onclick="szCxToggleResumo()" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:14px 16px;">
-          <span style="color:${GOLD};font-weight:800;font-size:18px;line-height:1;">${state._szResumoAberto ? "\u2212" : "+"}</span>
-          <span style="color:${GOLD};font-weight:800;font-size:16px;letter-spacing:.5px;">RESUMO GERAL DA OPERA\u00c7\u00c3O</span>
-          <span style="margin-left:auto;font-size:11px;color:#888;">as seis etapas do dia \u00b7 importar arquivos e anexar canhotos</span>
-        </div>
-        ${state._szResumoAberto ? `<div style="padding:0 16px 16px 16px;">${szTelaEtapasHTML()}</div>` : ""}
-      </div>
-      ${rfAvisoCidadesNovasHTML()}
-      ${ctBlocoHTML()}
-      ${szCaixasCaminhaoHTML()}
-    `;
+       v465: a aba abre na tela de ferramentas (szAbaSuzanoHTML). */
+    wrap.innerHTML = szAbaSuzanoHTML();
     return;
   }
 
