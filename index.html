@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v465)</title>
+<title>RF Logística — Painel da Frota (v466)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v465">
+<meta name="rf-versao" content="v466">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v465" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v466" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14305,6 +14305,19 @@ function rfFiscalFichaDoMotorista(nome) {
   });
   return cands.length === 1 ? cands[0].mot : null;
 }
+/* v466: trava do nome do condutor. Em 29/09 o MDF-e 1 do PKO3F40 saiu com
+   "JEFERSON.MARTINS" -- o nome do LOGIN -- porque ele não tinha ficha de motorista
+   e o campo veio preenchido com o login. A SEFAZ aceita (valida pelo CPF), mas o
+   documento fica com o nome errado. Nome de condutor tem que ser nome de gente:
+   duas palavras ou mais, só letras, sem ponto, sem arroba, sem número. */
+function rfNomeCondutorProblema(nome) {
+  var n = String(nome || "").trim();
+  if (!n) return "está vazio";
+  if (/[.@_]/.test(n)) return "parece o nome do LOGIN (tem ponto, arroba ou sublinhado)";
+  if (/\d/.test(n)) return "tem número";
+  if (n.split(/\s+/).filter(function (x) { return x.length > 1; }).length < 2) return "precisa ter nome e sobrenome";
+  return "";
+}
 function rfFiscalMdfeEmitir(cargaId, placa) {
   var c = szCarga(cargaId); if (!c) return;
   var esps = (c.espelhos || []);
@@ -14320,10 +14333,21 @@ function rfFiscalMdfeEmitir(cargaId, placa) {
   if (!cond || String(cond.cpf).length !== 11) {
     var cpf = prompt("CPF do motorista " + (mt.nome || "") + " (não achei a ficha dele):", "");
     if (cpf === null) return;
-    var nm = prompt("Nome completo do motorista, como sai no MDF-e:", (ficha && ficha.nome) || mt.nome || "");
+    var sugestao = (ficha && ficha.nome) || mt.nome || "";
+    if (rfNomeCondutorProblema(sugestao)) sugestao = "";   // v466: não sugere o login
+    var nm = prompt("Nome completo do motorista, como está na CNH (sai no MDF-e):", sugestao);
     if (nm === null) return;
-    cond = { nome: nm, cpf: String(cpf).replace(/\D/g, "") };
+    cond = { nome: String(nm).trim().replace(/\s+/g, " "), cpf: String(cpf).replace(/\D/g, "") };
   }
+  // v466: trava -- nunca emitir com nome de login no lugar do nome do motorista
+  var probNome = rfNomeCondutorProblema(cond.nome);
+  while (probNome) {
+    var nm2 = prompt("O nome do motorista \"" + cond.nome + "\" " + probNome + ".\n\nDigite o nome COMPLETO, como está na CNH:", "");
+    if (nm2 === null) return;
+    cond = { nome: String(nm2).trim().replace(/\s+/g, " "), cpf: cond.cpf };
+    probNome = rfNomeCondutorProblema(cond.nome);
+  }
+  cond.nome = cond.nome.toUpperCase();
   if (String(cond.cpf).length !== 11) { alert("CPF inválido."); return; }
   var vv = (state.veiculos || []).filter(function (v) { return String(v.placa || "").toUpperCase() === String(placa || c.placa || "").toUpperCase(); })[0] || {};
   var tara = Number(vv.taraKg) || 0;
@@ -14335,6 +14359,14 @@ function rfFiscalMdfeEmitir(cargaId, placa) {
     if (vv.placa) { vv.taraKg = tara; vv.atualizadoEm = Date.now(); }
   }
   var capKg = Math.round((Number(vv.cargaUtilT) || 3.5) * 1000);
+  // v466: tara de caminhão toco/3-4 da frota fica entre 2.500 e 8.000 kg; fora disso quase sempre é digitação
+  if ((tara < 2500 || tara > 8000) && !confirm("A tara de " + (placa || c.placa) + " está em " + tara.toLocaleString("pt-BR") + " kg, o que é fora do comum para toco ou 3/4 (normalmente entre 2.500 e 8.000 kg).\n\nConfira no CRLV. Emitir assim mesmo?")) {
+    var t2 = prompt("Tara correta em kg (fica guardada no cadastro):", String(tara));
+    if (t2 === null) return;
+    tara = Math.round(parseFloat(String(t2).replace(/\./g, "").replace(",", ".")) || 0);
+    if (!tara) { alert("Tara inválida."); return; }
+    if (vv.placa) { vv.taraKg = tara; vv.atualizadoEm = Date.now(); }
+  }
   var ciot = prompt("CIOT desta viagem (12 dígitos, gerado no SimplesCTe).\nDeixe vazio se não tiver:", c.fiscalCiot || "");
   if (ciot === null) return;
   ciot = String(ciot).replace(/\D/g, "");
@@ -16583,27 +16615,64 @@ function rfFiscalNfsDoEsp(e) {
   }).filter(Boolean);
   return ns.join(", ");
 }
+/* v466: e-mail do André ENXUTO (pedido do Renato em 26/09 e de novo em 29/09):
+   só o CT-e com a CHAVE e o DACTE em anexo. Sem MDF-e, sem averbação, sem totais.
+   Dá pra escolher um CT-e ou todos, e se o CIOT vai ou não (desligado por padrão). */
+function rfFiscalEnvioSel(c) {
+  var ev = window.__rfEnvio || {};
+  var esps = (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; });
+  if (!ev.sel) return esps;
+  return esps.filter(function (e) { return ev.sel[e.id] !== false; });
+}
 function rfFiscalEmailEnvio(c) {
-  var t = szEmisTotais(c), m = c.fiscalMdfe || {};
+  var ev = window.__rfEnvio || {};
   var dt = String(c.data || "").slice(0, 10).split("-").reverse().join("/");
-  var mot = (c.fiscalCondutor && c.fiscalCondutor.nome) || szEmisMotorista(c).nome || "";
-  var placa = (m.placa || c.placa || "");
-  var linhas = (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).map(function (e) {
-    var f = e.fiscal;
-    return "• CT-e " + f.numero + " — " + (e.cliente || "") + " — " + ((f.destino && f.destino.cidade) || e.cidade || "")
-      + " — NF " + rfFiscalNfsDoEsp(e) + " — frete " + fmtR(Number(e.valorFrete) || 0)
-      + "\n  Chave: " + f.chave
-      + (f.averbacao && f.averbacao.numero ? "\n  Averbação: " + f.averbacao.numero : "");
+  var placa = ((c.fiscalMdfe || {}).placa || c.placa || "");
+  var sel = rfFiscalEnvioSel(c);
+  var blocos = sel.map(function (e) {
+    return "CT-e " + e.fiscal.numero + " — " + (e.cliente || "") + " — NF " + rfFiscalNfsDoEsp(e) + "\nChave: " + e.fiscal.chave;
   });
-  return "Bom dia, André! Tudo bem?\n\n"
-    + "Seguem os documentos da viagem de " + dt + " — placa " + placa + (mot ? ", motorista " + mot : "") + ".\n\n"
-    + (m.status === "autorizado" ? "MDF-e " + m.numero + "\nChave: " + m.chave + "\n" + (c.fiscalCiot ? "CIOT: " + c.fiscalCiot + "\n" : "") + "\n" : "")
-    + "CT-e (" + linhas.length + "):\n" + linhas.join("\n\n")
-    + "\n\nTotal de frete: " + fmtR(t.frete) + " · " + (Math.round(t.peso * 10) / 10).toLocaleString("pt-BR") + " kg · " + t.volumes + " volumes."
-    + "\n\nEm anexo, o DACTE e o XML de cada CT-e e o DAMDFE/XML do manifesto.\n\n"
-    + "Qualquer dúvida, é só avisar.\n\nAtenciosamente,\n\n"
-    + "Renato Couto\nDiretor de Operações\nRF Logística Transportes e Distribuição Ltda\n"
-    + "(75) 99971-7578 — comercial@rflogistica.com.br";
+  return "Bom dia, André!\n\n"
+    + "Segue" + (sel.length > 1 ? "m os CT-e" : " o CT-e") + " da viagem de " + dt + " — placa " + placa + ".\n\n"
+    + blocos.join("\n\n")
+    + (ev.ciot && c.fiscalCiot ? "\n\nCIOT: " + c.fiscalCiot : "")
+    + "\n\nDACTE em anexo.\n\nAtenciosamente,\nRenato Couto\nRF Logística";
+}
+function rfFiscalEnvioAtualizar() {
+  var ev = window.__rfEnvio; if (!ev) return;
+  var c = szCarga(ev.cargaId); if (!c) return;
+  ev.email = rfFiscalEmailEnvio(c);
+  var ta = document.getElementById("rfEnvioEmail");
+  if (ta) ta.value = ev.email;
+}
+function rfFiscalEnvioSelCte(espId, v) {
+  var ev = window.__rfEnvio; if (!ev) return;
+  if (!ev.sel) ev.sel = {};
+  ev.sel[espId] = !!v;
+  rfFiscalEnvioAtualizar();
+}
+function rfFiscalEnvioSetCiot(v) {
+  var ev = window.__rfEnvio; if (!ev) return;
+  ev.ciot = !!v;
+  rfFiscalEnvioAtualizar();
+}
+// ZIP só com o DACTE dos CT-e escolhidos -- é o que vai anexado para o André
+function rfFiscalEnviarZipAndre() {
+  var ev = window.__rfEnvio; if (!ev) return;
+  var c = szCarga(ev.cargaId) || {};
+  var nomes = {};
+  rfFiscalEnvioSel(c).forEach(function (e) { nomes["DACTE " + e.fiscal.numero + " - " + rfFiscalNomeArq(e.cliente) + ".pdf"] = true; });
+  var pdfs = ev.arquivos.filter(function (a) { return a.pdf && !a.mdfe && nomes[a.nome]; });
+  if (!pdfs.length) { alert("Nenhum DACTE selecionado."); return; }
+  if (pdfs.length === 1) { rfBaixarBlob(pdfs[0].blob, pdfs[0].nome); return; }
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) { pdfs.forEach(function (a, i) { setTimeout(function () { rfBaixarBlob(a.blob, a.nome); }, i * 600); }); return; }
+    var zip = new JSZip();
+    pdfs.forEach(function (a) { zip.file(a.nome, a.blob); });
+    zip.generateAsync({ type: "blob" }).then(function (blob) {
+      rfBaixarBlob(blob, "DACTE_" + rfFiscalNomeArq((c.fiscalMdfe || {}).placa || c.placa) + "_" + String(c.data || "").slice(0, 10).replace(/-/g, "") + ".zip");
+    });
+  });
 }
 function rfFiscalEnviarAbrir(cargaId) {
   var c = szCarga(cargaId); if (!c) return;
@@ -16633,7 +16702,8 @@ function rfFiscalEnviarAbrir(cargaId) {
     render();
     // MDF-e primeiro na lista do motorista (é o que a fiscalização pede primeiro)
     arquivos.sort(function (x, y) { return (y.mdfe ? 1 : 0) - (x.mdfe ? 1 : 0); });
-    window.__rfEnvio = { cargaId: cargaId, arquivos: arquivos, email: rfFiscalEmailEnvio(szCarga(cargaId) || c) };
+    window.__rfEnvio = { cargaId: cargaId, arquivos: arquivos, sel: {}, ciot: false };
+    window.__rfEnvio.email = rfFiscalEmailEnvio(szCarga(cargaId) || c);
     var st = document.getElementById("rfEnvioStatus"), ac = document.getElementById("rfEnvioAcoes");
     if (!st || !ac) return;
     var nPdf = arquivos.filter(function (a) { return a.pdf; }).length, nXml = arquivos.length - nPdf;
@@ -16643,10 +16713,18 @@ function rfFiscalEnviarAbrir(cargaId) {
     var bt = 'class="btn-outline" style="display:block;width:100%;text-align:left;font-size:13px;padding:9px 12px;margin:0 0 8px;';
     ac.innerHTML = '<div style="font-size:11px;font-weight:800;color:#888;margin:4px 0 6px;">MOTORISTA</div>'
       + '<button ' + bt + 'border-color:#25D366;color:#25D366;" onclick="rfFiscalEnviarMotorista()">📲 Mandar os PDFs (DAMDFE + DACTE) — abre o WhatsApp</button>'
-      + '<div style="font-size:11px;font-weight:800;color:#888;margin:8px 0 6px;">ANDRÉ</div>'
-      + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="rfFiscalEnviarZip()">⬇ Baixar ZIP (DACTE, DAMDFE, XML e espelho)</button>'
-      + '<button ' + bt + '" onclick="rfFiscalEnviarCopiar()">📋 Copiar o e-mail (anexe o ZIP no Gmail)</button>'
-      + '<textarea readonly style="width:100%;height:190px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(window.__rfEnvio.email) + '</textarea>';
+      + '<div style="font-size:11px;font-weight:800;color:#888;margin:10px 0 6px;">ANDRÉ — O QUE VAI (só CT-e com a chave + DACTE)</div>'
+      + '<div style="background:#0A0A0A;border:1px solid #2b2b2b;border-radius:8px;padding:8px 10px;margin-bottom:8px;">'
+      + (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).map(function (e) {
+          return '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:4px 0;"><input type="checkbox" checked style="width:18px;height:18px;accent-color:' + GOLD + ';" onchange="rfFiscalEnvioSelCte(&#39;' + esc(String(e.id)) + '&#39;,this.checked)"> CT-e ' + esc(String(e.fiscal.numero)) + ' — ' + esc(e.cliente || "") + '</label>';
+        }).join("")
+      + (c.fiscalCiot ? '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:6px 0 2px;border-top:1px solid #1c1c1c;margin-top:4px;"><input type="checkbox" style="width:18px;height:18px;accent-color:' + GOLD + ';" onchange="rfFiscalEnvioSetCiot(this.checked)"> incluir o CIOT (' + esc(c.fiscalCiot) + ')</label>' : "")
+      + '</div>'
+      + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="rfFiscalEnviarZipAndre()">⬇ Baixar o DACTE dos CT-e marcados (para anexar)</button>'
+      + '<button ' + bt + '" onclick="rfFiscalEnviarCopiar()">📋 Copiar o e-mail</button>'
+      + '<textarea id="rfEnvioEmail" readonly style="width:100%;height:170px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(window.__rfEnvio.email) + '</textarea>'
+      + '<div style="font-size:11px;font-weight:800;color:#888;margin:10px 0 6px;">ARQUIVO DA RF</div>'
+      + '<button ' + bt + '" onclick="rfFiscalEnviarZip()">⬇ Pacote completo da viagem (DACTE, DAMDFE, XML e espelho) — para guardar, não para o André</button>';
   });
 }
 function rfFiscalEnviarMotorista() {
@@ -16688,7 +16766,7 @@ function rfFiscalEnviarZip() {
 }
 function rfFiscalEnviarCopiar() {
   var ev = window.__rfEnvio; if (!ev) return;
-  var ok = function () { alert("E-mail copiado. Cole no Gmail e anexe o ZIP."); };
+  var ok = function () { alert("E-mail copiado. Cole no Gmail e anexe o DACTE."); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ev.email).then(ok, function () { alert("Não consegui copiar — selecione o texto na caixa e copie."); });
   else alert("Selecione o texto na caixa e copie.");
 }
@@ -26360,7 +26438,7 @@ function gerarContextoAssistente() {
       const st = szFerrSituacao();
       pend = SZ_FERR.map((f) => "  " + f.n + ". " + f.nome + " — " + ((st[f.id] || {}).txt || "sem pendência")).join("\n");
     } catch (e) { pend = "  (não consegui montar a situação)"; }
-    return "ABA OPERAÇÃO SUZANO (v465 — reorganizada em FERRAMENTAS, aprovada pelo Renato): a aba 'Carregamento Suzano' abre numa tela inicial com 8 ferramentas em 3 grupos. OPERAÇÃO DO DIA: 1 Roteirização (FOCRI → caminhões, rota, e-mail, exportar), 2 Carregamento (bipar volumes, anexar espelho, liberar o caminhão), 3 Entregas e canhotos (fotos em lote ou por parada). DOCUMENTOS FISCAIS, cada um com caixa própria: 4 CT-e (abas Emitir — roteiro de digitação, emissão pelo app, averbação — e XML por viagem), 5 MDF-e (abas Em aberto, Emitir, Encerrados; botão Encerrar agora para MDF-e emitido pelo app; emitido fora do app se encerra no SimplesCTe e importa o XML do evento), 6 CIOT (manifestos sem/com CIOT e o botão Informar CIOT nas cargas que vão manifestar pelo app — o CIOT ainda é gerado no SimplesCTe). CONTROLE: 7 Conferência Suzano (NF x espelho x CT-e x canhoto), 8 Arquivos e contabilidade (ZIP de XML do contador e originais guardados). No topo há o botão 'Por caminhão', que mostra uma caixa por placa. As antigas 'etapas' (Roteirização, Conferência, Emissão de CT-e, Fiscal, Canhotos, NF da Suzano) viraram essas ferramentas — se alguém falar em 'etapa 5', é a Conferência Suzano; 'Fiscal' é CT-e > XML por viagem. Quando perguntarem onde fazer algo da Suzano, diga o NOME da ferramenta. Situação agora:\n" + pend;
+    return "ABA OPERAÇÃO SUZANO (v465 — reorganizada em FERRAMENTAS, aprovada pelo Renato): a aba 'Carregamento Suzano' abre numa tela inicial com 8 ferramentas em 3 grupos. OPERAÇÃO DO DIA: 1 Roteirização (FOCRI → caminhões, rota, e-mail, exportar), 2 Carregamento (bipar volumes, anexar espelho, liberar o caminhão), 3 Entregas e canhotos (fotos em lote ou por parada). DOCUMENTOS FISCAIS, cada um com caixa própria: 4 CT-e (abas Emitir — roteiro de digitação, emissão pelo app, averbação — e XML por viagem), 5 MDF-e (abas Em aberto, Emitir, Encerrados; botão Encerrar agora para MDF-e emitido pelo app; emitido fora do app se encerra no SimplesCTe e importa o XML do evento), 6 CIOT (manifestos sem/com CIOT e o botão Informar CIOT nas cargas que vão manifestar pelo app — o CIOT ainda é gerado no SimplesCTe). CONTROLE: 7 Conferência Suzano (NF x espelho x CT-e x canhoto), 8 Arquivos e contabilidade (ZIP de XML do contador e originais guardados). No topo há o botão 'Por caminhão', que mostra uma caixa por placa. As antigas 'etapas' (Roteirização, Conferência, Emissão de CT-e, Fiscal, Canhotos, NF da Suzano) viraram essas ferramentas — se alguém falar em 'etapa 5', é a Conferência Suzano; 'Fiscal' é CT-e > XML por viagem. Quando perguntarem onde fazer algo da Suzano, diga o NOME da ferramenta. ENVIO DE DOCUMENTOS (v466): o botão 'Enviar documentos (André / motorista)' fica no quadro de cada caminhão em MDF-e > Emitir. Para o MOTORISTA vai tudo por WhatsApp (DAMDFE + DACTE). Para o ANDRÉ vai SÓ o CT-e com a chave e o DACTE — sem MDF-e, sem averbação, sem totais; dá para marcar quais CT-e vão e se o CIOT vai (desligado por padrão). TRAVA DO MDF-e (v466): o sistema não emite MDF-e com nome de login no lugar do nome do motorista (nome com ponto, arroba, número ou sem sobrenome) e pede o nome completo da CNH; também avisa quando a tara está fora de 2.500 a 8.000 kg. Motorista sem ficha cadastrada cai nessa pergunta — o certo é cadastrar a ficha. Situação agora:\n" + pend;
   })();
   const blocoDonoViagem = "DONO DA VIAGEM (v462, regra do Renato): a viagem e' do MOTORISTA (login), nunca da placa. O dono fica gravado em motoristaNaEpoca -- ao enviar a viagem para um login, esse login vira o dono; ao trocar o motorista de um caminhao na aba Frota, as viagens antigas daquela placa ficam com quem as fez (o motorista anterior ou o login para quem foram enviadas) e NAO passam para o motorista novo. Se perguntarem de quem e' uma viagem, responda pelo motoristaNaEpoca, nunca pelo motorista atual do caminhao.";
   const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
