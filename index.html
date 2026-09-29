@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v481)</title>
+<title>RF Logística — Painel da Frota (v482)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v481">
+<meta name="rf-versao" content="v482">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v481" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v482" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14398,7 +14398,7 @@ function rfFiscalMdfeEmitir(cargaId, placa) {
     if (!tara) { alert("Tara inválida."); return; }
     if (vv.placa) { vv.taraKg = tara; vv.atualizadoEm = Date.now(); }
   }
-  var ciot = prompt("CIOT desta viagem (12 dígitos, gerado no SimplesCTe).\nDeixe vazio se não tiver:", c.fiscalCiot || "");
+  var ciot = prompt("CIOT desta viagem (12 dígitos)" + (c.ciotApp && c.ciotApp.id12 && c.ciotApp.amb === "producao" ? " — emitido pelo app na ANTT" : ", gerado no SimplesCTe") + ".\nDeixe vazio se não tiver:", c.fiscalCiot || "");
   if (ciot === null) return;
   ciot = String(ciot).replace(/\D/g, "");
   if (ciot && ciot.length !== 12) { alert("O CIOT tem 12 dígitos."); return; }
@@ -14481,13 +14481,166 @@ function rfFiscalMdfeEncerrar(cargaId) {
     }
   }).catch(function (err) { alert("Erro: " + (err && err.message || err)); rfFiscalMdfeAcompanhar(cargaId, 19); });
 }
+/* ===== v482: CIOT PELO APP, DIRETO NA ANTT ===================================
+   Pedido do Renato (29/09/2026): emitir o CIOT de frota própria pelo próprio app,
+   de graça, direto no webservice da ANTT (Portaria SUROC 6/2026, art. 3º, II),
+   sem entregar o certificado a site de terceiro e sem pagar SimplesCTe.
+   Servidor: Edge Function rf-ciot -> função do banco rf_antt (a ANTT recusa o IP
+   das Edge Functions; o banco passa). Certificado A1 da RF no Vault.
+   SITUAÇÃO: a ANTT ainda não liberou o certificado da RF (homologação responde
+   "CNPJ do certificado não corresponde a transportador no RNTRC"; produção fecha a
+   conexão). Pedido enviado a pef@antt.gov.br. Enquanto isso o quadro fica em
+   "aguardando liberação" e o CIOT continua vindo do SimplesCTe.
+   Quando liberar: Config > "CIOT pelo app: ligado" (state.config.ciotApp). */
+var CIOT_ORIGEM_SUZANO = { cmun: 2930709, cep: "43700000", nome: "Simões Filho" };   // CD Suzano (Simões Filho/BA)
+var CIOT_FN = "/functions/v1/rf-ciot";
+function ciotChamar(corpo) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com o servidor");
+    return sb.auth.getSession().then(function (res) {
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) throw new Error("sessão expirada — saia e entre de novo");
+      return fetch(RF_SB_URL + CIOT_FN, { method: "POST", headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(corpo) })
+        .then(function (r) { return r.json(); });
+    });
+  });
+}
+function ciotLigado() { return !!(state.config && state.config.ciotApp); }
+function ciotDigitos(s) { return String(s || "").replace(/\D/g, ""); }
+function ciotViagemDa(c, placa) {
+  var p = String(placa || c.placa || "").toUpperCase();
+  return (state.viagens || []).filter(function (v) { return String(v.placa || "").toUpperCase() === p && v.data === c.data && String(v.cliente || "").indexOf("Suzano") === 0; })[0] || null;
+}
+function ciotDiaMais(iso, n) { var d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+// monta a Declaração de Operação de Transporte com o que a carga já tem (espelhos, CT-e, viagem prevista)
+function ciotMontar(c, placa) {
+  var esps = c.espelhos || [], t = szEmisTotais(c), v = ciotViagemDa(c, placa);
+  var dests = [], contratante = "";
+  esps.forEach(function (e) {
+    var d = ciotDigitos(e.cnpjCliente); if (d && dests.indexOf(d) < 0) dests.push(d);
+    var ch = ciotDigitos(e.chave || ((e.notas || [])[0] || {}).chave); if (!contratante && ch.length === 44) contratante = ch.slice(6, 20);   // emitente da NF-e = Suzano
+  });
+  var ult = esps.length ? ((esps[esps.length - 1].fiscal || {}).destino || {}) : {};
+  var dias = Math.max(1, Number(v && v.dias) || 1), ini = c.data || hojeISO();
+  var frac = dests.length > 1;
+  var vei = (state.veiculos || []).filter(function (x) { return String(x.placa || "").toUpperCase() === String(placa || c.placa || "").toUpperCase(); })[0] || {};
+  var op = {
+    TipoOperacao: frac ? 2 : 1,
+    CpfCnpjContratante: contratante,
+    CpfCnpjDestinatario: dests[0] || "",
+    ValorFrete: Math.round((Number(v && v.valorViagem) || t.frete) * 100) / 100,
+    DataInicioViagem: ini,
+    DataFimViagem: ciotDiaMais(ini, dias - 1),
+    Veiculos: [{ Placa: String(placa || c.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, ""), NumeroEixos: String(vei.eixos || 2) }],
+    OrigemDestino: [{
+      Origem: { CodigoMunicipioOrigem: CIOT_ORIGEM_SUZANO.cmun, CepOrigem: CIOT_ORIGEM_SUZANO.cep },
+      Destino: { CodigoMunicipioDestino: Number(ult.cmun) || 0, CepDestino: ciotDigitos(ult.cep) },
+      DistanciaPercorrida: Math.round(Number(v && v.km) || 0),
+    }],
+    DadosCarga: { CodigoNaturezaCarga: Number((state.config && state.config.ciotNatureza) || 4802), PesoCarga: Math.round(t.peso * 100) / 100, CodigoTipoCarga: 5 },
+  };
+  if (frac) op.DadosCarga.ContratantesCargaFrac = [contratante];
+  else op.InfIndicadoresOperacionais = { IndAltoDesempenho: false, IndRetornoVazio: false, ComposicaoVeicular: false };
+  var falta = [];
+  if (!contratante) falta.push("CNPJ da Suzano (chave da NF-e)");
+  if (!op.CpfCnpjDestinatario) falta.push("CNPJ do destinatário");
+  if (!op.OrigemDestino[0].Destino.CodigoMunicipioDestino) falta.push("código IBGE do destino (vem do CT-e autorizado)");
+  if (!op.OrigemDestino[0].DistanciaPercorrida) falta.push("km da viagem (viagem prevista da roteirização)");
+  if (!(op.DadosCarga.PesoCarga > 0)) falta.push("peso da carga");
+  if (!(op.ValorFrete > 0)) falta.push("valor do frete");
+  return { op: op, falta: falta, viagem: v };
+}
+function ciotEmitir(cargaId, placa) {
+  var c = szCarga(cargaId); if (!c) return;
+  if (!ciotLigado()) { alert("O CIOT pelo app ainda não foi liberado pela ANTT. Continue gerando no SimplesCTe e digite o número no MDF-e."); return; }
+  var m = ciotMontar(c, placa), op = m.op;
+  if (m.falta.length) { alert("Falta para o CIOT:\n- " + m.falta.join("\n- ")); return; }
+  if (!confirm("Emitir CIOT na ANTT\n\nPlaca " + op.Veiculos[0].Placa + " · " + (op.TipoOperacao === 2 ? "carga fracionada" : "lotação")
+    + "\nContratante " + op.CpfCnpjContratante + "\nFrete " + fmtR(op.ValorFrete) + " · peso " + op.DadosCarga.PesoCarga + " kg · " + op.OrigemDestino[0].DistanciaPercorrida + " km"
+    + "\nViagem " + exDataBr(op.DataInicioViagem) + " a " + exDataBr(op.DataFimViagem))) return;
+  c.ciotApp = { status: "enviando", em: Date.now(), por: ccQuem() }; rfFiscalToca(c);
+  ciotChamar({ acao: "declarar", op: op }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    if (j && j.ok && j.ciot) {
+      var cod = ciotDigitos(j.ciot);
+      c2.ciotApp = { status: "declarado", ciot: cod, id12: cod.slice(0, 12), protocolo: (j.j && j.j.Protocolo) || "", amb: j.ambiente, em: Date.now(), por: ccQuem(), enviado: j.enviado };
+      if (j.ambiente === "producao") c2.fiscalCiot = cod.slice(0, 12);   // vai sozinho para o MDF-e
+    } else {
+      var msg = (j && j.j && (j.j.message || j.j.Mensagem || JSON.stringify(j.j))) || (j && (j.erro || j.status)) || "sem resposta";
+      c2.ciotApp = { status: "erro", erro: String(msg).slice(0, 300), em: Date.now(), amb: j && j.ambiente };
+    }
+    rfFiscalToca(c2);
+  }).catch(function (e) { var c2 = szCarga(cargaId); if (c2) { c2.ciotApp = { status: "erro", erro: String(e && e.message || e) }; rfFiscalToca(c2); } });
+}
+function ciotEncerrar(cargaId) {
+  var c = szCarga(cargaId), a = c && c.ciotApp; if (!a || !a.ciot) return;
+  var t = szEmisTotais(c);
+  if (!confirm("Encerrar o CIOT " + a.ciot + " na ANTT (viagem concluída)?")) return;
+  ciotChamar({ acao: "encerrar", ciot: a.ciot, peso: a.enviado && a.enviado.TipoOperacao === 1 ? t.peso : 0 }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    if (j && j.ok) { c2.ciotApp.status = "encerrado"; c2.ciotApp.encerradoEm = Date.now(); }
+    else alert("A ANTT respondeu: " + JSON.stringify((j && (j.j || j.erro)) || j).slice(0, 300));
+    rfFiscalToca(c2);
+  }).catch(function (e) { alert("Erro: " + (e && e.message || e)); });
+}
+function ciotCancelar(cargaId) {
+  var c = szCarga(cargaId), a = c && c.ciotApp; if (!a || !a.ciot) return;
+  var mot = prompt("Cancelar o CIOT " + a.ciot + ".\nA ANTT só aceita até 24h depois do início da viagem.\n\nMotivo:", "Operação não realizada");
+  if (!mot) return;
+  ciotChamar({ acao: "cancelar", ciot: a.ciot, motivo: mot }).then(function (j) {
+    var c2 = szCarga(cargaId); if (!c2) return;
+    if (j && j.ok) { c2.ciotApp.status = "cancelado"; c2.ciotApp.canceladoEm = Date.now(); if (c2.fiscalCiot === a.id12) c2.fiscalCiot = ""; }
+    else alert("A ANTT respondeu: " + JSON.stringify((j && (j.j || j.erro)) || j).slice(0, 300));
+    rfFiscalToca(c2);
+  }).catch(function (e) { alert("Erro: " + (e && e.message || e)); });
+}
+function ciotTestar() {
+  state._ciotTeste = "testando a conexão com a ANTT..."; render();
+  ciotChamar({ acao: "diagnostico" }).then(function (j) {
+    var msg = (j && j.j && (j.j.message || j.j.Mensagem)) || (j && j.erro) || "";
+    state._ciotTeste = (j && j.ok ? "✓ ANTT respondeu OK (" + j.ambiente + ") — pode ligar o CIOT pelo app." : "✖ ANTT (" + (j && j.ambiente) + "): " + (msg || ("status " + (j && j.status)))) ;
+    render();
+  }).catch(function (e) { state._ciotTeste = "✖ " + (e && e.message || e); render(); });
+}
+function ciotLigar(v) { if (!ehAdmin()) return; garantirConfig(); state.config.ciotApp = !!v; salvar(); render(); }
+function ciotHTML(c, placa) {
+  var esps = c.espelhos || []; if (!esps.length) return "";
+  var cid = esc(String(c.id)), a = c.ciotApp || {};
+  var h = '<div style="border:1px solid #AB47BC;border-radius:8px;padding:8px 11px;margin-top:8px;background:rgba(171,71,188,0.06);">'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><span style="font-size:11px;font-weight:800;color:#CE93D8;">CIOT PELO APP (ANTT)</span>';
+  if (!ciotLigado()) {
+    h += '<span style="font-size:10.5px;color:#999;">aguardando a ANTT liberar o certificado da RF · por enquanto o CIOT sai no SimplesCTe</span>';
+    if (ehAdmin()) h += '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ciotTestar()">🔌 testar ANTT</button>'
+      + '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="if(confirm(\'Ligar o CIOT pelo app? Só depois que a ANTT liberar.\'))ciotLigar(true)">ligar</button>';
+    if (state._ciotTeste) h += '<div style="width:100%;font-size:10.5px;color:#bbb;">' + esc(state._ciotTeste) + '</div>';
+    return h + '</div></div>';
+  }
+  if (a.status === "declarado" || a.status === "encerrado") {
+    h += '<span style="font-size:12px;color:#66BB6A;font-weight:800;">✓ CIOT ' + esc(a.ciot) + '</span>' + rfFiscalAmbTag(a.amb)
+      + (a.status === "encerrado" ? '<span style="font-size:10.5px;color:#999;">encerrado</span>'
+        : '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ciotEncerrar(\'' + cid + '\')">encerrar</button>'
+        + '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#E57373;border-color:#E57373;" onclick="ciotCancelar(\'' + cid + '\')">cancelar</button>');
+  } else if (a.status === "enviando") {
+    h += '<span style="font-size:11px;color:#F2E600;">⏳ enviando para a ANTT...</span>';
+  } else {
+    var m = ciotMontar(c, placa);
+    h += '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#CE93D8;color:#CE93D8;font-weight:800;" onclick="ciotEmitir(\'' + cid + '\',\'' + esc(placa || "") + '\')">🆔 ' + (a.status === "erro" || a.status === "cancelado" ? "Emitir de novo" : "Emitir CIOT") + '</button>'
+      + (m.falta.length ? '<span style="font-size:10.5px;color:' + GOLD + ';">falta: ' + esc(m.falta.join(", ")) + '</span>' : '<span style="font-size:10.5px;color:#999;">' + (m.op.TipoOperacao === 2 ? "fracionada" : "lotação") + ' · ' + fmtR(m.op.ValorFrete) + ' · ' + m.op.OrigemDestino[0].DistanciaPercorrida + ' km</span>');
+    if (a.status === "erro") h += '<div style="width:100%;font-size:10.5px;color:#E57373;">ANTT: ' + esc(a.erro || "") + '</div>';
+  }
+  return h + '</div></div>';
+}
+function ciotContextoAssistente() {
+  return "\nCIOT PELO APP (v482, 29/09/2026): a RF vai emitir o CIOT de frota propria DIRETO na ANTT (gratis, webservice pefServices, Portaria SUROC 6/2026 art. 3o II), sem SimplesCTe e sem entregar o certificado a site de terceiro. Onde: aba Carregamento Suzano, quadro roxo 'CIOT PELO APP (ANTT)' logo acima do MDF-e da carga: Emitir CIOT (monta sozinho contratante = CNPJ da Suzano pela chave da NF, destinatario, frete, peso, km e dias da viagem prevista, origem Simoes Filho, destino do ultimo CT-e), encerrar e cancelar (ate 24h do inicio). Em producao o numero (12 digitos) entra sozinho no MDF-e. SITUACAO: " + (ciotLigado() ? "LIGADO." : "AGUARDANDO A ANTT liberar o certificado da RF (pedido a pef@antt.gov.br): a homologacao responde que o CNPJ do certificado nao corresponde a transportador no RNTRC e a producao fecha a conexao; ate liberar, o CIOT continua saindo no SimplesCTe e e digitado no MDF-e. Botao 'testar ANTT' mostra a resposta atual.") + "\n";
+}
+/* ===== fim v482 ===== */
 function rfFiscalMdfeHTML(c, placa) {
   var esps = c.espelhos || [];
   if (!esps.length) return "";
   var aut = esps.filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).length;
   var m = c.fiscalMdfe || {};
   var cid = esc(String(c.id));
-  var h = '<div style="border:1px solid #4FC3F7;border-radius:8px;padding:9px 11px;margin-top:8px;background:rgba(79,195,247,0.05);">'
+  var h = ciotHTML(c, placa) + '<div style="border:1px solid #4FC3F7;border-radius:8px;padding:9px 11px;margin-top:8px;background:rgba(79,195,247,0.05);">'
     + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
     + '<span style="font-size:11px;font-weight:800;color:#4FC3F7;">MDF-e PELO APP</span>' + rfFiscalAmbTag(m.amb)
     + '<span style="font-size:10.5px;color:#999;">' + aut + ' de ' + esps.length + ' CT-e autorizados</span>';
@@ -16782,7 +16935,7 @@ function mdContextoAssistente() {
     var tt = ttLista().map(function (t) { return "- " + t.cliente + ": " + (t.tipo === "km" ? "R$ " + t.valor + "/km (Toco)" + (t.km34 !== "" && t.km34 != null ? " e R$ " + t.km34 + "/km (3/4)" : "") : "adicional de R$ " + t.valor + " por viagem") + " para saídas de " + (t.de || "sempre") + " até " + (t.ate || "sem data de fim") + (t.obs ? " (" + t.obs + ")" : ""); });
     return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado. v469: o casamento recibo→viagem aceita placa com um caractere diferente (a leitura confunde I e J), usa também a data em que a viagem foi cadastrada e, se o primeiro nome do motorista bate, aceita até 10 dias de diferença; recibo que ficou \"sem viagem no sistema\" tem, no card da medição, um seletor para escolher a viagem e o botão vincular (pede tratamento e justificativa se o valor divergir).\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
-      + scContextoAssistente()
+      + scContextoAssistente() + (typeof ciotContextoAssistente === "function" ? ciotContextoAssistente() : "")
       + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
       + mdSubContexto()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
