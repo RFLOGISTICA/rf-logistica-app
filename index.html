@@ -16729,7 +16729,7 @@ function mdContextoAssistente() {
     return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado. v469: o casamento recibo→viagem aceita placa com um caractere diferente (a leitura confunde I e J), usa também a data em que a viagem foi cadastrada e, se o primeiro nome do motorista bate, aceita até 10 dias de diferença; recibo que ficou \"sem viagem no sistema\" tem, no card da medição, um seletor para escolher a viagem e o botão vincular (pede tratamento e justificativa se o valor divergir).\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
       + scContextoAssistente()
-      + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5351, a confirmar com o contador; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
+      + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
       + mdSubContexto()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
   } catch (e) { return ""; }
@@ -17170,8 +17170,8 @@ function scContextoAssistente() {
    (tipo de serviço 1) pela rf-sefaz v13, com: tomador = contratante (JDL), remetente
    e destinatário do CT-e referenciado (endereços puxados da Receita pelo CNPJ), as
    NF-e daquele CT-e e a lista das viagens da medição na observação. Não averba (a
-   carga viajou no seguro da contratante). CFOP padrão 5351 — confirmar com o contador. */
-var SUB_CFOP = [["5351", "5351 — transporte para execução de serviço da mesma natureza (subcontratação)"], ["5360", "5360 — prestação a contribuinte substituto"], ["5353", "5353 — prestação a estabelecimento comercial"]];
+   carga viajou no seguro da contratante). CFOP padrão 5360 (6360 interestadual) — Resposta à Consulta SEFAZ-SP 18537/2018. */
+var SUB_CFOP = [["5360", "5360 — subcontratação dentro da BA (prestação a contribuinte substituto)"], ["6360", "6360 — subcontratação para outro estado"], ["5351", "5351 — transporte para serviço da mesma natureza"]];
 function subNum3(v) { var t = String(v == null ? "" : v).replace(/[^\d,.]/g, ""); if (t.indexOf(",") >= 0) t = t.replace(/\./g, "").replace(",", "."); var n = Number(t); return isFinite(n) ? n : 0; }
 function subDig(v) { return String(v == null ? "" : v).replace(/\D/g, ""); }
 function subChaveOk(c) { c = subDig(c); if (c.length !== 44) return false; var s = 0, p = 2; for (var i = 42; i >= 0; i--) { s += Number(c[i]) * p; p = p === 9 ? 2 : p + 1; } var r = s % 11; return String(r < 2 ? 0 : 11 - r) === c[43]; }
@@ -17197,7 +17197,7 @@ function subObsPadrao(md) {
 function subAbrir(medId) {
   var md = mdAcha(medId); if (!md) return;
   state._sub = { id: medId, chaveAnt: "", remCnpj: "96.755.848/0001-08", remIe: "36953491", destCnpj: "", destIe: "", tomCnpj: "", tomIe: "076024300",
-    nfes: "", valorCarga: "", peso: "", volumes: "", produto: "", cfop: "5351", base: "bruto", obs: subObsPadrao(md), previa: null, msg: "" };
+    nfes: "", valorCarga: "", peso: "", volumes: "", produto: "", cfop: "5360", base: "bruto", obs: subObsPadrao(md), previa: null, msg: "" };
   render();
 }
 function subSet(k, v, re) { if (state._sub) { state._sub[k] = v; if (k !== "previa" && k !== "msg") state._sub.previa = null; } if (re) render(); }
@@ -17303,7 +17303,7 @@ function subBlocoHTML(md) {
       + '<textarea ' + inp + 'width:100%;height:58px;font-family:monospace;" oninput="subSet(\'nfes\',this.value)" onchange="render()">' + esc(s.nfes) + '</textarea>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("valorCarga", "Valor da carga (R$)", 120) + campo("peso", "Peso (kg)", 100) + campo("volumes", "Volumes", 80) + campo("produto", "Produto predominante", 220) + '</div>'
       + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">'
-      + '<div>' + lab("CFOP (confirmar com o contador)") + '<select ' + inp + '" onchange="subSet(\'cfop\',this.value)">' + SUB_CFOP.map(function (o) { return '<option value="' + o[0] + '"' + (s.cfop === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") + '</select></div>'
+      + '<div>' + lab("CFOP") + '<select ' + inp + '" onchange="subSet(\'cfop\',this.value)">' + SUB_CFOP.map(function (o) { return '<option value="' + o[0] + '"' + (s.cfop === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") + '</select></div>'
       + '<div style="padding-bottom:6px;">' + lab("Valor do CT-e") + '<label style="font-size:12px;color:#ddd;margin-right:12px;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base !== "liquido" ? "checked" : "") + ' onchange="subSet(\'base\',\'bruto\',true)"> frete bruto ' + fmtR(md.totalFrete) + '</label>'
       + '<label style="font-size:12px;color:#ddd;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "liquido" ? "checked" : "") + ' onchange="subSet(\'base\',\'liquido\',true)"> líquido a pagar ' + fmtR(md.totalAPagar) + '</label></div></div>'
       + lab("Observação que sai no CT-e") + '<textarea ' + inp + 'width:100%;height:70px;" oninput="subSet(\'obs\',this.value)">' + esc(s.obs) + '</textarea>';
