@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v482)</title>
+<title>RF Logística — Painel da Frota (v483)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v482">
+<meta name="rf-versao" content="v483">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v482" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v483" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -839,7 +839,15 @@ function rfCarimbar(lista, snapAnterior, agora) {
     var copia = {}; for (var kk in x) { if (kk !== "atualizadoEm") copia[kk] = x[kk]; }
     var json;
     try { json = JSON.stringify(copia); } catch (e) { return; }
-    if (antes === undefined || antes !== json) x.atualizadoEm = agora;
+    /* v483 -- BUG GRAVE CORRIGIDO: sem instantaneo anterior (primeira vez na
+       sessao, ou logo depois de baixar da nuvem, que zera o __rfSnap) TODO item
+       recebia o carimbo "agora". Assim o aparelho que abria com dados velhos
+       passava a ter a versao "mais nova" de tudo e, na subida, apagava o que o
+       outro aparelho acabara de gravar (caso real 29/09: viagem do Gustavo
+       aprovada no celular voltou a "em andamento" e sem a foto de chegada depois
+       que o tablet abriu). Agora, sem instantaneo, so se tira a foto do estado
+       (linha de base); carimba apenas o que mudou DEPOIS dela. */
+    if (snapAnterior && (antes === undefined || antes !== json)) x.atualizadoEm = agora;
     snapNovo[k] = json;
   });
   if (snapAnterior) {
@@ -6109,6 +6117,7 @@ let state = {
   saldoCamVeiculoId: "",
   mesAtivo: new Date().toISOString().slice(0, 7),
 };
+try { rfCarimbarTudo(); } catch (e) {}   // v483: linha de base do que veio do aparelho (nao carimba nada)
 
 /* ===== Migração de dívidas com prazo (v42) ==============================
    Versões antigas guardavam só "parcelasRestantes" (texto), que não sabia
