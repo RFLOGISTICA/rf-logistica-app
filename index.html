@@ -2,11 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v461)</title>
+<title>RF Logística — Painel da Frota (v462)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v461">
-<meta name="rf-data" content="2026-09-28">
+<meta name="rf-versao" content="v462">
+<meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
      Muito servico e peca sao pegos na conta de fornecedor que fatura o mes, e a
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v461" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v462" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -6357,6 +6357,10 @@ function veiculosDoCliente(cliente, soAptos) {
 function atualizarVeiculo(id, campo, valor) {
   const v = state.veiculos.find((x) => String(x.id) === String(id));
   if (!v) return;
+  // v462: trocar o motorista do caminhão NÃO pode levar viagens de um pro outro
+  if (campo === "motorista" && String(v.motorista || "") !== String(valor || "")) {
+    rfCongelarMotoristaViagens(v.placa, v.motorista || "");
+  }
   if (CAMPOS_MES.indexOf(campo) !== -1) { mesV(v)[campo] = valor; }  // campo do mês
   else if (campo === "receitaMes" || campo === "custoMes") { mesV(v)[campo] = valor; } // v47: manual por mês (não vaza p/ outros meses)
   else { v[campo] = valor; }                                         // cadastro fixo
@@ -7160,6 +7164,11 @@ function enviarViagemParaMotorista(id, motoristaUid) {
   if (!m) { alert("Motorista não encontrado."); return; }
   v.motoristaDesignadoUid = motoristaUid;
   v.motoristaDesignadoNome = m.nome || m.email || "";
+  // v462: a viagem é do MOTORISTA, nunca da placa. Enviar pra um login grava o
+  // dono da viagem -- antes ficava só no "designado" e motoristaNaEpoca vazio,
+  // e aí a tela caía no motorista ATUAL do caminhão (foi assim que a viagem do
+  // Jorge.Lima virou do Anderson.Santiago ao trocar o motorista do QDO5E70).
+  if (m.nome) v.motoristaNaEpoca = m.nome;
   v.statusMotorista = "aguardando_motorista";
   salvar(); render();
 }
@@ -7501,8 +7510,23 @@ function seletorMotoristaVeiculo(v) {
 }
 function motoristaDaViagem(v) {
   if (v.motoristaNaEpoca) return v.motoristaNaEpoca;
+  if (v.motoristaDesignadoNome) return v.motoristaDesignadoNome;   // v462: login pra quem foi enviada
   const vc = state.veiculos.find((x) => x.placa === v.placa);
   return (vc && vc.motorista) || "";
+}
+// v462: REGRA DO RENATO (02/09) -- a viagem é do motorista, nunca da placa.
+// Congela o dono de toda viagem da placa que ainda não tem motoristaNaEpoca,
+// usando o login designado ou, se não houver, o motorista que estava no caminhão
+// ANTES da troca. Chamada antes de mudar o motorista do veículo e após carregar a nuvem.
+function rfCongelarMotoristaViagens(placa, motoristaAnterior) {
+  let n = 0;
+  (state.viagens || []).forEach(function (v) {
+    if (v.motoristaNaEpoca) return;
+    if (placa && v.placa !== placa) return;
+    const dono = v.motoristaDesignadoNome || motoristaAnterior || "";
+    if (dono) { v.motoristaNaEpoca = dono; n++; }
+  });
+  return n;
 }
 
 // Auto-preenchimento conforme o modo do cliente.
@@ -26022,6 +26046,7 @@ function gerarContextoAssistente() {
   /* v417: o assistente precisa saber que viagem tem DUAS datas, senao explica
      errado quando alguem pergunta por que o mes mudou ou por que os dias
      cairam. Regra permanente: toda novidade entra tambem aqui. */
+  const blocoDonoViagem = "DONO DA VIAGEM (v462, regra do Renato): a viagem e' do MOTORISTA (login), nunca da placa. O dono fica gravado em motoristaNaEpoca -- ao enviar a viagem para um login, esse login vira o dono; ao trocar o motorista de um caminhao na aba Frota, as viagens antigas daquela placa ficam com quem as fez (o motorista anterior ou o login para quem foram enviadas) e NAO passam para o motorista novo. Se perguntarem de quem e' uma viagem, responda pelo motoristaNaEpoca, nunca pelo motorista atual do caminhao.";
   const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
   /* v418: sem isto o assistente diz que a viagem tem N paradas quando ela tem
      N-1, e nao sabe explicar por que o peso entregue nao bate com o FOCRI. */
@@ -26705,6 +26730,7 @@ ${blocoDonoDaRota}
 ${blocoCaixasViagens}
 
 ${blocoExportViagens}
+${blocoDonoViagem}
 ${blocoDatasViagem}
 ${blocoNaoVieram}
 ${blocoNotaVazia}
@@ -30504,6 +30530,14 @@ revalidarSessaoAoAbrir();
         const nKm = recalcularKmTodasViagens();
         if (nKm) console.log("[viagens] KM rodado recalculado pelas fotos em " + nKm + " viagem(ns)");
       } catch (e) { console.error("[viagens km]", e); }
+      // v462: viagem enviada a um login e sem dono gravado -> o dono é o login
+      try {
+        let nDono = 0;
+        (state.viagens || []).forEach(function (v) {
+          if (!v.motoristaNaEpoca && v.motoristaDesignadoNome) { v.motoristaNaEpoca = v.motoristaDesignadoNome; nDono++; }
+        });
+        if (nDono) console.log("[viagens] dono da viagem gravado pelo login designado em " + nDono + " viagem(ns)");
+      } catch (e) { console.error("[viagens dono]", e); }
       // v213: realinha "última troca" do cadastro com os lançamentos de troca
       try {
         const nAj = sincronizarOleoUltimaTodas();
