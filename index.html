@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v473)</title>
+<title>RF Logística — Painel da Frota (v474)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v473">
+<meta name="rf-versao" content="v474">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v473" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v474" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -17201,6 +17201,9 @@ function subAbrir(medId) {
   render();
 }
 // v471: anexa o CT-e da contratante e preenche tudo sozinho (XML lê direto; PDF/foto pela IA ler-dacte)
+function subFaltamNf(s) { var ok = subChavesDoTexto(s.nfes).filter(subChaveOk).length; return Math.max(0, (Number(s.qtdDocs) || 0) - ok); }
+function subAddNf(v) { var s = state._sub; if (!s) return; var novas = subChavesDoTexto(v).filter(subChaveOk); if (!novas.length) { alert("Essa chave não fecha o dígito verificador — confira os 44 números no DACTE."); return; }
+  var atuais = subChavesDoTexto(s.nfes); novas.forEach(function (c) { if (atuais.indexOf(c) < 0) atuais.push(c); }); s.nfes = atuais.join("\n"); s.previa = null; render(); subPrevia(); }
 function subAplicarLido(d) {
   var s = state._sub; if (!s) return;
   s.chaveAnt = d.chave || ""; s.remCnpj = d.remCnpj || ""; s.remIe = d.remIe || ""; s.destCnpj = d.destCnpj || ""; s.destIe = d.destIe || "";
@@ -17209,7 +17212,7 @@ function subAplicarLido(d) {
   s.nfes = (d.nfes || []).join("\n"); s.valorCarga = d.valorCarga ? String(d.valorCarga).replace(".", ",") : "";
   s.peso = d.peso ? String(d.peso).replace(".", ",") : ""; s.volumes = d.volumes ? String(d.volumes) : ""; s.produto = d.produto || "";
   s.lidoResumo = (d.emitNome ? d.emitNome + " · " : "") + (d.origem || "") + (d.destino ? " → " + d.destino : "") + (d.nfes && d.nfes.length ? " · " + d.nfes.length + " NF-e" : "") + (d.valorCarga ? " · carga " + fmtR(d.valorCarga) : "");
-  s.tentou = true;
+  s.tentou = true; s.qtdDocs = Number(d.qtdDocs) || (d.nfes || []).length; s.nfFaltando = d.nfFaltando || [];
   if (d.chaveDoQr) s.lidoResumo += " · chave lida do QR code ✓";
   if (d.erroIA) s.lidoResumo += " · a leitura do resto falhou (" + d.erroIA + ") — preencha abaixo";
   var ruins = subChavesDoTexto(s.nfes).filter(function (c) { return !subChaveOk(c); }).length;
@@ -17258,7 +17261,7 @@ function subLerRef(input) {
       var j = r[1] || {};
       if (j.erroIA && !qrs.length) throw new Error(j.erroIA);
       var nf = (j.nfes || []).map(function (n) { return n.chave; });
-      return { chave: qrs[0] || j.chave, chaveDoQr: !!qrs[0], erroIA: j.erroIA || "", emitNome: (j.emitente || {}).nome, emitIe: (j.emitente || {}).ie, remCnpj: (j.remetente || {}).cnpj, remIe: (j.remetente || {}).ie,
+      return { chave: qrs[0] || j.chave, chaveDoQr: !!qrs[0], erroIA: j.erroIA || "", qtdDocs: Number(j.qtdDocumentos) || 0, nfFaltando: j.nfFaltando || [], emitNome: (j.emitente || {}).nome, emitIe: (j.emitente || {}).ie, remCnpj: (j.remetente || {}).cnpj, remIe: (j.remetente || {}).ie,
         destCnpj: (j.destinatario || {}).cnpj, destIe: (j.destinatario || {}).ie, nfes: nf, nfesRuins: (j.nfes || []).filter(function (n) { return !n.ok; }).length,
         valorCarga: j.valorCarga, peso: j.peso, volumes: j.volumes, produto: j.produto, origem: j.origem, destino: j.destino };
     });
@@ -17304,6 +17307,7 @@ function subEmitir(homolog) {
   if (!ehAdmin()) return;
   var s = state._sub, md = s && mdAcha(s.id); if (!md) return;
   if (!s.previa) { alert("Clique primeiro em Conferir, para ver os dados que vão no CT-e."); return; }
+  if (subFaltamNf(s) > 0) { alert("Falta NF-e: o DACTE da contratante tem " + s.qtdDocs + " nota(s) e só " + (s.qtdDocs - subFaltamNf(s)) + " foi(ram) lida(s). Cole a chave que falta no quadro vermelho antes de emitir."); return; }
   var c = subCorpo(s, md);
   if (!homolog && !confirm("Emitir AGORA na SEFAZ (produção, com valor fiscal) o CT-e de subcontratação de " + fmtR(c.valorFrete) + " para " + (s.previa.toma4 ? s.previa.toma4.xNome : "a contratante") + "?\n\nDepois de autorizado só dá para cancelar em até 7 dias.")) return;
   md.ctesSub = md.ctesSub || [];
@@ -17380,8 +17384,15 @@ function subBlocoHTML(md) {
         + '<label style="font-size:12px;color:#ddd;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "outro" ? "checked" : "") + ' onchange="subSet(\'base\',\'outro\',true)"> outro</label>'
         + (s.base === "outro" ? ' <input ' + inp + 'width:120px;" value="' + esc(s.valorOutro || "") + '" placeholder="R$" oninput="subSet(\'valorOutro\',this.value)">' : "") + '</div>'
         + '<div style="flex:1;min-width:240px;">' + lab("Cliente (tomador do serviço) — CNPJ") + '<input ' + inp + 'width:100%;" value="' + esc(s.tomCnpj || "") + '" placeholder="vazio = a transportadora que emitiu o CT-e de referência" oninput="subSet(\'tomCnpj\',this.value)"></div></div>';
+      var faltam = subFaltamNf(s);
+      if (faltam > 0) {
+        h += '<div style="margin-top:8px;padding:8px 10px;border:1px solid #E57373;border-radius:6px;background:rgba(229,115,115,0.08);font-size:12px;color:#ffd2d2;">'
+          + '<b style="color:#E57373;">⚠ O DACTE tem ' + s.qtdDocs + ' NF-e e ' + (faltam === 1 ? "1 não foi lida" : faltam + " não foram lidas") + (s.nfFaltando && s.nfFaltando.length ? " (NF " + esc(s.nfFaltando.join(", ")) + ")" : "") + '.</b> O CT-e só sai com todas.<br>'
+          + 'Cole a chave que falta (44 números, como está no DACTE — pode ser com pontos e traços): '
+          + '<input ' + inp + 'width:100%;margin-top:4px;font-family:monospace;" placeholder="29-26/09-96.755.848/0001-08-55-003/002289646-1-46161948-2" onchange="subAddNf(this.value)"></div>';
+      }
       // demais dados lidos: escondidos, só para corrigir se a leitura errar
-      h += '<details style="margin-top:8px;"' + (s.abrirDados ? " open" : "") + '><summary style="font-size:11px;color:#4FC3F7;cursor:pointer;">ver / corrigir os dados lidos do CT-e</summary>'
+      h += '<details style="margin-top:8px;"' + (s.abrirDados ? " open" : "") + '><summary style="display:inline-block;font-size:12px;color:#4FC3F7;cursor:pointer;border:1px solid #4FC3F7;border-radius:6px;padding:3px 10px;">✏ ver / corrigir os dados lidos do CT-e</summary>'
         + lab("Chave do CT-e da contratante") + '<input ' + inp + 'width:100%;font-family:monospace;" value="' + esc(s.chaveAnt) + '" oninput="subSet(\'chaveAnt\',this.value)">'
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("remCnpj", "CNPJ do remetente", 160) + campo("remIe", "IE do remetente", 100) + campo("destCnpj", "CNPJ do destinatário", 160) + campo("destIe", "IE do destinatário", 100) + campo("tomIe", "IE do tomador", 100) + '</div>'
         + lab("Chaves das NF-e (" + subChavesDoTexto(s.nfes).length + ")") + '<textarea ' + inp + 'width:100%;height:50px;font-family:monospace;" oninput="subSet(\'nfes\',this.value)">' + esc(s.nfes) + '</textarea>'
@@ -17396,7 +17407,7 @@ function subBlocoHTML(md) {
         + 'Tipo: <b>SUBCONTRATAÇÃO</b> · CFOP ' + esc(p.CFOP) + ' · ' + esc(p.ini.xMun) + '/' + esc(p.ini.UF) + ' → ' + esc(p.fim.xMun) + '/' + esc(p.fim.UF) + '<br>'
         + 'Cliente (tomador): <b>' + esc(p.toma4 ? p.toma4.xNome + " — " + p.toma4.CNPJ : (p.toma3 === "3" ? "o destinatário" : "o remetente")) + '</b><br>'
         + 'Remetente: ' + esc(p.rem.xNome) + ' · Destinatário: ' + esc(p.dest.xNome) + '<br>'
-        + 'CT-e referenciado: ' + esc(((p.docAnt || [])[0] || {}).xNome || "") + ' · ' + (p.nfes || []).length + ' NF-e · carga ' + fmtR(p.vCarga) + '<br>'
+        + 'CT-e referenciado: ' + esc(((p.docAnt || [])[0] || {}).xNome || "") + ' · <b style="color:' + ((p.nfes || []).length < (Number(s.qtdDocs) || 0) ? "#E57373" : "#66BB6A") + ';">' + (p.nfes || []).length + (s.qtdDocs ? ' de ' + s.qtdDocs : "") + ' NF-e</b> · carga ' + fmtR(p.vCarga) + '<br>'
         + 'Valor do frete: <b style="font-size:13px;">' + fmtR(p.vPrest) + '</b> · sem averbação (a carga viajou no seguro da contratante)</div>';
     }
     h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
