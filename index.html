@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v467)</title>
+<title>RF Logística — Painel da Frota (v468)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v467">
+<meta name="rf-versao" content="v468">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v467" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v468" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15680,6 +15680,8 @@ function exVincTexto(l) {
     + ((v.viagensMot || []).length ? (v.viagensMot.length + " viagem(ns) " + fmtR(v.valorViagens) + (v.resto > 0.04 ? " + " + fmtR(v.resto) + " " + esc(String(v.finalidade || "").toLowerCase()) : "")) : esc(v.finalidade || "Combustível"));
   if (v.tipo === "abastecimento") return "⛽ abastecimento pago ao posto · " + esc(exMotNomeBonito(v.motorista)) + " · " + esc(v.placa || "") + " · " + exDataBr(String(v.dataAbast || "").slice(0, 10)) + " · " + fmtR(v.valorAbast) + (Math.abs(v.dif || 0) >= 0.05 ? ' <span style="color:#FFB74D;">(diferença ' + fmtR(v.dif) + ')</span>' : "");
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
+  if (v.tipo === "viagens" && v.demonstrativo && v.demonstrativo.compensacao) return "🧾 compensação Suzano · " + (v.ids || []).length + " viagem(ns) · " + fmtR(v.soma)
+    + (Math.abs(v.dif || 0) >= 0.05 ? ' · <span style="color:#FFB74D;">' + fmtR(v.dif) + ' fora das viagens</span>' : "") + (v.obs ? ' <span style="color:#888;">(' + esc(v.obs) + ')</span>' : "");
   if (v.tipo === "viagens" && v.demonstrativo) return (v.ids || []).length + " viagem(ns) quitada(s) pelo demonstrativo · fretes " + fmtR(v.soma) + ' · <span style="color:#FFB74D;">descontos ' + fmtR(v.descontos || 0) + '</span>'
     + (v.demonstrativo.arquivo ? ' · <a href="javascript:void(0)" onclick="ccVer(\'' + esc(v.demonstrativo.arquivo) + '\')" style="color:#4FC3F7;">demonstrativo</a>' : "")
     + ((v.difFrete || []).length && !v.difFreteEncerrada ? ' · <span style="color:#E57373;">' + v.difFrete.length + ' viagem(ns) com frete a receber</span>' : "")
@@ -16581,6 +16583,7 @@ function mdExcluir(medId) {
 }
 function mdToggle(id) { state._mdAberta = state._mdAberta === id ? "" : id; render(); }
 function mdCardHTML(md) {
+  if (md.tipo === "compensacao") return scCardHTML(md);
   var st = mdStatusTxt(md), ab = state._mdAberta === md.id, abertas = mdDifsAbertas(md);
   var h = '<div style="border:1px solid #2A2A2A;border-left:5px solid ' + st.c + ';border-radius:10px;background:#111;padding:11px 13px;margin-bottom:10px;">'
     + '<div onclick="mdToggle(\'' + esc(md.id) + '\')" style="cursor:pointer;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">'
@@ -16637,15 +16640,16 @@ function mdCardHTML(md) {
 }
 function mdTelaHTML() {
   var l = mdLista().slice().sort(function (a, b) { return String(b.criadoEm || "").localeCompare(String(a.criadoEm || "")); });
-  var aRec = l.filter(function (m) { return m.status !== "paga"; });
+  var aRec = l.filter(function (m) { return m.status !== "paga" && m.tipo !== "compensacao"; });
   var tAR = Math.round(aRec.reduce(function (s, m) { return s + (m.totalAPagar || 0); }, 0) * 100) / 100;
-  var nDif = l.reduce(function (s, m) { return s + mdDifsAbertas(m).length; }, 0);
+  var nDif = l.reduce(function (s, m) { return s + (m.tipo === "compensacao" ? scPendentes(m) : mdDifsAbertas(m).length); }, 0);
   var inp = 'style="font-size:12px;padding:6px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;"';
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">'
     + '<div><div style="font-size:22px;font-weight:800;color:' + GOLD + ';">📑 Medições</div>'
     + '<div style="font-size:12px;color:#999;">Anexe a medição do cliente: as viagens ficam A RECEBER. Quando o dinheiro entrar, dê baixa com o crédito do extrato ou com o comprovante.</div></div>'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">cliente <select id="md-cliente" ' + inp + '>' + (state.clientes || []).map(function (c) { return '<option' + (c === "Mercante/JDL" ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>'
-    + '<label style="cursor:pointer;font-size:13px;font-weight:800;background:' + GOLD + ';color:#000;padding:8px 16px;border-radius:9px;">📎 Anexar medição (PDF ou imagem)<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="mdLer(this)"></label></div></div>'
+    + '<label style="cursor:pointer;font-size:13px;font-weight:800;background:' + GOLD + ';color:#000;padding:8px 16px;border-radius:9px;">📎 Anexar medição (PDF ou imagem)<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="mdLer(this)"></label>'
+    + '<label style="cursor:pointer;font-size:13px;font-weight:800;border:1px solid ' + GOLD + ';color:' + GOLD + ';padding:7px 14px;border-radius:9px;">' + (state._scMsg ? "⏳ " + esc(state._scMsg) : "📎 Compensação Suzano (planilha)") + '<input type="file" style="display:none;" onchange="scLer(this)"></label></div></div>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px;">'
     + statCard("Medições a receber", String(aRec.length), aRec.length ? GOLD : "#2E7D32")
     + statCard("Valor a receber", fmtR(tAR), tAR ? GOLD : "#2E7D32")
@@ -16666,10 +16670,435 @@ function mdContextoAssistente() {
     var tt = ttLista().map(function (t) { return "- " + t.cliente + ": " + (t.tipo === "km" ? "R$ " + t.valor + "/km (Toco)" + (t.km34 !== "" && t.km34 != null ? " e R$ " + t.km34 + "/km (3/4)" : "") : "adicional de R$ " + t.valor + " por viagem") + " para saídas de " + (t.de || "sempre") + " até " + (t.ate || "sem data de fim") + (t.obs ? " (" + t.obs + ")" : ""); });
     return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado.\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
+      + scContextoAssistente()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
   } catch (e) { return ""; }
 }
 /* ============ fim v467 ============================================================ */
+
+/* ============ v468 — SUZANO: ARQUIVO DE COMPENSAÇÃO =============================
+   Renato (29/09/2026): a Suzano manda a planilha de compensação (SAP) com uma
+   linha por CT-e pago (tipo 93, "Referência" 000000017-1 = número-série) e as
+   linhas de pagamento (tipo ZP), agrupadas pelo "Doc.compensação". O de-para
+   era feito à mão para mandar ao André. Agora a planilha entra na aba Medições:
+   - cruza por NÚMERO + SÉRIE com os CT-e do sistema (a numeração recomeça por série);
+   - separa: OK · não pago · pago a maior · pago a menor · pago sem CT-e no sistema;
+   - cada divergência tem tratamento + justificativa;
+   - exporta PARA O ANDRÉ (só não pagos/pagos a menor, com chave — pago a maior
+     NUNCA vai, pode ser bonificação ou erro nosso) e a versão INTERNA completa;
+   - dá baixa nas viagens por pagamento (Doc.compensação), com o crédito do extrato. */
+var SC_TRAT = {
+  np: [["cobrar", "cobrar da Suzano (vai para o André)"], ["aguardar", "aguardar o próximo pagamento"], ["cancelado", "CT-e cancelado/substituído — não cobrar"]],
+  maior: [["bonificacao", "bonificação/ajuste da Suzano"], ["valor_errado", "valor do CT-e no sistema está errado"], ["duplicidade", "pago em duplicidade — combinar devolução/abatimento"]],
+  menor: [["cobrar", "cobrar a diferença (vai para o André)"], ["aceitar", "aceitar o valor pago"]],
+  sem: [["importar", "CT-e existe — falta importar o XML no sistema"], ["outra", "CT-e de outra série/empresa"], ["outro", "outro (explicar)"]]
+};
+var SC_GRUPO_NOME = { np: "NÃO PAGOS", maior: "PAGOS A MAIOR", menor: "PAGOS A MENOR", sem: "PAGOS SEM CT-e NO SISTEMA", ok: "OK" };
+function scData(n) {
+  if (typeof n === "number" && n > 20000) return new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 864e5).toISOString().slice(0, 10);
+  var s = String(n == null ? "" : n).trim(), m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return m[3] + "-" + m[2] + "-" + m[1];
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[0] : "";
+}
+function scValor(v) { if (typeof v === "number") return v; var s = String(v == null ? "" : v).trim(); var neg = /^-|-$|^\(/.test(s); var n = ccNum(s.replace(/[-()]/g, "")); return neg ? -n : n; }
+function scRef(ref) { var m = String(ref || "").trim().match(/^0*(\d+)\s*-\s*0*(\d+)$/); return m ? { numero: Number(m[1]), serie: String(Number(m[2])) } : null; }
+function scChave(numero, serie) { return Number(numero) + "-" + String(Number(serie || 0)); }
+function scDiaMais(iso, n) { var d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function scLista() { return mdLista().filter(function (m) { return m.tipo === "compensacao"; }); }
+// acha a linha de cabeçalho e o índice de cada coluna (nome normalizado exato)
+function scCabecalho(linhas) {
+  var quer = { tipo: "tipodedocumento", ref: "referencia", valor: "montmoedadoc", dc: "doccompensacao", comp: "datadecompensacao", doc: "datadodocumento", texto: "texto", cab: "textocabecalhodocumento" };
+  for (var i = 0; i < Math.min(linhas.length, 15); i++) {
+    var l = (linhas[i] || []).map(function (c) { return normTxt(String(c == null ? "" : c)); });
+    var idx = {}, ok = true;
+    Object.keys(quer).forEach(function (k) { idx[k] = l.indexOf(quer[k]); });
+    ["tipo", "ref", "valor", "dc", "comp"].forEach(function (k) { if (idx[k] < 0) ok = false; });
+    if (ok) return { linha: i, idx: idx };
+  }
+  return null;
+}
+function scParse(wb) {
+  var achou = null;
+  (wb.SheetNames || []).some(function (nome) {
+    var sh = wb.Sheets[nome];
+    var linhas = sh && sh.__rows ? sh.__rows : XLSX.utils.sheet_to_json(sh, { header: 1, defval: "" });
+    var c = scCabecalho(linhas); if (c) { achou = { linhas: linhas, cab: c }; return true; }
+    return false;
+  });
+  if (!achou) throw new Error("Não achei as colunas da compensação (Tipo de documento, Referência, Mont.moeda doc., Doc.compensação, Data de compensação).");
+  var ix = achou.cab.idx, ctes = [], zp = [], outros = 0;
+  achou.linhas.slice(achou.cab.linha + 1).forEach(function (r) {
+    if (!r || !r.length) return;
+    var tipo = String(r[ix.tipo] == null ? "" : r[ix.tipo]).trim().toUpperCase();
+    var val = scValor(r[ix.valor]), dc = String(r[ix.dc] == null ? "" : r[ix.dc]).trim(), comp = scData(r[ix.comp]);
+    if (tipo === "93") {
+      var rf = scRef(r[ix.ref]); if (!rf) { outros++; return; }
+      ctes.push({ ref: String(r[ix.ref]).trim(), numero: rf.numero, serie: rf.serie, valor: Math.round(-val * 100) / 100, emissao: ix.doc >= 0 ? scData(r[ix.doc]) : "", comp: comp, dc: dc });
+    } else if (tipo === "ZP") {
+      zp.push({ valor: Math.round(val * 100) / 100, comp: comp, dc: dc, lote: ix.cab >= 0 ? String(r[ix.cab] || "") : "" });
+    } else if (tipo) outros++;
+  });
+  if (!ctes.length) throw new Error("A planilha não tem linhas de CT-e (tipo 93). Confira se é o arquivo de compensação da Suzano.");
+  // pagamentos: um por Doc.compensação (as linhas ZP do mesmo documento viram um valor só)
+  var pags = {}, ordem = [];
+  zp.forEach(function (z) {
+    if (!pags[z.dc]) { pags[z.dc] = { dc: z.dc, data: z.comp, valor: 0, partes: [], lote: z.lote, status: "aberto" }; ordem.push(z.dc); }
+    pags[z.dc].valor = Math.round((pags[z.dc].valor + z.valor) * 100) / 100; pags[z.dc].partes.push(z.valor);
+  });
+  // documento de compensação que só tem CT-e (sem ZP): valor = soma dos CT-e
+  ctes.forEach(function (c) { if (!pags[c.dc]) { pags[c.dc] = { dc: c.dc, data: c.comp, valor: 0, partes: [], lote: "", status: "aberto", semZP: true }; ordem.push(c.dc); } });
+  ordem.forEach(function (dc) {
+    var p = pags[dc], soma = ctes.filter(function (c) { return c.dc === dc; }).reduce(function (s, c) { return s + c.valor; }, 0);
+    p.somaCtes = Math.round(soma * 100) / 100; if (p.semZP) p.valor = p.somaCtes;
+  });
+  return { ctes: ctes, pagamentos: ordem.map(function (dc) { return pags[dc]; }), outros: outros };
+}
+function scLer(input) {
+  if (!ehAdmin()) return;
+  var f = input.files && input.files[0]; if (!f) return;
+  state._scMsg = "lendo " + (f.name || "planilha") + "..."; render();
+  var dados = null;
+  rfLerArquivoBytes(f).then(function (b) { return rfRotAbrirWorkbook(b); }).then(function (wb) {
+    dados = scParse(wb);
+    var jaDc = {}; scLista().forEach(function (m) { (m.pagamentos || []).forEach(function (p) { jaDc[p.dc] = m; }); });
+    var novos = dados.pagamentos.filter(function (p) { return !jaDc[p.dc]; });
+    if (!novos.length) throw new Error("Essa compensação já foi importada (" + ((jaDc[dados.pagamentos[0].dc] || {}).ref || "") + ").");
+    if (novos.length < dados.pagamentos.length) {
+      var dcs = {}; novos.forEach(function (p) { dcs[p.dc] = 1; });
+      if (!confirm("Parte desta planilha já foi importada. Entram só os " + novos.length + " pagamento(s) novos. Continuar?")) throw new Error("cancelado");
+      dados.pagamentos = novos; dados.ctes = dados.ctes.filter(function (c) { return dcs[c.dc]; });
+    }
+    return ccSubir([f], "medicoes", "compensacao-" + Date.now()).then(function (r) { return r[0] || null; }).catch(function () { return null; });
+  }).then(function (arq) {
+    var datas = dados.pagamentos.map(function (p) { return p.data; }).filter(Boolean).sort();
+    var ult = datas[datas.length - 1] || hojeISO();
+    var dBr = datas.filter(function (d, i) { return datas.indexOf(d) === i; }).map(function (d) { return exDataBr(d).slice(0, 5); });
+    var md = { id: "sc-" + Date.now(), tipo: "compensacao", cliente: "Suzano", ref: "compensação " + dBr.join(" e ") + "/" + ult.slice(0, 4),
+      arquivos: arq ? [arq] : [], corte: scDiaMais(ult, -1), linhas: dados.ctes, pagamentos: dados.pagamentos, trats: {},
+      totalAPagar: 0, totalFrete: 0, totalDesc: 0, recibos: [], difs: [], status: "a_receber",
+      criadoEm: new Date().toISOString(), por: ccQuem(), atualizadoEm: Date.now() };
+    mdLista().push(md);
+    state._scMsg = ""; state._mdAberta = md.id; input.value = "";
+    salvar(); render();
+  }).catch(function (e) {
+    input.value = ""; state._scMsg = "";
+    if (String(e && e.message || e) !== "cancelado") alert("Não consegui ler a compensação: " + (e && e.message || e));
+    render();
+  });
+}
+// CT-e da Suzano no sistema, por número-série
+function scCtesSistema() {
+  var m = {};
+  rfFiscais().forEach(function (f) {
+    if (f.tipo !== "cte" || !/suzano/i.test(String(f.remetente || "") + " " + String(f.tomador || ""))) return;
+    if (f.status === "cancelado" || f.cancelado) return;
+    m[scChave(f.numero, f.serie)] = f;
+  });
+  return m;
+}
+// quanto a Suzano já pagou por CT-e, somando TODAS as compensações importadas
+function scPagoPorCte() {
+  var m = {};
+  scLista().forEach(function (md) { (md.linhas || []).forEach(function (c) { var k = scChave(c.numero, c.serie); m[k] = Math.round(((m[k] || 0) + c.valor) * 100) / 100; }); });
+  return m;
+}
+function scUltima() { var l = scLista().slice().sort(function (a, b) { return String(b.corte || "").localeCompare(String(a.corte || "")); }); return l[0] || null; }
+function scGrupos(md) {
+  var sis = scCtesSistema(), pago = scPagoPorCte(), g = { ok: [], np: [], maior: [], menor: [], sem: [] }, vistos = {};
+  (md.linhas || []).forEach(function (c) {
+    var k = scChave(c.numero, c.serie); if (vistos[k]) return; vistos[k] = 1;
+    var f = sis[k], pg = pago[k] || 0, noArq = (md.linhas || []).filter(function (x) { return scChave(x.numero, x.serie) === k; });
+    var item = { k: k, numero: c.numero, serie: c.serie, pago: pg, pagoArq: Math.round(noArq.reduce(function (s, x) { return s + x.valor; }, 0) * 100) / 100, vezes: noArq.length, emissao: c.emissao, dc: c.dc, f: f || null };
+    if (!f) { item.dif = pg; g.sem.push(item); return; }
+    item.valor = Number(f.valor) || 0; item.dif = Math.round((pg - item.valor) * 100) / 100;
+    if (Math.abs(item.dif) < 0.05) g.ok.push(item); else if (item.dif > 0) g.maior.push(item); else g.menor.push(item);
+  });
+  // não pagos: só na compensação mais recente (é a foto de hoje), até a data de corte
+  var ult = scUltima();
+  if (ult && ult.id === md.id) {
+    Object.keys(sis).forEach(function (k) {
+      var f = sis[k]; if (pago[k]) return;
+      if (!f.data || String(f.data).slice(0, 10) > md.corte) return;
+      g.np.push({ k: k, numero: Number(f.numero), serie: String(f.serie), valor: Number(f.valor) || 0, pago: 0, dif: -(Number(f.valor) || 0), emissao: String(f.data).slice(0, 10), f: f });
+    });
+  }
+  Object.keys(g).forEach(function (t) { g[t].sort(function (a, b) { return String(a.emissao).localeCompare(String(b.emissao)) || a.numero - b.numero; }); });
+  return g;
+}
+function scSoma(l, campo) { return Math.round(l.reduce(function (s, x) { return s + Math.abs(Number(x[campo]) || 0); }, 0) * 100) / 100; }
+function scTrat(md, grupo, k) { return (md.trats || {})[grupo + ":" + k] || null; }
+function scTratSet(mdId, grupo, k, campo, val) {
+  var md = mdAcha(mdId); if (!md) return;
+  md.trats = md.trats || {};
+  var t = md.trats[grupo + ":" + k] || (md.trats[grupo + ":" + k] = {});
+  t[campo] = val; t.por = ccQuem(); t.em = new Date().toISOString();
+  md.atualizadoEm = Date.now(); salvar(); if (campo === "trat") render();
+}
+function scPendentes(md, g) {
+  g = g || scGrupos(md);
+  var n = 0;
+  ["np", "maior", "menor", "sem"].forEach(function (gr) { g[gr].forEach(function (x) { var t = scTrat(md, gr, x.k); if (!t || !t.trat || !String(t.just || "").trim()) n++; }); });
+  return n;
+}
+function scCorteSet(mdId, v) { var md = mdAcha(mdId); if (!md || !v) return; md.corte = v; md.atualizadoEm = Date.now(); salvar(); render(); }
+// lista que vai para o André: não pagos (menos cancelado/aguardar) + pagos a menor (menos aceitos)
+function scListaAndre(md, g) {
+  g = g || scGrupos(md);
+  var np = g.np.filter(function (x) { var t = scTrat(md, "np", x.k); return !t || (t.trat !== "cancelado" && t.trat !== "aguardar"); });
+  var me = g.menor.filter(function (x) { var t = scTrat(md, "menor", x.k); return !t || t.trat !== "aceitar"; });
+  return { np: np, menor: me, total: Math.round((scSoma(np, "valor") + scSoma(me, "dif")) * 100) / 100 };
+}
+function scNfs(f) { return ((f && f.nfes) || []).map(function (ch) { return String(ch).length === 44 ? String(Number(String(ch).slice(25, 34))) : String(ch); }).join(" "); }
+function scExportar(mdId, modo) {
+  var md = mdAcha(mdId); if (!md) return;
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou. Verifique a internet e tente de novo."); return; }
+  var g = scGrupos(md), wb = XLSX.utils.book_new(), ap = function (nome, aoa, larg) { var ws = XLSX.utils.aoa_to_sheet(aoa); if (larg) ws["!cols"] = larg.map(function (w) { return { wch: w }; }); XLSX.utils.book_append_sheet(wb, ws, nome); };
+  var tr = function (gr, x) { var t = scTrat(md, gr, x.k) || {}; var nome = ((SC_TRAT[gr] || []).filter(function (o) { return o[0] === t.trat; })[0] || ["", ""])[1]; return [nome, t.just || ""]; };
+  var cab = ["CT-e", "Série", "Emissão", "Destinatário", "Cidade", "NF-e", "Valor CT-e", "Chave de acesso"];
+  var linhaNp = function (x) { var f = x.f || {}; return [x.numero, x.serie, exDataBr(x.emissao), f.cliente || "", f.cidade || "", scNfs(f), x.valor, f.chave || ""]; };
+  var larg = [8, 6, 11, 34, 18, 16, 12, 48];
+  if (modo === "andre") {
+    var a = scListaAndre(md, g);
+    var aoa = [["RF LOGÍSTICA — CT-e EM ABERTO NA SUZANO"], ["Conferência da " + md.ref + " · emitidos até " + exDataBr(md.corte)], [], cab];
+    a.np.forEach(function (x) { aoa.push(linhaNp(x)); });
+    aoa.push(["", "", "", "", "", "TOTAL", scSoma(a.np, "valor"), ""]);
+    ap("CT-e nao pagos", aoa, larg);
+    if (a.menor.length) {
+      var aoa2 = [["CT-e PAGOS A MENOR"], [], ["CT-e", "Série", "Emissão", "Destinatário", "Valor CT-e", "Pago", "Diferença", "Chave de acesso"]];
+      a.menor.forEach(function (x) { var f = x.f || {}; aoa2.push([x.numero, x.serie, exDataBr(x.emissao), f.cliente || "", x.valor, x.pago, Math.abs(x.dif), f.chave || ""]); });
+      ap("Pagos a menor", aoa2, [8, 6, 11, 34, 12, 12, 12, 48]);
+    }
+    XLSX.writeFile(wb, "RF_Suzano_CTe_em_aberto_" + md.corte.replace(/-/g, "") + ".xlsx");
+    return;
+  }
+  var res = [["RF LOGÍSTICA — DE-PARA DA COMPENSAÇÃO SUZANO (INTERNO — NÃO ENVIAR)"], [md.ref + " · CT-e emitidos até " + exDataBr(md.corte)], [], ["Grupo", "Qtd", "Valor"]];
+  [["OK", g.ok, "valor"], ["Não pagos", g.np, "valor"], ["Pagos a maior (diferença)", g.maior, "dif"], ["Pagos a menor (diferença)", g.menor, "dif"], ["Pagos sem CT-e no sistema", g.sem, "pago"]].forEach(function (r) { res.push([r[0], r[1].length, scSoma(r[1], r[2])]); });
+  res.push([], ["Pagamentos (Doc.compensação)", "Data", "Valor", "Baixa"]);
+  (md.pagamentos || []).forEach(function (p) { res.push([p.dc, exDataBr(p.data), p.valor, p.status === "baixado" ? "baixado " + exDataBr((p.baixa || {}).data || "") : "em aberto"]); });
+  ap("Resumo", res, [34, 12, 14, 18]);
+  var c2 = cab.concat(["Tratamento", "Justificativa"]);
+  ap("Nao pagos", [c2].concat(g.np.map(function (x) { return linhaNp(x).concat(tr("np", x)); })), larg.concat([34, 40]));
+  ap("Pagos a maior", [["CT-e", "Série", "Emissão", "Destinatário", "Valor CT-e", "Pago", "Vezes no arquivo", "Diferença", "Tratamento", "Justificativa"]].concat(g.maior.map(function (x) { var f = x.f || {}; return [x.numero, x.serie, exDataBr(x.emissao), f.cliente || "", x.valor, x.pago, x.vezes, x.dif].concat(tr("maior", x)); })), [8, 6, 11, 34, 12, 12, 8, 12, 34, 40]);
+  ap("Pagos a menor", [["CT-e", "Série", "Emissão", "Destinatário", "Valor CT-e", "Pago", "Diferença", "Tratamento", "Justificativa"]].concat(g.menor.map(function (x) { var f = x.f || {}; return [x.numero, x.serie, exDataBr(x.emissao), f.cliente || "", x.valor, x.pago, x.dif].concat(tr("menor", x)); })), [8, 6, 11, 34, 12, 12, 12, 34, 40]);
+  ap("Sem CT-e no sistema", [["CT-e", "Série", "Emissão (Suzano)", "Pago", "Doc.compensação", "Tratamento", "Justificativa"]].concat(g.sem.map(function (x) { return [x.numero, x.serie, exDataBr(x.emissao), x.pago, x.dc].concat(tr("sem", x)); })), [8, 6, 14, 12, 16, 34, 40]);
+  ap("OK", [["CT-e", "Série", "Emissão", "Destinatário", "Valor", "Pago", "Doc.compensação"]].concat(g.ok.map(function (x) { var f = x.f || {}; return [x.numero, x.serie, exDataBr(x.emissao), f.cliente || "", x.valor, x.pago, x.dc]; })), [8, 6, 11, 34, 12, 12, 16]);
+  XLSX.writeFile(wb, "RF_Suzano_Compensacao_INTERNO_" + md.corte.replace(/-/g, "") + ".xlsx");
+}
+// PDF para o André: só CT-e em aberto (e pago a menor), com a chave
+function scPdfAndre(mdId) {
+  var md = mdAcha(mdId); if (!md) return;
+  var a = scListaAndre(md);
+  if (!a.np.length && !a.menor.length) { alert("Não há CT-e em aberto para mandar."); return; }
+  rfPdfLib().then(function (JsPDF) {
+    if (!JsPDF) throw new Error("a biblioteca de PDF não carregou");
+    var doc = new JsPDF({ orientation: "landscape", unit: "mm", format: "a4" }), y = 14;
+    var linha = function (cols, xs, bold, tam) { doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(tam || 8); cols.forEach(function (t, i) { doc.text(String(t == null ? "" : t), xs[i], y); }); y += 5; if (y > 195) { doc.addPage(); y = 14; } };
+    linha(["RF LOGÍSTICA — CT-e EM ABERTO NA SUZANO"], [10], true, 13); y += 1;
+    linha(["Conferência da " + md.ref + " · CT-e emitidos até " + exDataBr(md.corte)], [10], false, 9); y += 3;
+    var xs = [10, 26, 44, 110, 150, 175], xsV = 172;
+    if (a.np.length) {
+      linha(["NÃO PAGOS (" + a.np.length + ")"], [10], true, 10);
+      linha(["CT-e", "Emissão", "Destinatário", "Cidade", "", "Chave de acesso"], xs, true);
+      a.np.forEach(function (x) { var f = x.f || {}; linha([x.numero + "-" + x.serie, exDataBr(x.emissao), String(f.cliente || "").slice(0, 34), String(f.cidade || "").slice(0, 18), "", f.chave || ""], xs); doc.text(fmtR(x.valor), xsV, y - 5, { align: "right" }); });
+      linha(["", "", "", "TOTAL", "", ""], xs, true); doc.text(fmtR(scSoma(a.np, "valor")), xsV, y - 5, { align: "right" });
+      y += 3;
+    }
+    if (a.menor.length) {
+      linha(["PAGOS A MENOR (" + a.menor.length + ")"], [10], true, 10);
+      linha(["CT-e", "Emissão", "Destinatário", "Valor CT-e / pago", "", "Chave de acesso"], xs, true);
+      a.menor.forEach(function (x) { var f = x.f || {}; linha([x.numero + "-" + x.serie, exDataBr(x.emissao), String(f.cliente || "").slice(0, 34), fmtR(x.valor) + " / " + fmtR(x.pago), "", f.chave || ""], xs); doc.text(fmtR(Math.abs(x.dif)), xsV, y - 5, { align: "right" }); });
+    }
+    y += 3; linha(["Total em aberto: " + fmtR(a.total) + " · os DACTE seguem em anexo."], [10], true, 10);
+    rfBaixarBlob(doc.output("blob"), "RF_Suzano_CTe_em_aberto_" + md.corte.replace(/-/g, "") + ".pdf");
+  }).catch(function (e) { alert("Não consegui gerar o PDF: " + (e.message || e)); });
+}
+// e-mail enxuto para o André (texto pronto para copiar)
+function scEmailAndre(md) {
+  var a = scListaAndre(md);
+  var t = "André, bom dia.\n\nConferimos a " + md.ref + ". Seguem os CT-e emitidos até " + exDataBr(md.corte) + " que ainda não foram pagos:\n\n";
+  a.np.forEach(function (x) { t += "CT-e " + x.numero + " · " + exDataBr(x.emissao) + " · " + fmtR(x.valor) + " · chave " + ((x.f || {}).chave || "") + "\n"; });
+  if (a.menor.length) { t += "\nPagos a menor:\n"; a.menor.forEach(function (x) { t += "CT-e " + x.numero + " · valor " + fmtR(x.valor) + " · pago " + fmtR(x.pago) + " · falta " + fmtR(Math.abs(x.dif)) + " · chave " + ((x.f || {}).chave || "") + "\n"; }); }
+  t += "\nTotal: " + fmtR(a.total) + ". DACTE em anexo.\n\nObrigado,\nRenato — RF Logística";
+  return t;
+}
+function scCopiarEmail(mdId) {
+  var md = mdAcha(mdId); if (!md) return;
+  var t = scEmailAndre(md);
+  var ok = function () { alert("Texto do e-mail copiado."); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok).catch(function () { prompt("Copie o texto:", t); });
+  else prompt("Copie o texto:", t);
+}
+// ---- baixa por pagamento (Doc.compensação) ----
+function scVinculo(md, dcs, valorRecebido) {
+  var sis = scCtesSistema(), rec = exRecebidoPorViagem(), porViagem = {}, semViagem = [], nCte = 0, soma = 0;
+  (md.linhas || []).forEach(function (c) {
+    if (dcs.indexOf(c.dc) < 0) return;
+    nCte++;
+    var f = sis[scChave(c.numero, c.serie)], v = f ? rfFiscalViagemDo(f) : null;
+    if (!v) { semViagem.push(c.numero + "-" + c.serie); return; }
+    porViagem[String(v.id)] = Math.round(((porViagem[String(v.id)] || 0) + c.valor) * 100) / 100;
+  });
+  var ids = [], aloc = {}, excesso = [];
+  Object.keys(porViagem).forEach(function (id) {
+    var v = mdViagem(id); if (!v) return;
+    var falta = Math.max(0, exFaltaViagem(v, rec)), val = Math.min(falta, porViagem[id]);
+    if (porViagem[id] - val >= 0.05) excesso.push(v.placa + " " + exDataBr(String(v.data || "").slice(0, 10)) + " (+" + fmtR(porViagem[id] - val) + ")");
+    if (val <= 0) return;
+    ids.push(id); aloc[id] = Math.round(val * 100) / 100; soma += val;
+  });
+  soma = Math.round(soma * 100) / 100;
+  return { tipo: "viagens", ids: ids, aloc: aloc, soma: soma, dif: Math.round((valorRecebido - soma) * 100) / 100,
+    obs: "compensação Suzano " + dcs.join(" + ") + ": " + nCte + " CT-e" + (semViagem.length ? "; CT-e sem viagem: " + semViagem.join(", ") : "") + (excesso.length ? "; pago acima do valor da viagem: " + excesso.join(", ") : ""),
+    demonstrativo: { arquivo: ((md.arquivos || [])[0] || {}).path || "", compensacao: true, medicaoId: md.id, docs: dcs },
+    medicaoId: md.id, por: ccQuem(), em: new Date().toISOString() };
+}
+function scPag(md, dc) { return (md.pagamentos || []).filter(function (p) { return p.dc === dc; })[0] || null; }
+// crédito do extrato que bate: um pagamento sozinho, ou todos os pagamentos abertos do mesmo dia somados
+function scCandidatos(md, p) {
+  var livres = exTodasLinhas().filter(function (x) { return x.l.valor > 0 && !x.l.vinc && x.l.data >= scDiaMais(p.data, -2) && x.l.data <= scDiaMais(p.data, 5); });
+  var out = livres.filter(function (x) { return Math.abs(x.l.valor - p.valor) < 0.05; }).map(function (x) { return { x: x, dcs: [p.dc] }; });
+  if (!out.length) {
+    var dia = (md.pagamentos || []).filter(function (q) { return q.status !== "baixado" && q.data === p.data; });
+    if (dia.length > 1) {
+      var tot = Math.round(dia.reduce(function (s, q) { return s + q.valor; }, 0) * 100) / 100;
+      livres.forEach(function (x) { if (Math.abs(x.l.valor - tot) < 0.05) out.push({ x: x, dcs: dia.map(function (q) { return q.dc; }) }); });
+    }
+  }
+  return out;
+}
+function scBaixar(mdId, extId, linId, dcsTxt) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(mdId), o = exLinha(extId, linId); if (!md || !o.l) return;
+  if (o.l.vinc) { alert("Esse crédito já está vinculado a outra coisa na Conciliação."); return; }
+  var dcs = String(dcsTxt).split(",");
+  if (!confirm("Dar baixa no pagamento Suzano " + dcs.join(" + ") + " com o crédito de " + exDataBr(o.l.data) + " (" + fmtR(o.l.valor) + ")?")) return;
+  o.l.vinc = scVinculo(md, dcs, o.l.valor); delete o.l.sug;
+  dcs.forEach(function (dc) { var p = scPag(md, dc); if (p) { p.status = "baixado"; p.baixa = { data: o.l.data, valor: o.l.valor, fonte: "extrato", extratoId: extId, linhaId: linId, juntos: dcs, por: ccQuem(), em: new Date().toISOString() }; } });
+  scStatus(md); exSalvar(o.e);
+}
+function scBaixaManual(mdId, dc) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(mdId), p = md ? scPag(md, dc) : null; if (!p) return;
+  if (!confirm("O extrato com esse crédito ainda não está no sistema?\n\nLançar o recebimento de " + fmtR(p.valor) + " em " + exDataBr(p.data) + " à mão, usando a planilha de compensação como comprovante?")) return;
+  var e = exManualExtrato();
+  var l = { id: EX_MANUAL_ID + "-" + Date.now(), data: p.data, manual: true, valor: p.valor, desc: "Recebido · Suzano compensação " + dc, comprovante: ((md.arquivos || [])[0] || {}).path || "" };
+  l.vinc = scVinculo(md, [dc], l.valor);
+  e.linhas.push(l);
+  var datas = e.linhas.map(function (x) { return x.data; }).sort(); e.periodoIni = datas[0]; e.periodoFim = datas[datas.length - 1];
+  p.status = "baixado"; p.baixa = { data: p.data, valor: p.valor, fonte: "planilha", extratoId: e.id, linhaId: l.id, juntos: [dc], por: ccQuem(), em: new Date().toISOString() };
+  scStatus(md); exSalvar(e);
+}
+function scStatus(md) {
+  var ab = (md.pagamentos || []).filter(function (p) { return p.status !== "baixado"; });
+  md.status = ab.length ? "a_receber" : "paga";
+  if (!ab.length) md.pagamento = { data: (md.pagamentos || []).map(function (p) { return (p.baixa || {}).data || p.data; }).sort().pop(), valor: Math.round((md.pagamentos || []).reduce(function (s, p) { return s + p.valor; }, 0) * 100) / 100, fonte: "compensação" };
+  md.atualizadoEm = Date.now();
+}
+function scExcluir(mdId) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(mdId); if (!md) return;
+  if ((md.pagamentos || []).some(function (p) { return p.status === "baixado"; })) { alert("Já tem pagamento baixado nesta compensação. Desfaça a baixa na Conciliação antes de excluir."); return; }
+  if (!confirm("Excluir a " + md.ref + "?")) return;
+  state.medicoes = mdLista().filter(function (x) { return x.id !== md.id; });
+  salvar(); render();
+}
+// se a baixa foi desfeita na Conciliação, o pagamento volta a ficar em aberto
+function scConferirBaixas(md) {
+  var mud = false;
+  (md.pagamentos || []).forEach(function (p) {
+    if (p.status !== "baixado" || !p.baixa) return;
+    var o = exLinha(p.baixa.extratoId, p.baixa.linhaId);
+    if (!o.l || !o.l.vinc || o.l.vinc.medicaoId !== md.id) { p.status = "aberto"; delete p.baixa; mud = true; }
+  });
+  if (mud) scStatus(md);
+}
+function scGrupoHTML(md, gr, itens) {
+  if (!itens.length) return "";
+  var cor = { np: "#E57373", maior: "#4FC3F7", menor: "#FFB74D", sem: "#BA68C8" }[gr];
+  var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11px;color:#ccc;vertical-align:top;"';
+  var inp = 'style="font-size:11px;padding:3px 6px;background:#111;color:#eee;border:1px solid #333;border-radius:5px;';
+  var tot = gr === "np" ? scSoma(itens, "valor") : gr === "sem" ? scSoma(itens, "pago") : scSoma(itens, "dif");
+  var dica = { np: "Emitidos até o corte e sem pagamento em nenhuma compensação importada.", maior: "NÃO vai para o André: pode ser bonificação, valor errado nosso ou pagamento em dobro. Confira antes.", menor: "A Suzano pagou menos que o CT-e.", sem: "A Suzano pagou, mas o CT-e não está no sistema (falta importar o XML ou é de outra série)." }[gr];
+  var h = '<div style="margin-top:10px;border:1px solid ' + cor + '55;border-radius:8px;padding:8px 10px;background:#0d0d0d;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + cor + ';">' + SC_GRUPO_NOME[gr] + ' · ' + itens.length + ' · ' + fmtR(tot) + '</div><div style="font-size:11px;color:#888;margin-bottom:4px;">' + dica + '</div>'
+    + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:820px;"><tr>'
+    + ["CT-e", "Emissão", "Destinatário", "Valor CT-e", "Pago", gr === "maior" ? "A maior" : gr === "menor" ? "Falta" : "", "Tratamento", "Justificativa"].map(function (c) { return '<th style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;">' + c + '</th>'; }).join("") + '</tr>';
+  itens.forEach(function (x) {
+    var t = scTrat(md, gr, x.k) || {}, ok = t.trat && String(t.just || "").trim();
+    h += '<tr><td ' + td + '><b>' + x.numero + '</b>-' + esc(x.serie) + (x.vezes > 1 ? ' <span style="color:' + cor + ';">(' + x.vezes + 'x no arquivo)</span>' : "") + '</td><td ' + td + '>' + exDataBr(x.emissao) + '</td><td ' + td + '>' + esc(((x.f || {}).cliente || (gr === "sem" ? "—" : "")).slice(0, 34)) + '</td>'
+      + '<td ' + td + ' align="right">' + (x.f ? fmtR(x.valor) : "—") + '</td><td ' + td + ' align="right">' + fmtR(x.pago) + '</td><td ' + td + ' align="right">' + (gr === "maior" || gr === "menor" ? '<b>' + fmtR(Math.abs(x.dif)) + '</b>' : "") + '</td>'
+      + '<td ' + td + '><select ' + inp + '" onchange="scTratSet(\'' + esc(md.id) + '\',\'' + gr + '\',\'' + esc(x.k) + '\',\'trat\',this.value)"><option value="">— escolha —</option>'
+      + SC_TRAT[gr].map(function (o) { return '<option value="' + o[0] + '"' + (t.trat === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") + '</select></td>'
+      + '<td ' + td + '><input ' + inp + 'width:100%;min-width:180px;border-color:' + (ok ? "#2E7D32" : "#5a4a26") + ';" placeholder="justificativa" value="' + esc(t.just || "") + '" onchange="scTratSet(\'' + esc(md.id) + '\',\'' + gr + '\',\'' + esc(x.k) + '\',\'just\',this.value)"></td></tr>';
+  });
+  return h + '</table></div></div>';
+}
+function scCardHTML(md) {
+  scConferirBaixas(md);
+  var g = scGrupos(md), pend = scPendentes(md, g), ab = state._mdAberta === md.id, ult = scUltima();
+  var pags = md.pagamentos || [], nBx = pags.filter(function (p) { return p.status === "baixado"; }).length;
+  var totPag = Math.round(pags.reduce(function (s, p) { return s + p.valor; }, 0) * 100) / 100;
+  var cor = nBx === pags.length ? "#66BB6A" : GOLD;
+  var chip = function (t, c) { return '<span style="font-size:11px;font-weight:800;color:' + c + ';border:1px solid ' + c + '66;border-radius:10px;padding:1px 8px;">' + t + '</span>'; };
+  var h = '<div style="border:1px solid #2A2A2A;border-left:5px solid ' + cor + ';border-radius:10px;background:#111;padding:11px 13px;margin-bottom:10px;">'
+    + '<div onclick="mdToggle(\'' + esc(md.id) + '\')" style="cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    + '<b style="font-size:15px;color:#fff;">Suzano · ' + esc(md.ref) + '</b>'
+    + chip(nBx === pags.length ? "✓ PAGAMENTOS BAIXADOS" : "BAIXA " + nBx + "/" + pags.length, cor)
+    + chip("✓ " + g.ok.length + " ok", "#66BB6A")
+    + (ult && ult.id === md.id ? chip(g.np.length + " não pagos " + fmtR(scSoma(g.np, "valor")), g.np.length ? "#E57373" : "#666") : "")
+    + (g.maior.length ? chip(g.maior.length + " a maior " + fmtR(scSoma(g.maior, "dif")), "#4FC3F7") : "")
+    + (g.menor.length ? chip(g.menor.length + " a menor " + fmtR(scSoma(g.menor, "dif")), "#FFB74D") : "")
+    + (g.sem.length ? chip(g.sem.length + " sem CT-e " + fmtR(scSoma(g.sem, "pago")), "#BA68C8") : "")
+    + (pend ? chip("⚠ " + pend + " sem tratamento", "#FFB74D") : "")
+    + '<span style="margin-left:auto;font-size:12px;color:#bbb;">' + (md.linhas || []).length + ' CT-e pagos · <b style="color:#66BB6A;">' + fmtR(totPag) + '</b></span></div>';
+  if (!ab) return h + '</div>';
+  var inp = 'style="font-size:12px;padding:4px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;"';
+  h += '<div style="margin-top:8px;font-size:12px;color:#bbb;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
+    + (ult && ult.id === md.id ? 'Cobrar CT-e emitidos até <input type="date" ' + inp + ' value="' + esc(md.corte) + '" onchange="scCorteSet(\'' + esc(md.id) + '\',this.value)"> <span style="color:#777;">(o que saiu depois ainda está no prazo)</span>'
+      : '<span style="color:#777;">Os não pagos aparecem só na compensação mais recente.</span>') + '</div>';
+  // pagamentos
+  var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11.5px;color:#ccc;"';
+  h += '<div style="margin-top:8px;border:1px solid #2a2a2a;border-radius:8px;padding:8px 10px;"><div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">PAGAMENTOS DA SUZANO — baixa nas viagens</div><table style="width:100%;border-collapse:collapse;">';
+  pags.forEach(function (p) {
+    var nC = (md.linhas || []).filter(function (c) { return c.dc === p.dc; }).length;
+    h += '<tr><td ' + td + '>' + exDataBr(p.data) + '</td><td ' + td + '>doc ' + esc(p.dc) + ' · ' + nC + ' CT-e' + (p.partes.length > 1 ? ' <span style="color:#777;">(' + p.partes.map(fmtR).join(" + ") + ')</span>' : "") + '</td><td ' + td + ' align="right"><b>' + fmtR(p.valor) + '</b></td><td ' + td + '>';
+    if (p.status === "baixado") h += '<span style="color:#66BB6A;font-weight:800;">✓ baixado ' + exDataBr((p.baixa || {}).data || "") + ' (' + ((p.baixa || {}).fonte === "extrato" ? "extrato" : "planilha") + (((p.baixa || {}).juntos || []).length > 1 ? ", junto com outro(s) pagamento(s) do dia" : "") + ')</span>';
+    else {
+      h += scCandidatos(md, p).map(function (c) { return '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#66BB6A;color:#66BB6A;font-weight:800;margin-right:4px;" onclick="scBaixar(\'' + esc(md.id) + '\',\'' + esc(c.x.e.id) + '\',\'' + esc(c.x.l.id) + '\',\'' + esc(c.dcs.join(",")) + '\')">✓ crédito ' + exDataBr(c.x.l.data) + ' ' + fmtR(c.x.l.valor) + (c.dcs.length > 1 ? " (" + c.dcs.length + " pagamentos do dia)" : "") + '</button>'; }).join("")
+        + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="scBaixaManual(\'' + esc(md.id) + '\',\'' + esc(p.dc) + '\')">lançar sem extrato</button>';
+    }
+    h += '</td></tr>';
+  });
+  h += '</table><div style="font-size:11px;color:#777;margin-top:4px;">Cada CT-e pago é abatido da viagem dele (placa + data). Sem crédito que bata? Importe o extrato na Conciliação ou lance sem extrato.</div></div>';
+  h += scGrupoHTML(md, "np", g.np) + scGrupoHTML(md, "menor", g.menor) + scGrupoHTML(md, "maior", g.maior) + scGrupoHTML(md, "sem", g.sem);
+  var a = scListaAndre(md, g);
+  h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + (ult && ult.id === md.id ? '<span style="font-size:12px;color:#ddd;">Para o André: <b>' + (a.np.length + a.menor.length) + ' CT-e · ' + fmtR(a.total) + '</b></span>'
+      + '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';font-weight:800;" onclick="scPdfAndre(\'' + esc(md.id) + '\')">📄 PDF para o André</button>'
+      + '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="scExportar(\'' + esc(md.id) + '\',\'andre\')">⬇ Excel para o André</button>'
+      + '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;" onclick="scCopiarEmail(\'' + esc(md.id) + '\')">✉ copiar texto do e-mail</button>' : "")
+    + '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#E57373;color:#E57373;" onclick="scExportar(\'' + esc(md.id) + '\',\'interno\')">⬇ Excel INTERNO (não enviar)</button>'
+    + (md.arquivos || []).map(function (x) { return '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="ccVer(\'' + esc(x.path) + '\')">📄 planilha original</button>'; }).join("")
+    + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;color:#E57373;border-color:#E57373;" onclick="scExcluir(\'' + esc(md.id) + '\')">excluir</button></div>';
+  return h + '</div>';
+}
+function scContextoAssistente() {
+  try {
+    var l = scLista(); if (!l.length) return "";
+    return "\nCOMPENSAÇÃO SUZANO (aba 📑 Medições, v468): a Suzano manda a planilha de compensação do SAP (linhas tipo 93 = CT-e pago, com Referência número-série; linhas ZP = pagamento, agrupadas pelo Doc.compensação). O app cruza por NÚMERO + SÉRIE com os CT-e do sistema e separa OK, não pago (emitido até a data de corte e sem pagamento em nenhuma compensação), pago a maior, pago a menor e pago sem CT-e no sistema. Cada divergência tem tratamento + justificativa. Para o André vão só os NÃO PAGOS e os PAGOS A MENOR, com a chave e o DACTE — pago a maior NUNCA vai (pode ser bonificação, valor errado nosso ou duplicidade; fica só no Excel INTERNO). A baixa é por pagamento: cada CT-e pago abate a viagem dele (placa + data), com o crédito do extrato que bate (um pagamento ou os do mesmo dia somados) ou lançado sem extrato.\n"
+      + l.map(function (md) {
+        var g = scGrupos(md), p = md.pagamentos || [];
+        return "- " + md.ref + " (corte " + exDataBr(md.corte) + "): " + (md.linhas || []).length + " CT-e pagos, " + g.ok.length + " ok"
+          + (g.np.length ? ", " + g.np.length + " não pagos " + fmtR(scSoma(g.np, "valor")) + " (CT-e " + g.np.map(function (x) { return x.numero; }).join(", ") + ")" : "")
+          + (g.maior.length ? ", " + g.maior.length + " pagos a maior " + fmtR(scSoma(g.maior, "dif")) + " (CT-e " + g.maior.map(function (x) { return x.numero; }).join(", ") + ")" : "")
+          + (g.menor.length ? ", " + g.menor.length + " pagos a menor " + fmtR(scSoma(g.menor, "dif")) : "")
+          + (g.sem.length ? ", " + g.sem.length + " pagos sem CT-e no sistema " + fmtR(scSoma(g.sem, "pago")) + " (CT-e " + g.sem.map(function (x) { return x.numero; }).join(", ") + ")" : "")
+          + "; pagamentos " + p.map(function (q) { return exDataBr(q.data) + " " + fmtR(q.valor) + (q.status === "baixado" ? " baixado" : " em aberto"); }).join(" · ")
+          + "; " + scPendentes(md, g) + " divergência(s) sem tratamento";
+      }).join("\n");
+  } catch (e) { return ""; }
+}
+/* ============ fim v468 ============================================================ */
 
 /* ============ v456 — RECEBIMENTO FORA DO EXTRATO =============================
    Renato (28/09/2026): "viagens pagas 80% na saída e 20% quando finaliza — a CDJ
