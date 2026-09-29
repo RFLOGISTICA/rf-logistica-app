@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v484)</title>
+<title>RF Logística — Painel da Frota (v485)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v484">
+<meta name="rf-versao" content="v485">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v484" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v485" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14619,8 +14619,14 @@ function ciotHTML(c, placa) {
   var cid = esc(String(c.id)), a = c.ciotApp || {};
   var h = '<div style="border:1px solid #AB47BC;border-radius:8px;padding:8px 11px;margin-top:8px;background:rgba(171,71,188,0.06);">'
     + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><span style="font-size:11px;font-weight:800;color:#CE93D8;">CIOT PELO APP (ANTT)</span>';
+  // v485: CIOT já existe (Portal/SimplesCTe) → só mostra o número, sem oferecer emitir de novo
+  var jaTem = (a.status === "declarado" || a.status === "encerrado") ? "" : ciotDaCarga(c, placa);
+  if (jaTem) return h + '<span style="font-size:12px;color:#66BB6A;font-weight:800;">✓ CIOT ' + esc(jaTem) + '</span><span style="font-size:10.5px;color:#999;">já informado · encerrar no Portal do Transportador no fim da viagem</span>'
+    + '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="szCiotInformar(\'' + cid + '\')">alterar</button></div></div>';
+  h += '<span style="font-size:10.5px;color:#E57373;font-weight:800;">🔒 sem CIOT</span><span style="font-size:10.5px;color:#bbb;">gere no Portal do Transportador (tablet, PRODUÇÃO) e informe aqui:</span>'
+    + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="szCiotInformar(\'' + cid + '\')">✍ Informar CIOT</button>';
   if (!ciotLigado()) {
-    h += '<span style="font-size:10.5px;color:#999;">aguardando a ANTT liberar o certificado da RF · por enquanto o CIOT sai no SimplesCTe</span>';
+    h += '<span style="font-size:10.5px;color:#999;">emissão direta pelo app ainda em teste</span>';
     if (ehAdmin()) h += '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ciotTestar()">🔌 testar ANTT</button>'
       + '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="if(confirm(\'Ligar o CIOT pelo app? Só depois que a ANTT liberar.\'))ciotLigar(true)">ligar</button>';
     if (state._ciotTeste) h += '<div style="width:100%;font-size:10.5px;color:#bbb;">' + esc(state._ciotTeste) + '</div>';
@@ -14635,7 +14641,7 @@ function ciotHTML(c, placa) {
     h += '<span style="font-size:11px;color:#F2E600;">⏳ enviando para a ANTT...</span>';
   } else {
     var m = ciotMontar(c, placa);
-    h += '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#CE93D8;color:#CE93D8;font-weight:800;" onclick="ciotEmitir(\'' + cid + '\',\'' + esc(placa || "") + '\')">🆔 ' + (a.status === "erro" || a.status === "cancelado" ? "Emitir de novo" : "Emitir CIOT") + '</button>'
+    h += '<button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#CE93D8;color:#CE93D8;font-weight:800;" onclick="ciotEmitir(\'' + cid + '\',\'' + esc(placa || "") + '\')">🆔 ' + (a.status === "erro" || a.status === "cancelado" ? "Emitir de novo pelo app" : "Emitir pelo app (em teste)") + '</button>'
       + (m.falta.length ? '<span style="font-size:10.5px;color:' + GOLD + ';">falta: ' + esc(m.falta.join(", ")) + '</span>' : '<span style="font-size:10.5px;color:#999;">' + (m.op.TipoOperacao === 2 ? "fracionada" : "lotação") + ' · ' + fmtR(m.op.ValorFrete) + ' · ' + m.op.OrigemDestino[0].DistanciaPercorrida + ' km</span>');
     if (a.status === "erro") h += '<div style="width:100%;font-size:10.5px;color:#E57373;">ANTT: ' + esc(a.erro || "") + '</div>';
   }
@@ -14661,7 +14667,7 @@ function ciotDaCarga(c, placa) {
   return v && v.ciot ? ciotNorm(v.ciot.id12 || v.ciot.codigo) : "";
 }
 function ciotContextoAssistente() {
-  return "\nTRAVA DO MDF-e (v484): o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
+  return "\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
     + "\nCIOT PELO APP (v482, 29/09/2026): a RF vai emitir o CIOT de frota propria DIRETO na ANTT (gratis, webservice pefServices, Portaria SUROC 6/2026 art. 3o II), sem SimplesCTe e sem entregar o certificado a site de terceiro. Onde: aba Carregamento Suzano, quadro roxo 'CIOT PELO APP (ANTT)' logo acima do MDF-e da carga: Emitir CIOT (monta sozinho contratante = CNPJ da Suzano pela chave da NF, destinatario, frete, peso, km e dias da viagem prevista, origem Simoes Filho, destino do ultimo CT-e), encerrar e cancelar (ate 24h do inicio). Em producao o numero (12 digitos) entra sozinho no MDF-e. SITUACAO: " + (ciotLigado() ? "LIGADO." : "AGUARDANDO A ANTT liberar o certificado da RF (pedido a pef@antt.gov.br): a homologacao responde que o CNPJ do certificado nao corresponde a transportador no RNTRC e a producao fecha a conexao; ate liberar, o CIOT continua saindo no SimplesCTe e e digitado no MDF-e. Botao 'testar ANTT' mostra a resposta atual.") + "\n";
 }
 /* ===== fim v482 ===== */
