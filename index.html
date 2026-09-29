@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v480)</title>
+<title>RF Logística — Painel da Frota (v481)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v480">
+<meta name="rf-versao" content="v481">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v480" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v481" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15427,6 +15427,8 @@ function exImportar(input) {
         + (conf ? (conf.ok ? " · leitura conferida com " + conf.dias + " saldos diários do banco" : " · ATENÇÃO: a soma não bateu com o saldo do banco em " + conf.erros.length + " dia(s)") : "")
         + ". Confira as sugestões automáticas abaixo.";
       exAutoVincular(ext);
+      try { var nSz = scAutoBaixar(); if (nSz) state._exMsg += " · " + nSz + " pagamento(s) da compensação Suzano conferido(s) e baixado(s) nas viagens."; } catch (eSz) { }
+      exSincPago();
       input.value = "";
       ext.atualizadoEm = Date.now(); salvar(); render();
     });
@@ -15449,6 +15451,22 @@ function exRecebidoPorViagem() {
   return m;
 }
 function exFaltaViagem(v, rec) { rec = rec || exRecebidoPorViagem(); return Math.round(((Number(v.valorViagem) || 0) - (rec[String(v.id)] || 0)) * 100) / 100; }
+/* v481: a viagem passa a PAGA quando o extrato cobre o valor dela (vínculo na
+   Conciliação ou baixa da compensação Suzano) -- antes o "Pendente de pagamento"
+   da aba Viagens não mudava com a conciliação. Só desmarca o que ela mesma marcou. */
+function exSincPago() {
+  try {
+    var rec = exRecebidoPorViagem(), ult = {};
+    exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (!v || v.tipo !== "viagens") return; (v.ids || []).forEach(function (id) { id = String(id); if (!ult[id] || x.l.data > ult[id]) ult[id] = x.l.data; }); });
+    (state.viagens || []).forEach(function (v) {
+      if (!v || v.id == null) return;
+      var id = String(v.id), quitada = rec[id] > 0 && exFaltaViagem(v, rec) < 0.05;
+      if (quitada && (!v.pago || v.pagoFonte === "extrato")) {
+        if (!v.pago || v.dataPagamento !== ult[id]) { v.pago = true; v.dataPagamento = ult[id] || v.dataPagamento || hojeISO(); v.pagoFonte = "extrato"; v.atualizadoEm = Date.now(); }
+      } else if (!quitada && v.pago && v.pagoFonte === "extrato") { v.pago = false; v.dataPagamento = ""; delete v.pagoFonte; v.atualizadoEm = Date.now(); }
+    });
+  } catch (e) { }
+}
 function exViagensRecebidas() { var m = {}, rec = exRecebidoPorViagem(); (state.viagens || []).forEach(function (v) { if (v && rec[String(v.id)] && exFaltaViagem(v, rec) < 0.05) m[String(v.id)] = 1; }); return m; }
 function exComprasPagas() { var m = {}; exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (v && v.tipo === "compra") m[String(v.id)] = x; }); return m; }
 function exCompraRestante(c) {
@@ -15514,7 +15532,7 @@ function exAutoVincular(ext) {
   });
 }
 function exLinha(extId, linId) { var e = exAcha(extId); if (!e) return {}; return { e: e, l: (e.linhas || []).filter(function (x) { return x.id === linId; })[0] }; }
-function exSalvar(e) { e.atualizadoEm = Date.now(); salvar(); render(); }
+function exSalvar(e) { e.atualizadoEm = Date.now(); exSincPago(); salvar(); render(); }
 function exVincCompra(extId, linId, compraId) {
   if (!ehAdmin()) return;
   var o = exLinha(extId, linId), c = ccAcha(compraId); if (!o.l || !c) return;
@@ -16874,6 +16892,7 @@ function scLer(input) {
       totalAPagar: 0, totalFrete: 0, totalDesc: 0, recibos: [], difs: [], status: "a_receber",
       criadoEm: new Date().toISOString(), por: ccQuem(), atualizadoEm: Date.now() };
     mdLista().push(md);
+    try { var nSz = scAutoBaixar(md.id); if (nSz) setTimeout(function () { alert("✓ " + nSz + " pagamento(s) desta compensação já estavam no extrato: baixa feita nas viagens."); }, 50); } catch (eSz) { }
     state._scMsg = ""; state._mdAberta = md.id; input.value = "";
     salvar(); render();
   }).catch(function (e) {
@@ -17084,6 +17103,43 @@ function scBaixaManual(mdId, dc) {
   p.status = "baixado"; p.baixa = { data: p.data, valor: p.valor, fonte: "planilha", extratoId: e.id, linhaId: l.id, juntos: [dc], por: ccQuem(), em: new Date().toISOString() };
   scStatus(md); exSalvar(e);
 }
+/* v481: BAIXA AUTOMÁTICA PELO EXTRATO -- pedido do Renato: "a medição diz que está
+   pago, a conta bancária dá o aval". Cada pagamento da compensação (doc. de
+   compensação, com data e valor) é procurado nos créditos do extrato que vieram
+   da SUZANO; quando existe UM crédito só que bate (valor exato, até 2 dias antes
+   e 5 depois, ou a soma dos pagamentos do mesmo dia), a baixa é feita sozinha:
+   os CT-e daquele pagamento são abatidos das viagens deles. Roda ao importar a
+   compensação, ao importar o extrato e pelo botão do cartão. */
+function scCandSuzano(md, p) {
+  return scCandidatos(md, p).filter(function (c) { return /suzano/.test(exNormNome(String(c.x.l.desc || "") + " " + String(c.x.l.cp || ""))) || /suzano/i.test(String(c.x.l.desc || "")); });
+}
+function scAplicarBaixa(md, x, dcs) {
+  x.l.vinc = scVinculo(md, dcs, x.l.valor); delete x.l.sug;
+  dcs.forEach(function (dc) { var p = scPag(md, dc); if (p) { p.status = "baixado"; p.baixa = { data: x.l.data, valor: x.l.valor, fonte: "extrato", extratoId: x.e.id, linhaId: x.l.id, juntos: dcs, auto: true, por: ccQuem(), em: new Date().toISOString() }; } });
+  x.e.atualizadoEm = Date.now();
+  scStatus(md);
+}
+function scAutoBaixar(mdId) {
+  if (!ehAdmin()) return 0;
+  var n = 0;
+  scLista().forEach(function (md) {
+    if (mdId && md.id !== mdId) return;
+    (md.pagamentos || []).forEach(function (p) {
+      if (p.status === "baixado") return;
+      var c = scCandSuzano(md, p);
+      if (c.length !== 1 || c[0].x.l.vinc) return;
+      scAplicarBaixa(md, c[0].x, c[0].dcs); n += c[0].dcs.length;
+    });
+  });
+  if (n) exSincPago();
+  return n;
+}
+function scAutoBaixarBotao(mdId) {
+  var n = scAutoBaixar(mdId);
+  if (!n) { alert("Nenhum pagamento desta compensação bate sozinho com um crédito da Suzano no extrato.\n\nImporte o extrato do período na Conciliação > Extrato bancário, ou use os botões de cada pagamento."); return; }
+  salvar(); render();
+  alert("✓ " + n + " pagamento(s) conferido(s) com o extrato e baixado(s) nas viagens.");
+}
 function scStatus(md) {
   var ab = (md.pagamentos || []).filter(function (p) { return p.status !== "baixado"; });
   md.status = ab.length ? "a_receber" : "paga";
@@ -17147,6 +17203,8 @@ function scCardHTML(md) {
     + (g.sem.length ? chip(g.sem.length + " sem CT-e " + fmtR(scSoma(g.sem, "pago")), "#BA68C8") : "")
     + (pend ? chip("⚠ " + pend + " sem tratamento", "#FFB74D") : "")
     + '<span style="margin-left:auto;font-size:12px;color:#bbb;">' + (md.linhas || []).length + ' CT-e pagos · <b style="color:#66BB6A;">' + fmtR(totPag) + '</b></span></div>';
+  var nBate = pags.filter(function (p) { return p.status !== "baixado" && scCandSuzano(md, p).length === 1; }).length;
+  if (nBate && ehAdmin()) h += '<div style="margin-top:8px;"><button class="btn-outline" style="font-size:12px;padding:5px 14px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="scAutoBaixarBotao(\'' + esc(md.id) + '\')">🏦 ' + nBate + ' pagamento(s) batem com o extrato — dar baixa nas viagens</button></div>';
   if (!ab) return h + '</div>';
   var inp = 'style="font-size:12px;padding:4px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;"';
   h += '<div style="margin-top:8px;font-size:12px;color:#bbb;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">'
@@ -17184,7 +17242,7 @@ function mdSubContexto() {
 function scContextoAssistente() {
   try {
     var l = scLista(); if (!l.length) return "";
-    return "\nCOMPENSAÇÃO SUZANO (aba 📑 Medições, v468): a Suzano manda a planilha de compensação do SAP (linhas tipo 93 = CT-e pago, com Referência número-série; linhas ZP = pagamento, agrupadas pelo Doc.compensação). O app cruza por NÚMERO + SÉRIE com os CT-e do sistema e separa OK, não pago (emitido até a data de corte e sem pagamento em nenhuma compensação), pago a maior, pago a menor e pago sem CT-e no sistema. Cada divergência tem tratamento + justificativa. Para o André vão só os NÃO PAGOS e os PAGOS A MENOR, com a chave e o DACTE — pago a maior NUNCA vai (pode ser bonificação, valor errado nosso ou duplicidade; fica só no Excel INTERNO). A baixa é por pagamento: cada CT-e pago abate a viagem dele (placa + data), com o crédito do extrato que bate (um pagamento ou os do mesmo dia somados) ou lançado sem extrato.\n"
+    return "\nCOMPENSAÇÃO SUZANO (aba 📑 Medições, v468): a Suzano manda a planilha de compensação do SAP (linhas tipo 93 = CT-e pago, com Referência número-série; linhas ZP = pagamento, agrupadas pelo Doc.compensação). O app cruza por NÚMERO + SÉRIE com os CT-e do sistema e separa OK, não pago (emitido até a data de corte e sem pagamento em nenhuma compensação), pago a maior, pago a menor e pago sem CT-e no sistema. Cada divergência tem tratamento + justificativa. Para o André vão só os NÃO PAGOS e os PAGOS A MENOR, com a chave e o DACTE — pago a maior NUNCA vai (pode ser bonificação, valor errado nosso ou duplicidade; fica só no Excel INTERNO). A baixa é por pagamento: cada CT-e pago abate a viagem dele (placa + data), com o crédito do extrato que bate (um pagamento ou os do mesmo dia somados) ou lançado sem extrato. v481: a baixa é AUTOMÁTICA quando existe um único crédito da SUZANO no extrato que bate com o pagamento (roda ao importar a compensação, ao importar o extrato e pelo botão \"🏦 N pagamento(s) batem com o extrato\" no cartão). E a viagem vira PAGA (pagoFonte extrato, data do crédito) sempre que o extrato cobre o valor dela, então o Pendente de pagamento da aba Viagens passa a acompanhar a Conciliação.\n"
       + l.map(function (md) {
         var g = scGrupos(md), p = md.pagamentos || [];
         return "- " + md.ref + " (corte " + exDataBr(md.corte) + "): " + (md.linhas || []).length + " CT-e pagos, " + g.ok.length + " ok"
