@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v463)</title>
+<title>RF Logística — Painel da Frota (v464)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v463">
+<meta name="rf-versao" content="v464">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v463" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v464" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -24665,6 +24665,12 @@ function crResumoPlaca(placa, mes) {
     litrosSemAbast: soma("litrosSemAbast"), rsSemAbast: soma("rsSemAbast"),
     fixoManual: crFixoManualDaPlaca(placa, mes),
     liquido: soma("resultado") + crFixoManualDaPlaca(placa, mes).receita - crFixoManualDaPlaca(placa, mes).custo - fx.total,
+    // v464: LUCRO DO CAMINHÃO SEM RATEIO (pedido do Renato) -- o valor real do caminhão:
+    // o que ele faturou menos só o que é DELE (custo real das viagens + custo fixo
+    // lançado nele + dívidas fixas marcadas com a placa dele). A parte da empresa
+    // (galpão, luz, Sandra...) não entra aqui.
+    faturou: soma("frete") + crFixoManualDaPlaca(placa, mes).receita,
+    lucro: soma("resultado") + crFixoManualDaPlaca(placa, mes).receita - crFixoManualDaPlaca(placa, mes).custo - fx.direta,
   };
 }
 function crToggleCaixa(placa) { state._crAberta = (state._crAberta === placa) ? "" : placa; render(); }
@@ -26864,11 +26870,11 @@ ${(function () {
       return "- " + p + ": " + r.viagens + " viagem(ns), frete " + fmtR(r.frete) + (r.fixoManual.receita ? ", aluguel fixo " + fmtR(r.fixoManual.receita) : "")
         + ", diesel consumido " + fmtR(r.consumido) + ", mão de obra " + fmtR(r.maoReal) + ", alimentação " + fmtR(r.alim) + ", imposto " + fmtR(r.imposto)
         + ", outros " + fmtR(r.outros) + ", dívidas fixas " + fmtR(r.fixas.total) + (r.fixoManual.custo ? ", custo fixo manual " + fmtR(r.fixoManual.custo) : "")
-        + " => LÍQUIDO " + fmtR(r.liquido) + (r.litrosSemAbast > 1 ? " (" + Math.round(r.litrosSemAbast) + " L rodados sem abastecimento lançado)" : "");
+        + " => faturou " + fmtR(r.faturou) + ", LUCRO SEM RATEIO " + fmtR(r.lucro) + ", líquido com rateio " + fmtR(r.liquido) + (r.litrosSemAbast > 1 ? " (" + Math.round(r.litrosSemAbast) + " L rodados sem abastecimento lançado)" : "");
     }).filter(Boolean).join("\n");
   } catch (e) { nums = "(não consegui montar os números)"; }
   return `CUSTO REAL POR CAMINHÃO (aba "⛽ Custo Real", refeita na v463):
-É o painel que responde "quanto cada caminhão deixou no mês". Conta única, de cima pra baixo: RECEITA (frete das viagens + aluguel fixo do caminhão, ex. Leão) − CUSTO REAL DAS VIAGENS (diesel CONSUMIDO, motorista/ajudante pelo regime -- CLT pelo rateio da folha --, alimentação, imposto, outros) − CUSTO FIXO DO CAMINHÃO (dívidas fixas marcadas nele + rateio em partes iguais das fixas da empresa entre os caminhões que rodaram + custo manual lançado no caminhão) = LÍQUIDO DO MÊS.
+É o painel que responde "quanto cada caminhão deixou no mês". O número PRINCIPAL (v464, pedido do Renato: "isso é valor real") é o LUCRO DO CAMINHÃO SEM RATEIO = faturou − custo real das viagens − custo fixo e dívidas fixas marcadas na placa dele. Quando perguntarem quanto um caminhão lucrou, responda com esse número e o faturamento; o líquido com rateio das despesas da empresa é secundário. Conta única, de cima pra baixo: RECEITA (frete das viagens + aluguel fixo do caminhão, ex. Leão) − CUSTO REAL DAS VIAGENS (diesel CONSUMIDO, motorista/ajudante pelo regime -- CLT pelo rateio da folha --, alimentação, imposto, outros) − CUSTO FIXO DO CAMINHÃO (dívidas fixas marcadas nele + rateio em partes iguais das fixas da empresa entre os caminhões que rodaram + custo manual lançado no caminhão) = LÍQUIDO DO MÊS.
 ADM, manutenção e pneus da aba Viagens são RESERVAS e NÃO entram neste painel: o custo real deles está nas dívidas fixas. Não somar os dois.
 Diesel consumido = KM da viagem × custo por km (preço mediano do litro do caminhão ÷ km/l). O km/l é o MEDIDO pelo hodômetro quando há cobertura (80% do KM em 5+ viagens com abastecimento), senão o do CADASTRO da aba Frota -- o mesmo do Financeiro. A diferença de diesel entre este painel e o Financeiro vem principalmente de litros rodados sem abastecimento lançado antes (o tanque virtual do Financeiro não cobra litro que não entrou; aqui cobra); o resto é preço (mediano do caminhão aqui, médio do tanque lá) e caminhão com consumo medido. Isso costuma ser abastecimento não lançado ou lançado em outra viagem.
 A viagem entra no caminhão pela PLACA e no mês pela data de SAÍDA; o motorista que a fez aparece na linha (é do motorista, nunca muda com troca de motorista do caminhão). Placa de teste (TES...) fica fora do painel e do rateio.
@@ -29176,7 +29182,7 @@ function renderTabela() {
     const placas = state.veiculos.map((v) => v.placa).filter((p) => p && !rfPlacaTeste(p));
     const dados = placas.map((p) => ({ placa: p, r: crResumoPlaca(p, mesCR) }))
       .filter((x) => x.r.viagens || x.r.fixoManual.receita || x.r.fixoManual.custo || x.r.fixas.total)
-      .sort((a, b) => b.r.liquido - a.r.liquido);
+      .sort((a, b) => b.r.lucro - a.r.lucro);
     const somaG = (c) => dados.reduce((t, x) => t + (Number(x.r[c]) || 0), 0);
     const recFixa = dados.reduce((t, x) => t + x.r.fixoManual.receita, 0);
     const cusFixoMan = dados.reduce((t, x) => t + x.r.fixoManual.custo, 0);
@@ -29209,8 +29215,27 @@ function renderTabela() {
           ${linhaConta("Imposto", somaG("imposto"), VERM_CR, "−", receitaG)}
           ${linhaConta("Outros custos de viagem", somaG("outros"), VERM_CR, "−", receitaG)}
           ${cusFixoMan ? linhaConta("Custo fixo lançado no caminhão", cusFixoMan, VERM_CR, "−", receitaG) : ""}
-          ${linhaConta("Dívidas fixas (próprias do caminhão + rateio da empresa)", fixasG, VERM_CR, "−", receitaG)}
-          ${linhaConta("<b>LÍQUIDO</b>", liqG, cor(liqG), "=", receitaG)}
+          ${linhaConta("Dívidas fixas marcadas nos caminhões", fxMes.diretasTotal, VERM_CR, "−", receitaG)}
+          ${linhaConta("<b>LUCRO DOS CAMINHÕES (sem rateio)</b>", somaG("lucro"), cor(somaG("lucro")), "=", receitaG)}
+          ${linhaConta("Despesas da empresa (galpão, luz, administração…)", fxMes.empresa, VERM_CR, "−", receitaG)}
+          ${linhaConta("<b>LÍQUIDO DA FROTA</b>", liqG, cor(liqG), "=", receitaG)}
+          <div style="font-size:12px;font-weight:800;color:${GOLD};margin:16px 0 6px;letter-spacing:.5px;">LUCRO DE CADA CAMINHÃO — SEM RATEIO</div>
+          <div style="overflow-x:auto;"><table style="min-width:520px;"><thead><tr>
+            <th>Caminhão</th><th style="text-align:right;">Viagens</th><th style="text-align:right;">Faturou</th>
+            <th style="text-align:right;" title="custo real das viagens + custo fixo e dívidas marcadas no caminhão">Custos dele</th>
+            <th style="text-align:right;">Lucro</th><th style="text-align:right;">Margem</th>
+          </tr></thead><tbody>
+            ${dados.map(({ placa, r }) => `<tr onclick="crToggleCaixa('${esc(placa)}')" style="cursor:pointer;">
+              <td><b>${esc(placa)}</b></td><td style="text-align:right;">${r.viagens}</td>
+              <td style="text-align:right;">${fmtR(r.faturou)}</td>
+              <td style="text-align:right;color:#999;">${fmtR(r.faturou - r.lucro)}</td>
+              <td style="text-align:right;font-weight:800;color:${cor(r.lucro)};">${fmtR(r.lucro)}</td>
+              <td style="text-align:right;color:${cor(r.lucro)};">${r.faturou > 0 ? (r.lucro / r.faturou * 100).toFixed(1) + "%" : "—"}</td></tr>`).join("")}
+            <tr style="background:#0E0E0E;font-weight:800;"><td>TOTAL</td><td style="text-align:right;">${somaG("viagens")}</td>
+              <td style="text-align:right;">${fmtR(somaG("faturou"))}</td><td style="text-align:right;">${fmtR(somaG("faturou") - somaG("lucro"))}</td>
+              <td style="text-align:right;color:${cor(somaG("lucro"))};">${fmtR(somaG("lucro"))}</td>
+              <td style="text-align:right;">${somaG("faturou") > 0 ? (somaG("lucro") / somaG("faturou") * 100).toFixed(1) + "%" : "—"}</td></tr>
+          </tbody></table></div>
           <div style="font-size:11px;color:#888;line-height:1.6;margin-top:10px;">
             Das ${fmtR(fxMes.totalFixas)} de dívidas fixas, <b style="color:#bbb;">${fmtR(fxMes.diretasTotal)}</b> têm caminhão marcado e vão direto para ele; <b style="color:#bbb;">${fmtR(fxMes.empresa)}</b> são da empresa e foram divididas em partes iguais entre os ${fxMes.nRodaram} caminhões que rodaram (${fmtR(fxMes.cota)} cada).
             ${fxMes.empresa > fxMes.diretasTotal ? `<br><span style="color:${VERM_CR};">⚠ A maior parte das fixas está sem caminhão marcado: peça, mola e pneu de um caminhão estão sendo divididos entre todos. Marque o caminhão na aba <b>Dívidas Fixas</b>.</span>` : ""}
@@ -29222,7 +29247,7 @@ function renderTabela() {
 
     const caixas = dados.map(({ placa, r }) => {
       const aberta = state._crAberta === placa;
-      const ck = cor(r.liquido), fundo = r.liquido >= 0 ? "#0B1710" : "#1E0C0B";
+      const ck = cor(r.lucro), fundo = r.lucro >= 0 ? "#0B1710" : "#1E0C0B";
       const receita = r.frete + r.fixoManual.receita;
       if (!aberta) {
         return `<div onclick="crToggleCaixa('${esc(placa)}')" title="Clique para ver viagem por viagem"
@@ -29232,9 +29257,13 @@ function renderTabela() {
             <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px;">${esc(placa)}</span>
             <span style="margin-left:auto;font-size:11px;color:#777;">${esc(r.base.consumo.tipo)} · ${r.viagens} viagem(ns)</span>
           </div>
-          <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-top:8px;">Líquido do mês</div>
-          <div style="font-size:22px;font-weight:800;color:${ck};line-height:1.1;">${fmtR(r.liquido)}</div>
-          <div style="font-size:10px;color:#888;margin-top:4px;line-height:1.5;">receita ${fmtR(receita)} · custo das viagens ${fmtR(r.custoRealV)} · fixas ${fmtR(r.fixas.total + r.fixoManual.custo)}</div>
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-top:8px;">
+            <div><div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Faturou</div>
+              <div style="font-size:16px;font-weight:800;color:#fff;">${fmtR(r.faturou)}</div></div>
+            <div style="text-align:right;"><div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:.5px;">Lucro (sem rateio)</div>
+              <div style="font-size:22px;font-weight:800;color:${cor(r.lucro)};line-height:1.1;">${fmtR(r.lucro)}</div></div>
+          </div>
+          <div style="font-size:10px;color:#777;margin-top:4px;">com rateio da empresa: <span style="color:${ck};">${fmtR(r.liquido)}</span></div>
         </div>`;
       }
       const c = r.base.consumo;
@@ -29266,8 +29295,10 @@ function renderTabela() {
           ${linhaConta("Imposto", r.imposto, VERM_CR, "−", receita)}
           ${linhaConta("Outros custos de viagem", r.outros, VERM_CR, "−", receita)}
           ${r.fixoManual.custo ? linhaConta("Custo fixo lançado no caminhão", r.fixoManual.custo, VERM_CR, "−", receita) : ""}
-          ${linhaConta("Dívidas fixas: " + fmtR(r.fixas.direta) + " dele" + (r.fixas.rodou ? " + " + fmtR(r.fixas.rateada) + " de rateio" : ""), r.fixas.total, VERM_CR, "−", receita)}
-          ${linhaConta("<b>LÍQUIDO DO MÊS</b>", r.liquido, ck, "=", receita)}
+          ${linhaConta("Dívidas fixas marcadas neste caminhão", r.fixas.direta, VERM_CR, "−", receita)}
+          ${linhaConta("<b>LUCRO DO CAMINHÃO (sem rateio)</b>", r.lucro, cor(r.lucro), "=", receita)}
+          ${r.fixas.rodou ? linhaConta("Rateio das despesas da empresa", r.fixas.rateada, "#888", "−", receita) : ""}
+          ${linhaConta("Líquido com rateio", r.liquido, cor(r.liquido), "=", receita)}
           <div style="font-size:11px;color:#888;margin-top:8px;">Tanque virtual no fim do mês: <b style="color:${cor(r.saldo)};">${fmtR(r.saldo)}</b> (${r.base.litro > 0 ? Math.round(r.saldo / r.base.litro) : 0} L) · abastecido no mês ${fmtR(r.abastecido)}${r.litrosSemAbast > 1 ? ` · <span style="color:${GOLD};">${Math.round(r.litrosSemAbast)} L rodados sem abastecimento lançado</span>` : ""}</div>
         </div>
         <div style="overflow-x:auto;">
