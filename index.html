@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v474)</title>
+<title>RF Logística — Painel da Frota (v475)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v474">
+<meta name="rf-versao" content="v475">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v474" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v475" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -17332,6 +17332,31 @@ function subEmitir(homolog) {
     if (state._sub) { state._sub.msg = "❌ " + rfSefazMsgErro(j) + (j && j.bruto ? " — " + String(j.bruto).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300) : ""); render(); }
   }).catch(function (err) { if (state._sub) { state._sub.msg = "❌ Falha de conexão: " + (err.message || err) + ". Confira a internet e toque em Conferir de novo."; render(); } });
 }
+// v475: manda DACTE + XML juntos (WhatsApp/e-mail pelo compartilhar do aparelho), igual ao envio ao motorista
+function subEnviar(medId, k) {
+  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.pdfPath) return;
+  var base = "CTe-" + x.numero + "-serie" + x.serie + "-RF-Logistica";
+  Promise.all([rfBaixarDoBucket(x.pdfPath), x.xmlPath ? rfBaixarDoBucket(x.xmlPath) : null]).then(function (r) {
+    if (!r[0]) { alert("Não consegui baixar o DACTE do armazenamento. Confira a internet."); return; }
+    var files = [new File([r[0]], base + ".pdf", { type: "application/pdf" })];
+    if (r[1]) files.push(new File([r[1]], base + ".xml", { type: "text/xml" }));
+    var texto = "CT-e " + x.numero + " (série " + x.serie + ") — RF Logística · " + fmtR(x.valor) + (x.amb !== "producao" ? " · TESTE SEM VALOR FISCAL" : "")
+      + "\nChave: " + x.chave + "\nDACTE e XML em anexo.";
+    var tenta = function (fs) { return navigator.canShare && navigator.canShare({ files: fs }); };
+    if (tenta(files)) {
+      navigator.share({ files: files, title: "CT-e " + x.numero, text: texto }).catch(function (e) { if (e && e.name !== "AbortError") alert("Não consegui abrir o compartilhamento: " + e.message); });
+      return;
+    }
+    if (files.length > 1 && tenta([files[0]])) {   // aparelho que não aceita XML no compartilhar: manda o PDF e baixa o XML
+      rfBaixarBlob(r[1], base + ".xml");
+      navigator.share({ files: [files[0]], title: "CT-e " + x.numero, text: texto }).catch(function () { });
+      alert("Este aparelho não deixa compartilhar XML. O XML foi baixado na pasta Downloads — anexe junto com o DACTE.");
+      return;
+    }
+    rfBaixarBlob(r[0], base + ".pdf"); if (r[1]) setTimeout(function () { rfBaixarBlob(r[1], base + ".xml"); }, 600);
+    alert("Baixei o DACTE e o XML na pasta Downloads. Anexe os dois no WhatsApp Web ou no e-mail.\n\n" + texto);
+  });
+}
 function subConsultar(medId, k) {
   var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.chave) return;
   rfSefazChamar({ acao: "recuperar", modelo: "cte", chave: x.chave, averbar: false }).then(function (j) {
@@ -17359,6 +17384,7 @@ function subBlocoHTML(md) {
     var cor = x.status === "autorizado" ? (x.amb === "producao" ? "#66BB6A" : "#999") : x.status === "cancelado" ? "#E57373" : "#FFB74D";
     h += '<div style="font-size:11.5px;color:#ddd;margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><b style="color:' + cor + ';">' + (x.amb !== "producao" ? "TESTE · " : "") + 'CT-e ' + esc(x.numero) + '/' + esc(x.serie) + ' · ' + esc(x.status) + '</b>'
       + '<span>' + fmtR(x.valor) + ' · ' + exDataBr(String(x.em || "").slice(0, 10)) + ' · ref. CT-e ' + esc(String(x.chaveAnt || "").slice(25, 34).replace(/^0+/, "")) + ' da contratante</span>'
+      + (x.pdfPath ? '<button class="btn-outline" style="font-size:11px;padding:3px 12px;border-color:#25D366;color:#25D366;font-weight:800;" onclick="subEnviar(\'' + esc(md.id) + '\',' + k + ')">📤 Enviar DACTE + XML</button>' : "")
       + (x.pdfPath ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ccVer(\'' + esc(x.pdfPath) + '\')">DACTE</button>' : "")
       + (x.xmlPath ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ccVer(\'' + esc(x.xmlPath) + '\')">XML</button>' : "")
       + (x.status === "pendente" ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#FFB74D;border-color:#FFB74D;" onclick="subConsultar(\'' + esc(md.id) + '\',' + k + ')">consultar</button>' : "")
