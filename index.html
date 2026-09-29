@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v466)</title>
+<title>RF Logística — Painel da Frota (v467)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v466">
+<meta name="rf-versao" content="v467">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v466" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v467" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -884,7 +884,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos"];   // v423: goias; v446: compras; v448: extratos
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -939,7 +939,16 @@ function freteM3De(cliente) {
 //   1) rota por tonelada (Salvador RM) e peso informado -> peso/1000 x R$/ton
 //   2) peso informado e dentro do limite da VAN -> preço de VAN, seja qual for o caminhão
 //   3) senão, preço do tipo do veículo escalado
-function freteRotaDe(cliente, rota, tipo, pesoKg) {
+// v467: dataISO (saída da viagem) opcional -- aplica o adicional temporário do período (ttAtiva)
+function freteRotaDe(cliente, rota, tipo, pesoKg, dataISO) {
+  var base = freteRotaBase(cliente, rota, tipo, pesoKg);
+  if (base > 0 && dataISO && typeof ttAtiva === "function") {
+    var ad = ttAtiva(cliente, dataISO, "adicional");
+    if (ad && Number(ad.valor)) base = Math.round((base + Number(ad.valor)) * 100) / 100;
+  }
+  return base;
+}
+function freteRotaBase(cliente, rota, tipo, pesoKg) {
   const t = tarifaCliente(cliente);
   if (!t || t.modo !== "rota" || !rota) return 0;
   const r = (t.rotas || {})[rota];
@@ -969,6 +978,13 @@ function freteRotaMotivo(cliente, rota, tipo, pesoKg) {
 function freteKmViagem(v) {
   if (v.freteKmManual) return Number(v.freteKmManualValor) || 0;   // v72: valor/km escolhido manualmente nesta viagem
   const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
+  // v467: tarifa por km com prazo (ex.: JDL R$ 5,10 de 21/09 a 02/10/2026), pela data de saída
+  const tt = (typeof ttAtiva === "function") ? ttAtiva(v.cliente, v.data, "km") : null;
+  if (tt) {
+    const eh34 = veic && veic.tipo === "3/4";
+    if (eh34 && tt.km34 !== "" && tt.km34 != null && Number(tt.km34) > 0) return Number(tt.km34);
+    if (!eh34 && Number(tt.valor) > 0) return Number(tt.valor);
+  }
   return freteKmDe(v.cliente, veic ? veic.tipo : "");
 }
 // Handlers da config de tarifa (chamados pela tela de clientes)
@@ -2286,7 +2302,7 @@ function mtGerarViagem(auto) {
   var kmCriacao = mtKmDaCarga(p);          /* v394: uma conta so, reusada abaixo */
   var valor = 0;
   try {
-    if (typeof freteRotaDe === "function" && rotaTar) valor = freteRotaDe("JT/Mateus", rotaTar, veic.tipo || "", peso) || 0;
+    if (typeof freteRotaDe === "function" && rotaTar) valor = freteRotaDe("JT/Mateus", rotaTar, veic.tipo || "", peso, data) || 0;   // v467: com adicional do período
   } catch (e) { valor = 0; }
   if (!valor && Number(m.frete) > 0) valor = Number(m.frete);
 
@@ -2597,7 +2613,7 @@ function mtBlocoHTML() {
   };
   var veicSel = (state.veiculos || []).find(function (x) { return x.placa === placaSel; }) || {};
   var valorTab = 0;
-  try { if (typeof freteRotaDe === "function" && rotaTar && placaSel) valorTab = freteRotaDe("JT/Mateus", rotaTar, veicSel.tipo || "", pesoTotG) || 0; } catch (e) { valorTab = 0; }
+  try { if (typeof freteRotaDe === "function" && rotaTar && placaSel) valorTab = freteRotaDe("JT/Mateus", rotaTar, veicSel.tipo || "", pesoTotG, hojeISO()) || 0; } catch (e) { valorTab = 0; }
 
   h += '<div style="margin-top:14px;padding:12px;background:#111;border:1px solid ' + GOLD + ';border-radius:8px;">'
     + '<div style="font-size:12.5px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">\ud83d\ude9a Gerar a viagem</div>'
@@ -6040,6 +6056,7 @@ function salvar() {
     localStorage.setItem("rf-frota-lapides-v1", JSON.stringify(state.lapides || []));   // v421
     localStorage.setItem("rf-frota-compras-v1", JSON.stringify(state.compras || []));   // v446
     localStorage.setItem("rf-frota-extratos-v1", JSON.stringify(state.extratos || []));   // v448
+    localStorage.setItem("rf-frota-medicoes-v1", JSON.stringify(state.medicoes || []));   // v467
   } catch (e) {}
 }
 
@@ -6076,6 +6093,7 @@ let state = {
   motoristasCad: carregar("rf-frota-motoristascad-v1", () => []),   // v397: fichas FO_YL_026
   compras: carregar("rf-frota-compras-v1", () => []),   // v446: conciliacao de compras
   extratos: carregar("rf-frota-extratos-v1", () => []),   // v448: extratos bancarios
+  medicoes: carregar("rf-frota-medicoes-v1", () => []),   // v467: medições do cliente
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -7552,7 +7570,7 @@ function aplicarFreteKm(v, origem) {
     // conforme o tipo do veículo escalado (Toco ou 3/4).
     if (!v.rota) return;
     const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
-    const valorRota = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "", v.pesoKg);   // v264: peso decide VAN/tonelada
+    const valorRota = freteRotaDe(v.cliente, v.rota, veic ? veic.tipo : "", v.pesoKg, v.data);   // v264: peso decide VAN/tonelada; v467: + adicional do período
     if (valorRota > 0) v.valorViagem = valorRota;
   }
   // modo "viagem": valor é manual, não mexe.
@@ -7658,7 +7676,7 @@ function setFreteKmManual(id, checked) {          // v72: liga/desliga valor/km 
   v.freteKmManual = !!checked;
   if (v.freteKmManual && !v.freteKmManualValor) {
     const veic = (state.veiculos || []).find((x) => x.placa === v.placa);
-    v.freteKmManualValor = freteKmDe(v.cliente, veic ? veic.tipo : "") || 0;  // pré-preenche com a tarifa padrão, se houver
+    v.freteKmManualValor = ttKmDe(v.cliente, veic ? veic.tipo : "", v.data) || 0;  // pré-preenche com a tarifa padrão (v467: a do período, se houver)
   }
   aplicarFreteKm(v, "km");
   salvar(); render();
@@ -15718,7 +15736,21 @@ function exPainelSaida(e, l) {
     + '<button class="btn-outline" style="font-size:11px;padding:3px 9px;" onclick="exVincOutro(\'' + eid + '\',\'' + lid + '\')">salvar</button></div>';
   return h + '</div>';
 }
+function exMedicaoDoCredito(l) {   // v467: crédito que bate com uma medição a receber
+  if (!(l.valor > 0) || l.vinc) return null;
+  return mdLista().filter(function (m) { return m.status !== "paga" && Math.abs((m.totalAPagar || 0) - l.valor) < 0.05; })[0] || null;
+}
 function exPainelEntrada(e, l) {
+  var eid = esc(e.id), lid = esc(l.id);
+  var mdC = exMedicaoDoCredito(l);
+  if (mdC) return '<div style="margin:8px 0;padding:9px 11px;border:1px solid #66BB6A;border-radius:8px;background:#0b130c;font-size:12px;color:#ddd;">'
+    + '💡 Este crédito bate com a <b>medição ' + esc(mdC.ref) + '</b> (' + esc(mdC.cliente || "") + ', a pagar ' + fmtR(mdC.totalAPagar) + ', ' + (mdC.recibos || []).length + ' viagem(ns)). '
+    + '<button class="btn-outline" style="font-size:11.5px;padding:3px 12px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="mdBaixaExtrato(\'' + esc(mdC.id) + '\',\'' + eid + '\',\'' + lid + '\')">✓ dar baixa por essa medição</button>'
+    + ' <a href="javascript:void(0)" style="color:#888;font-size:11px;" onclick="state._exNaoMed=\'' + lid + '\';render()">não é essa medição</a></div>'
+    + (state._exNaoMed === l.id ? exPainelEntradaNormal(e, l) : "");
+  return exPainelEntradaNormal(e, l);
+}
+function exPainelEntradaNormal(e, l) {
   var eid = esc(e.id), lid = esc(l.id);
   var selIds = state._exSelV && state._exSelV.lin === l.id ? state._exSelV.ids : [];
   var vs = exViagensAbertas();
@@ -16136,6 +16168,508 @@ function exDemoBaixa(extId, linId) {
   exSalvar(o.e);
 }
 /* ============ fim v451 ====================================================== */
+
+
+/* ===================== v467 — TARIFA COM PRAZO =====================
+   Renato (29/09/2026): acordos temporários por causa do aumento do diesel.
+   - JDL (Mercante/JDL): R$ 5,10/km em vez de R$ 4,80 para viagens com SAÍDA de
+     21/09 a 02/10/2026 ("ajuda temporária, depois volta a 4,80").
+   - JT/Mateus: + R$ 500 por viagem sobre a tabela, a partir de 21/09/2026 (sem fim
+     definido ainda).
+   A regra vale pela DATA DE SAÍDA da viagem (campo data). Passado o prazo, o
+   cálculo volta sozinho ao valor normal da tabela.
+   tipo "km": R$/km que substitui a tarifa (valor = Toco/demais, km34 = 3/4; vazio = não muda)
+   tipo "adicional": R$ fixo somado ao valor da rota. */
+function ttLista() {
+  if (!state.config) state.config = {};
+  if (!Array.isArray(state.config.tarifasTemp)) state.config.tarifasTemp = [];
+  return state.config.tarifasTemp;
+}
+function ttAtiva(cliente, dataISO, tipo) {
+  var d = String(dataISO || "").slice(0, 10);
+  if (!d || !cliente) return null;
+  return ttLista().filter(function (t) {
+    return t && t.cliente === cliente && (!tipo || t.tipo === tipo) && (!t.de || d >= t.de) && (!t.ate || d <= t.ate);
+  })[0] || null;
+}
+function ttSemear() {
+  if (!state.config) state.config = {};
+  if (Array.isArray(state.config.tarifasTemp)) return false;
+  state.config.tarifasTemp = [
+    { id: "tt-jdl-diesel-2609", cliente: "Mercante/JDL", tipo: "km", valor: 5.10, km34: "", de: "2026-09-21", ate: "2026-10-02", obs: "ajuda temporária do diesel — depois volta a R$ 4,80/km" },
+    { id: "tt-jt-diesel-2609", cliente: "JT/Mateus", tipo: "adicional", valor: 500, km34: "", de: "2026-09-21", ate: "", obs: "adicional temporário do diesel por viagem" },
+  ];
+  return true;
+}
+// R$/km do período para o tipo do caminhão (sem regra: a tarifa normal)
+function ttKmDe(cliente, tipo, dataISO) {
+  var t = ttAtiva(cliente, dataISO, "km");
+  if (t) {
+    if (tipo === "3/4") { if (t.km34 !== "" && t.km34 != null && Number(t.km34) > 0) return Number(t.km34); }
+    else if (Number(t.valor) > 0) return Number(t.valor);
+  }
+  return freteKmDe(cliente, tipo);
+}
+// Reaplica as regras nas viagens do período (valor calculado pela tarifa; viagem com valor manual ou medição aceita fica como está)
+function ttReaplicar(silencioso) {
+  var n = 0;
+  (state.viagens || []).forEach(function (v) {
+    if (!v || !v.cliente || !v.data) return;
+    if (v.medicao && v.medicao.aceita) return;
+    var modo = modoCliente(v.cliente);
+    /* R$/km "manual" igual à tarifa normal é só o pré-preenchimento padrão: passa a ser
+       a do período. Manual diferente (combinado à parte) não é tocado. */
+    if (v.freteKmManual) {
+      if (modo !== "km") return;
+      var vc = (state.veiculos || []).find(function (x) { return x.placa === v.placa; }) || {};
+      var normal = freteKmDe(v.cliente, vc.tipo || ""), doPer = ttKmDe(v.cliente, vc.tipo || "", v.data);
+      var atual = Number(v.freteKmManualValor) || 0;
+      if (Math.abs(atual - normal) > 0.001 || Math.abs(doPer - atual) < 0.001 || !(Number(v.km) > 0)) return;
+      var ant = Number(v.valorViagem) || 0;
+      v.freteKmManualValor = doPer;
+      aplicarFreteKm(v, "km");
+      if (Math.abs((Number(v.valorViagem) || 0) - ant) >= 0.01) n++;
+      return;
+    }
+    var t = ttAtiva(v.cliente, v.data, modo === "km" ? "km" : modo === "rota" ? "adicional" : "__nenhum");
+    if (!t) return;
+    if (modo === "rota" && !v.rota) return;
+    if (modo === "km" && !(Number(v.km) > 0)) return;
+    var antes = Number(v.valorViagem) || 0;
+    aplicarFreteKm(v, "auto");
+    if (Math.abs((Number(v.valorViagem) || 0) - antes) >= 0.01) n++;
+  });
+  if (!silencioso) { salvar(); render(); alert(n ? n + " viagem(ns) recalculada(s) com a tarifa do período." : "Nenhuma viagem precisou mudar."); }
+  return n;
+}
+function ttSet(i, campo, val) {
+  var l = ttLista(); if (!l[i]) return;
+  l[i][campo] = (campo === "valor" || campo === "km34") ? (String(val).trim() === "" ? "" : Number(String(val).replace(",", ".")) || 0) : String(val || "").trim();
+  salvar(); render();
+}
+function ttAdd() {
+  ttLista().push({ id: "tt-" + Date.now(), cliente: (state.clientes || [])[0] || "", tipo: "adicional", valor: 0, km34: "", de: hojeISO(), ate: "", obs: "" });
+  salvar(); render();
+}
+function ttDel(i) {
+  var l = ttLista(); if (!l[i]) return;
+  if (!confirm("Remover a tarifa temporária de " + l[i].cliente + "? As viagens já calculadas não mudam; use 'reaplicar' se quiser recalcular.")) return;
+  l.splice(i, 1); salvar(); render();
+}
+function ttBlocoHTML() {
+  var l = ttLista(), hoje = hojeISO();
+  var inp = 'style="font-size:11px;padding:3px 6px;background:#111;color:#eee;border:1px solid #333;border-radius:5px;"';
+  var h = '<div style="margin:0 0 14px;padding:10px 12px;background:#1A1206;border:1px solid ' + GOLD + ';border-radius:8px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">⏳ TARIFAS COM PRAZO (acordos temporários)</div>'
+    + '<div style="font-size:10.5px;color:#999;margin-bottom:8px;">Vale pela <b>data de saída</b> da viagem. "R$/km" troca a tarifa por km no período; "adicional" soma um valor fixo à rota. Fora do prazo, volta sozinho ao normal.</div>';
+  if (!l.length) h += '<div style="font-size:11px;color:#777;">Nenhuma tarifa temporária.</div>';
+  l.forEach(function (t, i) {
+    var ativa = (!t.de || hoje >= t.de) && (!t.ate || hoje <= t.ate);
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:5px 0;border-top:1px solid #2a2a2a;font-size:11px;color:#ccc;">'
+      + '<select ' + inp + ' onchange="ttSet(' + i + ',\'cliente\',this.value)">' + (state.clientes || []).map(function (c) { return '<option' + (c === t.cliente ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>'
+      + '<select ' + inp + ' onchange="ttSet(' + i + ',\'tipo\',this.value)"><option value="km"' + (t.tipo === "km" ? " selected" : "") + '>R$/km</option><option value="adicional"' + (t.tipo === "adicional" ? " selected" : "") + '>adicional por viagem</option></select>'
+      + (t.tipo === "km" ? 'Toco <input ' + inp + ' size="5" value="' + esc(String(t.valor)) + '" onchange="ttSet(' + i + ',\'valor\',this.value)"> 3/4 <input ' + inp + ' size="5" placeholder="igual" value="' + esc(String(t.km34 == null ? "" : t.km34)) + '" onchange="ttSet(' + i + ',\'km34\',this.value)">'
+        : 'R$ <input ' + inp + ' size="6" value="' + esc(String(t.valor)) + '" onchange="ttSet(' + i + ',\'valor\',this.value)">')
+      + ' de <input type="date" ' + inp + ' value="' + esc(t.de || "") + '" onchange="ttSet(' + i + ',\'de\',this.value)">'
+      + ' até <input type="date" ' + inp + ' value="' + esc(t.ate || "") + '" onchange="ttSet(' + i + ',\'ate\',this.value)">'
+      + '<span style="font-size:10px;font-weight:800;color:' + (ativa ? "#66BB6A" : "#777") + ';">' + (ativa ? "VALENDO" : (t.de && hoje < t.de ? "AINDA NÃO COMEÇOU" : "ENCERRADA")) + '</span>'
+      + '<input ' + inp + ' style="flex:1;min-width:140px;font-size:11px;padding:3px 6px;background:#111;color:#aaa;border:1px solid #333;border-radius:5px;" placeholder="observação" value="' + esc(t.obs || "") + '" onchange="ttSet(' + i + ',\'obs\',this.value)">'
+      + '<button class="btn-outline" style="font-size:10px;padding:1px 7px;color:#E57373;border-color:#E57373;" onclick="ttDel(' + i + ')">remover</button></div>';
+  });
+  h += '<div style="margin-top:6px;display:flex;gap:6px;"><button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="ttAdd()">+ tarifa temporária</button>'
+    + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="ttReaplicar()" title="Recalcula o valor das viagens do período (não mexe em valor manual nem em viagem com medição aceita)">↻ reaplicar nas viagens do período</button></div>';
+  return h + '</div>';
+}
+
+/* ===================== v467 — MEDIÇÕES DO CLIENTE (JDL e outros) =====================
+   Renato (29/09/2026): "esse pdf é a medição da JDL, preciso anexar ele, e assim
+   colocar as viagens como a pagar; assim que pagar anexa o comprovante/extrato e o
+   sistema dá baixa nas viagens" + "quando o valor da viagem der divergente da
+   medição tem que ter um campo para tratar essa divergência".
+   Fluxo: anexar a medição -> a leitura (mesma função ler-demonstrativo-pagamento da
+   Conciliação) devolve os recibos -> cada recibo casa com a viagem (placa + data +
+   valor) -> divergência de valor exige TRATAMENTO (aceitar / cobrar / contestar) e
+   justificativa -> a medição fica "A RECEBER" e as viagens ganham o selo da medição.
+   O abastecimento que o cliente descontou entra como combustível da viagem (é diesel
+   que ele pôs no caminhão). Na baixa, usa o crédito do extrato importado que bate
+   com o valor, ou um comprovante anexado à mão; o vínculo é o mesmo da Conciliação,
+   então a viagem passa a constar como recebida em todo o sistema. */
+function mdLista() { if (!Array.isArray(state.medicoes)) state.medicoes = []; return state.medicoes; }
+function mdAcha(id) { return mdLista().filter(function (m) { return String(m.id) === String(id); })[0] || null; }
+function mdRecibosMedidos(excetoMed) {
+  var m = {};
+  mdLista().forEach(function (md) {
+    if (md.id === excetoMed) return;
+    (md.recibos || []).forEach(function (r) { if (r.recibo) m[String(r.recibo)] = md; });
+  });
+  return m;
+}
+function mdLer(input) {
+  if (!ehAdmin()) return;
+  var files = Array.prototype.slice.call(input.files || []); if (!files.length) return;
+  var ruim = files.filter(function (f) { return !/^image\//.test(f.type || "") && !exEhPdf(f); });
+  if (ruim.length) { alert("Mande o PDF da medição ou a imagem/print dela."); input.value = ""; return; }
+  var cliSel = document.getElementById("md-cliente");
+  var cliente = (cliSel && cliSel.value) || "Mercante/JDL";
+  var ant = state._mdLeit && state._mdLeit.recibos ? state._mdLeit : null;
+  var acum = { cliente: ant ? ant.cliente : cliente, recibos: ant ? ant.recibos.slice() : [], total: ant ? ant.total : 0, arquivos: ant ? (ant.arquivos || []).slice() : [] };
+  state._mdLeit = { lendo: true, msg: "lendo " + files.length + " arquivo(s)..." }; render();
+  var erros = [];
+  files.reduce(function (p, file, i) {
+    return p.then(function () {
+      var arquivo = null;
+      return ccSubir([file], "medicoes", "medicao-" + Date.now() + "-" + i).then(function (r) { arquivo = r[0] || null; }).catch(function () { })
+        .then(function () { return exEhPdf(file) ? exPdfParaImagens(file) : [file]; })
+        .then(function (imgs) {
+          var achou = false;
+          return imgs.reduce(function (q, img, pi) {
+            return q.then(function () {
+              state._mdLeit = { lendo: true, msg: "lendo " + (file.name || "arquivo") + (imgs.length > 1 ? " — página " + (pi + 1) + " de " + imgs.length : "") + "..." }; render();
+              return exArquivoBase64(img).then(function (a) { return exDemoViaIA(a.b64, a.mime); }).then(function (j) {
+                var recs = (j && j.recibos) || []; if (!recs.length) return;
+                achou = true;
+                var ja = {}; acum.recibos.forEach(function (r) { if (r.recibo) ja[r.recibo] = 1; });
+                recs.forEach(function (r) { if (!r.recibo || !ja[r.recibo]) acum.recibos.push(r); });
+                acum.total = Math.round((acum.total + (Number(j.total) || 0)) * 100) / 100;
+              }).catch(function (e) { if (!/nao_legivel/.test(String(e.message || e))) erros.push((file.name || "arquivo") + ": " + (e.message || e)); });
+            });
+          }, Promise.resolve()).then(function () { if (achou && arquivo) acum.arquivos.push(arquivo); });
+        })
+        .catch(function (e) { erros.push((file.name || "arquivo") + ": " + (e.message || e)); });
+    });
+  }, Promise.resolve()).then(function () {
+    input.value = "";
+    if (!acum.recibos.length) { state._mdLeit = { erro: "Não achei viagens/recibos no arquivo." + (erros.length ? " " + erros.join(" · ") : "") }; render(); return; }
+    acum.erros = erros;
+    acum.recibos = mdCasar(acum.recibos, acum.cliente);
+    state._mdLeit = acum; render();
+  });
+}
+function mdCasar(recibos, cliente) {
+  var medidos = mdRecibosMedidos(null), baixados = exRecibosUsados(null), usadas = {};
+  var abertas = exViagensAbertas().filter(function (v) { return (!cliente || v.cliente === cliente) && !v.medicao; });
+  (recibos || []).forEach(function (r) {
+    r.jaMedido = r.recibo && medidos[String(r.recibo)] ? { id: medidos[String(r.recibo)].id, ref: medidos[String(r.recibo)].ref } : null;
+    r.jaBaixado = r.recibo && baixados[String(r.recibo)] ? baixados[String(r.recibo)] : null;
+    if (r.vidManual) return;
+    r.vid = "";
+    if (r.jaMedido || r.jaBaixado) return;
+    var placa = exNormPlaca(r.placa), ini = exDataISO(r.inicio) || exDataISO(r.fim);
+    var cands = abertas.filter(function (v) { return exPlacaParecida(v.placa, placa) && !usadas[String(v.id)]; });
+    var dias = function (v) { if (!ini || !v.data) return 999; return Math.abs((new Date(String(v.data).slice(0, 10)) - new Date(ini)) / 86400000); };
+    cands.sort(function (a, b) {
+      return dias(a) - dias(b) || Math.abs((Number(a.valorViagem) || 0) - r.valorFrete) - Math.abs((Number(b.valorViagem) || 0) - r.valorFrete);
+    });
+    var v = cands[0];
+    if (v && (dias(v) <= 5 || Math.abs((Number(v.valorViagem) || 0) - r.valorFrete) < 0.05)) { r.vid = String(v.id); usadas[r.vid] = 1; }
+  });
+  return recibos;
+}
+function mdTrocar(i, vid) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) { d.recibos[i].vid = vid; d.recibos[i].vidManual = true; render(); } }
+function mdDifSet(i, campo, val, re) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) d.recibos[i][campo] = val; if (re) render(); }
+function mdSetCliente(v) { var d = state._mdLeit; if (d && d.recibos) { d.cliente = v; d.recibos.forEach(function (r) { r.vidManual = false; }); d.recibos = mdCasar(d.recibos, v); render(); } }
+function mdViagem(id) { return (state.viagens || []).filter(function (x) { return String(x.id) === String(id); })[0] || null; }
+function mdDivergencia(r, v) {
+  if (!v || !(r.valorFrete > 0)) return 0;
+  return Math.round(((Number(v.valorViagem) || 0) - r.valorFrete) * 100) / 100;   // + = sistema maior que a medição
+}
+var MD_TRAT = [["aceitar", "aceitar o valor da medição (corrige a viagem)"], ["cobrar", "manter o sistema e cobrar a diferença do cliente"], ["contestar", "contestar — medição errada, pedir correção ao cliente"]];
+function mdLeituraHTML() {
+  var d = state._mdLeit; if (!d) return "";
+  if (d.lendo) return '<div style="font-size:12px;color:#F2E600;margin:10px 0;">⏳ ' + esc(d.msg || "lendo a medição...") + '</div>';
+  if (d.erro) return '<div style="font-size:12px;color:#E57373;margin:10px 0;">✖ ' + esc(d.erro) + ' <button class="btn-outline" style="font-size:10px;padding:1px 7px;" onclick="state._mdLeit=null;render()">ok</button></div>';
+  var inp = 'font-size:11px;padding:3px 5px;background:#111;color:#ddd;border:1px solid #333;border-radius:5px;';
+  var abertas = exViagensAbertas().filter(function (v) { return !v.medicao; });
+  var tF = 0, tD = 0, tP = 0, nDif = 0, nSem = 0;
+  var th = 'style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;"';
+  var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11px;color:#ccc;vertical-align:top;"';
+  var linhas = d.recibos.map(function (r, i) {
+    tF += r.valorFrete || 0; tD += exDemoDesc(r); tP += r.aPagar || 0;
+    var v = r.vid ? mdViagem(r.vid) : null;
+    if (!v && !r.jaMedido && !r.jaBaixado) nSem++;
+    var mesma = abertas.filter(function (x) { return exPlacaParecida(x.placa, r.placa) || String(x.id) === r.vid; });
+    var outras = abertas.filter(function (x) { return mesma.indexOf(x) === -1 && (!d.cliente || x.cliente === d.cliente); }).slice(0, 150);
+    var op = function (x) { return '<option value="' + esc(String(x.id)) + '"' + (String(x.id) === r.vid ? " selected" : "") + '>' + exDataBr(String(x.data || "").slice(0, 10)) + " · " + esc(x.placa || "") + " · " + esc(x.cliente || "") + " · " + fmtR(x.valorViagem) + '</option>'; };
+    var sel = r.jaMedido ? '<span style="color:#E57373;">já está na medição ' + esc(r.jaMedido.ref || "") + '</span>'
+      : r.jaBaixado ? '<span style="color:#E57373;">já baixado no crédito de ' + exDataBr(r.jaBaixado.data) + '</span>'
+      : '<select onchange="mdTrocar(' + i + ',this.value)" style="' + inp + 'max-width:100%;"><option value="">— sem viagem no sistema —</option>'
+        + (mesma.length ? '<optgroup label="mesma placa">' + mesma.map(op).join("") + '</optgroup>' : "")
+        + (outras.length ? '<optgroup label="outras viagens em aberto">' + outras.map(op).join("") + '</optgroup>' : "") + '</select>';
+    var dif = mdDivergencia(r, v), difH = "";
+    if (v && Math.abs(dif) >= 0.05) {
+      nDif++;
+      var kmS = Number(v.km) || 0, kmM = Number(r.kmRodado) || 0;
+      difH = '<div style="margin-top:4px;padding:6px 7px;border:1px solid #5a4a26;border-radius:6px;background:rgba(255,183,77,0.07);">'
+        + '<div style="color:#FFB74D;font-size:11px;font-weight:800;">⚠ DIVERGÊNCIA: sistema ' + fmtR(v.valorViagem) + ' · medição ' + fmtR(r.valorFrete) + ' · diferença ' + fmtR(dif) + '</div>'
+        + (kmM && Math.abs(kmM - kmS) >= 1 ? '<div style="color:#bbb;font-size:10.5px;">KM: sistema ' + kmS + ' · medição ' + kmM + (kmM ? ' · R$/km da medição ' + (r.valorFrete / kmM).toFixed(2).replace(".", ",") : "") + '</div>' : "")
+        + '<select onchange="mdDifSet(' + i + ',\'trat\',this.value,true)" style="' + inp + 'margin-top:4px;max-width:100%;"><option value="">— escolha o tratamento —</option>'
+        + MD_TRAT.map(function (t) { return '<option value="' + t[0] + '"' + (r.trat === t[0] ? " selected" : "") + '>' + t[1] + '</option>'; }).join("") + '</select>'
+        + '<input value="' + esc(r.difMotivo || "") + '" oninput="mdDifSet(' + i + ',\'difMotivo\',this.value)" placeholder="justificativa (obrigatória)" style="' + inp + 'width:100%;box-sizing:border-box;margin-top:4px;">'
+        + '</div>';
+    }
+    return '<tr><td ' + td + '>' + esc(r.recibo || "") + '</td>'
+      + '<td ' + td + '><b style="color:#fff;">' + esc(r.placa || "") + '</b><br><span style="color:#888;">' + esc(r.motorista || "") + '</span></td>'
+      + '<td ' + td + '>' + esc(r.descricao || "") + '<br><span style="color:#888;">' + esc(r.inicio || "") + ' a ' + esc(r.fim || "") + (r.kmRodado ? ' · ' + r.kmRodado + ' km' : "") + '</span></td>'
+      + '<td ' + td + ' align="right">' + fmtR(r.valorFrete) + '</td>'
+      + '<td ' + td + ' align="right" title="adiantamento ' + fmtR(r.adiantamento) + ' · abastecimento ' + fmtR(r.abastecimento) + ' · vale ' + fmtR(r.vale) + ' · impostos ' + fmtR(r.impostos) + '">' + fmtR(exDemoDesc(r)) + (r.abastecimento ? '<br><span style="color:#888;font-size:10px;">diesel ' + fmtR(r.abastecimento) + '</span>' : "") + (r.vale ? '<br><span style="color:#888;font-size:10px;">vale ' + fmtR(r.vale) + '</span>' : "") + '</td>'
+      + '<td ' + td + ' align="right"><b style="color:#66BB6A;">' + fmtR(r.aPagar) + '</b></td>'
+      + '<td ' + td + '>' + sel + difH + '</td></tr>';
+  }).join("");
+  tF = Math.round(tF * 100) / 100; tD = Math.round(tD * 100) / 100; tP = Math.round(tP * 100) / 100;
+  return '<div style="margin:12px 0;border:1px solid #2d4a31;border-radius:10px;padding:10px 12px;background:#0b130c;">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">'
+    + '<b style="color:#66BB6A;font-size:12px;">MEDIÇÃO LIDA — ' + d.recibos.length + ' recibo(s)</b>'
+    + '<span style="font-size:11px;color:#999;">cliente</span><select onchange="mdSetCliente(this.value)" style="' + inp + '">' + (state.clientes || []).map(function (c) { return '<option' + (c === d.cliente ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>'
+    + '<span style="font-size:11px;color:#999;">referência</span><input id="md-ref" value="' + esc(d.ref || (d.recibos[0] && d.recibos[0].mes ? "Mês " + d.recibos[0].mes : "")) + '" oninput="state._mdLeit.ref=this.value" style="' + inp + 'width:130px;">'
+    + (d.arquivos || []).map(function (a, k) { return '<a href="javascript:void(0)" onclick="ccVer(\'' + esc(a.path) + '\')" style="color:#4FC3F7;font-size:11px;">arquivo ' + (k + 1) + '</a>'; }).join(" ")
+    + '<label style="color:#66BB6A;cursor:pointer;text-decoration:underline;font-size:11px;">+ outra página<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="mdLer(this)"></label></div>'
+    + ((d.erros || []).length ? '<div style="font-size:11px;color:#E57373;margin-bottom:6px;">✖ ' + esc(d.erros.join(" · ")) + '</div>' : "")
+    + '<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:820px;"><tr><th ' + th + '>Recibo</th><th ' + th + '>Placa / motorista</th><th ' + th + '>Frete / período</th><th ' + th + '>Valor frete</th><th ' + th + '>Descontos</th><th ' + th + '>A pagar</th><th ' + th + '>Viagem no sistema / divergência</th></tr>' + linhas + '</table></div>'
+    + '<div style="font-size:12px;color:#ddd;margin-top:8px;line-height:1.6;">fretes <b>' + fmtR(tF) + '</b> − descontos <b>' + fmtR(tD) + '</b> = a pagar <b style="color:#66BB6A;">' + fmtR(tP) + '</b>'
+    + (d.total && Math.abs(d.total - tP) >= 0.05 ? ' · <span style="color:#E57373;">o total impresso na medição é ' + fmtR(d.total) + ' — confira a leitura</span>' : (d.total ? ' · <span style="color:#66BB6A;">bate com o total da medição ✓</span>' : ""))
+    + (nSem ? '<br><span style="color:#E57373;">' + nSem + ' recibo(s) sem viagem — escolha na lista ou deixe sem (fica registrado).</span>' : "")
+    + (nDif ? '<br><span style="color:#FFB74D;">' + nDif + ' divergência(s) de valor — cada uma precisa de tratamento e justificativa.</span>' : "")
+    + '</div>'
+    + '<div style="margin-top:8px;display:flex;gap:8px;"><button class="btn-outline" style="font-size:12px;padding:5px 14px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="mdSalvar()">✓ Lançar medição (viagens ficam A RECEBER)</button>'
+    + '<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="state._mdLeit=null;render()">descartar</button></div></div>';
+}
+function mdSalvar() {
+  if (!ehAdmin()) return;
+  var d = state._mdLeit; if (!d || !d.recibos) return;
+  var falhas = [], ids = {};
+  d.recibos.forEach(function (r) {
+    if (!r.vid || r.jaMedido || r.jaBaixado) return;
+    if (ids[r.vid]) falhas.push("a mesma viagem foi escolhida em dois recibos (" + (r.recibo || "?") + ")");
+    ids[r.vid] = 1;
+    var v = mdViagem(r.vid); var dif = mdDivergencia(r, v);
+    if (Math.abs(dif) >= 0.05) {
+      if (!r.trat) falhas.push("recibo " + (r.recibo || "?") + " (" + (r.placa || "") + "): escolha o tratamento da divergência");
+      else if (!String(r.difMotivo || "").trim()) falhas.push("recibo " + (r.recibo || "?") + " (" + (r.placa || "") + "): escreva a justificativa da divergência");
+    }
+  });
+  if (falhas.length) { alert(falhas.join("\n")); return; }
+  var id = "med-" + Date.now(), agora = new Date().toISOString(), quem = ccQuem();
+  var ref = String(d.ref || (d.recibos[0] && d.recibos[0].mes ? "Mês " + d.recibos[0].mes : "") || exDataBr(hojeISO())).trim();
+  var difs = [], avisoComb = [];
+  var recibos = d.recibos.map(function (r) {
+    var c = {}; ["recibo", "mes", "motorista", "placa", "descricao", "carregamento", "kmRodado", "inicio", "fim", "valorFrete", "adiantamento", "abastecimento", "subtotal", "vale", "impostos", "aPagar", "trat", "difMotivo"].forEach(function (k) { if (r[k] != null && r[k] !== "") c[k] = r[k]; });
+    c.vid = (r.jaMedido || r.jaBaixado) ? "" : (r.vid || "");
+    if (r.jaMedido) c.foraMotivo = "já na medição " + (r.jaMedido.ref || "");
+    if (r.jaBaixado) c.foraMotivo = "já baixado em " + exDataBr(r.jaBaixado.data);
+    return c;
+  });
+  recibos.forEach(function (r) {
+    var v = r.vid ? mdViagem(r.vid) : null; if (!v) return;
+    var dif = mdDivergencia(r, v);
+    var antes = Number(v.valorViagem) || 0;
+    v.medicao = { id: id, ref: ref, recibo: r.recibo || "", valorFrete: r.valorFrete, aPagar: r.aPagar, kmMedicao: r.kmRodado || 0,
+      desc: { adiantamento: r.adiantamento || 0, abastecimento: r.abastecimento || 0, vale: r.vale || 0, impostos: r.impostos || 0 }, em: agora };
+    if (Math.abs(dif) >= 0.05) {
+      difs.push({ vid: String(v.id), recibo: r.recibo || "", placa: v.placa, data: v.data, sistema: antes, medicao: r.valorFrete, dif: dif, trat: r.trat, motivo: String(r.difMotivo || "").trim(),
+        status: r.trat === "aceitar" ? "resolvida" : "aberta", por: quem, em: agora });
+      if (r.trat === "aceitar") { v.valorEstimado = antes; v.valorViagem = r.valorFrete; v.medicao.aceita = true; }
+      v.medicao.divergencia = { dif: dif, trat: r.trat, motivo: String(r.difMotivo || "").trim() };
+    }
+    // diesel que o cliente abasteceu e descontou: é custo de combustível desta viagem
+    if ((Number(r.abastecimento) || 0) > 0) {
+      v.combustivelItens = v.combustivelItens || [];
+      var jaTem = v.combustivelItens.some(function (x) { return x && x.origemMedicao === id + ":" + (r.recibo || ""); });
+      var outros = v.combustivelItens.filter(function (x) { return x && !x.origemMedicao; }).reduce(function (s, x) { return s + (Number(x.valor) || 0); }, 0);
+      if (!jaTem) {
+        v.combustivelItens.push({ id: uid(), valor: Number(r.abastecimento), litros: 0, desc: "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + ref + ", recibo " + (r.recibo || "?"), origemMedicao: id + ":" + (r.recibo || "") });
+        if (outros > 0) avisoComb.push(v.placa + " " + exDataBr(String(v.data || "").slice(0, 10)) + " já tinha " + fmtR(outros) + " de combustível lançado");
+      }
+    }
+  });
+  var tot = function (k) { return Math.round(recibos.reduce(function (s, r) { return s + (Number(r[k]) || 0); }, 0) * 100) / 100; };
+  mdLista().push({ id: id, cliente: d.cliente, ref: ref, arquivos: d.arquivos || [], recibos: recibos, totalImpresso: d.total || 0,
+    totalFrete: tot("valorFrete"), totalAPagar: tot("aPagar"), totalDesc: Math.round(recibos.reduce(function (s, r) { return s + exDemoDesc(r); }, 0) * 100) / 100,
+    difs: difs, status: "a_receber", criadoEm: agora, por: quem, atualizadoEm: Date.now() });
+  ttReaplicar(true);   // não mexe em viagem com medição aceita
+  state._mdLeit = null; state._mdAberta = id;
+  salvar(); render();
+  if (avisoComb.length) alert("Medição lançada.\n\nO diesel descontado pelo cliente entrou como combustível das viagens. Confira se não é o mesmo abastecimento já lançado:\n• " + avisoComb.join("\n• "));
+}
+function mdStatusTxt(md) {
+  if (md.status === "paga") return { t: "RECEBIDA em " + exDataBr((md.pagamento || {}).data || ""), c: "#66BB6A" };
+  return { t: "A RECEBER", c: GOLD };
+}
+function mdDifsAbertas(md) { return (md.difs || []).filter(function (x) { return x.status !== "resolvida"; }); }
+function mdDifResolver(medId, k) {
+  var md = mdAcha(medId); if (!md || !md.difs || !md.difs[k]) return;
+  var x = md.difs[k];
+  var r = prompt("Como a divergência de " + fmtR(x.dif) + " (" + x.placa + ") foi resolvida?\nEx.: cliente pagou a diferença em 05/10; cliente corrigiu a medição; aceito o valor do cliente.", x.resolucao || "");
+  if (r === null || !String(r).trim()) return;
+  x.status = "resolvida"; x.resolucao = String(r).trim(); x.resolvidoPor = ccQuem(); x.resolvidoEm = new Date().toISOString();
+  md.atualizadoEm = Date.now(); salvar(); render();
+}
+// créditos do extrato (já importado) que batem com o valor a pagar da medição
+function mdCreditosCandidatos(md) {
+  return exTodasLinhas().filter(function (x) { return x.l.valor > 0 && !x.l.vinc && Math.abs(x.l.valor - md.totalAPagar) < 0.05; });
+}
+function mdVinculo(md, valorRecebido) {
+  var rec = exRecebidoPorViagem();
+  var ids = [], aloc = {}, soma = 0, difFrete = [];
+  (md.recibos || []).forEach(function (r) {
+    var v = r.vid ? mdViagem(r.vid) : null; if (!v) return;
+    var falta = Math.max(0, exFaltaViagem(v, rec));
+    var val = falta;
+    var dv = (md.difs || []).filter(function (x) { return x.vid === String(v.id); })[0];
+    if (dv && dv.trat !== "aceitar") {   // cobrar/contestar: a viagem recebe só o que o cliente mediu; a diferença fica em aberto
+      val = Math.min(falta, r.valorFrete || falta);
+      difFrete.push({ vid: String(v.id), recibo: r.recibo, placa: v.placa, data: v.data, sistema: dv.sistema, recibo_valor: r.valorFrete, dif: dv.dif, acao: dv.trat === "contestar" ? "cobrar" : dv.trat, motivo: dv.motivo });
+    }
+    ids.push(String(v.id)); aloc[String(v.id)] = Math.round(val * 100) / 100; soma += val;
+  });
+  soma = Math.round(soma * 100) / 100;
+  return { tipo: "viagens", ids: ids, aloc: aloc, soma: soma, dif: Math.round((valorRecebido - soma) * 100) / 100, descontos: md.totalDesc,
+    obs: "medição " + md.ref + " (" + (md.cliente || "") + "): " + (md.recibos || []).length + " recibo(s), fretes " + fmtR(md.totalFrete) + " − descontos " + fmtR(md.totalDesc) + " = " + fmtR(md.totalAPagar),
+    demonstrativo: { arquivo: ((md.arquivos || [])[0] || {}).path || "", arquivos: (md.arquivos || []).map(function (a) { return a.path; }), recibos: md.recibos, medicaoId: md.id },
+    difFrete: difFrete, difFreteEncerrada: !difFrete.length, medicaoId: md.id, por: ccQuem(), em: new Date().toISOString() };
+}
+function mdBaixaExtrato(medId, extId, linId) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(medId), o = exLinha(extId, linId); if (!md || !o.l) return;
+  if (o.l.vinc) { alert("Esse crédito já está vinculado a outra coisa na Conciliação."); return; }
+  if (!confirm("Dar baixa na medição " + md.ref + " com o crédito de " + exDataBr(o.l.data) + " (" + fmtR(o.l.valor) + ")?")) return;
+  o.l.vinc = mdVinculo(md, o.l.valor); delete o.l.sug;
+  md.status = "paga"; md.pagamento = { data: o.l.data, valor: o.l.valor, fonte: "extrato", extratoId: extId, linhaId: linId, por: ccQuem(), em: new Date().toISOString() };
+  md.atualizadoEm = Date.now();
+  exSalvar(o.e);
+}
+function mdBaixaAbrir(medId) { var md = mdAcha(medId); state._mdBaixa = md ? { id: medId, data: hojeISO(), valor: String(md.totalAPagar.toFixed(2)).replace(".", ","), just: "", arq: null } : null; render(); }
+function mdBaixaArquivo(input) {
+  var f = input.files && input.files[0]; if (!f || !state._mdBaixa) return;
+  state._mdBaixa.enviando = true; render();
+  ccSubir([f], "medicoes", "comprovante-" + Date.now()).then(function (r) { state._mdBaixa.arq = r[0] || null; }).catch(function (e) { alert("Não consegui guardar o arquivo: " + (e.message || e)); })
+    .then(function () { if (state._mdBaixa) state._mdBaixa.enviando = false; input.value = ""; render(); });
+}
+function mdBaixaManual() {
+  if (!ehAdmin()) return;
+  var b = state._mdBaixa; if (!b) return;
+  var md = mdAcha(b.id); if (!md) return;
+  var valor = ccNum(b.valor);
+  if (!(valor > 0)) { alert("Informe o valor recebido."); return; }
+  if (!b.data) { alert("Informe a data do pagamento."); return; }
+  if (!b.arq && !confirm("Dar baixa sem anexar o comprovante?")) return;
+  if (Math.abs(valor - md.totalAPagar) >= 0.05 && !String(b.just || "").trim()) { alert("O valor recebido (" + fmtR(valor) + ") é diferente do a pagar da medição (" + fmtR(md.totalAPagar) + "). Escreva a justificativa."); return; }
+  var e = exManualExtrato();
+  var l = { id: EX_MANUAL_ID + "-" + Date.now(), data: b.data, manual: true, valor: Math.round(valor * 100) / 100,
+    desc: "Recebido · medição " + md.ref + " · " + (md.cliente || "") + (b.just ? " · " + String(b.just).trim() : ""), comprovante: b.arq ? b.arq.path : "" };
+  l.vinc = mdVinculo(md, l.valor);
+  if (b.just) l.vinc.obs += "; " + String(b.just).trim();
+  e.linhas.push(l);
+  var datas = e.linhas.map(function (x) { return x.data; }).sort(); e.periodoIni = datas[0]; e.periodoFim = datas[datas.length - 1];
+  md.status = "paga"; md.pagamento = { data: b.data, valor: l.valor, fonte: "comprovante", comprovante: b.arq || null, linhaId: l.id, extratoId: e.id, just: String(b.just || "").trim(), por: ccQuem(), em: new Date().toISOString() };
+  md.atualizadoEm = Date.now();
+  state._mdBaixa = null;
+  exSalvar(e);
+}
+function mdExcluir(medId) {
+  if (!ehAdmin()) return;
+  var md = mdAcha(medId); if (!md) return;
+  if (md.status === "paga") { alert("Esta medição já foi recebida. Desfaça a baixa na Conciliação antes de excluir."); return; }
+  if (!confirm("Excluir a medição " + md.ref + "? As viagens voltam ao valor anterior e o diesel lançado por ela sai.")) return;
+  (state.viagens || []).forEach(function (v) {
+    if (!v.medicao || v.medicao.id !== md.id) return;
+    if (v.medicao.aceita && v.valorEstimado != null) { v.valorViagem = v.valorEstimado; delete v.valorEstimado; }
+    v.combustivelItens = (v.combustivelItens || []).filter(function (x) { return !(x && String(x.origemMedicao || "").indexOf(md.id + ":") === 0); });
+    delete v.medicao;
+  });
+  state.medicoes = mdLista().filter(function (x) { return x.id !== md.id; });
+  salvar(); render();
+}
+function mdToggle(id) { state._mdAberta = state._mdAberta === id ? "" : id; render(); }
+function mdCardHTML(md) {
+  var st = mdStatusTxt(md), ab = state._mdAberta === md.id, abertas = mdDifsAbertas(md);
+  var h = '<div style="border:1px solid #2A2A2A;border-left:5px solid ' + st.c + ';border-radius:10px;background:#111;padding:11px 13px;margin-bottom:10px;">'
+    + '<div onclick="mdToggle(\'' + esc(md.id) + '\')" style="cursor:pointer;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">'
+    + '<b style="font-size:15px;color:#fff;">' + esc(md.cliente || "") + ' · ' + esc(md.ref || "") + '</b>'
+    + '<span style="font-size:11px;font-weight:800;color:' + st.c + ';border:1px solid ' + st.c + ';border-radius:10px;padding:1px 9px;">' + st.t + '</span>'
+    + (abertas.length ? '<span style="font-size:11px;font-weight:800;color:#FFB74D;">⚠ ' + abertas.length + ' divergência(s) em aberto</span>' : "")
+    + '<span style="margin-left:auto;font-size:12px;color:#bbb;">' + (md.recibos || []).length + ' viagem(ns) · fretes ' + fmtR(md.totalFrete) + ' · descontos ' + fmtR(md.totalDesc) + ' · <b style="color:#66BB6A;">a pagar ' + fmtR(md.totalAPagar) + '</b></span></div>';
+  if (!ab) return h + '</div>';
+  var td = 'style="padding:4px 6px;border-bottom:1px solid #1d1d1d;font-size:11px;color:#ccc;"';
+  h += '<div style="overflow:auto;margin-top:8px;"><table style="width:100%;border-collapse:collapse;min-width:760px;"><tr>'
+    + ["Recibo", "Placa", "Motorista", "Destino", "Início", "KM", "Frete", "Descontos", "A pagar", "Viagem"].map(function (c) { return '<th style="padding:4px 6px;font-size:10px;color:#999;text-align:left;border-bottom:1px solid #333;">' + c + '</th>'; }).join("") + '</tr>'
+    + (md.recibos || []).map(function (r) {
+      var v = r.vid ? mdViagem(r.vid) : null;
+      return '<tr><td ' + td + '>' + esc(r.recibo || "") + '</td><td ' + td + '>' + esc(r.placa || "") + '</td><td ' + td + '>' + esc(r.motorista || "") + '</td><td ' + td + '>' + esc(r.descricao || "") + '</td><td ' + td + '>' + esc(r.inicio || "") + '</td><td ' + td + '>' + (r.kmRodado || "") + '</td>'
+        + '<td ' + td + ' align="right">' + fmtR(r.valorFrete) + '</td><td ' + td + ' align="right">' + fmtR(exDemoDesc(r)) + '</td><td ' + td + ' align="right"><b>' + fmtR(r.aPagar) + '</b></td>'
+        + '<td ' + td + '>' + (v ? exDataBr(String(v.data || "").slice(0, 10)) + ' · ' + esc(v.placa) + (v.medicao && v.medicao.divergencia ? ' <span style="color:#FFB74D;">(divergência)</span>' : ' <span style="color:#66BB6A;">✓</span>') : '<span style="color:#E57373;">' + esc(r.foraMotivo || "sem viagem no sistema") + '</span>') + '</td></tr>';
+    }).join("") + '</table></div>';
+  if ((md.difs || []).length) {
+    h += '<div style="margin-top:8px;padding:8px 10px;border:1px solid #5a4a26;border-radius:8px;background:rgba(255,183,77,0.05);"><div style="font-size:11px;font-weight:800;color:#FFB74D;margin-bottom:4px;">DIVERGÊNCIAS</div>'
+      + md.difs.map(function (x, k) {
+        var tr = (MD_TRAT.filter(function (t) { return t[0] === x.trat; })[0] || ["", x.trat])[1];
+        return '<div style="font-size:11.5px;color:#ddd;padding:4px 0;border-top:1px solid #2a2a2a;">' + esc(x.placa || "") + ' · ' + exDataBr(String(x.data || "").slice(0, 10)) + ' · recibo ' + esc(x.recibo || "") + ' — sistema ' + fmtR(x.sistema) + ' × medição ' + fmtR(x.medicao) + ' = <b>' + fmtR(x.dif) + '</b>'
+          + '<br><span style="color:#aaa;">tratamento: ' + esc(tr) + ' · ' + esc(x.motivo || "") + '</span>'
+          + (x.status === "resolvida" ? ' <span style="color:#66BB6A;font-weight:800;">✓ resolvida</span>' + (x.resolucao ? ' <span style="color:#888;">(' + esc(x.resolucao) + ')</span>' : "")
+            : ' <button class="btn-outline" style="font-size:10px;padding:1px 8px;" onclick="mdDifResolver(\'' + esc(md.id) + '\',' + k + ')">marcar resolvida</button>') + '</div>';
+      }).join("") + '</div>';
+  }
+  h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + (md.arquivos || []).map(function (a, k) { return '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="ccVer(\'' + esc(a.path) + '\')">📄 medição ' + ((md.arquivos || []).length > 1 ? (k + 1) : "") + '</button>'; }).join("");
+  if (md.status === "paga") {
+    var p = md.pagamento || {};
+    h += '<span style="font-size:12px;color:#66BB6A;">✓ recebida em ' + exDataBr(p.data) + ' · ' + fmtR(p.valor) + ' (' + (p.fonte === "extrato" ? "crédito do extrato" : "comprovante") + ')</span>'
+      + (p.comprovante && p.comprovante.path ? '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="ccVer(\'' + esc(p.comprovante.path) + '\')">🧾 comprovante</button>' : "");
+  } else {
+    var cands = mdCreditosCandidatos(md);
+    h += cands.map(function (x) { return '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="mdBaixaExtrato(\'' + esc(md.id) + '\',\'' + esc(x.e.id) + '\',\'' + esc(x.l.id) + '\')">✓ baixar com o crédito de ' + exDataBr(x.l.data) + ' (' + fmtR(x.l.valor) + ') do extrato</button>'; }).join("")
+      + '<button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';font-weight:800;" onclick="mdBaixaAbrir(\'' + esc(md.id) + '\')">💰 Dar baixa com comprovante</button>'
+      + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;color:#E57373;border-color:#E57373;" onclick="mdExcluir(\'' + esc(md.id) + '\')">excluir medição</button>';
+  }
+  h += '</div>';
+  var b = state._mdBaixa;
+  if (b && b.id === md.id && md.status !== "paga") {
+    var inp = 'style="font-size:12px;padding:5px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;"';
+    var vNum = ccNum(b.valor);
+    h += '<div style="margin-top:8px;padding:10px;border:1px solid ' + GOLD + ';border-radius:8px;background:#1A1206;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;color:#ddd;">'
+      + '<b style="color:' + GOLD + ';">Baixa</b> data <input type="date" ' + inp + ' value="' + esc(b.data) + '" onchange="state._mdBaixa.data=this.value">'
+      + ' valor recebido <input ' + inp + ' size="10" value="' + esc(b.valor) + '" onchange="state._mdBaixa.valor=this.value;render()">'
+      + '<label class="btn-outline" style="font-size:11px;padding:4px 10px;cursor:pointer;">' + (b.enviando ? "⏳ enviando..." : b.arq ? "📎 " + esc(b.arq.nome || "comprovante") : "📎 anexar comprovante/extrato") + '<input type="file" accept="image/*,application/pdf,.pdf" style="display:none;" onchange="mdBaixaArquivo(this)"></label>'
+      + (vNum > 0 && Math.abs(vNum - md.totalAPagar) >= 0.05 ? '<input ' + inp + ' style="flex:1;min-width:220px;font-size:12px;padding:5px 8px;background:#111;color:#eee;border:1px solid #E57373;border-radius:6px;" placeholder="justifique: valor diferente do a pagar (' + fmtR(md.totalAPagar) + ')" value="' + esc(b.just || "") + '" oninput="state._mdBaixa.just=this.value">' : "")
+      + '<button class="btn-outline" style="font-size:12px;padding:4px 14px;border-color:#66BB6A;color:#66BB6A;font-weight:800;" onclick="mdBaixaManual()">✓ confirmar baixa</button>'
+      + '<button class="btn-outline" style="font-size:11px;padding:3px 9px;" onclick="state._mdBaixa=null;render()">cancelar</button></div>';
+  }
+  return h + '</div>';
+}
+function mdTelaHTML() {
+  var l = mdLista().slice().sort(function (a, b) { return String(b.criadoEm || "").localeCompare(String(a.criadoEm || "")); });
+  var aRec = l.filter(function (m) { return m.status !== "paga"; });
+  var tAR = Math.round(aRec.reduce(function (s, m) { return s + (m.totalAPagar || 0); }, 0) * 100) / 100;
+  var nDif = l.reduce(function (s, m) { return s + mdDifsAbertas(m).length; }, 0);
+  var inp = 'style="font-size:12px;padding:6px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;"';
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">'
+    + '<div><div style="font-size:22px;font-weight:800;color:' + GOLD + ';">📑 Medições</div>'
+    + '<div style="font-size:12px;color:#999;">Anexe a medição do cliente: as viagens ficam A RECEBER. Quando o dinheiro entrar, dê baixa com o crédito do extrato ou com o comprovante.</div></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">cliente <select id="md-cliente" ' + inp + '>' + (state.clientes || []).map(function (c) { return '<option' + (c === "Mercante/JDL" ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>'
+    + '<label style="cursor:pointer;font-size:13px;font-weight:800;background:' + GOLD + ';color:#000;padding:8px 16px;border-radius:9px;">📎 Anexar medição (PDF ou imagem)<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none;" onchange="mdLer(this)"></label></div></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px;">'
+    + statCard("Medições a receber", String(aRec.length), aRec.length ? GOLD : "#2E7D32")
+    + statCard("Valor a receber", fmtR(tAR), tAR ? GOLD : "#2E7D32")
+    + statCard("Divergências em aberto", String(nDif), nDif ? "#C0392B" : "#2E7D32") + '</div>';
+  h += mdLeituraHTML();
+  h += l.length ? l.map(mdCardHTML).join("") : '<div style="color:#777;padding:20px;border:1px dashed #333;border-radius:10px;">Nenhuma medição lançada ainda.</div>';
+  h += ttBlocoHTML();
+  return h;
+}
+function mdContextoAssistente() {
+  try {
+    var l = mdLista();
+    var linhas = l.map(function (m) {
+      return "- " + (m.cliente || "") + " · " + (m.ref || "") + ": " + (m.recibos || []).length + " viagem(ns), fretes " + fmtR(m.totalFrete) + ", descontos " + fmtR(m.totalDesc) + ", a pagar " + fmtR(m.totalAPagar)
+        + " · " + (m.status === "paga" ? "RECEBIDA em " + exDataBr((m.pagamento || {}).data || "") : "A RECEBER")
+        + (mdDifsAbertas(m).length ? " · " + mdDifsAbertas(m).length + " divergência(s) em aberto" : "");
+    });
+    var tt = ttLista().map(function (t) { return "- " + t.cliente + ": " + (t.tipo === "km" ? "R$ " + t.valor + "/km (Toco)" + (t.km34 !== "" && t.km34 != null ? " e R$ " + t.km34 + "/km (3/4)" : "") : "adicional de R$ " + t.valor + " por viagem") + " para saídas de " + (t.de || "sempre") + " até " + (t.ate || "sem data de fim") + (t.obs ? " (" + t.obs + ")" : ""); });
+    return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado.\n"
+      + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
+      + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
+  } catch (e) { return ""; }
+}
+/* ============ fim v467 ============================================================ */
 
 /* ============ v456 — RECEBIMENTO FORA DO EXTRATO =============================
    Renato (28/09/2026): "viagens pagas 80% na saída e 20% quando finaliza — a CDJ
@@ -18016,6 +18550,7 @@ var ABAS_DEF = [
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
   { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "conciliacao", label: "🧾 Conciliação", grupo: "FINANCEIRO" },   // v446
+  { id: "medicoes", label: "📑 Medições", grupo: "FINANCEIRO" },   // v467
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
   { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
 ];
@@ -18042,6 +18577,7 @@ var TAB_DESCRICOES = {
   saldocaminhao: "Saldo acumulado mês a mês de cada caminhão (receita − despesas − dívida alocada)",
   dividas: "Dívidas e obrigações fixas mensais",
   conciliacao: "Compras (orçamento, aprovação, nota e comprovante) e extrato do banco conciliado com as compras e as receitas de viagem",
+  medicoes: "Medição do cliente (ex.: JDL): viagens a receber, divergências de valor e baixa com o extrato ou comprovante",
   tributario: "Simulação de regime tributário: Simples, Simples Híbrido (IBS/CBS) e Lucro Presumido sobre a base real de 12 meses",
   documentos: "Documentos da empresa e da frota",
   cadmotorista: "Ficha de cadastro do motorista no modelo aprovado pelos clientes (FO_YL_026), pronta para exportar",
@@ -18346,12 +18882,12 @@ function logout() {
   state.manutencoes = []; state.fechamentos = []; state.frotaMes = {}; state.config = {};
   state.almoxarifado = []; state.tarifas = {}; state.oleoTrocas = [];
   state.usuarios = []; state.pagamentosMotorista = []; state.abastecimentos = []; state.viagensFinalizadas = [];
-  state.compras = []; state.extratos = [];   // v446/v448
+  state.compras = []; state.extratos = []; state.medicoes = [];   // v446/v448/v467
   try {
     ["rf-frota-veiculos-v4", "rf-frota-dividas-v1", "rf-frota-viagens-v1", "rf-frota-clientes-v1",
      "rf-frota-manutencoes-v1", "rf-frota-fechamentos-v1", "rf-frota-frotames-v1", "rf-frota-config-v1",
      "rf-frota-almox-v1", "rf-frota-tarifas-v1", "rf-frota-oleotrocas-v1", "rf-frota-usuarios-v1",
-     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1"].forEach(function (k) { localStorage.removeItem(k); });
+     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1", "rf-frota-medicoes-v1"].forEach(function (k) { localStorage.removeItem(k); });
   } catch (e) {}
   salvarSessaoLocal(); render();
 }
@@ -27125,6 +27661,7 @@ ${blocoCaixasViagens}
 
 ${blocoExportViagens}
 ${blocoSuzanoFerr}
+${mdContextoAssistente()}
 ${blocoDonoViagem}
 ${blocoDatasViagem}
 ${blocoNaoVieram}
@@ -28764,6 +29301,7 @@ function renderTabela() {
       <div style="margin-bottom:16px; padding:12px 14px; background:#161616; border:1px solid #2A2A2A; border-radius:6px;">
         <div onclick="toggleSecaoViagem('clientes')" style="font-size:11px; color:#999; text-transform:uppercase; margin-bottom:10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;"><span>Clientes & forma de cobrança</span><span style="color:${GOLD};">${(state._secoesViagem||{}).clientes ? "▲ ocultar" : "▼ mostrar"}</span></div>
         <div style="display:${(state._secoesViagem||{}).clientes ? "block" : "none"};">
+        ${ttBlocoHTML()}
         <div style="font-size:10px; color:#666; margin-bottom:10px;">Defina como cada cliente paga. <b style="color:${GOLD};">Por km</b>, <b style="color:${GOLD};">por m³</b> ou <b style="color:${GOLD};">por rota</b> preenchem o valor da viagem sozinhos. <b>Por viagem</b> = valor manual.</div>
         ${state.clientes.map((c) => {
           const cEsc = esc(c).replace(/'/g, "\\'");
@@ -29439,6 +29977,10 @@ function renderTabela() {
   }
   if (state.aba === "goiascarga") {   // v423
     wrap.innerHTML = goBlocoHTML();
+    return;
+  }
+  if (state.aba === "medicoes") {   // v467
+    wrap.innerHTML = mdTelaHTML();
     return;
   }
   if (state.aba === "conciliacao") {   // v446
@@ -30638,7 +31180,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos"];   // v423
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423; v467: medicoes
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -30704,7 +31246,8 @@ revalidarSessaoAoAbrir();
     goiasCargas: "rf-frota-goiascargas-v1",       /* v423 */
     goiasBips: "rf-frota-goiasbips-v1",           /* v423 */
     compras: "rf-frota-compras-v1",               /* v446 */
-    extratos: "rf-frota-extratos-v1"              /* v448 */
+    extratos: "rf-frota-extratos-v1",             /* v448 */
+    medicoes: "rf-frota-medicoes-v1"              /* v467 */
   };
 
   var sb = null;
@@ -30926,6 +31469,18 @@ revalidarSessaoAoAbrir();
         const nKm = recalcularKmTodasViagens();
         if (nKm) console.log("[viagens] KM rodado recalculado pelas fotos em " + nKm + " viagem(ns)");
       } catch (e) { console.error("[viagens km]", e); }
+      // v467: tarifas com prazo (acordos do diesel JDL/JT) -- cria uma vez e recalcula as viagens do período uma vez
+      try {
+        if (ehAdmin()) {
+          var ttNova = ttSemear();
+          if (ttNova || !(state.config && state.config.ttMigrado467)) {
+            var nTt = ttReaplicar(true);
+            state.config.ttMigrado467 = true;
+            console.log("[tarifas com prazo] " + nTt + " viagem(ns) recalculada(s)");
+            salvar();
+          }
+        }
+      } catch (e) { console.error("[tarifas com prazo]", e); }
       // v462: viagem enviada a um login e sem dono gravado -> o dono é o login
       try {
         let nDono = 0;
