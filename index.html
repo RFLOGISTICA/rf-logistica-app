@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v478)</title>
+<title>RF Logística — Painel da Frota (v479)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v478">
+<meta name="rf-versao" content="v479">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v478" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v479" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -16428,10 +16428,33 @@ function mdVincularDepois(medId, i) {
     v.combustivelItens = v.combustivelItens || [];
     var chave = md.id + ":" + (r.recibo || "");
     if (!v.combustivelItens.some(function (x) { return x && x.origemMedicao === chave; }))
-      v.combustivelItens.push({ id: uid(), valor: Number(r.abastecimento), litros: 0, desc: "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + md.ref + ", recibo " + (r.recibo || "?"), origemMedicao: chave });
+      mdAbastCliente(v, Number(r.abastecimento), "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + md.ref + ", recibo " + (r.recibo || "?"), chave);
   }
   md.atualizadoEm = Date.now();
   salvar(); render();
+}
+/* v478: o 1º abastecimento da viagem JDL é feito no posto da própria JDL e
+   descontado na medição. Esse abastecimento costuma já estar lançado na viagem
+   como estimativa (1º item, sem descrição: R$ 1.600, R$ 1.700...). Até a v477 a
+   medição EMPURRAVA outro item com o valor do recibo e o diesel ficava em dobro.
+   Agora o valor do recibo SUBSTITUI essa estimativa; só cria item novo quando
+   não houver estimativa. Os litros saem do preço do próprio item (ou R$ 6,90/L). */
+function mdAbastCliente(v, valor, desc, chave) {
+  if (!(valor > 0)) return;
+  v.combustivelItens = v.combustivelItens || [];
+  var est = null;
+  for (var k = 0; k < v.combustivelItens.length; k++) {
+    var x = v.combustivelItens[k];
+    if (x && !x.origemMedicao && !String(x.desc || "").trim()) { est = x; break; }
+  }
+  var pl = est && Number(est.litros) > 0 && Number(est.valor) > 0 ? Number(est.valor) / Number(est.litros) : 6.9;
+  if (pl < 4.5 || pl > 10) pl = 6.9;
+  if (est) {
+    est.valorAntes = Number(est.valor) || 0;
+    est.valor = valor; est.litros = Math.round(valor / pl * 1000) / 1000; est.desc = desc; est.origemMedicao = chave;
+  } else {
+    v.combustivelItens.push({ id: uid(), valor: valor, litros: Math.round(valor / pl * 1000) / 1000, desc: desc, origemMedicao: chave });
+  }
 }
 function mdTrocar(i, vid) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) { d.recibos[i].vid = vid; d.recibos[i].vidManual = true; render(); } }
 function mdDifSet(i, campo, val, re) { var d = state._mdLeit; if (d && d.recibos && d.recibos[i]) d.recibos[i][campo] = val; if (re) render(); }
@@ -16544,7 +16567,7 @@ function mdSalvar() {
       var jaTem = v.combustivelItens.some(function (x) { return x && x.origemMedicao === id + ":" + (r.recibo || ""); });
       var outros = v.combustivelItens.filter(function (x) { return x && !x.origemMedicao; }).reduce(function (s, x) { return s + (Number(x.valor) || 0); }, 0);
       if (!jaTem) {
-        v.combustivelItens.push({ id: uid(), valor: Number(r.abastecimento), litros: 0, desc: "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + ref + ", recibo " + (r.recibo || "?"), origemMedicao: id + ":" + (r.recibo || "") });
+        mdAbastCliente(v, Number(r.abastecimento), "Abastecido pelo cliente (" + (v.cliente || "") + ") — medição " + ref + ", recibo " + (r.recibo || "?"), id + ":" + (r.recibo || ""));
         if (outros > 0) avisoComb.push(v.placa + " " + exDataBr(String(v.data || "").slice(0, 10)) + " já tinha " + fmtR(outros) + " de combustível lançado");
       }
     }
@@ -28397,7 +28420,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
       + "- Administrativo " + (Number(cfg.admPct) || 0) + "% e imposto " + impostoPctNum() + "% sobre o valor da viagem; manutencao 3%; pneus R$0,12/km. Cliente pode ter percentual proprio, que manda sobre esses.\n"
       + "- v461 RESERVA x REAL: ADM, manutencao e pneus da viagem sao RESERVAS (estimativa para ver se o frete paga). O custo REAL dessas coisas esta nas DIVIDAS FIXAS (galpao, Sandra, luz, agua, internet, IPTU, publicidade = ADM; molas, oficina, pecas, pneus, cartoes = manutencao). Ate a v460 o Financeiro descontava as duas coisas (reserva + divida) e o resultado do mes saia menor do que o real (cerca de R$ 14,5 mil em jul, R$ 24,5 mil em ago e R$ 20,6 mil em set). Desde a v461 o resultado do mes, a Analise de Custos e o Liquido por caminhao usam so o custo real; o lucro por viagem continua com a reserva. Cada divida fixa tem CATEGORIA (auto pelo nome, editavel). Cartao = pecas + combustivel: a parte informada como 'combustivel dentro' nao abate de novo porque ja esta no custo das viagens.\n"
       + "- Alimentacao NAO e' mais R$80/dia fixo: e' diaria x dias + pernoite x noites fora (noites = dias - 1), por pessoa. O valor sai da ROTA; se a rota nao tiver, do CLIENTE; se nao tiver, do padrao da empresa (diaria R$" + (Number(cfg.diariaPadrao) || 0) + ", pernoite R$" + (Number(cfg.pernoitePadrao) || 0) + ").\n"
-      + "- COMBUSTIVEL (v478): a viagem paga so o diesel RODADO (km / km-por-litro x preco medio do tanque da placa). Diesel abastecido pelo CLIENTE (desconto na medicao JDL, 'Abastecido pelo cliente') entra no TANQUE com litros = valor / preco de referencia -- ate a v477 entrava como despesa direta inteira e a viagem pagava o diesel duas vezes (setembro inflou ~R$10 mil). Lancamento com preco por litro fora de R$4,50-10,00 (foto lida trocada) tem os litros recalculados pelo valor.\n"
+      + "- COMBUSTIVEL (v478): a viagem paga so o diesel RODADO (km / km-por-litro x preco medio do tanque da placa). Diesel abastecido pelo CLIENTE (desconto na medicao JDL, 'Abastecido pelo cliente') entra no TANQUE com litros = valor / preco de referencia -- ate a v477 entrava como despesa direta inteira e a viagem pagava o diesel duas vezes (setembro inflou ~R$10 mil). O 1o abastecimento de toda viagem JDL e' feito no posto da JDL e descontado na medicao: ao vincular a medicao, o valor do recibo SUBSTITUI a estimativa ja lancada (1o item sem descricao), nao soma outro. Em 29/09/2026 as viagens JDL de jul-set foram acertadas pelos recibos (item marcado 'Abastecido pelo cliente (Mercante/JDL) — recibo N'). Lancamento com preco por litro fora de R$4,50-10,00 (foto lida trocada) tem os litros recalculados pelo valor.\n"
       + "- REGIME DO MOTORISTA: cada caminhao e' 'por viagem' ou 'CLT' (aba Frota). Caminhao CLT NAO paga valor por viagem: a viagem carrega o RATEIO da folha = custo mensal / " + (Number(cfg.diasUteisMes) || 22) + " dias uteis x dias de viagem.\n"
       + "- Custo mensal CLT = salario + encargos + bonificacao de SLA + vale-transporte. Hoje: motorista " + fmtR(mot) + "/mes (" + fmtR(mot / ((Number(cfg.diasUteisMes) || 22))) + " por dia de viagem), ajudante " + fmtR(aju) + "/mes (" + fmtR(aju / ((Number(cfg.diasUteisMes) || 22))) + " por dia). NAO ha plano de saude, cesta nem seguro de vida -- a RF nao paga esses beneficios.\n"
       + (cltPlacas.length ? "- Caminhoes hoje cadastrados como CLT: " + cltPlacas.join(", ") + ".\n" : "- Nenhum caminhao cadastrado como CLT no momento.\n")
