@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v496)</title>
+<title>RF Logística — Painel da Frota (v497)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v496">
+<meta name="rf-versao" content="v497">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v496" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v497" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13722,7 +13722,9 @@ function szEmisCadeiaDaNota(e) {
   if (ch.length !== 44) return null;
   var docs = [];
   try { docs = rfFiscais() || []; } catch (x) { return null; }
-  var cte = docs.find(function (d) { return d.tipo === "cte" && (d.nfes || []).indexOf(ch) >= 0; });
+  // v497: CT-e cancelado não conta (depois de cancelar e reemitir, a nota pertence ao CT-e novo)
+  var cte = docs.filter(function (d) { return d.tipo === "cte" && !d.cancelado && (d.nfes || []).indexOf(ch) >= 0; })
+    .sort(function (a, b) { return (Number(b.numero) || 0) - (Number(a.numero) || 0); })[0];
   if (!cte) return null;
   var mdfe = docs.find(function (d) { return d.tipo === "mdfe" && (d.ctes || []).indexOf(String(cte.chave || "")) >= 0; });
   return {
