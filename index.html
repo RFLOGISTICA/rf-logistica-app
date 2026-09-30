@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v498)</title>
+<title>RF Logística — Painel da Frota (v499)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v498">
+<meta name="rf-versao" content="v499">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v498" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v499" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13879,7 +13879,7 @@ function szEmisConhecimentoHTML(e, i, total) {
       + (e.cnpjCliente ? ' · CNPJ ' + esc(e.cnpjCliente) : "")
       + (e.endereco ? ' · ' + esc(e.endereco) : "") + '</div>'
     + ((e.notas || []).length > 1
-      ? '<div style="font-size:12px;font-weight:900;color:#000;background:#F2E600;border-radius:5px;padding:4px 8px;margin:4px 0;">⚠ ' + e.notas.length + ' NOTAS NESTE CONHECIMENTO — as ' + e.notas.length + ' chaves entram no MESMO CT-e</div>'
+      ? '<div style="font-size:12px;font-weight:900;color:#000;background:#F2E600;border-radius:5px;padding:4px 8px;margin:4px 0;width:fit-content;max-width:100%;box-sizing:border-box;">⚠ ' + e.notas.length + ' NOTAS NESTE CONHECIMENTO — as ' + e.notas.length + ' chaves entram no MESMO CT-e</div>'
         + e.notas.map(function (n) {
             return szEmisCampo("NF-e", n.nfe + " · " + (Number(n.qtdVolumes) || 0) + " vol · " + (Number(n.peso) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg · " + fmtR(n.valorMercadoria), "#FFFFFF", false)
               + szEmisCampo("Chave", n.chave || "(sem chave)", "#4FC3F7", true);
