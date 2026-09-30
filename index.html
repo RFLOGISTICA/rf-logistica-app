@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v502)</title>
+<title>RF Logística — Painel da Frota (v503)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v502">
+<meta name="rf-versao" content="v503">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v502" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v503" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -20160,6 +20160,13 @@ function garantirAcesso() {
   if (!Array.isArray(state._perfis)) state._perfis = [];
 }
 function ehAdmin() { return !!(state.sessao && state.sessao.papel === "admin"); }
+/* v503 — LOGIN MASTER (Renato, 30/09/2026: "o meu tem que ser o master!"). Só o master
+   altera outro administrador (papel, abas, ativo, senha) e ninguém mexe no master.
+   Protegido também no banco (trigger rf_proteger_perfil / rf_proteger_perfil_del) e na
+   Edge Function resetar-senha v2. Admin com "_restrito" nos módulos só vê as abas marcadas. */
+var RF_MASTER_UID = "f0426695-6a73-443c-ab3d-19b0109b6d30";
+function ehMaster() { return ehAdmin() && !!state.sessao && state.sessao.uid === RF_MASTER_UID; }
+function pfEhMaster(p) { return !!p && String(p.id) === RF_MASTER_UID; }
 /* ===== v245: TRAVA DO MÊS FECHADO ==========================================
    Renato encontrou várias alterações mal feitas por funcionário em meses que já
    tinham passado. Regra: o mês anterior fica FECHADO. Todo mundo continua vendo
@@ -20262,7 +20269,11 @@ function podeVerAba(id) {
   if (ehMotorista()) return id === "abastecimento";
   if (ehCliente()) return id === "painel_cliente";
   if (id === "usuarios") return ehAdmin();
-  if (ehAdmin()) return true;
+  if (ehAdmin()) {   // v503: master vê tudo; outro admin só é limitado se o master marcou "limitar abas"
+    var mA = state.sessao && Array.isArray(state.sessao.modulos) ? state.sessao.modulos : [];
+    if (ehMaster() || mA.indexOf("_restrito") === -1) return true;
+    return mA.indexOf(id) !== -1 || (id === "compras" && mA.indexOf("conciliacao") !== -1);
+  }
   var mods = state.sessao && Array.isArray(state.sessao.modulos) ? state.sessao.modulos : [];
   if (id === "compras" && mods.indexOf("conciliacao") !== -1) return true;   // v501: quem lançava compras na Conciliação continua lançando
   return mods.indexOf(id) !== -1;
@@ -20711,9 +20722,13 @@ function criarUsuarioSalvar() {
   });
 }
 
+function pfPodeEditar(p) { return ehMaster() || !(pfEhMaster(p) || p.papel === "admin"); }   // v503
+function pfAbrir(id) { state._pfAberto = state._pfAberto || {}; state._pfAberto[id] = !state._pfAberto[id]; render(); }
 function atualizarPerfilCampo(id, campo, valor) {
   const p = (state._perfis || []).find((x) => String(x.id) === String(id));
   if (!p) return;
+  if (!pfPodeEditar(p) || (campo === "papel" && valor === "admin" && !ehMaster())) { alert("Só o login master altera administradores."); render(); return; }
+  if (pfEhMaster(p) && ((campo === "papel" && valor !== "admin") || (campo === "ativo" && !valor))) { alert("O login master não pode perder o papel de administrador nem ser desativado."); render(); return; }
   p[campo] = valor; render();
   rfGetClient().then(function (sb) {
     if (!sb) return;
@@ -20729,6 +20744,8 @@ function atualizarPerfilCampo(id, campo, valor) {
   });
 }
 function resetarSenhaClick(id, nome) {
+  var pR = (state._perfis || []).find(function (x) { return String(x.id) === String(id); });
+  if (pR && !pfPodeEditar(pR) && String(id) !== String((state.sessao || {}).uid)) { alert("Só o login master reseta a senha de um administrador."); return; }
   var novaSenha = window.prompt("Nova senha pra \"" + (nome || id) + "\" (mínimo 6 caracteres):", "");
   if (novaSenha === null) return; // cancelou
   novaSenha = novaSenha.trim();
@@ -20751,6 +20768,9 @@ function resetarSenhaClick(id, nome) {
   });
 }
 function excluirUsuarioClick(id, nome) {
+  var pE = (state._perfis || []).find(function (x) { return String(x.id) === String(id); });
+  if (pfEhMaster(pE)) { alert("O login master não pode ser excluído."); return; }
+  if (pE && !pfPodeEditar(pE)) { alert("Só o login master exclui um administrador."); return; }
   if (!confirm("Excluir o usuario \"" + (nome || id) + "\"? Esta acao e permanente e remove o login e o perfil dele do sistema.")) return;
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexao com o servidor."); return; }
@@ -20773,6 +20793,7 @@ function excluirUsuarioClick(id, nome) {
 function toggleAbaPerfil(id, abaId, checked) {
   const p = (state._perfis || []).find((x) => String(x.id) === String(id));
   if (!p) return;
+  if (!pfPodeEditar(p) || pfEhMaster(p)) { alert(pfEhMaster(p) ? "O login master sempre vê tudo." : "Só o login master altera administradores."); render(); return; }
   if (!Array.isArray(p.modulos)) p.modulos = [];
   const i = p.modulos.indexOf(abaId);
   if (checked && i === -1) p.modulos.push(abaId);
@@ -29532,6 +29553,7 @@ edição; e no celular/tablet continua valendo o toque normal. Se alguém reclam
 viagens, é isso que você deve explicar.
 
 ABAS QUE ESTE USUÁRIO PODE VER: ${abasDoUsuario || "(nenhuma)"}
+LOGIN MASTER (v503): o login do Renato (comercial@) e o MASTER -- ve tudo, e so ele altera outro administrador (papel, abas, ativo, senha, excluir); ninguem altera, desativa, rebaixa ou exclui o master (protegido tambem no banco e na troca de senha). Na aba Usuarios cada login fica recolhido numa linha (nome, papel, e-mail, resumo, ativo) com o botao "abrir" para editar; ha busca e filtro por papel. Um admin pode ser LIMITADO pelo master ("Limitar as abas deste administrador") e ai so ve as abas marcadas. Usuario atual e master: ${ehMaster() ? "sim" : "nao"}.
 Se ele perguntar sobre algo marcado acima como "(sem permissão pra esta aba)", NÃO invente e NÃO diga que o dado não existe — explique que esse módulo não está liberado no acesso dele e que o Renato pode liberar na aba Usuários.
 Nunca invente número que não esteja neste contexto. Se o dado não estiver aqui, diga que não recebeu essa informação.`;
 }
@@ -30387,7 +30409,7 @@ function renderTabela() {
               <option value="user" selected>Usuário</option>
               <option value="motorista">Motorista</option>
               <option value="cliente">Cliente</option>
-              <option value="admin">Admin</option>
+              ${ehMaster() ? `<option value="admin">Admin</option>` : ""}
             </select>
           </div>
           <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Placa (obrigatório p/ motorista)</div><select id="nuPlaca" style="width:150px;" onchange="criarUsuarioCampo('placa',this.value)">${rfOptionsPlaca((state._novoUsuario || {}).placa || "")}</select></div>
@@ -30417,8 +30439,37 @@ function renderTabela() {
         <button id="nuBtnSalvar" class="btn-gold" onclick="criarUsuarioSalvar()">Criar usuário</button>
         <button class="btn-outline-gray" onclick="criarUsuarioFechar()">Cancelar</button>
       </div>` : ""}
-      ${(state._perfis || []).length ? state._perfis.map((p) => `
-        <div style="border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:12px;background:#0E0E0E;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <input placeholder="🔎 buscar usuário" value="${esc(state._pfBusca || "")}" oninput="state._pfBusca=this.value;clearTimeout(window.__pfT);window.__pfT=setTimeout(render,300)" style="width:220px;">
+        <select onchange="state._pfPapel=this.value;render()" style="width:auto;"><option value="">todos os papéis</option>${[["admin", "Admin"], ["user", "Usuário"], ["motorista", "Motorista"], ["cliente", "Cliente"]].map((o) => `<option value="${o[0]}" ${state._pfPapel === o[0] ? "selected" : ""}>${o[1]}</option>`).join("")}</select>
+        <button class="btn-outline" onclick="state._pfAberto={};(state._perfis||[]).forEach(function(x){state._pfAberto[x.id]=true});render()">abrir todos</button>
+        <button class="btn-outline" onclick="state._pfAberto={};render()">fechar todos</button>
+        <span style="font-size:11px;color:#777;">${ehMaster() ? "🛡️ você é o login <b style='color:" + GOLD + ";'>MASTER</b>: só você altera administradores" : "administradores e o login master só podem ser alterados pelo master"}</span>
+      </div>
+      ${(state._perfis || []).length ? state._perfis.slice().sort((a, b) => (pfEhMaster(b) - pfEhMaster(a)) || ((b.papel === "admin") - (a.papel === "admin")) || String(a.nome || "").localeCompare(String(b.nome || ""))).filter((p) => {
+        const q = String(state._pfBusca || "").toLowerCase();
+        if (state._pfPapel && p.papel !== state._pfPapel) return false;
+        return !q || [p.nome, p.email, p.id, p.placa_motorista, p.cliente_nome].join(" ").toLowerCase().indexOf(q) !== -1;
+      }).map((p) => {
+        const aberto = !!(state._pfAberto || {})[p.id], master = pfEhMaster(p), pode = pfPodeEditar(p);
+        const rest = Array.isArray(p.modulos) && p.modulos.indexOf("_restrito") !== -1;
+        const nAbas = Array.isArray(p.modulos) ? p.modulos.filter((m) => ABAS_DEF.some((a) => a.id === m)).length : 0;
+        const corP = { admin: GOLD, user: "#4FC3F7", motorista: "#66BB6A", cliente: "#CE93D8" }[p.papel] || "#999";
+        const resumo = master ? "vê tudo · controla os administradores" : p.papel === "admin" ? (rest ? nAbas + " aba(s) liberada(s)" : "todas as abas") : p.papel === "motorista" ? "placa " + (p.placa_motorista || "—") : p.papel === "cliente" ? (p.cliente_nome || "sem cliente") : nAbas + " aba(s)";
+        return `
+        <div style="border:1px solid ${master ? GOLD : aberto ? "#3a3a3a" : "#2A2A2A"};border-radius:10px;margin-bottom:8px;background:#0E0E0E;${p.ativo ? "" : "opacity:.6;"}">
+          <div onclick="pfAbrir('${p.id}')" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;">
+            <span style="color:#777;font-size:12px;width:12px;">${aberto ? "▾" : "▸"}</span>
+            <b style="color:#fff;font-size:14px;min-width:120px;">${esc(p.nome || "(sem nome)")}</b>
+            ${master ? `<span style="font-size:10px;font-weight:900;color:#000;background:${GOLD};border-radius:4px;padding:1px 7px;">🛡️ MASTER</span>` : ""}
+            <span style="font-size:10px;font-weight:900;color:#000;background:${corP};border-radius:4px;padding:1px 7px;">${esc({ admin: "ADMIN", user: "USUÁRIO", motorista: "MOTORISTA", cliente: "CLIENTE" }[p.papel] || String(p.papel || "").toUpperCase())}</span>
+            <span style="font-size:12px;color:#999;">${esc(p.email || "")}</span>
+            <span style="font-size:11.5px;color:#bbb;">${esc(resumo)}</span>
+            <span style="margin-left:auto;font-size:11px;color:${p.ativo ? "#66BB6A" : "#E57373"};">${p.ativo ? "● ativo" : "● desativado"}</span>
+            <button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="event.stopPropagation();pfAbrir('${p.id}')">${aberto ? "fechar" : "abrir"}</button>
+          </div>
+          ${!aberto ? "" : !pode ? `<div style="padding:0 14px 12px;color:#999;font-size:12px;">🔒 ${master ? "Este é o login master: só ele mesmo altera." : "Administrador: só o login master altera."}</div>` : `
+        <div style="padding:4px 14px 14px;border-top:1px solid #1d1d1d;">
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
             <div><div style="${lbl}">Nome</div><input value="${esc(p.nome || "")}" placeholder="Ex: João motorista" onchange="atualizarPerfilCampo('${p.id}','nome',this.value)" style="width:220px;"></div>
             <div><div style="${lbl}">E-mail</div><div style="padding:8px 0;color:#ccc;font-size:13px;">${esc(p.email || p.id)}</div></div>
@@ -30427,17 +30478,24 @@ function renderTabela() {
                 <option value="user" ${p.papel === "user" ? "selected" : ""}>Usuário</option>
                 <option value="motorista" ${p.papel === "motorista" ? "selected" : ""}>Motorista</option>
                 <option value="cliente" ${p.papel === "cliente" ? "selected" : ""}>Cliente</option>
-                <option value="admin" ${p.papel === "admin" ? "selected" : ""}>Admin</option>
+                ${ehMaster() || p.papel === "admin" ? `<option value="admin" ${p.papel === "admin" ? "selected" : ""}>Admin</option>` : ""}
               </select>
             </div>
             <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${p.ativo ? "#fff" : "#888"};">
-              <input type="checkbox" ${p.ativo ? "checked" : ""} onchange="atualizarPerfilCampo('${p.id}','ativo',this.checked)"> Ativo
+              <input type="checkbox" ${p.ativo ? "checked" : ""} ${master ? "disabled" : ""} onchange="atualizarPerfilCampo('${p.id}','ativo',this.checked)"> Ativo
             </label>
             <span id="pfSalvo_${p.id}" style="font-size:12px;color:#2ecc71;opacity:0;transition:opacity .3s;">✓ salvo</span>
             <button class="btn-outline" style="margin-left:auto;" onclick="resetarSenhaClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🔑 Resetar senha</button>
-            <button class="btn-outline-gray" style="color:#C0392B;border-color:#C0392B;" onclick="excluirUsuarioClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🗑 Excluir</button>
+            ${master ? "" : `<button class="btn-outline-gray" style="color:#C0392B;border-color:#C0392B;" onclick="excluirUsuarioClick('${p.id}','${esc(p.nome || p.email || "").replace(/'/g, "\\'")}')">🗑 Excluir</button>`}
           </div>
-          ${p.papel === "admin" ? `<div style="margin-top:10px;color:#999;font-size:12px;">Admin vê todas as abas automaticamente.</div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+          ${master ? `<div style="margin-top:10px;color:#999;font-size:12px;">🛡️ Login master: vê todas as abas, sempre. Não pode ser desativado, rebaixado nem excluído.</div>` : p.papel === "admin" ? `<div style="margin-top:10px;border-top:1px solid #222;padding-top:10px;">
+            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#fff;"><input type="checkbox" ${rest ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','_restrito',this.checked)"> <b>Limitar as abas deste administrador</b></label>
+            <div style="font-size:11.5px;color:#999;margin:4px 0 8px;">${rest ? "Ele só vê as abas marcadas abaixo (continua com os poderes de admin dentro delas)." : "Desmarcado: vê todas as abas, como admin."}</div>
+            ${rest ? `<div style="display:flex;flex-wrap:wrap;gap:10px 18px;">${ABAS_DEF.map((a) => {
+                const marcado = Array.isArray(p.modulos) && p.modulos.indexOf(a.id) !== -1;
+                return `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${marcado ? "#fff" : "#888"};"><input type="checkbox" ${marcado ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','${a.id}',this.checked)"> ${esc(a.label)}</label>`;
+              }).join("")}</div>` : ""}
+          </div>` : p.papel === "motorista" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
             <div><div style="${lbl}">Placa que ele roda</div><input value="${esc(p.placa_motorista || "")}" placeholder="Ex: QDG7921" style="width:140px;text-transform:uppercase;${p.placa_motorista ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','placa_motorista',this.value.toUpperCase())"></div>
             ${!p.placa_motorista ? `<div style="color:#C0392B;font-size:11px;">⚠ sem placa — motorista não verá o resumo de viagens</div>` : ""}
           </div><div style="margin-top:6px;color:#999;font-size:12px;">Motorista só vê a aba <b style="color:${GOLD};">⛽ Abastecimento</b> e o resumo das próprias viagens (vinculado à placa acima). Não precisa marcar módulos.</div>` : p.papel === "cliente" ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
@@ -30474,7 +30532,9 @@ function renderTabela() {
               <div style="font-size:11px;color:#777;margin-top:6px;">O assistente só enxerga as abas marcadas acima — liberar o chat não dá acesso a dado que a pessoa já não pudesse ver.</div>
             </div>
           </div>`}
-        </div>`).join("") : `<div style="text-align:center;color:#777;padding:30px;border:1px dashed #333;border-radius:10px;">${state._carregandoPerfis ? "Carregando contas..." : "Nenhuma conta encontrada. Crie a primeira em Supabase → Authentication → Add user."}</div>`}
+        </div>`}
+        </div>`;
+      }).join("") : `<div style="text-align:center;color:#777;padding:30px;border:1px dashed #333;border-radius:10px;">${state._carregandoPerfis ? "Carregando contas..." : "Nenhuma conta encontrada. Crie a primeira em Supabase → Authentication → Add user."}</div>`}
     `;
     wrap.scrollLeft = scrollLeft;
     return;
