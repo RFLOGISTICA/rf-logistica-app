@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v490)</title>
+<title>RF Logística — Painel da Frota (v491)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v490">
+<meta name="rf-versao" content="v491">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v490" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v491" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -857,6 +857,21 @@ function rfCarimbar(lista, snapAnterior, agora) {
   }
   return { lista: lista, lapides: lapides, snap: snapNovo };
 }
+/* v491: documento fiscal emitido nunca some na sincronizacao. Se a versao que ganhou (mais nova) nao tem o CT-e
+   ou o MDF-e autorizado que a outra tem, copia da outra. Caso real 30/09 10:00: um aparelho desatualizado salvou a
+   carga do OTQ9B07 por cima e os 7 CT-e sumiram da tela (a SEFAZ ja tinha autorizado). */
+function rfPreservarFiscal(ganha, perde) {
+  try {
+    if (!ganha || !perde || typeof ganha !== "object") return;
+    var forte = function (f) { return f && /^(autorizado|cancelado)$/.test(String(f.status || "")); };
+    if (Array.isArray(ganha.espelhos) && Array.isArray(perde.espelhos)) {
+      var mp = {}; perde.espelhos.forEach(function (e) { if (e && e.id != null) mp[String(e.id)] = e; });
+      ganha.espelhos.forEach(function (e) { var o = e && mp[String(e.id)]; if (o && forte(o.fiscal) && !forte(e.fiscal)) e.fiscal = o.fiscal; });
+    }
+    if (perde.fiscalMdfe && forte(perde.fiscalMdfe) && !forte(ganha.fiscalMdfe)) ganha.fiscalMdfe = perde.fiscalMdfe;
+    if (perde.fiscalCiot && !ganha.fiscalCiot) ganha.fiscalCiot = perde.fiscalCiot;
+  } catch (x) {}
+}
 function rfUnirLista(local, nuvem, lapides) {
   if (!Array.isArray(nuvem)) return local;
   if (!Array.isArray(local)) return nuvem;
@@ -865,7 +880,8 @@ function rfUnirLista(local, nuvem, lapides) {
   local.forEach(function (x) {
     var k = String(x.id), n = por[k];
     if (!n) { por[k] = x; return; }
-    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) por[k] = x;
+    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) { por[k] = x; rfPreservarFiscal(x, n); }
+    else rfPreservarFiscal(n, x);
   });
   var lap = {};
   (lapides || []).forEach(function (l) {
@@ -14229,6 +14245,16 @@ function rfFiscalCteEmitir(cargaId, espId) {
   if (!e) return;
   var f = e.fiscal || {};
   if (f.status === "autorizado") { alert("Este conhecimento já tem CT-e autorizado (nº " + f.numero + ")."); return; }
+  // v491: TRAVA DE DUPLICIDADE -- se a nota ja esta num CT-e da RF (documentos fiscais), nao emite outro,
+  // mesmo que o status tenha sumido da tela (caso de 30/09: aparelho desatualizado apagou os status do OTQ9B07).
+  var chavesNota = [String(e.chave || "")].concat((e.notas || []).map(function (n) { return String(n.chave || ""); }))
+    .map(function (x) { return x.replace(/\D/g, ""); }).filter(function (x) { return x.length === 44; });
+  var jaTem = [];
+  try { jaTem = (rfFiscais() || []).filter(function (d) { return d.tipo === "cte" && !d.cancelado && !/cancel/i.test(String(d.situacao || d.status || "")) && chavesNota.some(function (ch) { return (d.nfes || []).indexOf(ch) >= 0; }); }); } catch (x) {}
+  if (jaTem.length) {
+    alert("🔒 NÃO EMITIR: esta nota já está no CT-e " + (jaTem[0].numero || "") + " da RF (chave " + String(jaTem[0].chave || "").slice(-10) + ").\n\nO status sumiu da tela por falha de sincronização — atualize a página. Emitir de novo geraria CT-e DUPLICADO.");
+    return;
+  }
   // v445: na SEFAZ direta repetir e seguro (o servidor reaproveita o mesmo numero) -- so segura o toque duplo
   var sefazLivre = f.emissor === "sefaz" && (f.status === "processando" || Date.now() - (Number(f.em) || 0) > 90000);
   if ((f.status === "enviando" || f.status === "processando") && !sefazLivre) { alert("Já está em andamento — aguarde a resposta da SEFAZ."); return; }
@@ -14711,7 +14737,7 @@ function ciotEncHTML(c) {
     + '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;" onclick="ciotEncerrarJunto(\'' + cid + '\')">tentar pelo app</button></div>';
 }
 function ciotContextoAssistente() {
-  return "\nLITROS IMPOSSIVEIS (v489): se o preco por litro de um abastecimento der fora de R$ 4,50-10,00 (IA leu o visor errado), o app e o tanque virtual refazem os litros pelo valor / preco de referencia. Caso real 30/09: Joao PKS6I42, nota 125,759 L R$ 870,25 lida como 12,76 L.\nPONTE PROPRIA (v488, 29/09/2026): a RF tem servidor proprio no Brasil (Hostinger VPS KVM 1, IP 179.236.226.211, srv2021578.hstgr.cloud, R$ 395,88/ano) que faz a conexao com a ANTT. Testado em PRODUCAO: consulta de situacao (RNTRC ativo, ETC), frota (OTQ9B07 e PKO3F40 ativos) e consulta do CIOT 5200351212213074 funcionaram. O app emite, encerra e cancela o CIOT direto na ANTT, de graca; o Portal do Transportador vira plano B. A ANTT usa os 12 primeiros digitos do CIOT para encerrar/cancelar/consultar.\nENCERRAMENTO (v487): ao encerrar o MDF-e pelo app, o CIOT da carga e encerrado junto na ANTT. Se a ANTT nao aceitar (conexao do app ainda bloqueada), aparece aviso vermelho CIOT ainda ABERTO no quadro do MDF-e: encerrar no Portal do Transportador e tocar em ja encerrei no Portal.\nMDF-e > Emitir (v486): cargas com mais de 2 dias sem CT-e/MDF-e emitido pelo app (feitas no SimplesCTe) ficam escondidas; link mostrar/esconder no topo.\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
+  return "\nCT-e DUPLICADO (v491): o app nao deixa emitir CT-e para nota que ja esta num CT-e da RF, e a sincronizacao nunca apaga CT-e/MDF-e autorizado (30/09 um aparelho desatualizado apagou os status dos CT-e 8-14 do OTQ9B07; restaurado do backup).\nLITROS IMPOSSIVEIS (v489): se o preco por litro de um abastecimento der fora de R$ 4,50-10,00 (IA leu o visor errado), o app e o tanque virtual refazem os litros pelo valor / preco de referencia. Caso real 30/09: Joao PKS6I42, nota 125,759 L R$ 870,25 lida como 12,76 L.\nPONTE PROPRIA (v488, 29/09/2026): a RF tem servidor proprio no Brasil (Hostinger VPS KVM 1, IP 179.236.226.211, srv2021578.hstgr.cloud, R$ 395,88/ano) que faz a conexao com a ANTT. Testado em PRODUCAO: consulta de situacao (RNTRC ativo, ETC), frota (OTQ9B07 e PKO3F40 ativos) e consulta do CIOT 5200351212213074 funcionaram. O app emite, encerra e cancela o CIOT direto na ANTT, de graca; o Portal do Transportador vira plano B. A ANTT usa os 12 primeiros digitos do CIOT para encerrar/cancelar/consultar.\nENCERRAMENTO (v487): ao encerrar o MDF-e pelo app, o CIOT da carga e encerrado junto na ANTT. Se a ANTT nao aceitar (conexao do app ainda bloqueada), aparece aviso vermelho CIOT ainda ABERTO no quadro do MDF-e: encerrar no Portal do Transportador e tocar em ja encerrei no Portal.\nMDF-e > Emitir (v486): cargas com mais de 2 dias sem CT-e/MDF-e emitido pelo app (feitas no SimplesCTe) ficam escondidas; link mostrar/esconder no topo.\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
     + "\nCIOT PELO APP (v482, 29/09/2026): a RF vai emitir o CIOT de frota propria DIRETO na ANTT (gratis, webservice pefServices, Portaria SUROC 6/2026 art. 3o II), sem SimplesCTe e sem entregar o certificado a site de terceiro. Onde: aba Carregamento Suzano, quadro roxo 'CIOT PELO APP (ANTT)' logo acima do MDF-e da carga: Emitir CIOT (monta sozinho contratante = CNPJ da Suzano pela chave da NF, destinatario, frete, peso, km e dias da viagem prevista, origem Simoes Filho, destino do ultimo CT-e), encerrar e cancelar (ate 24h do inicio). Em producao o numero (12 digitos) entra sozinho no MDF-e. SITUACAO: " + (ciotLigado() ? "LIGADO." : "AGUARDANDO A ANTT liberar o certificado da RF (pedido a pef@antt.gov.br): a homologacao responde que o CNPJ do certificado nao corresponde a transportador no RNTRC e a producao fecha a conexao; ate liberar, o CIOT continua saindo no SimplesCTe e e digitado no MDF-e. Botao 'testar ANTT' mostra a resposta atual.") + "\n";
 }
 /* ===== fim v482 ===== */
