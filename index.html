@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v489)</title>
+<title>RF Logística — Painel da Frota (v490)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v489">
+<meta name="rf-versao" content="v490">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v489" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v490" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13708,7 +13708,7 @@ function szEmisCadeiaDaNota(e) {
   return {
     cte: cte,
     mdfe: mdfe || null,
-    placa: String((mdfe && mdfe.placa) || cte.placa || "").toUpperCase(),
+    placa: String((mdfe && mdfe.placa) || "").toUpperCase(),   // v490: so o MDF-e define o caminhao (CT-e nao tem placa; a placa gravada no CT-e e so a da caixa na hora de emitir)
     motorista: String((mdfe && mdfe.motorista) || "").trim(),
   };
 }
