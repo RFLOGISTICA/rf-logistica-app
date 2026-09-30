@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v493)</title>
+<title>RF Logística — Painel da Frota (v494)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v493">
+<meta name="rf-versao" content="v494">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v493" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v494" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14748,7 +14748,7 @@ function ciotEncHTML(c) {
     + '<button class="btn-outline" style="font-size:10.5px;padding:2px 8px;" onclick="ciotEncerrarJunto(\'' + cid + '\')">tentar pelo app</button></div>';
 }
 function ciotContextoAssistente() {
-  return "\nSUZANO MAIS FLUIDA (v493): na ferramenta CT-e, cada caminhao traz no fim do quadro o CIOT e o MDF-e (nao precisa ir para a ferramenta MDF-e); caminhoes de dias anteriores ou ja concluidos ficam escondidos (link mostrar).\nENVIO AO ANDRE (v492): botao Enviar ao Andre manda o DACTE em anexo e o texto com a CHAVE de cada CT-e no corpo, juntos; baixar o DACTE tambem copia o texto com as chaves.\nCT-e DUPLICADO (v491): o app nao deixa emitir CT-e para nota que ja esta num CT-e da RF, e a sincronizacao nunca apaga CT-e/MDF-e autorizado (30/09 um aparelho desatualizado apagou os status dos CT-e 8-14 do OTQ9B07; restaurado do backup).\nLITROS IMPOSSIVEIS (v489): se o preco por litro de um abastecimento der fora de R$ 4,50-10,00 (IA leu o visor errado), o app e o tanque virtual refazem os litros pelo valor / preco de referencia. Caso real 30/09: Joao PKS6I42, nota 125,759 L R$ 870,25 lida como 12,76 L.\nPONTE PROPRIA (v488, 29/09/2026): a RF tem servidor proprio no Brasil (Hostinger VPS KVM 1, IP 179.236.226.211, srv2021578.hstgr.cloud, R$ 395,88/ano) que faz a conexao com a ANTT. Testado em PRODUCAO: consulta de situacao (RNTRC ativo, ETC), frota (OTQ9B07 e PKO3F40 ativos) e consulta do CIOT 5200351212213074 funcionaram. O app emite, encerra e cancela o CIOT direto na ANTT, de graca; o Portal do Transportador vira plano B. A ANTT usa os 12 primeiros digitos do CIOT para encerrar/cancelar/consultar.\nENCERRAMENTO (v487): ao encerrar o MDF-e pelo app, o CIOT da carga e encerrado junto na ANTT. Se a ANTT nao aceitar (conexao do app ainda bloqueada), aparece aviso vermelho CIOT ainda ABERTO no quadro do MDF-e: encerrar no Portal do Transportador e tocar em ja encerrei no Portal.\nMDF-e > Emitir (v486): cargas com mais de 2 dias sem CT-e/MDF-e emitido pelo app (feitas no SimplesCTe) ficam escondidas; link mostrar/esconder no topo.\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
+  return "\nENVIO AO ANDRE (v494): o e-mail leva a chave do MDF-e e de cada CT-e no corpo; o botao baixa DACTE/DAMDFE e abre o e-mail para ANDREVMP@suzano.com.br ja com o texto (compartilhar arquivo pelo Android perdia o texto).\nSUZANO MAIS FLUIDA (v493): na ferramenta CT-e, cada caminhao traz no fim do quadro o CIOT e o MDF-e (nao precisa ir para a ferramenta MDF-e); caminhoes de dias anteriores ou ja concluidos ficam escondidos (link mostrar).\nENVIO AO ANDRE (v492): botao Enviar ao Andre manda o DACTE em anexo e o texto com a CHAVE de cada CT-e no corpo, juntos; baixar o DACTE tambem copia o texto com as chaves.\nCT-e DUPLICADO (v491): o app nao deixa emitir CT-e para nota que ja esta num CT-e da RF, e a sincronizacao nunca apaga CT-e/MDF-e autorizado (30/09 um aparelho desatualizado apagou os status dos CT-e 8-14 do OTQ9B07; restaurado do backup).\nLITROS IMPOSSIVEIS (v489): se o preco por litro de um abastecimento der fora de R$ 4,50-10,00 (IA leu o visor errado), o app e o tanque virtual refazem os litros pelo valor / preco de referencia. Caso real 30/09: Joao PKS6I42, nota 125,759 L R$ 870,25 lida como 12,76 L.\nPONTE PROPRIA (v488, 29/09/2026): a RF tem servidor proprio no Brasil (Hostinger VPS KVM 1, IP 179.236.226.211, srv2021578.hstgr.cloud, R$ 395,88/ano) que faz a conexao com a ANTT. Testado em PRODUCAO: consulta de situacao (RNTRC ativo, ETC), frota (OTQ9B07 e PKO3F40 ativos) e consulta do CIOT 5200351212213074 funcionaram. O app emite, encerra e cancela o CIOT direto na ANTT, de graca; o Portal do Transportador vira plano B. A ANTT usa os 12 primeiros digitos do CIOT para encerrar/cancelar/consultar.\nENCERRAMENTO (v487): ao encerrar o MDF-e pelo app, o CIOT da carga e encerrado junto na ANTT. Se a ANTT nao aceitar (conexao do app ainda bloqueada), aparece aviso vermelho CIOT ainda ABERTO no quadro do MDF-e: encerrar no Portal do Transportador e tocar em ja encerrei no Portal.\nMDF-e > Emitir (v486): cargas com mais de 2 dias sem CT-e/MDF-e emitido pelo app (feitas no SimplesCTe) ficam escondidas; link mostrar/esconder no topo.\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
     + "\nCIOT PELO APP (v482, 29/09/2026): a RF vai emitir o CIOT de frota propria DIRETO na ANTT (gratis, webservice pefServices, Portaria SUROC 6/2026 art. 3o II), sem SimplesCTe e sem entregar o certificado a site de terceiro. Onde: aba Carregamento Suzano, quadro roxo 'CIOT PELO APP (ANTT)' logo acima do MDF-e da carga: Emitir CIOT (monta sozinho contratante = CNPJ da Suzano pela chave da NF, destinatario, frete, peso, km e dias da viagem prevista, origem Simoes Filho, destino do ultimo CT-e), encerrar e cancelar (ate 24h do inicio). Em producao o numero (12 digitos) entra sozinho no MDF-e. SITUACAO: " + (ciotLigado() ? "LIGADO." : "AGUARDANDO A ANTT liberar o certificado da RF (pedido a pef@antt.gov.br): a homologacao responde que o CNPJ do certificado nao corresponde a transportador no RNTRC e a producao fecha a conexao; ate liberar, o CIOT continua saindo no SimplesCTe e e digitado no MDF-e. Botao 'testar ANTT' mostra a resposta atual.") + "\n";
 }
 /* ===== fim v482 ===== */
@@ -18336,11 +18336,15 @@ function rfFiscalEmailEnvio(c) {
   var blocos = sel.map(function (e) {
     return "CT-e " + e.fiscal.numero + " — " + (e.cliente || "") + " — NF " + rfFiscalNfsDoEsp(e) + "\nChave: " + e.fiscal.chave;
   });
+  // v494: o André pediu a chave do MDF-e também (30/09)
+  var m = c.fiscalMdfe || {};
+  var mdfeTxt = m.status === "autorizado" && m.chave ? "MDF-e " + (m.numero || "") + "\nChave: " + m.chave + "\n\n" : "";
   return "Bom dia, André!\n\n"
-    + "Segue" + (sel.length > 1 ? "m os CT-e" : " o CT-e") + " da viagem de " + dt + " — placa " + placa + ".\n\n"
+    + "Segue" + (sel.length > 1 ? "m os documentos" : "m os documentos") + " da viagem de " + dt + " — placa " + placa + ".\n\n"
+    + mdfeTxt
     + blocos.join("\n\n")
     + (ev.ciot && c.fiscalCiot ? "\n\nCIOT: " + c.fiscalCiot : "")
-    + "\n\nDACTE em anexo.\n\nAtenciosamente,\nRenato Couto\nRF Logística";
+    + "\n\nDACTE" + (mdfeTxt ? " e DAMDFE" : "") + " em anexo.\n\nAtenciosamente,\nRenato Couto\nRF Logística";
 }
 function rfFiscalEnvioAtualizar() {
   var ev = window.__rfEnvio; if (!ev) return;
@@ -18364,23 +18368,26 @@ function rfFiscalEnvioSetCiot(v) {
 /* v492: o André recebia só o PDF, sem as chaves -- o texto com as chaves ficava num botão separado.
    Agora o envio leva os dois juntos: o DACTE em anexo e o texto (com a chave de cada CT-e) no corpo. */
 function rfFiscalCopiarSilencioso(txt) { try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(function () { return true; }, function () { return false; }); } catch (e) {} return Promise.resolve(false); }
+var RF_EMAIL_ANDRE = "ANDREVMP@suzano.com.br";
+/* v494: compartilhar arquivo + texto não funciona: o Gmail do Android descarta o texto e fica só o PDF.
+   Agora: 1) baixa o DACTE (e o DAMDFE); 2) abre o e-mail JÁ ENDEREÇADO ao André com o texto das chaves no corpo;
+   3) deixa o texto copiado também. Só falta anexar os PDFs que acabaram de baixar. */
 function rfFiscalEnviarAndre() {
   var ev = window.__rfEnvio; if (!ev) return;
-  var c = szCarga(ev.cargaId) || {};
+  var c = szCarga(ev.cargaId) || {}, m = c.fiscalMdfe || {};
   var nomes = {};
   rfFiscalEnvioSel(c).forEach(function (e) { nomes["DACTE " + e.fiscal.numero + " - " + rfFiscalNomeArq(e.cliente) + ".pdf"] = true; });
-  var pdfs = ev.arquivos.filter(function (a) { return a.pdf && !a.mdfe && nomes[a.nome]; });
+  var pdfs = ev.arquivos.filter(function (a) { return a.pdf && (nomes[a.nome] || (a.mdfe && m.status === "autorizado")); });
   if (!pdfs.length) { alert("Nenhum DACTE selecionado."); return; }
   var texto = rfFiscalEmailEnvio(c);
-  var assunto = "CT-e " + rfFiscalEnvioSel(c).map(function (e) { return e.fiscal.numero; }).join(", ") + " — " + ((c.fiscalMdfe || {}).placa || c.placa || "") + " — " + String(c.data || "").slice(0, 10).split("-").reverse().join("/");
+  var assunto = "Documentos da viagem " + ((m.placa || c.placa || "")) + " — " + String(c.data || "").slice(0, 10).split("-").reverse().join("/")
+    + " — CT-e " + rfFiscalEnvioSel(c).map(function (e) { return e.fiscal.numero; }).join(", ") + (m.numero ? " / MDF-e " + m.numero : "");
   rfFiscalCopiarSilencioso(texto).then(function () {
-    var files = pdfs.map(function (a) { return new File([a.blob], a.nome, { type: "application/pdf" }); });
-    if (navigator.canShare && navigator.canShare({ files: files })) {
-      navigator.share({ files: files, title: assunto, text: texto }).catch(function (e) { if (e && e.name !== "AbortError") alert("Não consegui abrir o compartilhamento: " + e.message); });
-      return;
-    }
-    pdfs.forEach(function (a, i) { setTimeout(function () { rfBaixarBlob(a.blob, a.nome); }, i * 600); });
-    alert("Baixei o(s) DACTE e COPIEI o e-mail com as chaves.\n\nNo Gmail: cole o texto no corpo (segurar → Colar) e anexe o(s) PDF da pasta Downloads.");
+    pdfs.forEach(function (a, i) { setTimeout(function () { rfBaixarBlob(a.blob, a.nome); }, i * 500); });
+    setTimeout(function () {
+      alert("✓ " + pdfs.length + " PDF baixado(s) e o texto com as CHAVES copiado.\n\nVai abrir o e-mail para o André já com as chaves no corpo — só anexe os PDFs (📎 → Downloads).");
+      location.href = "mailto:" + RF_EMAIL_ANDRE + "?subject=" + encodeURIComponent(assunto) + "&body=" + encodeURIComponent(texto);
+    }, pdfs.length * 500 + 300);
   });
 }
 function rfFiscalEnviarZipAndre() {
@@ -18440,14 +18447,14 @@ function rfFiscalEnviarAbrir(cargaId) {
     var bt = 'class="btn-outline" style="display:block;width:100%;text-align:left;font-size:13px;padding:9px 12px;margin:0 0 8px;';
     ac.innerHTML = '<div style="font-size:11px;font-weight:800;color:#888;margin:4px 0 6px;">MOTORISTA</div>'
       + '<button ' + bt + 'border-color:#25D366;color:#25D366;" onclick="rfFiscalEnviarMotorista()">📲 Mandar os PDFs (DAMDFE + DACTE) — abre o WhatsApp</button>'
-      + '<div style="font-size:11px;font-weight:800;color:#888;margin:10px 0 6px;">ANDRÉ — O QUE VAI (só CT-e com a chave + DACTE)</div>'
+      + '<div style="font-size:11px;font-weight:800;color:#888;margin:10px 0 6px;">ANDRÉ — O QUE VAI (chaves dos CT-e e do MDF-e + DACTE/DAMDFE)</div>'
       + '<div style="background:#0A0A0A;border:1px solid #2b2b2b;border-radius:8px;padding:8px 10px;margin-bottom:8px;">'
       + (c.espelhos || []).filter(function (e) { return e.fiscal && e.fiscal.status === "autorizado"; }).map(function (e) {
           return '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:4px 0;"><input type="checkbox" checked style="width:18px;height:18px;accent-color:' + GOLD + ';" onchange="rfFiscalEnvioSelCte(&#39;' + esc(String(e.id)) + '&#39;,this.checked)"> CT-e ' + esc(String(e.fiscal.numero)) + ' — ' + esc(e.cliente || "") + '</label>';
         }).join("")
       + (c.fiscalCiot ? '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:6px 0 2px;border-top:1px solid #1c1c1c;margin-top:4px;"><input type="checkbox" style="width:18px;height:18px;accent-color:' + GOLD + ';" onchange="rfFiscalEnvioSetCiot(this.checked)"> incluir o CIOT (' + esc(c.fiscalCiot) + ')</label>' : "")
       + '</div>'
-      + '<button ' + bt + 'border-color:#4FC3F7;color:#4FC3F7;font-weight:800;" onclick="rfFiscalEnviarAndre()">📧 Enviar ao André — DACTE + CHAVES juntos (abre o Gmail)</button>'
+      + '<button ' + bt + 'border-color:#4FC3F7;color:#4FC3F7;font-weight:800;" onclick="rfFiscalEnviarAndre()">📧 Enviar ao André — e-mail com as CHAVES (CT-e + MDF-e) + PDFs</button>'
       + '<button ' + bt + 'border-color:' + GOLD + ';color:' + GOLD + ';" onclick="rfFiscalEnviarZipAndre()">⬇ Baixar o DACTE (o e-mail com as chaves é copiado junto)</button>'
       + '<button ' + bt + '" onclick="rfFiscalEnviarCopiar()">📋 Copiar o e-mail</button>'
       + '<textarea id="rfEnvioEmail" readonly style="width:100%;height:170px;background:#000;color:#ccc;border:1px solid #333;border-radius:6px;font-size:11.5px;padding:8px;">' + esc(window.__rfEnvio.email) + '</textarea>'
