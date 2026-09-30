@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v509)</title>
+<title>RF Logística — Painel da Frota (v510)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v509">
+<meta name="rf-versao" content="v510">
 <meta name="rf-data" content="2026-09-30">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v509" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v510" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15507,33 +15507,100 @@ function ccAnexar(input, id, tipo) {
    O comprovante fica guardado na compra (c.compArqs) e mostra "pago — aguardando extrato",
    mas NÃO conta como pago: a compra só concilia quando a saída aparece no extrato (regra v501).
    E o anexo que entrou no lugar errado (nota/recibo) pode ser movido para comprovante. */
+/* v510 — "o sistema tem que ler a data de pagamento do comprovante" (Renato, 30/09/2026).
+   A IA (Edge Function ler-comprovante) lê valor, DATA DO PAGAMENTO, quem recebeu e o banco
+   de origem. O Renato só confirma; se a leitura falhar, cai nas perguntas de antes. */
+function ccLerComprovanteIA(file) {
+  var prep = /^image\//.test(file.type || "") ? rfComprimirImagem(file)
+    : (/pdf$/i.test(file.type || "") || /\.pdf$/i.test(file.name || "")) && typeof exPdfParaImagens === "function" ? exPdfParaImagens(file, 1).then(function (a) { return a[0]; })
+    : Promise.resolve(null);
+  return prep.then(function (blob) {
+    if (!blob) return { erro: "formato não lido" };
+    return new Promise(function (res) {
+      var rd = new FileReader();
+      rd.onload = function () {
+        var b64 = String(rd.result || "").split(",")[1] || "";
+        rfGetClient().then(function (sb) {
+          if (!sb) { res({ erro: "sem conexão" }); return; }
+          sb.auth.getSession().then(function (r) {
+            var tk = r.data && r.data.session && r.data.session.access_token;
+            if (!tk) { res({ erro: "sessão expirada" }); return; }
+            fetch(RF_SB_URL + "/functions/v1/ler-comprovante", { method: "POST", headers: { "Authorization": "Bearer " + tk, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ imagemBase64: b64, mimeType: blob.type || "image/jpeg" }) })
+              .then(function (x) { return x.json(); }).then(function (j) { res(j && !j.erro && !j.error ? j : { erro: (j && (j.erro || j.error)) || "não li" }); })
+              .catch(function (e) { res({ erro: e.message || String(e) }); });
+          });
+        });
+      };
+      rd.onerror = function () { res({ erro: "arquivo" }); };
+      rd.readAsDataURL(blob);
+    });
+  }).catch(function (e) { return { erro: e.message || String(e) }; });
+}
+function ccIsoDeBr(br) { var m = String(br || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? m[3] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[1]).slice(-2) : ""; }
+function ccConfirmarComprovante(c, j) {   // devolve {valor, dataPag} confirmados, ou null se cancelou
+  var sug = Math.max(0, (ccValorNF(c) || Number(c.valor) || 0) - ccValorPago(c));
+  var lido = j && !j.erro && j.valor > 0 && j.data;
+  if (lido && confirm("🤖 Li no comprovante:\n\nValor: " + fmtR(j.valor) + "\nData do pagamento: " + j.data + (j.hora ? " às " + j.hora : "")
+      + (j.recebedor ? "\nRecebedor: " + j.recebedor : "") + (j.bancoPagador ? "\nPago pelo: " + j.bancoPagador : "")
+      + (j.descricao ? "\nDescrição: " + j.descricao : "") + "\n\nOK = está certo.  Cancelar = corrigir.")) return { valor: j.valor, dataPag: ccIsoDeBr(j.data) || hojeISO() };
+  var v0 = j && j.valor > 0 ? j.valor : sug;
+  var v = prompt("Valor PAGO neste comprovante (R$):", v0 ? String(Number(v0).toFixed(2)).replace(".", ",") : "");
+  if (v == null) return null;
+  var valor = ccNum(v); if (!(valor > 0)) { alert("Valor inválido."); return null; }
+  var dt = prompt("Data do pagamento (dd/mm/aaaa):", (j && j.data) || "");
+  if (dt == null) return null;
+  var iso = ccIsoDeBr(dt); if (!iso) { alert("Data inválida — use dd/mm/aaaa."); return null; }
+  return { valor: valor, dataPag: iso };
+}
+function ccRegComprovante(c, j, conf, extra) {
+  var reg = { valor: conf.valor, dataPag: conf.dataPag, em: new Date().toISOString(), por: ccQuem() };
+  if (j && !j.erro) { reg.recebedor = j.recebedor || ""; reg.docRecebedor = j.docRecebedor || ""; reg.bancoPagador = j.bancoPagador || ""; reg.descricao = j.descricao || ""; reg.idTransacao = j.idTransacao || ""; reg.lidoIA = true; }
+  for (var k in (extra || {})) reg[k] = extra[k];
+  return reg;
+}
 function ccAnexarComprovante(input, id) {
   var c = ccAcha(id); if (!c) return;
   var files = input.files; if (!files || !files.length) return;
-  var sug = Math.max(0, (ccValorNF(c) || Number(c.valor) || 0) - ccValorPago(c));
-  var v = prompt("Valor PAGO neste comprovante (R$):", sug ? String(sug.toFixed(2)).replace(".", ",") : "");
-  if (v == null) { input.value = ""; return; }
-  var valor = ccNum(v); if (!(valor > 0)) { alert("Valor inválido."); input.value = ""; return; }
-  var dt = prompt("Data do pagamento (dd/mm/aaaa):", new Date().toLocaleDateString("pt-BR"));
-  if (dt == null) { input.value = ""; return; }
-  var m = String(dt).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/), dataPag = m ? m[3] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[1]).slice(-2) : hojeISO();
-  ccSubir(files, c.id, "comprovante").then(function (paths) {
-    var agora = new Date().toISOString();
-    (c.compArqs = c.compArqs || []).push({ arquivos: paths, valor: valor, dataPag: dataPag, em: agora, por: ccQuem() });
-    (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: "anexou COMPROVANTE de pagamento " + fmtR(valor) + " de " + exDataBr(dataPag) + " (aguardando o extrato)" });
-    input.value = ""; ccToca(c);
-  }).catch(function (e) { input.value = ""; alert("Não consegui enviar: " + (e.message || e)); });
+  state._ccLendo = c.id; render();
+  ccLerComprovanteIA(files[0]).then(function (j) {
+    state._ccLendo = ""; render();
+    var conf = ccConfirmarComprovante(c, j);
+    if (!conf) { input.value = ""; return; }
+    ccSubir(files, c.id, "comprovante").then(function (paths) {
+      var reg = ccRegComprovante(c, j, conf, { arquivos: paths });
+      (c.compArqs = c.compArqs || []).push(reg);
+      (c.historico = c.historico || []).push({ em: reg.em, por: ccQuem(), o: "anexou COMPROVANTE de pagamento " + fmtR(reg.valor) + " de " + exDataBr(reg.dataPag) + (reg.recebedor ? " para " + reg.recebedor : "") + (reg.bancoPagador ? " (" + reg.bancoPagador + ")" : "") + " — aguardando o extrato" });
+      input.value = ""; ccToca(c);
+    }).catch(function (e) { input.value = ""; alert("Não consegui enviar: " + (e.message || e)); });
+  });
 }
 function ccMoverParaComprovante(id, idx) {
   var c = ccAcha(id); if (!c) return;
   var r = (c.nfs || [])[idx]; if (!r) return;
   if (!confirm("Mover este anexo (" + (ccEhRecibo(r) ? "recibo" : "nota") + " de " + fmtR(r.valor) + ") para COMPROVANTE DE PAGAMENTO?\n\nA compra volta a pedir a nota fiscal ou o recibo do fornecedor.")) return;
-  c.nfs.splice(idx, 1);
-  var agora = new Date().toISOString();
-  (c.compArqs = c.compArqs || []).push({ arquivos: r.arquivos || [], valor: r.valor, dataPag: String(r.em || agora).slice(0, 10), em: agora, por: ccQuem(), movido: true });
-  if (c.conciliadaEm && !(c.nfs && c.nfs.length)) { c.conciliadaEm = null; c.conciliadaPor = null; }
-  (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: "moveu anexo de " + fmtR(r.valor) + " do lugar da nota/recibo para COMPROVANTE de pagamento" });
-  ccToca(c);
+  var arq = (r.arquivos || [])[0];
+  var ler = !arq ? Promise.resolve({ erro: "sem arquivo" }) : rfGetClient().then(function (sb) {   // v510: lê a data do arquivo já guardado
+    if (!sb) return { erro: "sem conexão" };
+    return sb.storage.from(RF_BUCKET).download(arq.path).then(function (res) {
+      if (res.error || !res.data) return { erro: "não baixou" };
+      var f = res.data; try { f = new File([res.data], arq.nome || "comprovante", { type: res.data.type || (/\.pdf$/i.test(arq.path) ? "application/pdf" : "image/jpeg") }); } catch (e) { }
+      return ccLerComprovanteIA(f);
+    });
+  }).catch(function (e) { return { erro: e.message || String(e) }; });
+  state._ccLendo = c.id; render();
+  ler.then(function (j) {
+    state._ccLendo = ""; render();
+    var conf = ccConfirmarComprovante(c, j && !j.erro ? j : { valor: r.valor });
+    if (!conf) return;
+    var i2 = (c.nfs || []).indexOf(r); if (i2 < 0) return;
+    c.nfs.splice(i2, 1);
+    var reg = ccRegComprovante(c, j, conf, { arquivos: r.arquivos || [], movido: true });
+    (c.compArqs = c.compArqs || []).push(reg);
+    if (c.conciliadaEm && !(c.nfs && c.nfs.length)) { c.conciliadaEm = null; c.conciliadaPor = null; }
+    (c.historico = c.historico || []).push({ em: reg.em, por: ccQuem(), o: "moveu anexo do lugar da nota/recibo para COMPROVANTE: " + fmtR(reg.valor) + " de " + exDataBr(reg.dataPag) + (reg.recebedor ? " para " + reg.recebedor : "") });
+    ccToca(c);
+  });
 }
 function ccIrImportarExtrato() { state.aba = "conciliacao"; state._ccTela = "extrato"; state._exSel = null; state._exFiltro = "todos"; state._exAberta = null; state._exSelV = null; render(); }
 function ccTentarConciliar(c) {   // v448: usado pelo anexo e pelo extrato
@@ -15604,7 +15671,7 @@ function ccCardHTML(c) {
     else acoes.push('<span style="font-size:11px;color:#F2E600;">aguardando o Renato aprovar</span>');
   }
   if (st === "nota") { acoes.push(anexo("📄 Anexar nota fiscal", "nf", "#FFB74D")); acoes.push(anexo("🧾 Só tem recibo (fornecedor sem nota)", "recibo", "#BCAAA4")); }
-  if (st === "nota" || st === "pagamento" || st === "aprovacao") acoes.push(anexo("💸 Anexar comprovante de pagamento", "comprovante_arq", "#81C784"));   // v509
+  if (st === "nota" || st === "pagamento" || st === "aprovacao") acoes.push(anexo(state._ccLendo === c.id ? "🤖 lendo o comprovante..." : "💸 Anexar comprovante de pagamento", "comprovante_arq", "#81C784"));   // v509/v510
   if (adm && st === "pagamento") acoes.push(btn("📥 Importar extrato", "ccIrImportarExtrato()", "#4FC3F7"));   // v509
   if (st === "pagamento") {   // v501: o pagamento entra pelo extrato bancário
     if (adm) acoes.push(btn((state._ccBusEx === c.id ? "▾ " : "🏦 ") + (ccCond(c) === "cartao" ? "Procurar a fatura no extrato" : "Procurar o pagamento no extrato"), "ccBuscaExtrato('" + id + "')", "#4FC3F7"));
@@ -15653,7 +15720,7 @@ function ccCardHTML(c) {
     + '</div>'
     + (c.itens && c.itens.length ? ccItensHTML(c.itens, c.docLido && c.docLido.total, ccSoma(c.itens)) : "")
     + ccParcelasHTML(c)
-    + '<div style="margin-bottom:7px;">' + ccArqLinks(c.orcamentos, "Orçamento") + ccArqLinks((c.nfs || []).filter(function (r) { return !ccEhRecibo(r); }), "Nota") + ccArqLinks((c.nfs || []).filter(ccEhRecibo), "Recibo") + ccArqLinks(c.compArqs, "Comprovante") + ccArqLinks(c.comprovantes, "Extrato")
+    + '<div style="margin-bottom:7px;">' + ccArqLinks(c.orcamentos, "Orçamento") + ccArqLinks((c.nfs || []).filter(function (r) { return !ccEhRecibo(r); }), "Nota") + ccArqLinks((c.nfs || []).filter(ccEhRecibo), "Recibo") + ccArqLinks(c.compArqs, "Comprovante") + (c.compArqs || []).map(function (r) { return '<span style="font-size:10.5px;color:#81C784;margin-right:9px;">pago ' + exDataBr(r.dataPag) + (r.recebedor ? ' → ' + esc(r.recebedor) : "") + (r.bancoPagador ? ' · ' + esc(r.bancoPagador) : "") + '</span>'; }).join("") + ccArqLinks(c.comprovantes, "Extrato")
     + (st !== "conciliada" && st !== "cancelada" && (c.nfs || []).length ? (c.nfs || []).map(function (r, i) { return '<a href="javascript:void(0)" onclick="ccMoverParaComprovante(\'' + id + '\',' + i + ')" style="color:#81C784;font-size:10.5px;margin-right:9px;" title="Anexou o comprovante no lugar da nota? Mova para comprovante">↪ ' + (ccEhRecibo(r) ? "recibo" : "nota") + ' ' + fmtR(r.valor) + ' é comprovante de pagamento</a>'; }).join("") : "")
     + '</div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' + acoes.join("") + '</div>'
@@ -15794,7 +15861,7 @@ function ccContextoAssistente() {
   var abertas = l.filter(function (x) { return ["aprovacao", "nota", "pagamento", "divergente"].indexOf(ccStatus(x)) !== -1; }).slice(0, 15);
   var parcAb = [];
   l.forEach(function (x) { var s = ccStatus(x); if (s !== "pagamento" && s !== "nota") return; ccParcelasSit(x).forEach(function (p) { if (!p.paga) parcAb.push("nº" + x.numero + " parc " + p.n + "/" + ccPlano(x).length + " " + (p.venc ? exDataBr(p.venc) : "") + " " + fmtR(p.valor - p.pago) + (p.vencida ? " VENCIDA" : "")); }); });
-  return "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
+  return "LEITURA DO COMPROVANTE (v510, 30/09/2026 -- Renato: 'o sistema tem que ler a data de pagamento do comprovante'): ao anexar o comprovante (ou ao mover um anexo errado para comprovante) a IA le sozinha o VALOR, a DATA DO PAGAMENTO, a hora, QUEM RECEBEU e o BANCO DE ORIGEM (Edge Function ler-comprovante); o Renato so confirma, e se estiver errado corrige. O cartao da compra mostra 'pago dd/mm -> recebedor · banco'. Compras podem ser pagas pelo Itau ou pelo Nubank da RF -- o extrato de cada banco e importado em Conciliacao > Extrato com o nome do banco. " + "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
     + (c.aprovacao || 0) + " aguardando aprovacao, " + (c.nota || 0) + " sem nota, " + (c.pagamento || 0) + " sem comprovante, " + (c.divergente || 0) + " com valores divergentes, " + (c.conciliada || 0) + " conciliadas, " + (c.reprovada || 0) + " reprovadas, " + (c.cancelada || 0) + " canceladas. "
     + (abertas.length ? "Em aberto: " + abertas.map(function (x) { return "nº" + x.numero + " " + x.descricao + " (" + fmtR(x.valor) + ", " + CC_ST[ccStatus(x)].nome + ", pedido por " + (x.criadoPor || "?") + ")"; }).join("; ") + "." : "");
 }
