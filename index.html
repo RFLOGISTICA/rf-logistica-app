@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v495)</title>
+<title>RF Logística — Painel da Frota (v496)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v495">
+<meta name="rf-versao" content="v496">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v495" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v496" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -863,12 +863,16 @@ function rfCarimbar(lista, snapAnterior, agora) {
 function rfPreservarFiscal(ganha, perde) {
   try {
     if (!ganha || !perde || typeof ganha !== "object") return;
-    var forte = function (f) { return f && /^(autorizado|cancelado)$/.test(String(f.status || "")); };
+    // v495: autorizado só pode virar cancelado; cancelado só pode ser substituído por nova emissão (nunca apagado)
+    var st = function (f) { return String((f && f.status) || ""); };
     if (Array.isArray(ganha.espelhos) && Array.isArray(perde.espelhos)) {
       var mp = {}; perde.espelhos.forEach(function (e) { if (e && e.id != null) mp[String(e.id)] = e; });
-      ganha.espelhos.forEach(function (e) { var o = e && mp[String(e.id)]; if (o && forte(o.fiscal) && !forte(e.fiscal)) e.fiscal = o.fiscal; });
+      ganha.espelhos.forEach(function (e) {
+        var o = e && mp[String(e.id)]; if (!o || !o.fiscal) return;
+        if ((st(o.fiscal) === "autorizado" && !/^(autorizado|cancelado)$/.test(st(e.fiscal))) || (st(o.fiscal) === "cancelado" && !e.fiscal)) e.fiscal = o.fiscal;
+      });
     }
-    if (perde.fiscalMdfe && forte(perde.fiscalMdfe) && !forte(ganha.fiscalMdfe)) ganha.fiscalMdfe = perde.fiscalMdfe;
+    if (perde.fiscalMdfe && st(perde.fiscalMdfe) === "autorizado" && !/^(autorizado|cancelado)$/.test(st(ganha.fiscalMdfe))) ganha.fiscalMdfe = perde.fiscalMdfe;
     if (perde.fiscalCiot && !ganha.fiscalCiot) ganha.fiscalCiot = perde.fiscalCiot;
   } catch (x) {}
 }
