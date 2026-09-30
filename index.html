@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v485)</title>
+<title>RF Logística — Painel da Frota (v486)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v485">
+<meta name="rf-versao" content="v486">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v485" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v486" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -14667,7 +14667,7 @@ function ciotDaCarga(c, placa) {
   return v && v.ciot ? ciotNorm(v.ciot.id12 || v.ciot.codigo) : "";
 }
 function ciotContextoAssistente() {
-  return "\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
+  return "\nMDF-e > Emitir (v486): cargas com mais de 2 dias sem CT-e/MDF-e emitido pelo app (feitas no SimplesCTe) ficam escondidas; link mostrar/esconder no topo.\nTRAVA DO MDF-e (v484/v485): no quadro roxo da carga aparece o CIOT ja informado (verde) ou o botao Informar CIOT (quando falta). o app NAO emite MDF-e sem CIOT. O CIOT vem da carga, do app ou do Portal do Transportador (guardado na viagem, campo ciot). Se faltar, o botao pede o numero (12 ou 16 digitos; no MDF-e vao os 12 primeiros). Emitir o CIOT ANTES do MDF-e, de preferencia no Portal do Transportador (gratis, certificado A1 da RF, ambiente PRODUCAO). Primeiro CIOT emitido pelo Portal: 5200351212213074 (OTQ9B07, Norte, 30/09/2026) — no MDF-e: 520035121221."
     + "\nCIOT PELO APP (v482, 29/09/2026): a RF vai emitir o CIOT de frota propria DIRETO na ANTT (gratis, webservice pefServices, Portaria SUROC 6/2026 art. 3o II), sem SimplesCTe e sem entregar o certificado a site de terceiro. Onde: aba Carregamento Suzano, quadro roxo 'CIOT PELO APP (ANTT)' logo acima do MDF-e da carga: Emitir CIOT (monta sozinho contratante = CNPJ da Suzano pela chave da NF, destinatario, frete, peso, km e dias da viagem prevista, origem Simoes Filho, destino do ultimo CT-e), encerrar e cancelar (ate 24h do inicio). Em producao o numero (12 digitos) entra sozinho no MDF-e. SITUACAO: " + (ciotLigado() ? "LIGADO." : "AGUARDANDO A ANTT liberar o certificado da RF (pedido a pef@antt.gov.br): a homologacao responde que o CNPJ do certificado nao corresponde a transportador no RNTRC e a producao fecha a conexao; ate liberar, o CIOT continua saindo no SimplesCTe e e digitado no MDF-e. Botao 'testar ANTT' mostra a resposta atual.") + "\n";
 }
 /* ===== fim v482 ===== */
@@ -18695,9 +18695,20 @@ function szMdfeEmitirHTML() {
   try { caixas = szEmisCaixas() || []; } catch (e) { }
   var h = '<div style="font-size:12px;color:#999;margin-bottom:10px;">O MDF-e sai depois que todos os CT-e da carga estão autorizados. Um quadro por caminhão; o CT-e se emite na ferramenta <a href="javascript:void(0)" style="color:' + GOLD + ';" onclick="szFerrAbrir(&#39;cte&#39;,&#39;emitir&#39;)">CT-e</a>.</div>';
   var n = 0;
+  // v486: esconde carga antiga (mais de 2 dias) sem nenhum CT-e emitido pelo app e sem MDF-e do app — foi feita no SimplesCTe
+  var corte = ciotDiaMais(hojeISO(), -2), ocultas = 0;
+  caixas = caixas.filter(function (bx) {
+    var c = bx.carga;
+    if (!c || !(c.espelhos || []).length) return false;
+    var antiga = (bx.data || c.data || "") && (bx.data || c.data) < corte;
+    var temApp = (c.espelhos || []).some(function (e) { return e.fiscal && e.fiscal.status; }) || (c.fiscalMdfe && c.fiscalMdfe.status);
+    if (antiga && !temApp && !state.__mdfeVerAntigas) { ocultas++; return false; }
+    return true;
+  });
+  if (ocultas || state.__mdfeVerAntigas) h += '<div style="font-size:11.5px;color:#888;margin:-4px 0 10px;">' + (state.__mdfeVerAntigas ? "Mostrando também as cargas antigas feitas fora do app. " : ocultas + " carga(s) antiga(s) feita(s) fora do app escondida(s). ")
+    + '<a href="javascript:void(0)" style="color:' + GOLD + ';" onclick="state.__mdfeVerAntigas=!state.__mdfeVerAntigas;render()">' + (state.__mdfeVerAntigas ? "esconder" : "mostrar") + '</a></div>';
   caixas.slice(0, 20).forEach(function (bx) {
     var c = bx.carga;
-    if (!c || !(c.espelhos || []).length) return;
     n++;
     h += '<div style="background:#0A0A0A;border:1px solid #222;border-radius:10px;padding:11px 13px;margin-bottom:10px;">'
       + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
