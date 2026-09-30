@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v500)</title>
+<title>RF Logística — Painel da Frota (v501)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v500">
+<meta name="rf-versao" content="v501">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v500" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v501" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15067,11 +15067,201 @@ function rfSefazRegistrar(cargaId, espId) {
    Dados em state.compras (lista com id, sincronizada item a item como as outras). */
 var CC_CATEGORIAS = ["Manutenção / peças", "Pneus", "Combustível", "Pedágio", "Alimentação", "Escritório", "Limpeza", "Serviços", "Documentação / taxas", "Ferramentas", "Outros"];
 var CC_FORMAS = ["PIX", "Boleto", "Cartão", "Transferência", "Dinheiro"];
+/* ============ v501 — ABA COMPRAS: CONDIÇÃO DE PAGAMENTO E PARCELAS ============
+   Renato (30/09/2026, a RF vai para o Lucro Real e precisa de controle de gasto):
+   "um campo para anexar o orçamento, um botão para aprovar, fica esperando a nota
+   fiscal para iniciar a consolidação, e a consolidação só finaliza quando anexa o
+   pagamento via extrato bancário. Pode ser pago à vista, faturado e dividido, ou
+   cartão de crédito, uma vez ou mais vezes."
+   - c.pag = { cond: avista|faturado|cartao, forma, n, venc1, intervalo, cartao, parcelas:[{n,venc,valor}] }
+   - pagamento só entra pelo EXTRATO: saída do banco ligada à compra (à vista / boleto)
+     ou linha da FATURA do cartão ligada às parcelas do cartão. Cada ligação vira um
+     registro em c.comprovantes (origem "extrato" ou "fatura"); as parcelas ficam pagas
+     na ordem do vencimento conforme o dinheiro entra.
+   - a compra fecha sozinha (CONCILIADA) quando o pago no extrato = valor da nota. */
+var CC_COND = { avista: "À vista", faturado: "Faturado (boleto)", cartao: "Cartão de crédito" };
+var CC_FORMAS_AVISTA = ["PIX", "Transferência", "Boleto", "Débito", "Dinheiro"];
+function ccAddDias(iso, d) { var x = new Date(iso + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); }
+function ccAddMeses(iso, m) {
+  var p = String(iso).split("-").map(Number); var x = new Date(Date.UTC(p[0], p[1] - 1 + m, 1));
+  var ult = new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth() + 1, 0)).getUTCDate();
+  x.setUTCDate(Math.min(p[2], ult)); return x.toISOString().slice(0, 10);
+}
+function ccGerarParcelas(total, n, venc1, cond, intervalo) {
+  n = Math.max(1, Math.min(48, parseInt(n, 10) || 1));
+  var cent = Math.round((Number(total) || 0) * 100), base = Math.floor(cent / n), out = [];
+  for (var i = 0; i < n; i++) {
+    var v = i === n - 1 ? cent - base * (n - 1) : base;
+    var venc = !venc1 ? "" : cond === "cartao" ? ccAddMeses(venc1, i) : ccAddDias(venc1, i * (parseInt(intervalo, 10) || 30));
+    out.push({ n: i + 1, venc: venc, valor: v / 100 });
+  }
+  return out;
+}
+function ccCond(c) { return (c && c.pag && c.pag.cond) || "avista"; }
+function ccCondTexto(c) {
+  var g = c && c.pag; if (!g) return c && c.forma ? c.forma : "";
+  var n = (g.parcelas || []).length || 1;
+  if (g.cond === "cartao") return "Cartão" + (g.cartao ? " " + g.cartao : "") + " · " + (n > 1 ? n + "x" : "1x");
+  if (g.cond === "faturado") return "Faturado · " + (n > 1 ? n + " boletos" : "1 boleto");
+  return "À vista · " + (g.forma || "PIX");
+}
+function ccPlano(c) {   // parcelas planejadas; compra antiga (sem condição) = 1 pagamento só
+  if (c.pag && Array.isArray(c.pag.parcelas) && c.pag.parcelas.length) return c.pag.parcelas;
+  return [{ n: 1, venc: String(c.criadoEm || "").slice(0, 10), valor: ccValorNF(c) || Number(c.valor) || 0 }];
+}
+/* distribui o que já saiu no extrato pelas parcelas, da mais antiga para a mais nova */
+function ccParcelasSit(c) {
+  var resta = ccValorPago(c), hoje = hojeISO();
+  var pags = (c.comprovantes || []).slice().sort(function (a, b) { return String(a.dataPag || a.em || "").localeCompare(String(b.dataPag || b.em || "")); });
+  var pi = 0, usado = 0;
+  return ccPlano(c).map(function (p) {
+    var v = Number(p.valor) || 0, pago = Math.min(v, Math.max(0, resta));
+    resta = Math.round((resta - pago) * 100) / 100;
+    var falta = pago, data = "", guard = 0;
+    while (falta > 0.004 && pi < pags.length && guard++ < 200) {
+      var tot = Number(pags[pi].valor) || 0, usa = Math.min(Math.max(0, tot - usado), falta);
+      falta -= usa; usado += usa; data = pags[pi].dataPag || String(pags[pi].em || "").slice(0, 10);
+      if (tot - usado < 0.005) { pi++; usado = 0; }
+    }
+    var paga = v - pago < 0.05;
+    return { n: p.n, venc: p.venc || "", valor: v, pago: Math.round(pago * 100) / 100, paga: paga, dataPag: paga ? data : "", vencida: !paga && !!p.venc && p.venc < hoje };
+  });
+}
+function ccProxParcela(c) { return ccParcelasSit(c).filter(function (p) { return !p.paga; })[0] || null; }
+/* formulário da condição de pagamento (usado no "Nova compra" e no "✎ condição") */
+function ccPagFormHTML(px, g, totalFixo) {
+  g = g || {}; var cond = g.cond || "avista";
+  var inp = 'style="font-size:13px;padding:6px 8px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;width:100%;box-sizing:border-box;"';
+  var lab = function (t) { return '<div style="font-size:10.5px;color:#999;margin:6px 0 3px;font-weight:700;">' + t + '</div>'; };
+  var up = 'ccPagPrev(\'' + px + '\',' + (totalFixo != null ? Number(totalFixo) : "null") + ')';
+  var rd = function (k, t) { return '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;color:#ddd;border:1px solid ' + (cond === k ? GOLD : "#333") + ';border-radius:6px;padding:5px 10px;" id="' + px + '-lb-' + k + '">'
+    + '<input type="radio" name="' + px + '-cond-r" style="width:auto;margin:0;"' + (cond === k ? " checked" : "") + ' onchange="document.getElementById(\'' + px + '-cond\').value=\'' + k + '\';' + up + '"> ' + t + '</label>'; };
+  var hoje = hojeISO();
+  return '<div style="border:1px solid #2a2a2a;border-radius:8px;padding:9px 11px;margin-top:8px;background:#0b0b0b;">'
+    + '<div style="font-size:11px;color:' + GOLD + ';font-weight:800;margin-bottom:6px;">CONDIÇÃO DE PAGAMENTO</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + rd("avista", "💵 À vista") + rd("faturado", "🧾 Faturado (boleto)") + rd("cartao", "💳 Cartão de crédito") + '</div>'
+    + '<input type="hidden" id="' + px + '-cond" value="' + cond + '">'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0 10px;">'
+    + '<div id="' + px + '-bx-forma"' + (cond === "avista" ? "" : ' style="display:none;"') + '>' + lab("Pago por") + '<select id="' + px + '-forma" ' + inp + ' onchange="' + up + '">' + CC_FORMAS_AVISTA.map(function (x) { return '<option' + (g.forma === x ? " selected" : "") + '>' + x + '</option>'; }).join("") + '</select></div>'
+    + '<div id="' + px + '-bx-n"' + (cond !== "avista" ? "" : ' style="display:none;"') + '>' + lab("Nº de parcelas") + '<input id="' + px + '-n" type="number" min="1" max="48" value="' + esc(String(g.n || 1)) + '" ' + inp + ' oninput="' + up + '"></div>'
+    + '<div id="' + px + '-bx-venc">' + lab('<span id="' + px + '-venc-rot">' + (cond === "avista" ? "Data do pagamento" : cond === "faturado" ? "Vencimento do 1º boleto" : "Vencimento da 1ª fatura") + '</span>') + '<input id="' + px + '-venc" type="date" value="' + esc(g.venc1 || hoje) + '" ' + inp + ' onchange="' + up + '"></div>'
+    + '<div id="' + px + '-bx-int"' + (cond === "faturado" ? "" : ' style="display:none;"') + '>' + lab("Intervalo entre boletos (dias)") + '<input id="' + px + '-int" type="number" min="1" value="' + esc(String(g.intervalo || 30)) + '" ' + inp + ' oninput="' + up + '"></div>'
+    + '<div id="' + px + '-bx-cartao"' + (cond === "cartao" ? "" : ' style="display:none;"') + '>' + lab("Qual cartão (apelido)") + '<input id="' + px + '-cartao" value="' + esc(g.cartao || "") + '" placeholder="ex.: Itaú empresa" ' + inp + ' oninput="' + up + '"></div>'
+    + '</div><div id="' + px + '-prev" style="font-size:11px;color:#aaa;margin-top:7px;"></div></div>';
+}
+function ccPagLer(px, total) {
+  var g = function (k) { var el = document.getElementById(px + "-" + k); return el ? el.value : ""; };
+  var cond = g("cond") || "avista";
+  var n = cond === "avista" ? 1 : Math.max(1, Math.min(48, parseInt(g("n"), 10) || 1));
+  var venc1 = g("venc") || hojeISO(), intervalo = parseInt(g("int"), 10) || 30;
+  return { cond: cond, forma: cond === "avista" ? (g("forma") || "PIX") : cond === "faturado" ? "Boleto" : "Cartão", n: n, venc1: venc1, intervalo: intervalo,
+    cartao: cond === "cartao" ? String(g("cartao") || "").trim().slice(0, 40) : "", parcelas: ccGerarParcelas(total, n, venc1, cond, intervalo) };
+}
+function ccPagPrev(px, totalFixo) {
+  var cond = (document.getElementById(px + "-cond") || {}).value || "avista";
+  var mostra = function (k, on) { var el = document.getElementById(px + "-bx-" + k); if (el) el.style.display = on ? "" : "none"; };
+  mostra("forma", cond === "avista"); mostra("n", cond !== "avista"); mostra("int", cond === "faturado"); mostra("cartao", cond === "cartao");
+  ["avista", "faturado", "cartao"].forEach(function (k) { var lb = document.getElementById(px + "-lb-" + k); if (lb) lb.style.borderColor = k === cond ? GOLD : "#333"; });
+  var rot = document.getElementById(px + "-venc-rot");
+  if (rot) rot.textContent = cond === "avista" ? "Data do pagamento" : cond === "faturado" ? "Vencimento do 1º boleto" : "Vencimento da 1ª fatura";
+  var total = totalFixo != null ? totalFixo : ccNum((document.getElementById("cc-valor") || {}).value);
+  var pv = document.getElementById(px + "-prev"); if (!pv) return;
+  if (!(total > 0)) { pv.innerHTML = "informe o valor para ver as parcelas"; return; }
+  var g = ccPagLer(px, total);
+  pv.innerHTML = g.parcelas.map(function (p) { return '<span style="display:inline-block;margin:0 10px 2px 0;">' + (g.parcelas.length > 1 ? "<b>" + p.n + "/" + g.parcelas.length + "</b> " : "") + exDataBr(p.venc) + " · <b style=\"color:#ddd;\">" + fmtR(p.valor) + "</b></span>"; }).join("")
+    + (cond === "cartao" ? '<div style="color:#888;margin-top:3px;">cada parcela é baixada quando a fatura do cartão aparecer no extrato</div>' : "");
+}
+function ccPagEditar(id) { state._ccEdPag = state._ccEdPag === id ? "" : id; render(); setTimeout(function () { var c = ccAcha(id); if (c) ccPagPrev("ccp", ccValorNF(c) || Number(c.valor) || 0); }, 0); }
+function ccPagSalvar(id) {
+  var c = ccAcha(id); if (!c) return;
+  if (ccValorPago(c) > 0.004 && !ehAdmin()) { alert("Já tem pagamento no extrato: só o administrador muda a condição."); return; }
+  var total = ccValorNF(c) || Number(c.valor) || 0;
+  var g = ccPagLer("ccp", total);
+  c.pag = g; c.forma = ccCondTexto(c);
+  (c.historico = c.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "condição de pagamento: " + ccCondTexto(c) });
+  state._ccEdPag = "";
+  ccTentarConciliar(c); ccToca(c);
+}
+/* compras: onde o pagamento pode estar no extrato (lançamentos ainda não explicados) */
+function ccCandExtrato(c) {
+  if (typeof exTodasLinhas !== "function") return [];
+  var prox = ccProxParcela(c), rest = exCompraRestante(c), cartao = ccCond(c) === "cartao";
+  var ref = prox && prox.venc ? prox.venc : hojeISO();
+  var dias = function (a, b) { return Math.abs((new Date(a + "T12:00:00Z") - new Date(b + "T12:00:00Z")) / 86400000); };
+  var out = [];
+  exTodasLinhas().forEach(function (x) {
+    var l = x.l; if (l.vinc || !(l.valor < 0)) return;
+    var v = Math.abs(l.valor), d = dias(l.data, ref);
+    var bate = (prox && Math.abs(prox.valor - prox.pago - v) < 0.05) || Math.abs(rest - v) < 0.05;
+    var fat = cartao && /FATURA|CART[AÃ]O|CARTAO|MASTERCARD|VISA|ELO\b/i.test(exNormNome(l.desc));
+    if (cartao ? (fat && d <= 45) : (bate || d <= 20)) out.push({ e: x.e, l: l, bate: bate, d: d, dv: Math.abs(v - (prox ? prox.valor - prox.pago : rest)) });
+  });
+  out.sort(function (a, b) { return (b.bate - a.bate) || (a.dv - b.dv) || (a.d - b.d); });
+  return out.slice(0, 8);
+}
+function ccIrExtrato(extId, linId) { state.aba = "conciliacao"; state._ccTela = "extrato"; state._exSel = extId; state._exFiltro = "todos"; state._exAberta = linId; state._exSelV = null; render(); }
+function ccBuscaExtrato(id) { state._ccBusEx = state._ccBusEx === id ? "" : id; render(); }
+function ccParcelasHTML(c) {
+  var sit = ccParcelasSit(c), n = sit.length, cartao = ccCond(c) === "cartao";
+  if (!c.pag && !(c.nfs && c.nfs.length)) return "";
+  return '<div style="margin:2px 0 7px;display:flex;flex-direction:column;gap:3px;">' + sit.map(function (p) {
+    var cor = p.paga ? "#66BB6A" : p.vencida ? "#E57373" : p.pago > 0 ? "#FFB74D" : "#888";
+    var txt = p.paga ? "✓ paga" + (p.dataPag ? " em " + exDataBr(p.dataPag) : "") + (cartao ? " (fatura)" : " (extrato)")
+      : p.pago > 0 ? "paga em parte: " + fmtR(p.pago) : p.vencida ? "VENCIDA — não apareceu no extrato" : "aguardando o extrato";
+    return '<div style="font-size:11px;color:#bbb;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="min-width:44px;color:#777;font-weight:800;">' + (n > 1 ? p.n + "/" + n : "única") + '</span>'
+      + '<span style="min-width:92px;">' + (p.venc ? (cartao ? "fatura " : n > 1 || ccCond(c) === "faturado" ? "vence " : "") + exDataBr(p.venc) : "") + '</span>'
+      + '<b style="min-width:86px;color:#ddd;">' + fmtR(p.valor) + '</b><span style="color:' + cor + ';font-weight:700;">' + txt + '</span></div>';
+  }).join("") + '</div>';
+}
+function ccBuscaExtratoHTML(c) {
+  var cand = ccCandExtrato(c), cid = esc(String(c.id)), cartao = ccCond(c) === "cartao";
+  var h = '<div style="margin-top:8px;border:1px solid #1f3a4a;border-radius:7px;padding:8px 10px;background:#08121a;">'
+    + '<div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:5px;">' + (cartao ? "LINHAS DE FATURA DO CARTÃO NO EXTRATO" : "SAÍDAS DO EXTRATO QUE PODEM SER ESTE PAGAMENTO") + '</div>';
+  if (!exLista().length) return h + '<div style="font-size:11px;color:#888;">Nenhum extrato importado. Importe em Conciliação → Extrato bancário.</div></div>';
+  if (!cand.length) return h + '<div style="font-size:11px;color:#888;">Nada no extrato ainda' + (cartao ? " com cara de fatura de cartão perto do vencimento." : " com esse valor ou perto do vencimento.") + ' Importe o extrato mais recente.</div></div>';
+  return h + cand.map(function (x) {
+    var eid = esc(x.e.id), lid = esc(x.l.id);
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#ccc;padding:3px 0;border-top:1px solid #10202a;">'
+      + '<span style="width:70px;color:#888;">' + exDataBr(x.l.data) + '</span><span style="flex:1;min-width:160px;">' + esc(x.l.desc) + '</span>'
+      + '<b style="color:#E57373;">− ' + fmtR(Math.abs(x.l.valor)) + '</b>' + (x.bate ? '<span style="font-size:10px;font-weight:900;color:#000;background:#66BB6A;border-radius:4px;padding:0 6px;">VALOR BATE</span>' : "")
+      + (cartao ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="ccIrExtrato(\'' + eid + '\',\'' + lid + '\')">abrir a fatura no extrato →</button>'
+        : '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#66BB6A;color:#66BB6A;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',\'' + cid + '\')">✓ é este pagamento</button>')
+      + '</div>';
+  }).join("") + '</div>';
+}
+function ccExportar() {
+  if (typeof XLSX === "undefined") { alert("Planilha não carregou (verifique a internet)."); return; }
+  var lista = (state._ccVisiveis || ccLista());
+  var linhas = [["Nº", "Pedido em", "Pedido por", "Descrição", "Fornecedor", "Categoria", "Caminhão", "Condição", "Parcelas", "Valor orçado", "NF nº", "Valor NF", "Pago no extrato", "Situação", "Pagamentos (data · valor)", "Aprovado por", "Aprovado em", "Observação"]];
+  lista.forEach(function (c) {
+    linhas.push([Number(c.numero) || c.numero, String(c.criadoEm || "").slice(0, 10), c.criadoPor || "", c.descricao || "", c.fornecedor || "", c.categoria || "", c.placa || "",
+      ccCondTexto(c), ccPlano(c).length, Number(c.valor) || 0, (c.nfs || []).map(function (n) { return n.numero; }).filter(Boolean).join(", "), ccValorNF(c), ccValorPago(c),
+      CC_ST[ccStatus(c)].nome, (c.comprovantes || []).map(function (r) { return exDataBr(r.dataPag || String(r.em || "").slice(0, 10)) + " · " + fmtR(r.valor); }).join(" | "),
+      c.aprovadoPor || "", String(c.aprovadoEm || "").slice(0, 10), c.obs || ""]);
+  });
+  var ws = XLSX.utils.aoa_to_sheet(linhas); ws["!cols"] = linhas[0].map(function (t, i) { return { wch: [5, 11, 14, 34, 24, 18, 10, 22, 8, 12, 10, 12, 14, 16, 34, 14, 11, 30][i] || 12 }; });
+  var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Compras");
+  XLSX.writeFile(wb, "RF_Compras_" + hojeISO() + ".xlsx");
+}
+/* v501: ao escolher a foto do orçamento/nota, a IA lê o valor (igual à foto da bomba no abastecimento) */
+function ccLerValorArquivo(input) {
+  var f = input && input.files && input.files[0], alvo = document.getElementById("cc-valor"), st = document.getElementById("cc-ia");
+  if (!f || !/^image\//.test(f.type) || !alvo) return;
+  if (st) st.textContent = "🤖 lendo o valor...";
+  rfComprimirImagem(f).then(function (b) {
+    rfLerFotoIA("nota", b, function (j, motivo) {
+      var v = (j && Number(j.valor)) || 0;
+      if (v > 0 && !ccNum(alvo.value)) { alvo.value = String(v.toFixed(2)).replace(".", ","); ccPagPrev("ccn", null); }
+      if (st) st.textContent = v > 0 ? "🤖 valor lido: " + fmtR(v) + " — confira" : "🤖 não consegui ler o valor" + (motivo ? " (" + motivo + ")" : "") + " — digite";
+    });
+  }).catch(function () { if (st) st.textContent = ""; });
+}
 var CC_ST = {
   aprovacao:  { nome: "Aguardando aprovação", cor: "#F2E600" },
-  nota:       { nome: "Falta a nota fiscal",  cor: "#FFB74D" },
-  pagamento:  { nome: "Falta o comprovante",  cor: "#4FC3F7" },
-  divergente: { nome: "Valores não batem",    cor: "#E57373" },
+  nota:       { nome: "Aguardando nota fiscal", cor: "#FFB74D" },
+  pagamento:  { nome: "Em consolidação",      cor: "#4FC3F7" },   // v501: tem nota, falta o pagamento aparecer no extrato
+  divergente: { nome: "Pago a mais",          cor: "#E57373" },
   conciliada: { nome: "Conciliada",           cor: "#66BB6A" },
   reprovada:  { nome: "Reprovada",            cor: "#9E9E9E" },
   cancelada:  { nome: "Cancelada",            cor: "#9E9E9E" }
@@ -15088,8 +15278,8 @@ function ccStatus(c) {
   if (c.reprovada) return "reprovada";
   if (!c.aprovadoEm) return "aprovacao";
   if (!(c.nfs && c.nfs.length)) return "nota";
-  if (!(c.comprovantes && c.comprovantes.length)) return "pagamento";
   if (c.conciliadaEm) return "conciliada";
+  if (ccValorPago(c) < ccValorNF(c) - 0.05) return "pagamento";   // v501: em consolidação até o extrato cobrir a nota
   return "divergente";
 }
 function ccBatem(c) { return Math.abs(ccValorNF(c) - ccValorPago(c)) < 0.05; }
@@ -15137,7 +15327,7 @@ function ccVer(path) {
 
 /* ---- ações ---- */
 function ccToca(c) { if (c) c.atualizadoEm = Date.now(); salvar(); render(); }
-function ccNovaAbrir(on) { state._ccNova = on; render(); }
+function ccNovaAbrir(on) { state._ccNova = on; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
 function ccCriar() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
   var desc = String(g("cc-desc")).trim(), forn = String(g("cc-forn")).trim(), valor = ccNum(g("cc-valor"));
@@ -15154,13 +15344,14 @@ function ccCriar() {
     var agora = new Date().toISOString();
     var c = {
       id: id, numero: ccProxNumero(), descricao: desc, fornecedor: forn, valor: valor,
-      categoria: g("cc-cat"), placa: g("cc-placa"), forma: g("cc-forma"), obs: String(g("cc-obs")).trim(),
+      categoria: g("cc-cat"), placa: g("cc-placa"), forma: "", pag: ccPagLer("ccn", valor), obs: String(g("cc-obs")).trim(),
       criadoEm: agora, criadoPor: ccQuem(),
       orcamentos: tipo === "nota" ? [] : paths.map(function (p) { return { path: p.path, nome: p.nome, em: agora, por: ccQuem() }; }),
       nfs: tipo === "nota" ? [{ arquivos: paths, valor: valor, numero: String(g("cc-nnf")).trim(), em: agora, por: ccQuem() }] : [],
       comprovantes: [], historico: [{ em: agora, por: ccQuem(), o: tipo === "nota" ? "lançou com a nota (compra já feita)" : "pediu aprovação com orçamento" }]
     };
     if (tipo === "nota") c.semAprovacaoPrevia = true;
+    c.forma = ccCondTexto(c);
     ccLista().unshift(c);
     state._ccNova = false;
     ccToca(c);
@@ -15223,7 +15414,14 @@ function ccAnexar(input, id, tipo) {
   ccSubir(files, c.id, ehNF ? "nf" : "comprovante").then(function (paths) {
     var agora = new Date().toISOString();
     var reg = { arquivos: paths, valor: valor, em: agora, por: ccQuem() };
-    if (ehNF) { reg.numero = String(nnf || "").trim(); (c.nfs = c.nfs || []).push(reg); }
+    if (ehNF) {
+      reg.numero = String(nnf || "").trim(); (c.nfs = c.nfs || []).push(reg);
+      var totNF = ccValorNF(c);   // v501: parcelas acompanham o valor da nota enquanto nada foi pago
+      if (c.pag && ccValorPago(c) < 0.005 && Math.abs(ccSoma(c.pag.parcelas) - totNF) >= 0.05) {
+        c.pag.parcelas = ccGerarParcelas(totNF, c.pag.n || (c.pag.parcelas || []).length || 1, c.pag.venc1, c.pag.cond, c.pag.intervalo);
+        (c.historico = c.historico || []).push({ em: agora, por: "sistema", o: "parcelas recalculadas pelo valor da nota (" + fmtR(totNF) + ")" });
+      }
+    }
     else (c.comprovantes = c.comprovantes || []).push(reg);
     (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: (ehNF ? "anexou nota " : "anexou comprovante ") + fmtR(valor) });
     ccTentarConciliar(c);
@@ -15271,8 +15469,9 @@ function ccArqLinks(lista, rot) {
 }
 function ccPassos(c) {
   var st = ccStatus(c);
-  var feito = [!!c.aprovadoEm, !!(c.nfs && c.nfs.length), !!(c.comprovantes && c.comprovantes.length), !!c.conciliadaEm];
-  var nomes = ["Aprovação", "Nota fiscal", "Comprovante", "Conciliada"];
+  var temNF = !!(c.nfs && c.nfs.length);
+  var feito = [!!c.aprovadoEm, temNF, temNF && ccValorPago(c) >= ccValorNF(c) - 0.05, !!c.conciliadaEm];
+  var nomes = ["Orçamento aprovado", "Nota fiscal", "Pagamento no extrato", "Conciliada"];
   var parado = st === "reprovada" || st === "cancelada";
   return '<div style="display:flex;align-items:center;gap:0;margin:8px 0 6px;flex-wrap:wrap;">' + nomes.map(function (n, i) {
     var ok = feito[i];
@@ -15293,13 +15492,17 @@ function ccCardHTML(c) {
   };
   var acoes = [];
   if (st === "aprovacao") {
-    if (adm) { acoes.push(btn("✓ Aprovar", "ccAprovar('" + id + "')", "#66BB6A")); acoes.push(btn("✕ Reprovar", "ccReprovar('" + id + "')", "#E57373")); }
+    if (adm) { acoes.push(btn("✓ Aprovar orçamento", "ccAprovar('" + id + "')", "#66BB6A")); acoes.push(btn("✕ Reprovar", "ccReprovar('" + id + "')", "#E57373")); }
     else acoes.push('<span style="font-size:11px;color:#F2E600;">aguardando o Renato aprovar</span>');
   }
   if (st === "nota") acoes.push(anexo("📄 Anexar nota fiscal", "nf", "#FFB74D"));
-  if (st === "pagamento") acoes.push(anexo("💳 Anexar comprovante de pagamento", "comprovante", "#4FC3F7"));
+  if (st === "pagamento") {   // v501: o pagamento entra pelo extrato bancário
+    if (adm) acoes.push(btn((state._ccBusEx === c.id ? "▾ " : "🏦 ") + (ccCond(c) === "cartao" ? "Procurar a fatura no extrato" : "Procurar o pagamento no extrato"), "ccBuscaExtrato('" + id + "')", "#4FC3F7"));
+    else acoes.push('<span style="font-size:11px;color:#4FC3F7;">aguardando o pagamento aparecer no extrato do banco</span>');
+    acoes.push(anexo("+ outra nota", "nf", "#FFB74D"));
+  }
+  if ((st === "aprovacao" || st === "nota" || st === "pagamento") && (ccValorPago(c) < 0.005 || adm)) acoes.push(btn(state._ccEdPag === c.id ? "▾ condição" : "✎ condição de pagamento", "ccPagEditar('" + id + "')", "#999"));
   if (st === "divergente") {
-    acoes.push(anexo("+ outro comprovante", "comprovante", "#4FC3F7"));
     acoes.push(anexo("+ outra nota", "nf", "#FFB74D"));
     if (adm) acoes.push(btn("Fechar com a diferença", "ccFecharDivergente('" + id + "')", "#E57373"));
   }
@@ -15312,8 +15515,9 @@ function ccCardHTML(c) {
   var vNF = ccValorNF(c), vPago = ccValorPago(c);
   var valores = '<span style="font-size:11px;color:#999;">orçado <b style="color:#ddd;">' + fmtR(c.valor) + '</b>'
     + (c.nfs && c.nfs.length ? ' · nota <b style="color:#FFB74D;">' + fmtR(vNF) + '</b>' : "")
-    + (c.comprovantes && c.comprovantes.length ? ' · pago <b style="color:#4FC3F7;">' + fmtR(vPago) + '</b>' : "")
-    + (st === "divergente" ? ' · <b style="color:#E57373;">diferença ' + fmtR(vNF - vPago) + '</b>' : "") + '</span>';
+    + (c.comprovantes && c.comprovantes.length ? ' · pago no extrato <b style="color:#4FC3F7;">' + fmtR(vPago) + '</b>' : "")
+    + (st === "pagamento" && vPago > 0 ? ' · falta <b style="color:#4FC3F7;">' + fmtR(vNF - vPago) + '</b>' : "")
+    + (st === "divergente" ? ' · <b style="color:#E57373;">pago a mais ' + fmtR(vPago - vNF) + '</b>' : "") + '</span>';
   var h = '<div style="border:1px solid #262626;border-left:4px solid ' + S.cor + ';border-radius:8px;padding:10px 12px;margin-bottom:9px;background:#0d0d0d;">'
     + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
     + '<span style="font-size:11px;color:#777;font-weight:800;">Nº ' + esc(c.numero) + '</span>'
@@ -15324,7 +15528,7 @@ function ccCardHTML(c) {
     + '<span style="flex:1;"></span><span style="font-size:16px;font-weight:900;color:' + GOLD + ';">' + fmtR(c.valor) + '</span>'
     + '</div>'
     + '<div style="font-size:11px;color:#999;margin-top:3px;">'
-    + [c.fornecedor ? "fornecedor <b style='color:#ccc;'>" + esc(c.fornecedor) + "</b>" : "", c.categoria ? esc(c.categoria) : "", c.placa ? "placa " + esc(c.placa) : "", c.forma ? esc(c.forma) : "",
+    + [c.fornecedor ? "fornecedor <b style='color:#ccc;'>" + esc(c.fornecedor) + "</b>" : "", c.categoria ? esc(c.categoria) : "", c.placa ? "placa " + esc(c.placa) : "", ccCondTexto(c) ? "<b style='color:#ccc;'>" + esc(ccCondTexto(c)) + "</b>" : "",
        "pedido por " + esc(c.criadoPor || "?") + " em " + ccDataBr(c.criadoEm)].filter(Boolean).join(" · ")
     + '</div>'
     + (c.obs ? '<div style="font-size:11px;color:#aaa;margin-top:3px;">📝 ' + esc(c.obs) + '</div>' : "")
@@ -15334,8 +15538,12 @@ function ccCardHTML(c) {
     + ((st === "reprovada" || st === "cancelada") && c.motivo ? '<span style="font-size:10.5px;color:#E57373;margin-left:8px;">motivo: ' + esc(c.motivo) + '</span>' : "")
     + (c.justificativa ? '<span style="font-size:10.5px;color:#E57373;margin-left:8px;">fechada com diferença: ' + esc(c.justificativa) + '</span>' : "")
     + '</div>'
-    + '<div style="margin-bottom:7px;">' + ccArqLinks(c.orcamentos, "Orçamento") + ccArqLinks(c.nfs, "Nota") + ccArqLinks(c.comprovantes, "Comprovante") + '</div>'
-    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' + acoes.join("") + '</div>';
+    + ccParcelasHTML(c)
+    + '<div style="margin-bottom:7px;">' + ccArqLinks(c.orcamentos, "Orçamento") + ccArqLinks(c.nfs, "Nota") + ccArqLinks(c.comprovantes, "Extrato") + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' + acoes.join("") + '</div>'
+    + (state._ccEdPag === c.id ? ccPagFormHTML("ccp", c.pag || { cond: "avista", forma: c.forma }, ccValorNF(c) || Number(c.valor) || 0)
+        + '<div style="margin-top:6px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';font-weight:800;" onclick="ccPagSalvar(\'' + id + '\')">salvar condição</button></div>' : "")
+    + (state._ccBusEx === c.id && st === "pagamento" && adm ? ccBuscaExtratoHTML(c) : "");
   if (state._ccHist === c.id) {
     h += '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px;">' + (c.historico || []).map(function (x) {
       return '<div style="font-size:10.5px;color:#888;">' + ccDataBr(x.em) + ' — <b style="color:#bbb;">' + esc(x.por || "") + '</b> ' + esc(x.o || "") + '</div>';
@@ -15352,10 +15560,9 @@ function ccNovaHTML() {
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px;">'
     + '<div>' + lab("O que está sendo comprado *") + '<input id="cc-desc" ' + inp + ' placeholder="ex.: 2 pneus 275/80 para o QEN6J82"></div>'
     + '<div>' + lab("Fornecedor") + '<input id="cc-forn" ' + inp + ' placeholder="loja / prestador"></div>'
-    + '<div>' + lab("Valor (R$) *") + '<input id="cc-valor" inputmode="decimal" ' + inp + ' placeholder="0,00"></div>'
+    + '<div>' + lab("Valor (R$) *") + '<input id="cc-valor" inputmode="decimal" ' + inp + ' placeholder="0,00" oninput="ccPagPrev(\'ccn\',null)"><div id="cc-ia" style="font-size:10.5px;color:#4FC3F7;margin-top:2px;"></div></div>'
     + '<div>' + lab("Categoria") + '<select id="cc-cat" ' + inp + '>' + CC_CATEGORIAS.map(function (x) { return '<option>' + esc(x) + '</option>'; }).join("") + '</select></div>'
     + '<div>' + lab("Caminhão (se for de um)") + '<select id="cc-placa" ' + inp + '><option value="">— nenhum / empresa —</option>' + placas.map(function (p) { return '<option>' + esc(p) + '</option>'; }).join("") + '</select></div>'
-    + '<div>' + lab("Forma de pagamento") + '<select id="cc-forma" ' + inp + '>' + CC_FORMAS.map(function (x) { return '<option>' + esc(x) + '</option>'; }).join("") + '</select></div>'
     + '</div>'
     + lab("O que está anexando *")
     + '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#ddd;">'
@@ -15363,7 +15570,8 @@ function ccNovaHTML() {
     + '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" style="width:auto;margin:0;" name="cc-tipo-r" onchange="document.getElementById(\'cc-tipo\').value=\'nota\';document.getElementById(\'cc-nnf-box\').style.display=\'block\'"> Nota fiscal (já comprou)</label>'
     + '<input type="hidden" id="cc-tipo" value="orcamento"></div>'
     + '<div id="cc-nnf-box" style="display:none;max-width:220px;">' + lab("Número da nota") + '<input id="cc-nnf" ' + inp + '></div>'
-    + lab("Arquivo (foto ou PDF) *") + '<input id="cc-arq" type="file" accept="image/*,application/pdf" multiple style="font-size:12px;color:#ccc;width:auto;max-width:100%;">'
+    + lab("Arquivo (foto ou PDF) *") + '<input id="cc-arq" type="file" accept="image/*,application/pdf" multiple style="font-size:12px;color:#ccc;width:auto;max-width:100%;" onchange="ccLerValorArquivo(this)">'
+    + ccPagFormHTML("ccn", { cond: "avista" }, null)
     + lab("Observação") + '<input id="cc-obs" ' + inp + ' placeholder="opcional">'
     + '<div style="display:flex;gap:8px;margin-top:11px;">'
     + '<button id="cc-btn-criar" class="btn-gold" style="font-size:13px;padding:7px 16px;font-weight:800;background:' + GOLD + ';color:#000;border:none;border-radius:6px;cursor:pointer;" onclick="ccCriar()">Enviar para aprovação</button>'
@@ -15386,9 +15594,14 @@ function exPrepararSugestoes() {
 function ccAbasHTML() {   // v448
   var t = state._ccTela || "compras";
   var b = function (id, rot) { return '<button onclick="state._ccTela=\'' + id + '\';render()" style="font-size:13px;padding:7px 16px;font-weight:800;border-radius:6px 6px 0 0;cursor:pointer;border:1px solid ' + (t === id ? GOLD : "#333") + ';border-bottom:none;background:' + (t === id ? "rgba(212,160,23,0.12)" : "#0d0d0d") + ';color:' + (t === id ? GOLD : "#999") + ';">' + rot + '</button>'; };
-  return '<div style="display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:12px;flex-wrap:wrap;">' + b("compras", "🛒 Compras") + (ehAdmin() ? b("extrato", "🏦 Extrato bancário") + b("motoristas", "⛽ Motoristas") : "") + '</div>';
+  return '<div style="display:flex;gap:4px;border-bottom:1px solid #333;margin-bottom:12px;flex-wrap:wrap;align-items:flex-end;">' + b("extrato", "🏦 Extrato bancário") + b("motoristas", "⛽ Motoristas")
+    + '<span style="flex:1;"></span><a href="javascript:void(0)" onclick="state.aba=\'compras\';render()" style="font-size:12px;color:' + GOLD + ';margin-bottom:6px;">🛒 ir para Compras →</a></div>';
 }
 function ccTelaHTML() {
+  if (state.aba === "conciliacao") {   // v501: compras saíram daqui para a aba própria
+    if (!ehAdmin()) return '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:8px;">🧾 Conciliação</div><div style="font-size:12.5px;color:#aaa;">O extrato do banco é conciliado só pelo administrador. As compras agora ficam na aba <a href="javascript:void(0)" onclick="state.aba=\'compras\';render()" style="color:' + GOLD + ';">🛒 Compras</a>.</div>';
+    if (state._ccTela !== "motoristas") state._ccTela = "extrato";
+  } else state._ccTela = "compras";
   if ((state._ccTela === "extrato" || state._ccTela === "motoristas") && ehAdmin()) exPrepararSugestoes();
   if (state._ccTela === "motoristas" && ehAdmin()) {
     return '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">🧾 Conciliação</div>' + ccAbasHTML() + exMotTelaHTML();
@@ -15424,17 +15637,17 @@ function ccTelaHTML() {
   });
   var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
   var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:4px;">'
-    + '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';">🧾 Conciliação</div>'
-    + (state._ccNova ? "" : '<button style="font-size:13px;padding:7px 16px;font-weight:800;background:' + GOLD + ';color:#000;border:none;border-radius:6px;cursor:pointer;" onclick="ccNovaAbrir(true)">+ Nova compra</button>')
+    + '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';">🛒 Compras</div>'
+    + '<span style="display:inline-flex;gap:8px;flex-wrap:wrap;">' + (ehAdmin() ? '<button class="btn-outline" style="font-size:12px;padding:6px 12px;" onclick="ccExportar()" title="Planilha das compras do filtro, para a contabilidade">⬇ Excel p/ contabilidade</button>' : "")
+    + (state._ccNova ? "" : '<button style="font-size:13px;padding:7px 16px;font-weight:800;background:' + GOLD + ';color:#000;border:none;border-radius:6px;cursor:pointer;" onclick="ccNovaAbrir(true)">+ Nova compra</button>') + '</span>'
     + '</div>'
-    + '<div style="font-size:12px;color:#888;margin-bottom:12px;">Toda compra da RF passa por aqui: orçamento → aprovação → nota fiscal → comprovante. Só fecha quando a nota e o pagamento batem.</div>'
-    + ccAbasHTML()
+    + '<div style="font-size:12px;color:#888;margin-bottom:12px;">Toda compra da RF passa por aqui: <b style="color:#ccc;">orçamento → aprovação → nota fiscal → pagamento no extrato</b>. À vista, faturado (boletos) ou cartão (1x ou parcelado). Só fecha quando o extrato do banco cobre o valor da nota.</div>'
     + (state._ccNova ? ccNovaHTML() : "")
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
     + tile("aprovacao", "AGUARDANDO APROVAÇÃO", cont.aprovacao || 0, tot.aprovacao || 0, "aprovacao")
-    + tile("nota", "FALTA NOTA FISCAL", cont.nota || 0, tot.nota || 0, "nota")
-    + tile("pagamento", "FALTA COMPROVANTE", cont.pagamento || 0, tot.pagamento || 0, "pagamento")
-    + tile("divergente", "VALORES NÃO BATEM", cont.divergente || 0, tot.divergente || 0, "divergente")
+    + tile("nota", "AGUARDANDO NOTA FISCAL", cont.nota || 0, tot.nota || 0, "nota")
+    + tile("pagamento", "EM CONSOLIDAÇÃO", cont.pagamento || 0, tot.pagamento || 0, "pagamento")
+    + tile("divergente", "PAGO A MAIS", cont.divergente || 0, tot.divergente || 0, "divergente")
     + '<div onclick="ccFiltro(\'Sit\',\'conciliada\')" style="cursor:pointer;flex:1;min-width:140px;border:1px solid ' + (sit === "conciliada" ? "#66BB6A" : "#262626") + ';border-radius:8px;padding:8px 10px;background:#0d0d0d;">'
     + '<div style="font-size:10.5px;color:#66BB6A;font-weight:800;">CONCILIADAS NO MÊS</div>'
     + '<div style="font-size:20px;font-weight:900;color:#fff;">' + concMes.length + '</div>'
@@ -15443,13 +15656,16 @@ function ccTelaHTML() {
     + (semAprov ? '<div style="font-size:11.5px;color:#fff;background:rgba(192,57,43,0.25);border:1px solid #C0392B;border-radius:6px;padding:6px 10px;margin-bottom:10px;">⚠ ' + semAprov + ' compra(s) este mês chegaram com a nota <b>sem aprovação antes</b>.</div>' : "")
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">'
     + '<select ' + sel + ' onchange="ccFiltro(\'Sit\',this.value)">'
-    + [["abertas", "em aberto"], ["todas", "todas"], ["aprovacao", "aguardando aprovação"], ["nota", "falta nota"], ["pagamento", "falta comprovante"], ["divergente", "valores não batem"], ["conciliada", "conciliadas"], ["reprovada", "reprovadas"], ["cancelada", "canceladas"]]
+    + [["abertas", "em aberto"], ["todas", "todas"], ["aprovacao", "aguardando aprovação"], ["nota", "aguardando nota"], ["pagamento", "em consolidação"], ["divergente", "pago a mais"], ["conciliada", "conciliadas"], ["reprovada", "reprovadas"], ["cancelada", "canceladas"]]
       .map(function (o) { return '<option value="' + o[0] + '"' + (sit === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select>'
     + '<select ' + sel + ' onchange="ccFiltro(\'Mes\',this.value)"><option value="">todos os meses</option>'
     + Object.keys(meses).sort().reverse().map(function (m) { return '<option value="' + m + '"' + (mes === m ? " selected" : "") + '>' + m.slice(5) + "/" + m.slice(0, 4) + '</option>'; }).join("") + '</select>'
     + '<input placeholder="buscar (item, fornecedor, placa, quem pediu)" value="' + esc(state._ccBusca || "") + '" onchange="ccFiltro(\'Busca\',this.value)" style="font-size:12px;padding:5px 8px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:260px;max-width:100%;">'
     + '<span style="font-size:11px;color:#777;">' + vis.length + ' compra(s) · ' + fmtR(vis.reduce(function (a, c) { return a + (Number(c.valor) || 0); }, 0)) + '</span>'
     + '</div>';
+  state._ccVisiveis = vis;
+  var venc = lista.filter(function (c) { var s = ccStatus(c); return (s === "pagamento" || s === "nota") && ccParcelasSit(c).some(function (p) { return p.vencida; }); }).length;   // v501
+  if (venc) h += '<div style="font-size:11.5px;color:#fff;background:rgba(192,57,43,0.18);border:1px solid #8a3a30;border-radius:6px;padding:6px 10px;margin-bottom:10px;">⏰ ' + venc + ' compra(s) com parcela vencida que ainda não apareceu no extrato — importe o extrato mais recente ou confira se foi paga.</div>';
   if (!vis.length) return h + '<div style="font-size:12px;color:#777;">' + (lista.length ? "Nenhuma compra nesse filtro." : "Nenhuma compra lançada ainda. Clique em + Nova compra.") + '</div>';
   return h + vis.slice(0, 150).map(ccCardHTML).join("");
 }
@@ -15458,7 +15674,9 @@ function ccContextoAssistente() {
   var l = ccLista(), c = {};
   l.forEach(function (x) { var s = ccStatus(x); c[s] = (c[s] || 0) + 1; });
   var abertas = l.filter(function (x) { return ["aprovacao", "nota", "pagamento", "divergente"].indexOf(ccStatus(x)) !== -1; }).slice(0, 15);
-  return "CONCILIACAO DE COMPRAS (aba Conciliacao, v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
+  var parcAb = [];
+  l.forEach(function (x) { var s = ccStatus(x); if (s !== "pagamento" && s !== "nota") return; ccParcelasSit(x).forEach(function (p) { if (!p.paga) parcAb.push("nº" + x.numero + " parc " + p.n + "/" + ccPlano(x).length + " " + (p.venc ? exDataBr(p.venc) : "") + " " + fmtR(p.valor - p.pago) + (p.vencida ? " VENCIDA" : "")); }); });
+  return "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; na foto a IA le o valor sozinha, como a foto da bomba no abastecimento) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL; ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
     + (c.aprovacao || 0) + " aguardando aprovacao, " + (c.nota || 0) + " sem nota, " + (c.pagamento || 0) + " sem comprovante, " + (c.divergente || 0) + " com valores divergentes, " + (c.conciliada || 0) + " conciliadas, " + (c.reprovada || 0) + " reprovadas, " + (c.cancelada || 0) + " canceladas. "
     + (abertas.length ? "Em aberto: " + abertas.map(function (x) { return "nº" + x.numero + " " + x.descricao + " (" + fmtR(x.valor) + ", " + CC_ST[ccStatus(x)].nome + ", pedido por " + (x.criadoPor || "?") + ")"; }).join("; ") + "." : "");
 }
@@ -15760,13 +15978,76 @@ function exCompraRestante(c) {
   var alvo = ccValorNF(c) || Number(c.valor) || 0;
   return Math.round((alvo - ccValorPago(c)) * 100) / 100;
 }
-function exCandCompras(l) {
-  var pagas = exComprasPagas(), v = Math.abs(l.valor);
+function exCandCompras(l) {   // v501: compra parcelada aceita um pagamento por parcela; cartão é baixado pela fatura
+  var v = Math.abs(l.valor);
   return ccLista().filter(function (c) {
     var st = ccStatus(c);
-    if (st === "cancelada" || st === "reprovada" || st === "conciliada" || pagas[String(c.id)]) return false;
-    return Math.abs(exCompraRestante(c) - v) < 0.05 || Math.abs((Number(c.valor) || 0) - v) < 0.05;
+    if (st === "cancelada" || st === "reprovada" || st === "conciliada" || ccCond(c) === "cartao") return false;
+    var rest = exCompraRestante(c); if (rest < 0.05) return false;
+    var p = ccProxParcela(c);
+    return Math.abs(rest - v) < 0.05 || (p && Math.abs(p.valor - p.pago - v) < 0.05);
   });
+}
+/* v501: FATURA DO CARTÃO -- uma saída do extrato paga várias parcelas de compras no cartão */
+function exParcelasCartaoAbertas() {
+  var out = [];
+  ccLista().forEach(function (c) {
+    var st = ccStatus(c);
+    if (ccCond(c) !== "cartao" || st === "cancelada" || st === "reprovada" || st === "conciliada") return;
+    ccParcelasSit(c).forEach(function (p) { if (!p.paga) out.push({ c: c, p: p, k: c.id + "|" + p.n, falta: Math.round((p.valor - p.pago) * 100) / 100 }); });
+  });
+  return out.sort(function (a, b) { return String(a.p.venc).localeCompare(String(b.p.venc)); });
+}
+function exFatSel(linId, k, on) {
+  state._exFat = state._exFat && state._exFat.lin === linId ? state._exFat : { lin: linId, ks: null };
+  var ks = state._exFat.ks || [];
+  ks = ks.filter(function (x) { return x !== k; }); if (on) ks.push(k);
+  state._exFat.ks = ks; render();
+}
+function exFatSelecionadas(l) {
+  var ab = exParcelasCartaoAbertas();
+  if (state._exFat && state._exFat.lin === l.id && state._exFat.ks) return ab.filter(function (x) { return state._exFat.ks.indexOf(x.k) !== -1; });
+  var lim = ccAddDias(l.data, 10), ini = ccAddDias(l.data, -40);   // pré-marca as parcelas com fatura até 10 dias depois do pagamento
+  return ab.filter(function (x) { return x.p.venc && x.p.venc <= lim && x.p.venc >= ini; });
+}
+function exPainelFatura(e, l) {
+  var ab = exParcelasCartaoAbertas(); if (!ab.length) return "";
+  var sel = exFatSelecionadas(l), ks = sel.map(function (x) { return x.k; });
+  var soma = Math.round(sel.reduce(function (a, x) { return a + x.falta; }, 0) * 100) / 100, v = Math.abs(l.valor), resto = Math.round((v - soma) * 100) / 100;
+  var eid = esc(e.id), lid = esc(l.id);
+  return '<div style="border:1px solid #1f3a4a;border-radius:7px;padding:7px 9px;background:#08121a;"><div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:4px;">💳 É A FATURA DO CARTÃO? marque as parcelas que vieram nela</div>'
+    + '<div style="max-height:200px;overflow:auto;">' + ab.map(function (x) {
+        var on = ks.indexOf(x.k) !== -1, n = ccPlano(x.c).length;
+        return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "") + ' onchange="exFatSel(\'' + lid + '\',\'' + esc(x.k) + '\',this.checked)"> '
+          + 'nº ' + esc(x.c.numero) + ' · ' + esc(x.c.descricao) + (x.c.pag && x.c.pag.cartao ? ' · ' + esc(x.c.pag.cartao) : "") + ' · parcela ' + x.p.n + '/' + n + ' · fatura ' + exDataBr(x.p.venc) + ' · <b>' + fmtR(x.falta) + '</b></label>';
+      }).join("") + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:#ddd;">parcelas <b>' + fmtR(soma) + '</b> · fatura <b>' + fmtR(v) + '</b>'
+    + (Math.abs(resto) < 0.05 ? ' · <b style="color:#66BB6A;">bate ✓</b>' : resto > 0 ? ' · <b style="color:#E57373;">' + fmtR(resto) + ' da fatura sem compra lançada</b>' : ' · <b style="color:#E57373;">parcelas passam da fatura em ' + fmtR(-resto) + '</b>')
+    + ' <button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#4FC3F7;color:#4FC3F7;" onclick="exVincFatura(\'' + eid + '\',\'' + lid + '\')">ligar fatura</button></div></div>';
+}
+function exVincFatura(extId, linId) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l) return;
+  var sel = exFatSelecionadas(o.l);
+  if (!sel.length) { alert("Marque as parcelas do cartão que vieram nesta fatura."); return; }
+  var soma = Math.round(sel.reduce(function (a, x) { return a + x.falta; }, 0) * 100) / 100, v = Math.abs(o.l.valor), resto = Math.round((v - soma) * 100) / 100;
+  if (resto < -0.04) { alert("As parcelas marcadas (" + fmtR(soma) + ") passam do valor da fatura (" + fmtR(v) + "). Desmarque alguma."); return; }
+  var obs = "";
+  if (resto >= 0.05) {
+    obs = prompt("A fatura tem " + fmtR(resto) + " além das parcelas marcadas — gasto no cartão SEM compra lançada.\nO que é essa diferença? (anuidade, juros, compra não lançada...)", "");
+    if (obs == null) return;
+  }
+  var agora = new Date().toISOString();
+  sel.forEach(function (x) {
+    var c = x.c;
+    (c.comprovantes = c.comprovantes || []).push({ arquivos: o.e.arquivo ? [{ path: o.e.arquivo, nome: "Extrato " + o.e.banco }] : [], valor: x.falta, em: agora, por: ccQuem(),
+      origem: "fatura", extratoId: o.e.id, linhaId: o.l.id, dataPag: o.l.data, desc: o.l.desc, parcela: x.p.n });
+    (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: "parcela " + x.p.n + " paga na fatura do cartão (extrato " + o.e.banco + " de " + exDataBr(o.l.data) + "): " + fmtR(x.falta) });
+    ccTentarConciliar(c); c.atualizadoEm = Date.now();
+  });
+  o.l.vinc = { tipo: "fatura", itens: sel.map(function (x) { return { id: x.c.id, parcela: x.p.n, valor: x.falta }; }), soma: soma, resto: resto, obs: String(obs || "").trim(), por: ccQuem(), em: agora };
+  delete o.l.sug; state._exFat = null; state._exAberta = "";
+  exSalvar(o.e);
 }
 function exViagensAbertas() {
   var rec = exRecebidoPorViagem();
@@ -15841,6 +16122,7 @@ function exNovaCompra(extId, linId) {
   var c = { id: "cc" + Date.now() + Math.random().toString(36).slice(2, 6), numero: ccProxNumero(), descricao: String(desc).trim(), fornecedor: "", valor: Math.abs(o.l.valor),
     categoria: "Outros", placa: "", forma: "", obs: "lançada a partir do extrato " + o.e.banco + " de " + exDataBr(o.l.data),
     criadoEm: agora, criadoPor: ccQuem(), orcamentos: [], nfs: [], comprovantes: [], semLancamento: true,
+    pag: { cond: "avista", forma: "PIX", n: 1, venc1: o.l.data, intervalo: 30, cartao: "", parcelas: [{ n: 1, venc: o.l.data, valor: Math.abs(o.l.valor) }] },
     historico: [{ em: agora, por: ccQuem(), o: "saída no banco sem compra lançada — criada pelo extrato" }] };
   ccLista().unshift(c);
   exVincCompra(extId, linId, c.id);
@@ -15938,6 +16220,15 @@ function exDesfazer(extId, linId) {
   if (!ehAdmin()) return;
   var o = exLinha(extId, linId); if (!o.l || !o.l.vinc) return;
   if (!confirm("Desfazer a conciliação deste lançamento?")) return;
+  if (o.l.vinc.tipo === "fatura") {   // v501
+    (o.l.vinc.itens || []).forEach(function (it) {
+      var cf = ccAcha(it.id); if (!cf) return;
+      cf.comprovantes = (cf.comprovantes || []).filter(function (r) { return r.linhaId !== o.l.id; });
+      if (!ccBatem(cf) || !(cf.comprovantes || []).length) cf.conciliadaEm = null;
+      (cf.historico = cf.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "desfez a fatura do cartão de " + exDataBr(o.l.data) });
+      cf.atualizadoEm = Date.now();
+    });
+  }
   if (o.l.vinc.tipo === "compra") {
     var c = ccAcha(o.l.vinc.id);
     if (c) {
@@ -15970,10 +16261,11 @@ function exExcluirExtrato(extId) {
   var conc = (e.linhas || []).filter(function (l) { return l.vinc; }).length;
   if (!confirm("Excluir o extrato " + e.banco + " (" + exDataBr(e.periodoIni) + " a " + exDataBr(e.periodoFim) + ")?" + (conc ? "\n\nEle tem " + conc + " lançamento(s) conciliado(s) — os vínculos com compras serão desfeitos." : ""))) return;
   (e.linhas || []).forEach(function (l) {
-    if (l.vinc && l.vinc.tipo === "compra") {
-      var c = ccAcha(l.vinc.id);
+    var idsC = l.vinc && l.vinc.tipo === "compra" ? [l.vinc.id] : l.vinc && l.vinc.tipo === "fatura" ? (l.vinc.itens || []).map(function (it) { return it.id; }) : [];   // v501
+    idsC.forEach(function (cid) {
+      var c = ccAcha(cid);
       if (c) { c.comprovantes = (c.comprovantes || []).filter(function (r) { return r.extratoId !== e.id; }); if (!ccBatem(c) || !(c.comprovantes || []).length) c.conciliadaEm = null; c.atualizadoEm = Date.now(); }
-    }
+    });
   });
   state.extratos = exLista().filter(function (x) { return x !== e; });
   if (state._exSel === extId) state._exSel = "";
@@ -15998,6 +16290,8 @@ function exVincTexto(l) {
     + ((v.viagensMot || []).length ? (v.viagensMot.length + " viagem(ns) " + fmtR(v.valorViagens) + (v.resto > 0.04 ? " + " + fmtR(v.resto) + " " + esc(String(v.finalidade || "").toLowerCase()) : "")) : esc(v.finalidade || "Combustível"));
   if (v.tipo === "abastecimento") return "⛽ abastecimento pago ao posto · " + esc(exMotNomeBonito(v.motorista)) + " · " + esc(v.placa || "") + " · " + exDataBr(String(v.dataAbast || "").slice(0, 10)) + " · " + fmtR(v.valorAbast) + (Math.abs(v.dif || 0) >= 0.05 ? ' <span style="color:#FFB74D;">(diferença ' + fmtR(v.dif) + ')</span>' : "");
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
+  if (v.tipo === "fatura") return "💳 fatura do cartão · " + (v.itens || []).length + " parcela(s) de compra " + fmtR(v.soma)
+    + (v.resto >= 0.05 ? ' · <span style="color:#E57373;">' + fmtR(v.resto) + ' sem compra lançada' + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
   if (v.tipo === "viagens" && v.demonstrativo && v.demonstrativo.compensacao) return "🧾 compensação Suzano · " + (v.ids || []).length + " viagem(ns) · " + fmtR(v.soma)
     + (Math.abs(v.dif || 0) >= 0.05 ? ' · <span style="color:#FFB74D;">' + fmtR(v.dif) + ' fora das viagens</span>' : "") + (v.obs ? ' <span style="color:#888;">(' + esc(v.obs) + ')</span>' : "");
   if (v.tipo === "viagens" && v.demonstrativo) return (v.ids || []).length + " viagem(ns) quitada(s) pelo demonstrativo · fretes " + fmtR(v.soma) + ' · <span style="color:#FFB74D;">descontos ' + fmtR(v.descontos || 0) + '</span>'
@@ -16037,19 +16331,21 @@ function exLinhaHTML(e, l) {
   return h + '</div>';
 }
 function exPainelSaida(e, l) {
-  var eid = esc(e.id), lid = esc(l.id), pagas = exComprasPagas();
-  var abertas = ccLista().filter(function (c) { var s = ccStatus(c); return s !== "cancelada" && s !== "reprovada" && s !== "conciliada" && !pagas[String(c.id)]; });
+  var eid = esc(e.id), lid = esc(l.id);
+  var abertas = ccLista().filter(function (c) { var s = ccStatus(c); return s !== "cancelada" && s !== "reprovada" && s !== "conciliada" && ccCond(c) !== "cartao" && exCompraRestante(c) >= 0.05; });   // v501
   var cand = exCandCompras(l);
   var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;display:grid;gap:8px;">';
   h += exPainelMotorista(e, l);   // v457
-  h += '<div><div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:4px;">COMPRA LANÇADA NA CONCILIAÇÃO</div>'
+  h += '<div><div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:4px;">COMPRA LANÇADA NA ABA COMPRAS</div>'
     + (abertas.length ? '<select id="ex-cp-' + lid + '" ' + sel + '>' + abertas.map(function (c) {
         var ok = cand.indexOf(c) !== -1;
-        return '<option value="' + esc(c.id) + '"' + (ok ? " selected" : "") + '>' + (ok ? "★ " : "") + "nº " + esc(c.numero) + " — " + esc(c.descricao) + " — " + fmtR(c.valor) + " (" + CC_ST[ccStatus(c)].nome.toLowerCase() + ")</option>";
+        var px = ccProxParcela(c), np = ccPlano(c).length;
+        return '<option value="' + esc(c.id) + '"' + (ok ? " selected" : "") + '>' + (ok ? "★ " : "") + "nº " + esc(c.numero) + " — " + esc(c.descricao) + " — " + (np > 1 && px ? "parcela " + px.n + "/" + np + " " + fmtR(px.valor - px.pago) : "falta " + fmtR(exCompraRestante(c))) + " (" + CC_ST[ccStatus(c)].nome.toLowerCase() + ")</option>";
       }).join("") + '</select> <button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',document.getElementById(\'ex-cp-' + lid + '\').value)">ligar</button>'
       : '<span style="font-size:11px;color:#777;">nenhuma compra em aberto.</span>')
     + ' <button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#E57373;color:#E57373;" onclick="exNovaCompra(\'' + eid + '\',\'' + lid + '\')">+ criar compra com esta saída</button></div>';
+  h += exPainelFatura(e, l);   // v501
   h += '<div><div style="font-size:10.5px;color:#aaa;font-weight:800;margin-bottom:4px;">OU NÃO É COMPRA</div>'
     + '<select id="ex-cat-' + lid + '" ' + sel + '><option value="">— categoria —</option>' + EX_CAT_SAIDA.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("") + '</select> '
     + '<input id="ex-obs-' + lid + '" placeholder="observação" ' + sel.replace("width:auto", "width:220px") + '> '
@@ -19817,6 +20113,7 @@ var ABAS_DEF = [
   { id: "saldocaminhao", label: "🚚 Saldo por Caminhão", grupo: "FINANCEIRO" },
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
   { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
+  { id: "compras", label: "🛒 Compras", grupo: "FINANCEIRO" },   // v501
   { id: "conciliacao", label: "🧾 Conciliação", grupo: "FINANCEIRO" },   // v446
   { id: "medicoes", label: "📑 Medições", grupo: "FINANCEIRO" },   // v467
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
@@ -19844,7 +20141,8 @@ var TAB_DESCRICOES = {
   graficos: "Visão geral gráfica da frota: custo por caminhão, consumo, manutenção recorrente e evolução mensal",
   saldocaminhao: "Saldo acumulado mês a mês de cada caminhão (receita − despesas − dívida alocada)",
   dividas: "Dívidas e obrigações fixas mensais",
-  conciliacao: "Compras (orçamento, aprovação, nota e comprovante) e extrato do banco conciliado com as compras e as receitas de viagem",
+  compras: "Toda compra da RF: orçamento, aprovação, nota fiscal e pagamento (à vista, faturado ou cartão) conferido no extrato",
+  conciliacao: "Extrato do banco conciliado com as compras, as receitas de viagem e os PIX dos motoristas",
   medicoes: "Medição do cliente (ex.: JDL): viagens a receber, divergências de valor e baixa com o extrato ou comprovante",
   tributario: "Simulação de regime tributário: Simples, Simples Híbrido (IBS/CBS) e Lucro Presumido sobre a base real de 12 meses",
   documentos: "Documentos da empresa e da frota",
@@ -19962,7 +20260,9 @@ function podeVerAba(id) {
   if (ehCliente()) return id === "painel_cliente";
   if (id === "usuarios") return ehAdmin();
   if (ehAdmin()) return true;
-  return !!(state.sessao && Array.isArray(state.sessao.modulos) && state.sessao.modulos.indexOf(id) !== -1);
+  var mods = state.sessao && Array.isArray(state.sessao.modulos) ? state.sessao.modulos : [];
+  if (id === "compras" && mods.indexOf("conciliacao") !== -1) return true;   // v501: quem lançava compras na Conciliação continua lançando
+  return mods.indexOf(id) !== -1;
 }
 function abasPermitidas() { return ABAS_DEF.map((a) => a.id).filter((id) => podeVerAba(id)); }
 function guardAba() {
@@ -28909,7 +29209,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
     return `\nCALCULADORA YAMAHA — tarifa POR UNIDADE, conforme a classificação da cidade de entrega (${cab}):\n${linhas}\nCidades de cada classificação:\n${cidades}\n  No picking list da Yamalog, "SMALL" = MTC 1, "BIG" = MTC 2 e "SBIG" = MTC 6.\n  Uma mesma viagem pode ter destinos em classificações diferentes — cada destino é somado pela tarifa da região dele.${pedido}\n`;
   })();
 
-  const blocoConciliacao = !podeVerAba("conciliacao") ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
+  const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
   const blocoDocsViagem = !podeVerAba("docsviagem") ? "" : (function () { try { return dvContextoAssistente(); } catch (e) { return ""; } })();   // v435
 
   return `${blocoTributario}
@@ -31252,7 +31552,7 @@ function renderTabela() {
     wrap.innerHTML = mdTelaHTML();
     return;
   }
-  if (state.aba === "conciliacao") {   // v446
+  if (state.aba === "conciliacao" || state.aba === "compras") {   // v446 / v501
     wrap.innerHTML = ccTelaHTML();
     return;
   }
