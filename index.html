@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v497)</title>
+<title>RF Logística — Painel da Frota (v498)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v497">
+<meta name="rf-versao" content="v498">
 <meta name="rf-data" content="2026-09-29">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v497" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v498" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13726,7 +13726,8 @@ function szEmisCadeiaDaNota(e) {
   var cte = docs.filter(function (d) { return d.tipo === "cte" && !d.cancelado && (d.nfes || []).indexOf(ch) >= 0; })
     .sort(function (a, b) { return (Number(b.numero) || 0) - (Number(a.numero) || 0); })[0];
   if (!cte) return null;
-  var mdfe = docs.find(function (d) { return d.tipo === "mdfe" && (d.ctes || []).indexOf(String(cte.chave || "")) >= 0; });
+  var mdfe = docs.filter(function (d) { return d.tipo === "mdfe" && !d.cancelado && (d.ctes || []).indexOf(String(cte.chave || "")) >= 0; })
+    .sort(function (a, b) { return (Number(b.numero) || 0) - (Number(a.numero) || 0); })[0];   // v498: MDF-e cancelado não conta
   return {
     cte: cte,
     mdfe: mdfe || null,
