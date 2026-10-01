@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v530)</title>
+<title>RF Logística — Painel da Frota (v531)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v530">
+<meta name="rf-versao" content="v531">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v530" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v531" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -3105,6 +3105,7 @@ function cmSet(id, secao, campo, valor) {
   }
   f.atualizadoEm = Date.now();
   salvar();
+  if (secao === "mot" && (campo === "nome" || campo === "cpf") && typeof cmLoginsAgendar === "function") cmLoginsAgendar(4000);   // v531
 }
 function cmSetRef(id, i, campo, valor) {
   var f = cmFicha(id); if (!f) return;
@@ -3121,6 +3122,248 @@ function cmToggleCopia(id, chave) {
   f.atualizadoEm = Date.now();
   salvar(); render();
 }
+/* ==========================================================================
+   v531 — LOGIN AUTOMÁTICO A PARTIR DA FICHA (Renato, 01/10/2026: "o motorista
+   que tiver ficha já deve automaticamente ter cadastro, se não vamos ficar
+   repetindo sempre os mesmos dados").
+
+   Regra:
+     - Toda ficha de MOTORISTA (ajudante não tem login) com nome e sobrenome e
+       CPF de 11 dígitos tem que ter login no app do motorista.
+     - Primeiro o sistema PROCURA o login que já existe (os logins antigos são
+       "Primeiro.Sobrenome": Jeferson.Martins para a ficha JEFSON DE ALMEIDA
+       MARTINS, Jorge.Lima para Jorgivan Lima das Virgens). Achou -> só liga a
+       ficha ao login (f.loginUid), não cria nada.
+     - Não achou -> cria sozinho pela Edge Function criar-usuario, no mesmo
+       padrão dos logins que já existem:
+         nome  = Primeiro.Sobrenome (sem acento; Junior/Filho/Neto não contam)
+         e-mail = primeiro@rflogistica.com.br (ocupado -> sobrenome@, depois
+                  primeiro.sobrenome@)
+         senha inicial = os 6 primeiros dígitos do CPF
+         placa = a da ficha; senão a do caminhão em que ele está na Frota;
+                 senão TES000 (o "sem caminhão" que já é usado), ajustável na
+                 aba Usuários.
+     - Só roda com login de ADMIN (a Edge Function só aceita admin) e só depois
+       que a lista de logins veio do banco -- sem ela, não dá para saber se o
+       login já existe, e o risco seria duplicar.
+     - Antes de cada criação a lista é relida do banco (dois aparelhos abertos
+       ao mesmo tempo não criam o mesmo login duas vezes).
+   ========================================================================== */
+var CM_LOGIN_DOMINIO = "rflogistica.com.br";
+var CM_LOGIN_PARTICULAS = ["DE", "DA", "DO", "DAS", "DOS", "E"];
+var CM_LOGIN_SUFIXOS = ["JUNIOR", "JR", "FILHO", "NETO", "SOBRINHO"];
+var CM_LOGIN_PLACA_SEM = "TES000";
+
+function cmLoginToks(nome) {
+  return rfConfNorm(String(nome || "").replace(/[._]/g, " ")).split(" ")
+    .filter(function (t) { return t && /^[A-Z]+$/.test(t) && CM_LOGIN_PARTICULAS.indexOf(t) === -1; });
+}
+function cmLoginCpf(f) { return String(((f || {}).mot || {}).cpf || "").replace(/\D/g, ""); }
+/* ficha que pode (e deve) ter login: motorista, nome com sobrenome, CPF completo */
+function cmLoginFichaApta(f) {
+  if (!f || f.tipo === "ajudante" || f.loginIgnorar) return false;
+  return cmLoginToks((f.mot || {}).nome).length >= 2 && cmLoginCpf(f).length === 11;
+}
+/* procura o login de motorista que já existe para a ficha */
+function cmLoginDaFicha(f) {
+  var perfis = (state._perfis || []).filter(function (p) { return p && p.papel === "motorista"; });
+  if (f.loginUid) {
+    var ja = perfis.find(function (p) { return String(p.id) === String(f.loginUid); });
+    if (ja) return ja;
+  }
+  var toks = cmLoginToks((f.mot || {}).nome);
+  if (toks.length < 2) return null;
+  var resto = toks.slice(1);
+  var exatos = [], parecidos = [];
+  perfis.forEach(function (p) {
+    var lt = cmLoginToks(p.nome);
+    if (lt.length < 2) return;
+    var a = lt[0], b = lt[lt.length - 1];
+    if (resto.indexOf(b) === -1) return;                       // o sobrenome do login tem que estar no nome da ficha
+    if (a === toks[0]) exatos.push(p);
+    else if (a.length >= 3 && toks[0].slice(0, 3) === a.slice(0, 3)) parecidos.push(p);   // Jefson x Jeferson, Jorgivan x Jorge
+  });
+  var lista = exatos.length ? exatos : parecidos;
+  if (lista.length > 1) {                                       // mais de um: fica com o ativo, se for só um
+    var at = lista.filter(function (p) { return p.ativo !== false; });
+    if (at.length === 1) return at[0];
+    return null;                                                // ambíguo: não liga nem cria (aparece na ficha)
+  }
+  return lista[0] || null;
+}
+function cmLoginAmbiguo(f) {
+  if (cmLoginDaFicha(f)) return false;
+  var toks = cmLoginToks((f.mot || {}).nome); if (toks.length < 2) return false;
+  return (state._perfis || []).some(function (p) {
+    if (!p || p.papel !== "motorista") return false;
+    var lt = cmLoginToks(p.nome); if (lt.length < 2) return false;
+    return toks.slice(1).indexOf(lt[lt.length - 1]) >= 0 && lt[0].slice(0, 3) === toks[0].slice(0, 3);
+  });
+}
+function cmLoginCap(t) { t = String(t || "").toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); }
+function cmLoginProposta(f) {
+  var toks = cmLoginToks((f.mot || {}).nome);
+  var sem = toks.filter(function (t, i) { return i === 0 || CM_LOGIN_SUFIXOS.indexOf(t) === -1; });
+  var primeiro = sem[0], sobrenome = sem[sem.length - 1];
+  var p = primeiro.toLowerCase(), s = sobrenome.toLowerCase();
+  var emails = [p, s, p + "." + s].filter(function (x, i, a) { return a.indexOf(x) === i; })
+    .map(function (x) { return x + "@" + CM_LOGIN_DOMINIO; });
+  var placa = String((f.veic || {}).placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  var frota = (state.veiculos || []).map(function (v) { return String(v.placa || "").toUpperCase(); });
+  if (!placa || frota.indexOf(placa) === -1) {
+    var nomeLogin = cmLoginCap(primeiro) + "." + cmLoginCap(sobrenome);
+    var vc = (state.veiculos || []).find(function (v) {
+      var m = rfConfNorm(v.motorista || "");
+      return m && (m === rfConfNorm(nomeLogin) || m === rfConfNorm(f.mot.nome));
+    });
+    placa = vc ? String(vc.placa).toUpperCase() : CM_LOGIN_PLACA_SEM;
+  }
+  return { nome: cmLoginCap(primeiro) + "." + cmLoginCap(sobrenome), emails: emails, senha: cmLoginCpf(f).slice(0, 6), placa: placa };
+}
+function cmLoginRelerPerfis() {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    return sb.from("profiles").select("*").order("nome").then(function (res) {
+      if (res.error) throw new Error(res.error.message);
+      state._perfis = res.data || [];
+      return state._perfis;
+    });
+  });
+}
+function cmLoginChamarCriar(dados) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    return sb.auth.getSession().then(function (res) {
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) throw new Error("sessão expirada");
+      return fetch(RF_SB_URL + "/functions/v1/criar-usuario", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: dados.nome, email: dados.email, senha: dados.senha, papel: "motorista", modulos: [], placa: dados.placa, clienteNome: "" })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j || {} }; }); });
+    });
+  });
+}
+/* cria o login de UMA ficha (relendo os logins do banco antes) */
+function cmLoginCriarDaFicha(f) {
+  return cmLoginRelerPerfis().then(function () {
+    var ja = cmLoginDaFicha(f);
+    if (ja) { cmLoginLigar(f, ja, false); return "ligado"; }
+    if (cmLoginAmbiguo(f)) { f.loginErro = "há mais de um login parecido — escolha na ficha"; return "ambiguo"; }
+    var prop = cmLoginProposta(f);
+    var tentar = function (i) {
+      if (i >= prop.emails.length) { f.loginErro = "e-mails " + prop.emails.join(", ") + " já estão em uso"; return "erro"; }
+      return cmLoginChamarCriar({ nome: prop.nome, email: prop.emails[i], senha: prop.senha, placa: prop.placa }).then(function (r) {
+        if (r.ok && r.j.id) {
+          f.loginUid = r.j.id; f.loginNome = prop.nome; f.loginEmail = prop.emails[i]; f.loginPlaca = prop.placa;
+          f.loginCriadoEm = Date.now(); f.loginAuto = true; delete f.loginErro;
+          f.atualizadoEm = Date.now();
+          return "criado";
+        }
+        var msg = String(r.j.error || "falha ao criar");
+        if (/already|registered|exist|j[aá] (est|exist)|duplicate/i.test(msg)) return tentar(i + 1);   // e-mail ocupado -> próximo
+        f.loginErro = msg; return "erro";
+      });
+    };
+    return tentar(0);
+  }).catch(function (e) { f.loginErro = "sem conexão (" + (e && e.message || e) + ")"; return "erro"; });
+}
+function cmLoginLigar(f, p, avisar) {
+  f.loginUid = p.id; f.loginNome = p.nome; delete f.loginErro;
+  f.atualizadoEm = Date.now();
+  if (avisar) { salvar(); render(); }
+}
+/* o automático: liga o que já existe e cria o que falta */
+function cmLoginsAutomaticos() {
+  if (typeof ehAdmin !== "function" || !ehAdmin() || state._cmLoginRodando) return;
+  if (!Array.isArray(state._perfis) || !state._perfis.length) { garantirPerfisCarregados(); return; }
+  var aptas = cmSoMotoristas().filter(cmLoginFichaApta);
+  var mudou = false;
+  aptas.forEach(function (f) {
+    var p = cmLoginDaFicha(f);
+    if (p && String(f.loginUid || "") !== String(p.id)) { cmLoginLigar(f, p, false); mudou = true; }
+  });
+  if (!state._cmLoginTentou) state._cmLoginTentou = {};
+  var criar = aptas.filter(function (f) {
+    if (state._cmLoginTentou[f.id]) return false;               // uma tentativa por ficha por sessão
+    var p = cmLoginDaFicha(f);
+    return !p && !cmLoginAmbiguo(f);
+  });
+  if (!criar.length) { if (mudou) { salvar(); render(); } return; }
+  state._cmLoginRodando = true;
+  var feitos = [];
+  var proxima = function (i) {
+    if (i >= criar.length) {
+      state._cmLoginRodando = false;
+      state._cmLoginMsg = feitos.length ? "Login criado sozinho: " + feitos.join(" · ") + " (senha inicial = 6 primeiros dígitos do CPF)" : "";
+      salvar(); render();
+      return;
+    }
+    var f = criar[i];
+    state._cmLoginTentou[f.id] = true;
+    cmLoginCriarDaFicha(f).then(function (r) {
+      if (r === "criado") feitos.push(f.loginNome + " (" + f.loginEmail + ")");
+      proxima(i + 1);
+    });
+  };
+  proxima(0);
+}
+/* botões da ficha */
+function cmLoginTentarDeNovo(id) {
+  var f = cmFicha(id); if (!f) return;
+  if (!ehAdmin()) { alert("Só um login de administrador cria login de motorista."); return; }
+  delete f.loginErro; delete f.loginIgnorar;
+  if (state._cmLoginTentou) delete state._cmLoginTentou[f.id];
+  f.loginUid = "";
+  state._cmLoginRodando = true; render();
+  cmLoginCriarDaFicha(f).then(function (r) {
+    state._cmLoginRodando = false;
+    if (r === "criado") state._cmLoginMsg = "Login criado: " + f.loginNome + " (" + f.loginEmail + ")";
+    salvar(); render();
+  });
+}
+function cmLoginEscolher(id, uidLogin) {
+  var f = cmFicha(id); if (!f) return;
+  if (!uidLogin) return;
+  var p = (state._perfis || []).find(function (x) { return String(x.id) === String(uidLogin); });
+  if (p) cmLoginLigar(f, p, true);
+}
+/* linha que aparece no cabeçalho de cada ficha */
+function cmLoginLinhaHTML(f) {
+  if (!f || f.tipo === "ajudante") return "";
+  var css = 'margin-top:3px;font-size:11px;';
+  if (!cmLoginFichaApta(f)) return '<div style="' + css + 'color:#777;">🔑 login do app: sai sozinho quando a ficha tiver nome completo e CPF</div>';
+  var temPerfis = Array.isArray(state._perfis) && state._perfis.length;
+  var p = temPerfis ? cmLoginDaFicha(f) : null;
+  if (p) {
+    var st = p.ativo === false ? ' <span style="color:#E67E22;">(DESATIVADO — reative na aba Usuários)</span>' : '';
+    return '<div style="' + css + 'color:#2E7D32;">🔑 login do app: <b>' + esc(p.nome) + '</b>' + (f.loginEmail && String(f.loginUid) === String(p.id) ? ' · ' + esc(f.loginEmail) : '')
+      + (p.placa_motorista ? ' · placa ' + esc(p.placa_motorista) : '') + (f.loginAuto && String(f.loginUid) === String(p.id) ? ' · criado sozinho, senha inicial = 6 primeiros dígitos do CPF' : '') + st + '</div>';
+  }
+  if (!temPerfis) return '<div style="' + css + 'color:#777;">🔑 login do app: ' + (ehAdmin() ? 'conferindo os logins…' : 'é criado sozinho quando um administrador abrir o sistema') + '</div>';
+  if (cmLoginAmbiguo(f)) {
+    var toks = cmLoginToks(f.mot.nome);
+    var cands = (state._perfis || []).filter(function (x) {
+      if (!x || x.papel !== "motorista") return false;
+      var lt = cmLoginToks(x.nome); return lt.length >= 2 && toks.slice(1).indexOf(lt[lt.length - 1]) >= 0 && lt[0].slice(0, 3) === toks[0].slice(0, 3);
+    });
+    return '<div style="' + css + 'color:#E67E22;" onclick="event.stopPropagation()">🔑 mais de um login parecido — qual é o dele? '
+      + '<select onchange="cmLoginEscolher(\'' + f.id + '\',this.value)" style="font-size:11px;"><option value="">(escolha)</option>'
+      + cands.map(function (x) { return '<option value="' + esc(String(x.id)) + '">' + esc(x.nome) + (x.ativo === false ? ' (inativo)' : '') + '</option>'; }).join("")
+      + '</select></div>';
+  }
+  if (state._cmLoginRodando) return '<div style="' + css + 'color:' + GOLD + ';">🔑 criando o login do app…</div>';
+  if (f.loginErro) return '<div style="' + css + 'color:#C0392B;" onclick="event.stopPropagation()">🔑 não consegui criar o login: ' + esc(f.loginErro)
+    + (ehAdmin() ? ' <a href="javascript:void(0)" onclick="cmLoginTentarDeNovo(\'' + f.id + '\')" style="color:' + GOLD + ';">tentar de novo</a>' : '') + '</div>';
+  return '<div style="' + css + 'color:#777;">🔑 login do app: ' + (ehAdmin() ? 'na fila para criar' : 'é criado sozinho quando um administrador abrir o sistema') + '</div>';
+}
+/* gatilhos: quando os logins chegam do banco, depois de importar/editar ficha, e a cada minuto */
+function cmLoginsAgendar(ms) {
+  clearTimeout(state._cmLoginTimer);
+  state._cmLoginTimer = setTimeout(function () { try { cmLoginsAutomaticos(); } catch (e) { console.warn("v531 login automático:", e); } }, ms || 1500);
+}
+setInterval(function () { try { if (typeof ehAdmin === "function" && ehAdmin() && state.sessao) cmLoginsAutomaticos(); } catch (e) {} }, 60000);
+
 function cmAbrir(id) { state._cmAberta = (state._cmAberta === id) ? "" : id; render(); }
 function cmExcluir(id) {
   var f = cmFicha(id); if (!f) return;
@@ -3576,6 +3819,7 @@ function cmImportar(input) {
         + (modelos.length ? " (" + modelos.join(", ") + ")" : "") + "."
         + (erros.length ? " Não consegui ler: " + erros.join("; ") : "");
       salvar(); render();
+      if (typeof cmLoginsAgendar === "function") cmLoginsAgendar(1500);   // v531: ficha nova já ganha login
       return;
     }
     var file = files[i];
@@ -3955,6 +4199,7 @@ function cmSecaoTitulo(t) {
 }
 function cmBlocoHTML() {
   cmMigrarProprietario();
+  try { garantirPerfisCarregados(); } catch (e) {}   // v531: a ficha mostra/cria o login do app
   var fichas = cmSoMotoristas().slice().sort(function (a, b) { return (b.atualizadoEm || 0) - (a.atualizadoEm || 0); });   // v523: ajudantes têm bloco próprio
   var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
     + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\udeaa Cadastro de Motorista</div>'
@@ -3971,6 +4216,7 @@ function cmBlocoHTML() {
     + '<span style="font-size:11px;color:#777;">lê os dois modelos (Yamaha e RF); mesmo CPF atualiza a ficha, não duplica</span>'
     + '</div>'
     + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "")
+    + (state._cmLoginMsg ? '<div style="margin-top:6px;font-size:11.5px;color:#2E7D32;">🔑 ' + esc(state._cmLoginMsg) + '</div>' : "")   // v531
     + '<div style="margin-top:6px;font-size:11px;color:#666;">' + cmSoMotoristas().length + ' ficha(s) no sistema. As fichas sincronizam entre os aparelhos — quem preencher numa máquina aparece nas outras depois do próximo salvamento.</div>';
 
   if (!fichas.length) {
@@ -4001,6 +4247,7 @@ function cmBlocoHTML() {
       + (pendDocs.length
         ? '<div style="margin-top:3px;font-size:11px;color:#C0392B;">\ud83d\udcce ' + esc(pendDocs.join(" · ")) + '</div>'
         : '<div style="margin-top:3px;font-size:11px;color:#2E7D32;">\ud83d\udcce CNH, endereço, nada consta e toxicológico anexados e válidos</div>')
+      + cmLoginLinhaHTML(f)   // v531
       + '</div></div>';
     if (aberta) {
       h += '<div style="padding:0 12px 14px;">'
@@ -22508,6 +22755,7 @@ function carregarPerfis() {
       state._carregandoPerfis = false;
       if (!res.error) state._perfis = res.data || [];
       render();
+      if (!res.error && typeof cmLoginsAgendar === "function") cmLoginsAgendar(1500);   // v531
     }).catch(function () { state._carregandoPerfis = false; render(); });
   });
 }
@@ -30844,6 +31092,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `ASSINATURA (v404): a ficha RF sai com a assinatura digitalizada do Renato já aplicada em cima da linha "Assinatura do Responsável RF Logística" — a imagem está embutida no próprio modelo, com fundo transparente. A linha do MOTORISTA continua em branco de propósito, porque ele assina na hora da conferência dos documentos. Há um botão "RF sem assinatura" para quando se quer imprimir e assinar à mão. A ficha Yamaha não tem campo de assinatura e por isso não recebe nada. `
       + `DOIS MODELOS (v402): a exportação tem dois botões — ficha YAMAHA (FO_YL_026, aba "Ficha de Cadastro", grade B2:N64, com bloco PROPRIETÁRIO, 5 referências, veículo completo e a lista longa de cópias com exames médicos) e ficha RF LOGÍSTICA (F.001 REV.:00, aba "Motorista", grade B2:M42, com cabeçalho da RF, seções DADOS PESSOAIS / DADOS DA CNH / DADOS DO VEÍCULO só com placa, modelo e tipo / 4 referências / cópias curtas / duas assinaturas / rodapé de controle de revisão, e o campo EAR que só existe nela). O mesmo cadastro alimenta os dois; campo que só existe num modelo não é escrito no outro. O pacote ZIP leva as duas fichas. `
       + `IMPORTAÇÃO (v399/v406): dá para importar fichas já preenchidas em xlsx nos DOIS modelos. O app reconhece qual é pelo texto fixo do formulário (o RF tem "FICHA DE CADASTRO - MOTORISTA" na B4 e a aba chamada Motorista; o Yamaha tem "FICHA DE CADASTRO" na D2) e, na dúvida, tenta os dois mapas e fica com o que achou mais campo preenchido. Ficha no modelo RF não traz o bloco do PROPRIETÁRIO, então ele entra com o padrão da empresa. Se o CPF já existir, atualiza a ficha em vez de duplicar. Até a v405 a importação só lia o modelo Yamaha e a ficha RF entrava sem nada. `
+      + `LOGIN AUTOMÁTICO (v531, 01/10/2026 — Renato: "o motorista que tiver ficha já deve automaticamente ter cadastro, se não vamos ficar repetindo sempre os mesmos dados"): toda ficha de MOTORISTA com nome completo e CPF ganha sozinha o login do app do motorista — ninguém precisa mais ir em Usuários → Novo usuário. Primeiro o sistema procura o login que já existe (padrão Primeiro.Sobrenome; aceita apelido parecido, ex.: ficha JEFSON DE ALMEIDA MARTINS = login Jeferson.Martins) e só liga a ficha a ele. Se não existir, cria: nome Primeiro.Sobrenome, e-mail primeiro@rflogistica.com.br (ocupado → sobrenome@, depois primeiro.sobrenome@), SENHA INICIAL = os 6 primeiros dígitos do CPF, placa = a da ficha ou a do caminhão dele na Frota, senão TES000 (trocar na aba Usuários). Só roda com login de ADMINISTRADOR aberto (a ficha que a Sandra lança ganha o login na próxima vez que um admin abrir o sistema). Cada ficha mostra a linha "🔑 login do app" com o login ligado, e avisa se houver dois logins parecidos (escolher na lista) ou se a criação falhou ("tentar de novo"). Ajudante não tem login. Excluir a ficha NÃO apaga o login. `
       + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
     if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.` + "\n" + ajContextoAssistente();
     const linhas = fichas.map((f) => {
@@ -30854,7 +31103,8 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
         + (dias === null ? "vencimento da CNH não preenchido" : (dias < 0 ? `CNH VENCIDA há ${-dias} dia(s)` : `CNH válida, ${dias} dia(s)`))
         + ` · ${(f.refs || []).filter((r) => r && r.nome).length} referência(s)`
         + (falta.length ? ` · FALTA PREENCHER: ${falta.join(", ")}` : ` · ficha completa`)
-        + (cmDocsPendencias(f).length ? ` · ANEXOS: ${cmDocsPendencias(f).join("; ")}` : ` · os 4 anexos estão em dia`);
+        + (cmDocsPendencias(f).length ? ` · ANEXOS: ${cmDocsPendencias(f).join("; ")}` : ` · os 4 anexos estão em dia`)
+        + (() => { try { const lp = (Array.isArray(state._perfis) && state._perfis.length) ? cmLoginDaFicha(f) : null; return lp ? ` · login do app: ${lp.nome}${lp.ativo === false ? " (DESATIVADO)" : ""}` : (f.loginErro ? ` · login do app NÃO criado: ${f.loginErro}` : (cmLoginFichaApta(f) ? " · login do app: ainda não conferido/criado" : " · sem login (falta nome completo ou CPF)")); } catch (e) { return ""; } })();   // v531
     }).join("\n");
     return `${cab}\nFICHAS CADASTRADAS (${fichas.length}):\n${linhas}` + "\n" + ajContextoAssistente();   // v523
   })();
