@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v514)</title>
+<title>RF Logística — Painel da Frota (v515)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v514">
+<meta name="rf-versao" content="v515">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v514" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v515" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -8400,9 +8400,53 @@ function calcularManutencao() {
    quanto o caminhão consome de verdade. INVESTIMENTO/benfeitoria (Estrutural)
    fica de fora, senão a compra de um baú estouraria qualquer teto.
    Ficam no BLOCO 1 de <script> porque o render() as alcança (regra da v215). */
+/* v515 — COMPRAS DO CAMINHÃO ENTRAM NO TETO, COM TRAVA CONTRA CONTAR 2x (Renato, 01/10/2026:
+   "coloca a trava pra evitar contar duas vezes"). A compra (aba Compras) que tem PLACA, é de
+   manutenção (Manutenção/peças, Pneus ou Serviços), já foi APROVADA (ou chegou com nota) e não
+   está cancelada/reprovada passa a somar na caixa do caminhão, no mês em que foi lançada.
+   TRAVA: a compra NÃO soma quando
+     1) um lançamento da aba Manutenção aponta pra ela (m.compraId), ou
+     2) existe lançamento de manutenção da MESMA placa, no MESMO mês, com o MESMO valor
+        (diferença até R$ 0,05) -- o sistema entende que é a mesma despesa lançada nos dois lugares;
+        cada lançamento de manutenção só "absorve" uma compra, ou
+     3) o admin marcou na caixa "não contar (já está na manutenção)".
+   Só mexe no TETO/custo do caminhão. O lucro do Financeiro continua como estava. */
+var MT_CC_CATS = ["Manutenção / peças", "Pneus", "Serviços"];
+function mtValorManut(m) { return mtSomaPecasReal(m) + mtMaoObraReal(m) + mtSomaPecasAlmox(m) + mtSomaPecasFaturado(m) + mtMaoObraFaturada(m); }
+function mtComprasDoVeiculo(placa, mes) {
+  const alvo = mes || state.mesAtivo, out = [];
+  if (!placa || typeof ccLista !== "function") return out;
+  const manuts = (state.manutencoes || []).filter((m) => m && m.placa === placa && m.data && m.data.slice(0, 7) === alvo && !(m.investimento === true || m.categoria === "Estrutural"));
+  const usados = {};
+  ccLista().forEach(function (c) {
+    if (!c || String(c.placa || "") !== placa) return;
+    if (MT_CC_CATS.indexOf(c.categoria) === -1) return;
+    const st = ccStatus(c);
+    if (st === "cancelada" || st === "reprovada" || st === "aprovacao") return;
+    if (String(c.criadoEm || "").slice(0, 7) !== alvo) return;
+    const valor = ccValorNF(c) || Number(c.valor) || 0;
+    const it = { id: c.id, numero: c.numero, descricao: c.descricao || "", valor: valor, os: ccEhOS(c), conta: true, motivo: "" };
+    const ligado = (state.manutencoes || []).filter((m) => m && String(m.compraId || "") === String(c.id))[0];
+    if (ligado) { it.conta = false; it.motivo = "ligada ao lançamento de manutenção"; usados[ligado.id] = true; }
+    else if (c.mtIgnorar) { it.conta = false; it.motivo = "marcada: já está na manutenção"; }
+    else {
+      const igual = manuts.filter((m) => !usados[m.id] && Math.abs(mtValorManut(m) - valor) < 0.05)[0];
+      if (igual) { it.conta = false; it.motivo = "mesmo valor já lançado na manutenção (" + (igual.data || "") + ")"; usados[igual.id] = true; }
+    }
+    out.push(it);
+  });
+  return out;
+}
+function mtCompraIgnorar(id, on) {
+  if (!ehAdmin()) { alert("Só o administrador muda isso."); return; }
+  const c = ccAcha(id); if (!c) return;
+  c.mtIgnorar = !!on;
+  (c.historico = c.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: on ? "marcou: não contar no teto do caminhão (já está na manutenção)" : "voltou a contar no teto do caminhão" });
+  c.atualizadoEm = Date.now(); salvar(); render();
+}
 function mtGastoVeiculoMes(placa, mes) {
   const alvo = mes || state.mesAtivo;
-  const r = { novo: 0, faturado: 0, almox: 0, jaDivida: 0, invest: 0, total: 0, qtd: 0 };
+  const r = { novo: 0, faturado: 0, almox: 0, jaDivida: 0, invest: 0, compras: 0, comprasLista: [], total: 0, qtd: 0 };
   if (!placa) return r;
   (state.manutencoes || []).forEach(function (m) {
     if (!m || m.placa !== placa) return;
@@ -8417,7 +8461,9 @@ function mtGastoVeiculoMes(placa, mes) {
     r.almox += vAlmox;
     r.faturado += vFat;
   });
-  r.total = r.novo + r.jaDivida + r.almox + r.faturado;
+  try { r.comprasLista = mtComprasDoVeiculo(placa, alvo); } catch (e) { r.comprasLista = []; }   // v515
+  r.compras = r.comprasLista.reduce((a, x) => a + (x.conta ? x.valor : 0), 0);
+  r.total = r.novo + r.jaDivida + r.almox + r.faturado + r.compras;
   return r;
 }
 function mtStatusTeto(v, mes) {
@@ -28983,6 +29029,7 @@ function gerarContextoAssistente() {
 - JÁ EM DÍVIDA FIXA (lançamento inteiro marcado): ${fmtR(mt.jaEmDivida)} — está sendo pago parcelado em Dívidas Fixas.
 - 📦 PEÇA DO ESTOQUE: ${fmtR(mt.estoqueAlmox)} — já foi paga quando entrou no almoxarifado.
 - 🧾 FATURADO: ${fmtR(mt.faturado)} — peça ou serviço pego na conta de fornecedor que fatura o mês; essa fatura já está lançada em Dívidas Fixas.
+- 🛒 COMPRAS APROVADAS (v515): compra da aba Compras com placa, categoria Manutenção/peças, Pneus ou Serviços, aprovada (ou que chegou com nota), soma no TETO/custo do caminhão no mês em que foi lançada (inclui OS aprovada). TRAVA contra contar 2x: não soma se um lançamento de manutenção estiver ligado a ela, se houver manutenção da mesma placa no mesmo mês com o mesmo valor (até R$ 0,05), ou se o admin marcou 'não contar (já está na manutenção)'. Isso afeta só o teto do caminhão, não o lucro do Financeiro.
 Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome de verdade) mas NUNCA como gasto novo — contar de novo dobraria a despesa. Se perguntarem por que a manutenção do mês parece menor que a soma dos lançamentos, é isso.`;
   /* v349: teto de manutenção por caminhão. O assistente precisa saber o teto de
      cada um, quanto já gastou e quem estourou -- é o que ele aponta sozinho. */
@@ -28991,7 +29038,8 @@ Estoque e faturado aparecem no custo do caminhão (pra saber quanto ele consome 
     if (!st.temTeto) return `- ${v.placa}: SEM teto definido — gasto de manutenção no mês ${fmtR(st.gasto)}`;
     return `- ${v.placa}: teto ${fmtR(st.teto)}, gasto ${fmtR(st.gasto)} (${Math.round(st.pct)}%), `
       + (st.estourou ? `ESTOUROU em ${fmtR(st.gasto - st.teto)}` : `dentro do teto, ainda cabe ${fmtR(st.saldo)}`)
-      + (st.invest > 0 ? ` · investimento à parte ${fmtR(st.invest)} (fora do teto)` : "");
+      + (st.invest > 0 ? ` · investimento à parte ${fmtR(st.invest)} (fora do teto)` : "")
+      + ((st.det.comprasLista || []).length ? ` · compras: ` + st.det.comprasLista.map((x) => `nº${x.numero} ${fmtR(x.valor)} ${x.conta ? "conta" : "NÃO conta (" + x.motivo + ")"}`).join(", ") : "");
   }).join("\n");
   const blocoTetoManut = `TETO DE MANUTENÇÃO POR CAMINHÃO (aba Manutenção — uma caixa por veículo):
 Cada caminhão tem um teto mensal em R$ que o Renato define dentro da própria caixa. A caixa fica VERDE enquanto o gasto do mês está dentro do teto e VERMELHA quando passa. O teto continua valendo nos meses seguintes até ele alterar.
@@ -32659,9 +32707,21 @@ if (state.aba === "mtcustos") {
           ${statCard("🧾 Faturado", fmtR(d.faturado), "#888")}
           ${statCard("📦 Do almoxarifado", fmtR(d.almox), "#888")}
           ${statCard("Já em dívida fixa", fmtR(d.jaDivida), "#888")}
+          ${statCard("🛒 Compras aprovadas", fmtR(d.compras || 0), "#888")}
           ${statCard("Custo total (conta no teto)", fmtR(s.gasto), s.temTeto ? cor : "#fff")}
           ${d.invest > 0 ? statCard("Investimento (fora do teto)", fmtR(d.invest), GOLD) : ""}
         </div>
+
+        ${(d.comprasLista || []).length ? `<div style="border:1px solid #262626;border-radius:8px;padding:8px 12px;margin-bottom:12px;background:#0d0d0d;">
+          <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">🛒 Compras deste caminhão no mês (aba Compras)</div>
+          ${d.comprasLista.map((x) => `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;padding:2px 0;color:${x.conta ? "#ddd" : "#777"};">
+            <span style="color:#777;">Nº ${esc(x.numero)}</span>${x.os ? '<span style="font-size:10px;font-weight:900;color:#000;background:#90CAF9;border-radius:4px;padding:0 6px;">OS</span>' : ""}
+            <span style="flex:1;">${esc(x.descricao)}</span>
+            <b style="${x.conta ? "" : "text-decoration:line-through;"}">${fmtR(x.valor)}</b>
+            <span style="font-size:10.5px;color:${x.conta ? "#66BB6A" : "#FFB74D"};">${x.conta ? "conta no teto" : "não conta 2x — " + esc(x.motivo)}</span>
+            ${ehAdmin() ? (x.conta ? `<a href="javascript:void(0)" onclick="event.stopPropagation();mtCompraIgnorar('${esc(x.id)}',true)" style="font-size:10.5px;color:#4FC3F7;">não contar (já está na manutenção)</a>` : (/marcada/.test(x.motivo) ? `<a href="javascript:void(0)" onclick="event.stopPropagation();mtCompraIgnorar('${esc(x.id)}',false)" style="font-size:10.5px;color:#4FC3F7;">voltar a contar</a>` : "")) : ""}
+          </div>`).join("")}
+        </div>` : ""}
 
         ${tabelaDe(listaV)}
 
