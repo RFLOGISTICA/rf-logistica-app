@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v525)</title>
+<title>RF Logística — Painel da Frota (v526)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v525">
+<meta name="rf-versao" content="v526">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v525" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v526" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -30052,6 +30052,7 @@ function gerarContextoAssistente() {
   /* v422: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoLogos = "ENVIO DE DOCUMENTOS (v433, 25/09/2026): todo CT-e e MDF-e emitido pelo app entra sozinho nos documentos fiscais da viagem, com XML e PDF (DACTE/DAMDFE) guardados; o encerramento feito pelo app tambem vira registro. No quadro do MDF-e ha o botao Enviar documentos: para o motorista manda os PDFs direto no WhatsApp (compartilhar do celular/tablet); para o Andre (v508) baixa um ZIP so com DACTE + espelho e copia o e-mail pronto com placa, motorista e numero, cliente, NF e chave de cada CT-e. O Tudo desta viagem (ZIP) tambem passa a levar a pasta pdf/. EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
+  const blocoAtualizacao = "ATUALIZACAO AUTOMATICA DO SISTEMA (v526, 01/10/2026 -- Renato: 'estou tendo que mandar o index para a Sandra porque no note dela nao atualiza; o note da Flavia atualiza'): todo aparelho confere sozinho, ao abrir, a cada 5 minutos e sempre que a tela volta a ficar visivel, qual e a versao publicada no GitHub (rflogistica.github.io/rf-logistica-app). Se a publicada for mais nova: (1) quem usa o sistema pelo endereco online ve a faixa dourada 'Nova versao vN' e o sistema se atualiza sozinho em 30 segundos, mas so quando ninguem esta digitando e o canto mostra sincronizado (senao espera e tenta de novo); tem o botao 'Atualizar agora'; (2) quem abriu uma COPIA SALVA do index.html no computador (arquivo local, file:///) ve a faixa avisando que aquela copia nao se atualiza e o botao 'Abrir a versao online' -- a solucao definitiva e usar sempre o endereco online (favorito ou app instalado a partir dele), nunca um arquivo baixado. Esta versao: " + RF_SISTEMA.versao + ", aberta " + (location.protocol === "file:" ? "como ARQUIVO LOCAL (nao atualiza sozinha)" : "pelo endereco " + location.host) + ".";
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
     ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
@@ -30717,6 +30718,7 @@ ${blocoFotos}
 ${blocoSync}
 
 ${blocoUniao}
+${blocoAtualizacao}
 ${blocoLogos}
 ${blocoDocsViagem}
 ${blocoConciliacao}
@@ -36580,6 +36582,76 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("service-worker.js").catch(function () {});
   });
 }
+</script>
+<!-- v526: ATUALIZACAO AUTOMATICA. Renato (01/10/2026): "estou tendo que mandar index para a
+     Sandra porque no note dela nao atualiza". O service worker nao cacheia nada desde a v1,
+     entao quem fica preso numa versao velha e (a) quem deixa a aba aberta dias sem recarregar
+     ou (b) quem abre uma COPIA do index.html salva no computador (file:///), que nunca muda.
+     Aqui o sistema pergunta ao GitHub qual e a versao publicada (sem cache) ao abrir, a cada
+     5 min e quando a tela volta a ficar visivel. Mais nova -> faixa dourada; no endereco
+     online recarrega sozinho em 30 s quando ninguem esta digitando e nada esta salvando;
+     na copia local oferece abrir a versao online (nao redireciona sozinho: o login de la e
+     outro). -->
+<script>
+"use strict";
+(function () {
+  var ONLINE = "https://rflogistica.github.io/rf-logistica-app/index.html";
+  var atual = parseInt(((document.title || "").match(/\(v(\d+)\)/) || [])[1] || "0", 10);
+  var online = location.hostname === "rflogistica.github.io";
+  var faixa = null, nova = 0, timer = null, segundos = 30;
+  function salvando() {
+    try {
+      var kids = Array.prototype.slice.call(document.body.children, -15);
+      return kids.some(function (el) { return /salvando|aguardando 1|conectando/i.test(el.textContent || "") && (el.textContent || "").length < 60; });
+    } catch (e) { return false; }
+  }
+  function ocupado() {
+    var a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "button") return true;
+    return salvando();
+  }
+  function recarregar() {
+    if (ocupado()) { segundos = 10; return; }
+    clearInterval(timer);
+    location.replace(location.pathname + "?v=" + nova + location.hash);   // ?v= fura o cache do navegador
+  }
+  function mostrar() {
+    if (!faixa) {
+      faixa = document.createElement("div");
+      faixa.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:100000;background:#D4A017;color:#000;" +
+        "font:600 13px Arial,sans-serif;padding:8px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;box-shadow:0 2px 10px rgba(0,0,0,.5);";
+      document.body.appendChild(faixa);
+    }
+    var bt = 'style="background:#000;color:#D4A017;border:0;border-radius:6px;padding:5px 12px;font:700 12px Arial,sans-serif;cursor:pointer;"';
+    if (online) {
+      faixa.innerHTML = '🔄 Nova versão do sistema: <b>v' + nova + '</b> (você está na v' + atual + '). <span id="rf-upd-seg">Atualizando em ' + segundos + ' s…</span>'
+        + '<button ' + bt + ' id="rf-upd-ja">Atualizar agora</button>';
+      document.getElementById("rf-upd-ja").onclick = function () { segundos = 0; recarregar(); };
+      if (!timer) timer = setInterval(function () {
+        segundos--; var el = document.getElementById("rf-upd-seg");
+        if (el) el.textContent = ocupado() ? "Atualiza assim que terminar de digitar/salvar…" : "Atualizando em " + Math.max(0, segundos) + " s…";
+        if (segundos <= 0) recarregar();
+      }, 1000);
+    } else {
+      faixa.innerHTML = '⚠ Esta é uma <b>cópia salva no computador</b> (v' + atual + ') e não se atualiza sozinha. A versão atual é a <b>v' + nova + '</b>.'
+        + '<button ' + bt + ' id="rf-upd-on">Abrir a versão online</button><span style="font-weight:400;">Depois salve o endereço online como favorito e use sempre ele.</span>';
+      document.getElementById("rf-upd-on").onclick = function () { location.href = ONLINE + "?v=" + nova; };
+    }
+  }
+  function checar() {
+    if (!atual || !window.fetch) return;
+    fetch(ONLINE + "?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+      var m = (t || "").match(/<title>[^<]*\(v(\d+)\)/); if (!m) return;
+      var v = parseInt(m[1], 10);
+      if (v > atual && v > nova) { nova = v; mostrar(); }
+    }).catch(function () {});
+  }
+  window.rfChecarVersao = checar;
+  setTimeout(checar, 8000);
+  setInterval(checar, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") checar(); });
+  window.addEventListener("online", checar);
+})();
 </script>
 
 </body>
