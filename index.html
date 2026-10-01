@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v529)</title>
+<title>RF Logística — Painel da Frota (v530)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v529">
+<meta name="rf-versao" content="v530">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v529" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v530" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -8919,9 +8919,7 @@ function ccLancarManut(id, modo) {
   var mtItensNovos = itens.length && Math.abs(soma - total) < 0.05
     ? itens.map(function (it) { return { id: uid(), servico: it.descricao, pecas: "", valor: Number(it.valor) || 0, origem: "local", almoxId: "", qtd: Number(it.qtd) || 1, custoUnitSnap: 0 }; })
     : [{ id: uid(), servico: c.descricao || "compra nº " + c.numero, pecas: "", valor: total, origem: "local", almoxId: "", qtd: 1, custoUnitSnap: 0 }];
-  var data = String(c.criadoEm || "").slice(0, 10) || hojeISO();
-  var dl = c.docLido && c.docLido.data ? String(c.docLido.data) : "";
-  var mBr = dl.match(/(\d{2})\/(\d{2})\/(\d{4})/); if (mBr) data = mBr[3] + "-" + mBr[2] + "-" + mBr[1]; else if (/^\d{4}-\d{2}-\d{2}/.test(dl)) data = dl.slice(0, 10);
+  var data = ccDataCompetencia(c);   // v530: mês da nota fiscal
   if (!confirm((inv ? "Lançar como INVESTIMENTO (baú/reforma) do " : "Lançar na Manutenção do ") + placa + "?\n\n" + (c.descricao || "") + "\nOficina: " + (c.fornecedor || "—") + "\nData: " + data.split("-").reverse().join("/") + "\nValor: " + fmtR(total) + " (" + mtItensNovos.length + " item(ns))\n\nO lançamento fica ligado à compra nº " + c.numero + " — não conta duas vezes.")) return;
   var m = {
     id: uid(), data: data, placa: placa, categoria: inv ? "Estrutural" : c.categoria === "Pneus" ? "Pneus" : "Corretiva", oficina: c.fornecedor || "",
@@ -8967,7 +8965,7 @@ function ccLancarEstoque(id) {
   var linhas = itens.map(function (it) { var q = Number(it.qtd) || 1; return { nome: it.descricao, qtd: q, custoUnit: Math.round((Number(it.valor) || 0) / q * 100) / 100 }; });
   if (!confirm("Lançar no ESTOQUE (Almoxarifado)?\n\n" + linhas.map(function (l) { return "• " + l.qtd + "x " + l.nome + " — " + fmtR(l.custoUnit) + " cada"; }).join("\n") + "\n\nItem com o mesmo nome no estoque recebe a entrada; os outros viram itens novos.")) return;
   if (!state.almoxarifado) state.almoxarifado = [];
-  var data = String(c.criadoEm || "").slice(0, 10) || hojeISO(), novos = 0;
+  var data = ccDataCompetencia(c), novos = 0;   // v530: mês da nota fiscal
   linhas.forEach(function (l) {
     var it = state.almoxarifado.filter(function (x) { return ccNormNome(x.nome) === ccNormNome(l.nome); })[0];
     if (!it) { it = { id: uid(), nome: l.nome, marca: "", qtdMin: 0, custoUnit: l.custoUnit, entradas: [], saidas: [] }; state.almoxarifado.unshift(it); novos++; }
@@ -15963,14 +15961,14 @@ function ccBuscaExtratoHTML(c) {
 function ccExportar() {
   if (typeof XLSX === "undefined") { alert("Planilha não carregou (verifique a internet)."); return; }
   var lista = (state._ccVisiveis || ccLista());
-  var linhas = [["Nº", "Pedido em", "Pedido por", "Descrição", "Fornecedor", "Categoria", "Caminhão", "Condição", "Parcelas", "Valor orçado", "Documento", "NF/recibo nº", "Valor NF/recibo", "Pago no extrato", "Situação", "Serviços / itens", "Pagamentos (data · valor)", "Aprovado por", "Aprovado em", "Observação"]];
+  var linhas = [["Nº", "Competência (mês da NF)", "Pedido em", "Pedido por", "Descrição", "Fornecedor", "Categoria", "Caminhão", "Condição", "Parcelas", "Valor orçado", "Documento", "NF/recibo nº", "Valor NF/recibo", "Pago no extrato", "Situação", "Serviços / itens", "Pagamentos (data · valor)", "Aprovado por", "Aprovado em", "Observação"]];
   lista.forEach(function (c) {
-    linhas.push([Number(c.numero) || c.numero, String(c.criadoEm || "").slice(0, 10), c.criadoPor || "", c.descricao || "", c.fornecedor || "", c.categoria || "", c.placa || "",
+    linhas.push([Number(c.numero) || c.numero, ccMes(c), String(c.criadoEm || "").slice(0, 10), c.criadoPor || "", c.descricao || "", c.fornecedor || "", c.categoria || "", c.placa || "",
       ccCondTexto(c), ccPlano(c).length, Number(c.valor) || 0, !(c.nfs || []).length ? "" : ccSoRecibo(c) ? "Recibo (sem NF)" : ccTemRecibo(c) ? "NF + recibo" : "Nota fiscal", (c.nfs || []).map(function (n) { return n.numero; }).filter(Boolean).join(", "), ccValorNF(c), ccValorPago(c),
       CC_ST[ccStatus(c)].nome, ccItensTexto(c.itens), (c.comprovantes || []).map(function (r) { return exDataBr(r.dataPag || String(r.em || "").slice(0, 10)) + " · " + fmtR(r.valor); }).join(" | "),
       c.aprovadoPor || "", String(c.aprovadoEm || "").slice(0, 10), c.obs || ""]);
   });
-  var ws = XLSX.utils.aoa_to_sheet(linhas); ws["!cols"] = linhas[0].map(function (t, i) { return { wch: [5, 11, 14, 34, 24, 18, 10, 22, 8, 12, 14, 12, 12, 14, 16, 50, 34, 14, 11, 30][i] || 12 }; });
+  var ws = XLSX.utils.aoa_to_sheet(linhas); ws["!cols"] = linhas[0].map(function (t, i) { return { wch: [5, 12, 11, 14, 34, 24, 18, 10, 22, 8, 12, 14, 12, 12, 14, 16, 50, 34, 14, 11, 30][i] || 12 }; });
   var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Compras");
   XLSX.writeFile(wb, "RF_Compras_" + hojeISO() + ".xlsx");
 }
@@ -16089,7 +16087,29 @@ function ccProxNumero() {
   return m + 1;
 }
 function ccDataBr(iso) { if (!iso) return ""; var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
-function ccMes(c) { return String(c.criadoEm || "").slice(0, 7); }
+/* v530 — MÊS DA COMPRA = MÊS DA NOTA (Renato, 01/10/2026: "as notas/pagamentos têm que ir
+   automaticamente para o mês da sua NF; estamos lançando em outubro vários lançamentos que
+   pertencem a setembro"). Competência da compra = data de EMISSÃO da nota fiscal (a mais antiga,
+   se tiver peças + serviço). Antes da nota: a data do orçamento/OS lida pela IA; sem nada, o dia
+   do lançamento. A Manutenção, o Investimento e o Estoque ligados à compra vão para essa data --
+   e mudam sozinhos quando a nota chega com outra data. A data de emissão é lida pela IA ao anexar
+   a nota (só pergunta se não conseguir ler). */
+function ccIsoDoc(s) { var t = String(s || ""), m = t.match(/(\d{2})\/(\d{2})\/(\d{4})/); if (m) return m[3] + "-" + m[2] + "-" + m[1]; return /^\d{4}-\d{2}-\d{2}/.test(t) ? t.slice(0, 10) : ""; }
+function ccDataCompetencia(c) {
+  var ds = ((c && c.nfs) || []).map(function (r) { return r && r.dataEmissao ? String(r.dataEmissao).slice(0, 10) : ""; }).filter(Boolean).sort();
+  if (ds.length) return ds[0];
+  var dl = ccIsoDoc(c && c.docLido && c.docLido.data); if (dl) return dl;
+  return String((c && c.criadoEm) || "").slice(0, 10) || hojeISO();
+}
+function ccMes(c) { return ccDataCompetencia(c).slice(0, 7); }
+function ccSincCompetencia(c) {
+  if (!c) return false;
+  var d = ccDataCompetencia(c), mud = false;
+  var m = typeof ccManutLigada === "function" ? ccManutLigada(c) : null;
+  if (m && m.data !== d) { m.data = d; m.atualizadoEm = Date.now(); mud = true; }
+  (state.almoxarifado || []).forEach(function (it) { (it.entradas || []).forEach(function (e) { if (String(e.compraId || "") === String(c.id) && e.data !== d) { e.data = d; it.atualizadoEm = Date.now(); mud = true; } }); });
+  return mud;
+}
 
 /* ---- arquivos ---- */
 function ccSubir(files, compraId, tipo) {
@@ -16317,15 +16337,31 @@ function ccAnexar(input, id, tipo) {
     }).catch(function (e) { input.value = ""; alert("Não consegui enviar: " + (e.message || e)); });
     return;
   }
+  var jaLido = tipo === "nf_lido" || tipo === "recibo_lido"; if (tipo === "nf_lido") tipo = "nf"; if (tipo === "recibo_lido") tipo = "recibo";   // v530
   var ehRecibo = tipo === "recibo"; if (ehRecibo) tipo = "nf";   // v505
-  if (tipo === "nf" && !confirm("Este arquivo é a " + (ehRecibo ? "RECIBO do fornecedor" : "NOTA FISCAL") + "?\n\nOK = sim, é " + (ehRecibo ? "o recibo" : "a nota") + ".\nCancelar = não, é COMPROVANTE DE PAGAMENTO (vai para o lugar certo).")) { ccAnexarComprovante(input, id); return; }   // v509
+  if (tipo === "nf" && !jaLido && !confirm("Este arquivo é a " + (ehRecibo ? "RECIBO do fornecedor" : "NOTA FISCAL") + "?\n\nOK = sim, é " + (ehRecibo ? "o recibo" : "a nota") + ".\nCancelar = não, é COMPROVANTE DE PAGAMENTO (vai para o lugar certo).")) { ccAnexarComprovante(input, id); return; }   // v509
   var ehNF = tipo === "nf";
-  var sugest = ehNF ? (ccValorNF(c) ? 0 : c.valor) : Math.max(0, ccValorNF(c) - ccValorPago(c));
-  var v = prompt(ehRecibo ? "Valor do RECIBO (R$):" : ehNF ? "Valor total desta NOTA FISCAL (R$):" : "Valor PAGO neste comprovante (R$):", sugest ? String(sugest.toFixed(2)).replace(".", ",") : "");
+  if (ehNF && !input.__lidoV530) {   // v530: lê a nota ANTES de perguntar (valor, número e DATA DE EMISSÃO = mês da compra)
+    state._ccLendo = c.id; render();
+    Promise.race([ccLerDocIA(files[0]), new Promise(function (ok) { setTimeout(function () { ok({ erro: "demorou" }); }, 25000); })]).then(function (jn) { if (input.__lidoV530) return; state._ccLendo = ""; input.__lidoV530 = jn || {}; render(); ccAnexar(input, id, ehRecibo ? "recibo_lido" : "nf_lido"); })
+      .catch(function () { state._ccLendo = ""; input.__lidoV530 = {}; ccAnexar(input, id, ehRecibo ? "recibo_lido" : "nf_lido"); });
+    return;
+  }
+  var jNF = ehNF ? (input.__lidoV530 || {}) : {}; try { delete input.__lidoV530; } catch (eL) { }
+  if (jNF.erro) jNF = {};
+  var sugest = ehNF ? (Number(jNF.total) > 0 ? Number(jNF.total) : ccValorNF(c) ? 0 : c.valor) : Math.max(0, ccValorNF(c) - ccValorPago(c));
+  var dataLida = ehNF ? ccIsoDoc(jNF.data) : "";
+  var v = prompt(ehRecibo ? "Valor do RECIBO (R$):" + (dataLida ? "\n(emitido em " + exDataBr(dataLida) + " — lido)" : "") : ehNF ? "Valor total desta NOTA FISCAL (R$):" + (dataLida ? "\n(emitida em " + exDataBr(dataLida) + " — lido)" : "") : "Valor PAGO neste comprovante (R$):", sugest ? String(sugest.toFixed(2)).replace(".", ",") : "");
   if (v == null) { input.value = ""; return; }
   var valor = ccNum(v);
   if (!(valor > 0)) { alert("Valor inválido."); input.value = ""; return; }
-  var nnf = ehNF ? prompt(ehRecibo ? "Número do recibo (opcional):" : "Número da nota (opcional):", "") : null;
+  var nnf = ehNF ? prompt(ehRecibo ? "Número do recibo (opcional):" : "Número da nota (opcional):", ccNormNumNF(jNF.numero) || "") : null;
+  var dataEm = dataLida;
+  if (ehNF && !dataEm) {   // v530: a IA não leu a data -> pergunta (é ela que decide o mês da compra)
+    var dPr = prompt("Data de EMISSÃO " + (ehRecibo ? "do recibo" : "da nota") + " (dd/mm/aaaa) — é o mês em que a compra conta:", exDataBr(ccDataCompetencia(c)));
+    if (dPr == null) { input.value = ""; return; }
+    dataEm = ccIsoDoc(dPr); if (!dataEm) { alert("Data inválida — use dd/mm/aaaa."); input.value = ""; return; }
+  }
   if (ehNF && !ehRecibo && ccDocNum(nnf)) {   // v529: a mesma nota do mesmo fornecedor em outra compra
     var nN = ccNormNumNF(nnf), dN = null;
     ccLista().forEach(function (x) { if (dN || x === c) return; var s3 = ccStatus(x); if (s3 === "cancelada" || s3 === "reprovada") return;
@@ -16338,9 +16374,11 @@ function ccAnexar(input, id, tipo) {
     var agora = new Date().toISOString();
     var reg = { arquivos: paths, valor: valor, em: agora, por: ccQuem() };
     if (ehNF) {
-      reg.numero = String(nnf || "").trim(); reg.tipoDoc = ehRecibo ? "recibo" : "nf"; (c.nfs = c.nfs || []).push(reg);
+      reg.numero = String(nnf || "").trim(); reg.tipoDoc = ehRecibo ? "recibo" : "nf"; if (dataEm) reg.dataEmissao = dataEm; (c.nfs = c.nfs || []).push(reg);
+      if (ccSincCompetencia(c)) (c.historico = c.historico || []).push({ em: agora, por: "sistema", o: "competência: " + mesLabel(ccMes(c)) + " (emissão " + exDataBr(ccDataCompetencia(c)) + ") — Manutenção/Estoque ligados foram para esse mês" });
       ccRatNotaNova(c);   // v522: a nota estava citada num comprovante? entra nele
-      if (!(c.itens && c.itens.length) && files[0]) {   // v506: lê os serviços da nota/recibo se a compra ainda não tem
+      if (!(c.itens && c.itens.length) && (jNF.itens || []).length) { c.itens = jNF.itens; if (!c.fornecedor && jNF.fornecedor) c.fornecedor = jNF.fornecedor; }   // v530: já leu
+      else if (!(c.itens && c.itens.length) && files[0]) {   // v506: lê os serviços da nota/recibo se a compra ainda não tem
         var cid = c.id;
         ccLerDocIA(files[0]).then(function (j) { var c2 = ccAcha(cid); if (!c2 || j.erro || !(j.itens || []).length || (c2.itens && c2.itens.length)) return; c2.itens = j.itens; if (!c2.fornecedor && j.fornecedor) c2.fornecedor = j.fornecedor; ccToca(c2); });
       }
@@ -16607,7 +16645,8 @@ function ccCardHTML(c) {
     + '</div>'
     + '<div style="font-size:11px;color:#999;margin-top:3px;">'
     + [c.fornecedor ? "fornecedor <b style='color:#ccc;'>" + esc(c.fornecedor) + "</b>" : "", c.categoria ? esc(c.categoria) : "", c.placa ? "placa " + esc(c.placa) : "", ccCondTexto(c) ? "<b style='color:#ccc;'>" + esc(ccCondTexto(c)) + "</b>" : "",
-       "pedido por " + esc(c.criadoPor || "?") + " em " + ccDataBr(c.criadoEm)].filter(Boolean).join(" · ")
+       "pedido por " + esc(c.criadoPor || "?") + " em " + ccDataBr(c.criadoEm),
+       '<b style="color:#4FC3F7;" title="mês em que a compra conta: data de emissão da nota (antes da nota, a data do orçamento/OS)">competência ' + esc(mesLabel(ccMes(c))) + '</b>'].filter(Boolean).join(" · ")
     + '</div>'
     + (c.obs ? '<div style="font-size:11px;color:#aaa;margin-top:3px;">📝 ' + esc(c.obs) + '</div>' : "")
     + ccPassos(c)
@@ -16736,7 +16775,7 @@ function ccTelaHTML() {
   var cont = {}, tot = {};
   lista.forEach(function (c) { var s = ccStatus(c); cont[s] = (cont[s] || 0) + 1; tot[s] = (tot[s] || 0) + (Number(c.valor) || 0); });
   var mesAtual = hojeISO().slice(0, 7);
-  var concMes = lista.filter(function (c) { return ccStatus(c) === "conciliada" && String(c.conciliadaEm || "").slice(0, 7) === mesAtual; });
+  var concMes = lista.filter(function (c) { return ccStatus(c) === "conciliada" && ccMes(c) === mesAtual; });   // v530: pela competência (mês da nota)
   var semAprov = lista.filter(function (c) { return c.semAprovacaoPrevia && String(c.criadoEm || "").slice(0, 7) === mesAtual; }).length;
   var tile = function (st, rot, n, v, filtro) {
     var on = sit === filtro;
@@ -30414,6 +30453,7 @@ function gerarContextoAssistente() {
   const blocoLogos = "ENVIO DE DOCUMENTOS (v433, 25/09/2026): todo CT-e e MDF-e emitido pelo app entra sozinho nos documentos fiscais da viagem, com XML e PDF (DACTE/DAMDFE) guardados; o encerramento feito pelo app tambem vira registro. No quadro do MDF-e ha o botao Enviar documentos: para o motorista manda os PDFs direto no WhatsApp (compartilhar do celular/tablet); para o Andre (v508) baixa um ZIP so com DACTE + espelho e copia o e-mail pronto com placa, motorista e numero, cliente, NF e chave de cada CT-e. O Tudo desta viagem (ZIP) tambem passa a levar a pasta pdf/. EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoAtualizacao = "ATUALIZACAO AUTOMATICA DO SISTEMA (v526, 01/10/2026 -- Renato: 'estou tendo que mandar o index para a Sandra porque no note dela nao atualiza; o note da Flavia atualiza'): todo aparelho confere sozinho, ao abrir, a cada 5 minutos e sempre que a tela volta a ficar visivel, qual e a versao publicada no GitHub (rflogistica.github.io/rf-logistica-app). Se a publicada for mais nova: (1) quem usa o sistema pelo endereco online ve a faixa dourada 'Nova versao vN' e o sistema se atualiza sozinho em 30 segundos, mas so quando ninguem esta digitando e o canto mostra sincronizado (senao espera e tenta de novo); tem o botao 'Atualizar agora'; (2) quem abriu uma COPIA SALVA do index.html no computador (arquivo local, file:///) ve a faixa avisando que aquela copia nao se atualiza e o botao 'Abrir a versao online' -- a solucao definitiva e usar sempre o endereco online (favorito ou app instalado a partir dele), nunca um arquivo baixado. Esta versao: " + RF_SISTEMA.versao + ", aberta " + (location.protocol === "file:" ? "como ARQUIVO LOCAL (nao atualiza sozinha)" : "pelo endereco " + location.host) + ".";
+  const bloco530 = "V530 (01/10/2026) MES DA COMPRA = MES DA NOTA -- Renato: 'as notas/pagamentos tem que ir automaticamente para o mes da sua NF; estamos lancando em outubro varios lancamentos que pertencem a setembro'. Competencia da compra = data de EMISSAO da nota fiscal (a mais antiga, quando tem nota de pecas e de servico); antes da nota vale a data do orcamento/OS lida pela IA; sem nada, o dia do lancamento. Ao anexar a nota a IA le valor, numero e data de emissao (so pergunta a data se nao conseguir ler). A Manutencao, o Investimento e a entrada no Estoque ligados a compra ficam com essa data -- e mudam sozinhos se a nota chegar com outra data. O cartao da compra mostra 'competencia mes/ano', o filtro de mes da aba Compras e as conciliadas no mes usam a competencia, e o Excel da contabilidade tem a coluna Competencia. Pagamento (extrato/parcela) continua na data em que saiu do banco.";
   const bloco529 = "V529 (01/10/2026) DOCUMENTO EM DUPLICIDADE -- Renato: 'nao pode ler duas vezes o mesmo orcamento/OS (Sandra lanca e depois Renato ou Flavia lanca a mesma), o sistema tem que identificar e nao aceitar'. Ao lancar compra: (1) conteudo -- mesmo fornecedor (CNPJ ou nome) com o mesmo no de OS/orcamento, ou mesmo valor + mesmos itens, ou mesmo valor + mesma data do documento => recusa e diz qual compra, quem lancou e quando (o aviso ja aparece assim que a IA le); (2) arquivo -- impressao digital SHA-256/dHash reservada na tabela fotos_hash (referencia 'compra <id>'), vale entre aparelhos ao mesmo tempo. Nota fiscal: mesmo numero do mesmo fornecedor nao entra em duas compras, e o mesmo arquivo de nota nao entra duas vezes. Cancelar, reprovar ou excluir a compra libera o documento.";
   const bloco528 = "V528 (01/10/2026) ORDEM DO FLUXO TRAVADA -- Renato: 'pode retirar e trava, tem que seguir a ordem, orcamento/OS primeiro, depois segue o fluxo'. Toda compra comeca SO com orcamento ou OS (saiu lancar ja com nota/recibo); aprovacao; nota fiscal (ou recibo, pelo botao So tem recibo depois de aprovada); SO ENTAO comprovante e pagamento do extrato. O botao Anexar comprovante so aparece em compra em consolidacao; comprovante que cita nota sem compra lancada, ou maior que as compras das notas, NAO e anexado (o sistema diz o que falta lancar); repartir comprovante nao pode deixar sobra; a saida do extrato so liga em compra em consolidacao; criar compra a partir da saida do extrato cria a compra AGUARDANDO APROVACAO e a saida liga sozinha quando ela tiver a nota. O aviso de comprovantes esperando compras saiu.";
   const bloco527 = "V527 (01/10/2026): (1) SINCRONIZACAO -- a atualizacao em tempo real vinda de outro aparelho deixou de substituir a lista inteira (e de ser ignorada nos 6 s depois de uma edicao); agora une item a item como o download e, se a nuvem ficou sem algo deste aparelho, reenvia. Na MESMA compra, notas, comprovantes, pagamentos do extrato, orcamentos e historico dos dois aparelhos sao somados (so some o que alguem realmente tirou, anotado em _rem); no mesmo extrato cada linha fica com quem ligou/desfez por ultimo. Casos que motivaram (01/10): NFS-e 469 da compra 12 sumiu, comprovante do financeiro na 11 sumiu, compra do Marcelo das 12:12 sumiu, OS da Sandra (ela usava copia salva do index, v519-v523 em Downloads). (2) NOVA COMPRA e CONDICAO DE PAGAMENTO nao se apagam mais quando a tela se redesenha (antes voltavam para a vista/1 parcela/orcamento/sem placa). (3) PARCELAS: link '✎ ajustar valor e data de cada parcela' -- cada boleto com seu valor e vencimento; a soma tem que bater com o total; anexar nota nao refaz parcelas ajustadas a mao. (4) CONCILIACAO abre no extrato importado por ultimo. (5) COMPROVANTE anexado que bate com uma saida do extrato (mesmo valor, data +-1 dia, nome de quem recebeu na descricao) e ligado sozinho -- historico 'pagamento achado sozinho no extrato'. Ligados sozinhos nesta sessao: " + (window.__exAutoN || 0) + ".";
@@ -31086,6 +31126,7 @@ ${blocoAtualizacao}
 ${bloco527}
 ${bloco528}
 ${bloco529}
+${bloco530}
 ${blocoLogos}
 ${blocoDocsViagem}
 ${blocoConciliacao}
@@ -37104,6 +37145,7 @@ if ("serviceWorker" in navigator) {
     try {
       if (typeof exAutoLigarComprovantes !== "function") return;
       var n = exAutoLigarComprovantes();
+      if (typeof ehAdmin === "function" && ehAdmin() && window.__rfDadosCarregados && typeof ccSincCompetencia === "function") ccLista().forEach(function (c) { if (ccSincCompetencia(c)) n++; });   // v530
       if (n > 0) {
         window.__exAutoN += n;
         salvar();
