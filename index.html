@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v519)</title>
+<title>RF Logística — Painel da Frota (v520)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v519">
+<meta name="rf-versao" content="v520">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v519" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v520" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -8425,7 +8425,8 @@ function mtComprasDoVeiculo(placa, mes) {
     if (st === "cancelada" || st === "reprovada" || st === "aprovacao") return;
     if (String(c.criadoEm || "").slice(0, 7) !== alvo) return;
     const valor = ccValorNF(c) || Number(c.valor) || 0;
-    const it = { id: c.id, numero: c.numero, descricao: c.descricao || "", valor: valor, os: ccEhOS(c), conta: true, motivo: "" };
+    const sit0 = mtCompraSituacao(c);
+    const it = { id: c.id, numero: c.numero, descricao: c.descricao || "", valor: valor, os: ccEhOS(c), conta: true, motivo: "", aberta: !!(sit0 && sit0.aberta), sitNome: sit0 ? sit0.nome : "" };   // v520
     const ligado = (state.manutencoes || []).filter((m) => m && String(m.compraId || "") === String(c.id))[0];
     if (ligado) { it.conta = false; it.motivo = "ligada ao lançamento de manutenção"; usados[ligado.id] = true; }
     else if (c.mtIgnorar) { it.conta = false; it.motivo = "marcada: já está na manutenção"; }
@@ -8584,6 +8585,28 @@ function ccAbrirManut(id) {
   state.aba = "manutencao"; state.mesAtivo = String(m.data || "").slice(0, 7) || state.mesAtivo;
   state._mtAberta = m.placa; try { state.mtCaixaAberta = m.placa; } catch (e) { }
   render();
+}
+/* v520 — "não ficou bem destacado, tem que ficar na cor VERMELHA até o encerramento" (Renato,
+   01/10/2026). Compra ligada ao caminhão (e o lançamento de manutenção que veio dela) fica VERMELHA
+   enquanto a compra não for CONCILIADA (nota + pagamento no extrato). Encerrou -> azul "encerrada ✓".
+   Aparece em três lugares: a caixa fechada do caminhão (aviso "N compra(s) em aberto"), a lista de
+   compras dentro da caixa e a linha do lançamento na tabela de manutenção. */
+var MT_VERM_ABERTA = "#E53935", MT_AZUL_FECHADA = "#4FC3F7";
+function mtCompraSituacao(c) {
+  if (!c) return null;
+  var st = ccStatus(c);
+  if (st === "cancelada" || st === "reprovada") return null;
+  return { aberta: st !== "conciliada", nome: st === "conciliada" ? "encerrada ✓" : (CC_ST[st] ? CC_ST[st].nome : st) };
+}
+function mtCompraDaManut(m) { return m && m.compraId && typeof ccAcha === "function" ? ccAcha(m.compraId) : null; }
+function mtComprasAbertasPlaca(placa) {
+  if (!placa || typeof ccLista !== "function") return [];
+  return ccLista().filter(function (c) {
+    var pl = String(c.placa || "");
+    if (!pl) { var m = (state.manutencoes || []).filter(function (x) { return String(x.compraId || "") === String(c.id); })[0]; pl = m ? m.placa : ""; }
+    if (pl !== placa) return false;
+    var sit = mtCompraSituacao(c); return !!(sit && sit.aberta);
+  });
 }
 function mtCompraIgnorar(id, on) {
   if (!ehAdmin()) { alert("Só o administrador muda isso."); return; }
@@ -29224,6 +29247,7 @@ function gerarContextoAssistente() {
 - JÁ EM DÍVIDA FIXA (lançamento inteiro marcado): ${fmtR(mt.jaEmDivida)} — está sendo pago parcelado em Dívidas Fixas.
 - 📦 PEÇA DO ESTOQUE: ${fmtR(mt.estoqueAlmox)} — já foi paga quando entrou no almoxarifado.
 - 🧾 FATURADO: ${fmtR(mt.faturado)} — peça ou serviço pego na conta de fornecedor que fatura o mês; essa fatura já está lançada em Dívidas Fixas.
+- 🔴 COMPRA EM ABERTO NA MANUTENÇÃO (v520): compra ligada a um caminhão fica VERMELHA até ser CONCILIADA (nota + pagamento no extrato) — na caixa fechada do caminhão ('🛒 N em aberto'), na lista de compras dentro da caixa ('EM ABERTO — situação') e na linha do lançamento de manutenção que veio dela (selo '🛒 compra nº X EM ABERTO'). Conciliada, vira AZUL 'encerrada ✓'.
 - 🎯 DESTINO DA COMPRA (v519): compra aprovada tem 3 botões e só UM pode ser usado — '🔧 lançar na Manutenção do caminhão', '🏗 lançar como Investimento (baú/reforma)' (manutenção marcada investimento/Estrutural, fora do teto e do lucro do mês) ou '📦 lançar no Estoque' (uma entrada no Almoxarifado por item, ligada à compra; item com o mesmo nome recebe a entrada, os outros viram item novo). Escolhido um destino, os outros somem: a mesma compra nunca entra em dois lugares. Compra que foi pro estoque não conta no teto do caminhão (conta quando a peça for usada numa manutenção). Na aba Dívidas Fixas há o bloco '🛒 Compras com vencimento no mês': parcela paga no extrato ou compra conciliada fica AZUL 'PAGO ✓'; esse bloco NÃO soma no total das dívidas fixas.
 - 🔧 LANÇAR COMPRA NA MANUTENÇÃO (v518): na compra aprovada de Manutenção/peças, Pneus ou Serviços existe o botão '🔧 lançar na Manutenção do caminhão'. Ele cria UM lançamento na aba Manutenção (placa, oficina, data, itens da compra) LIGADO à compra; a partir daí quem conta é o lançamento e a compra para de somar sozinha no teto. Depois de lançado o botão vira 'já está na Manutenção — abrir' e não deixa lançar de novo. Se a compra não tiver placa, o sistema procura a placa na descrição ou pergunta.
 - 🛒 COMPRAS APROVADAS (v515): compra da aba Compras com placa, categoria Manutenção/peças, Pneus ou Serviços, aprovada (ou que chegou com nota), soma no TETO/custo do caminhão no mês em que foi lançada (inclui OS aprovada). TRAVA contra contar 2x: não soma se um lançamento de manutenção estiver ligado a ela, se houver manutenção da mesma placa no mesmo mês com o mesmo valor (até R$ 0,05), ou se o admin marcou 'não contar (já está na manutenção)'. Isso afeta só o teto do caminhão, não o lucro do Financeiro.
@@ -32758,8 +32782,11 @@ if (state.aba === "mtcustos") {
           + `</div>`
           + `<button class="btn-outline" style="font-size:10px;padding:2px 8px;margin-top:5px;" onclick="addItemManut('${m.id}')">+ peça / serviço</button>`
           + `<div style="font-size:10px;color:#777;margin-top:2px;">Soma das peças: <b style="color:#bbb;">${fmtR(somaPecas)}</b>${somaPecasAlmox > 0 ? ` <span style="color:#888;">(📦 ${fmtR(somaPecasAlmox)} do estoque — já paga, não conta 2x)</span>` : ""}${mtSomaPecasFaturado(m) > 0 ? ` <span style="color:#888;">(🧾 ${fmtR(mtSomaPecasFaturado(m))} faturado — já em dívida fixa, não conta 2x)</span>` : ""}</div>`;
-        return `<tr>
-          <td><input type="date" value="${m.data}" onchange="atualizarManutencao('${m.id}','data',this.value)"></td>
+        const cLig = mtCompraDaManut(m), sitLig = mtCompraSituacao(cLig);   // v520
+        const trStyle = sitLig ? (sitLig.aberta ? ` style="background:rgba(229,57,53,0.14);box-shadow:inset 4px 0 0 ${MT_VERM_ABERTA};"` : ` style="box-shadow:inset 4px 0 0 ${MT_AZUL_FECHADA};"`) : "";
+        const seloCompra = sitLig ? `<div style="margin-top:5px;font-size:10px;font-weight:900;border-radius:4px;padding:2px 6px;display:inline-block;cursor:pointer;${sitLig.aberta ? "background:" + MT_VERM_ABERTA + ";color:#fff;" : "background:" + MT_AZUL_FECHADA + ";color:#000;"}" onclick="state.aba='compras';render()" title="abrir a compra">🛒 compra nº ${esc(cLig.numero)} ${sitLig.aberta ? "EM ABERTO — " + esc(sitLig.nome) : "encerrada ✓"}</div>` : "";
+        return `<tr${trStyle}>
+          <td><input type="date" value="${m.data}" onchange="atualizarManutencao('${m.id}','data',this.value)">${seloCompra}</td>
           <td><select onchange="atualizarManutencao('${m.id}','placa',this.value)">${optsPlaca(m.placa,false)}</select></td>
           <td><select onchange="atualizarManutencao('${m.id}','categoria',this.value)">${optsCat(m.categoria)}</select></td>
           <td style="min-width:330px;">${celItens}</td>
@@ -32850,6 +32877,7 @@ if (state.aba === "mtcustos") {
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
             <span style="font-size:11px;color:#777;">${esc(v.tipo || "")}${s.qtd ? ` · ${s.qtd} lanç.` : ""}</span>
+            ${(() => { const ab = mtComprasAbertasPlaca(v.placa).length; return ab ? `<span style="font-size:10px;font-weight:900;color:#fff;background:${MT_VERM_ABERTA};border-radius:4px;padding:1px 6px;">🛒 ${ab} em aberto</span>` : ""; })()}
             <span style="font-size:12px;font-weight:800;color:${s.temTeto ? cor : "#777"};">${pctTxt}</span>
           </div>
           <div style="height:4px;border-radius:2px;background:#1E1E1E;margin-top:8px;overflow:hidden;">
@@ -32912,7 +32940,8 @@ if (state.aba === "mtcustos") {
 
         ${(d.comprasLista || []).length ? `<div style="border:1px solid #262626;border-radius:8px;padding:8px 12px;margin-bottom:12px;background:#0d0d0d;">
           <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">🛒 Compras deste caminhão no mês (aba Compras)</div>
-          ${d.comprasLista.map((x) => `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;padding:2px 0;color:${x.conta ? "#ddd" : "#777"};">
+          ${d.comprasLista.map((x) => `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;padding:5px 8px;margin:3px 0;border-radius:6px;color:${x.conta ? "#ddd" : "#999"};${x.aberta ? "background:rgba(229,57,53,0.16);border:1px solid " + MT_VERM_ABERTA + ";" : "background:rgba(79,195,247,0.07);border:1px solid #1f3a46;"}">
+            <span style="font-size:10px;font-weight:900;border-radius:4px;padding:1px 7px;${x.aberta ? "background:" + MT_VERM_ABERTA + ";color:#fff;" : "background:" + MT_AZUL_FECHADA + ";color:#000;"}">${x.aberta ? "EM ABERTO — " + esc(String(x.sitNome || "").toUpperCase()) : "ENCERRADA ✓"}</span>
             <span style="color:#777;">Nº ${esc(x.numero)}</span>${x.os ? '<span style="font-size:10px;font-weight:900;color:#000;background:#90CAF9;border-radius:4px;padding:0 6px;">OS</span>' : ""}
             <span style="flex:1;">${esc(x.descricao)}</span>
             <b style="${x.conta ? "" : "text-decoration:line-through;"}">${fmtR(x.valor)}</b>
