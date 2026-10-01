@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v515)</title>
+<title>RF Logística — Painel da Frota (v516)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v515">
+<meta name="rf-versao" content="v516">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v515" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v516" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -22498,6 +22498,27 @@ function rfViagensAbertasDaPlaca(placa) {
     return (Number(b.criadoEm) || 0) - (Number(a.criadoEm) || 0);
   });
 }
+/* v516 — "outubro está sem a Suzano" (Renato, 01/10/2026). A caixa de cada cliente na aba
+   Viagens vem de duas fontes: quem tem viagem no mês + a LISTA de clientes (state.clientes).
+   A Suzano rodou 34 viagens em setembro mas nunca esteve na lista (a lista tinha só FM Transporte,
+   JT/Mateus, Leão, Mercante/JDL e Yamaha) -- então, virando o mês sem viagem lançada, ela sumia
+   da tela E do seletor de cliente da viagem nova. Correção: todo cliente que teve viagem no mês
+   atual ou nos 2 anteriores volta sozinho pra lista. Nunca remove ninguém. */
+function rfClientesRecuperar() {
+  if (!Array.isArray(state.clientes)) state.clientes = [];
+  const hoje = new Date(), meses = {};
+  for (let i = 0; i < 3; i++) { const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1); meses[d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")] = true; }
+  let n = 0;
+  (state.viagens || []).forEach(function (v) {
+    const nome = String((v && v.cliente) || "").trim();
+    if (!nome || nome.indexOf("_") !== -1) return;
+    const mes = String(v.dataSaida || v.data || "").slice(0, 7);
+    if (!meses[mes]) return;
+    if (state.clientes.indexOf(nome) === -1) { state.clientes.push(nome); n++; }
+  });
+  if (n) state.clientes.sort();
+  return n;
+}
 function rfRomaneiosAutoVincular() {
   if (typeof ehMotorista === "function" && ehMotorista()) return 0;
   if (!window.__rfDadosCarregados) return 0;
@@ -33500,6 +33521,11 @@ revalidarSessaoAoAbrir();
         const nIni = rfViagensSincronizarInicios();
         if (nIni) console.log("[viagens] " + nIni + " viagem(ns) tiveram a data ajustada pelo inicio real");
       } catch (e) { console.error("[viagens inicio real]", e); }
+      // v516: cliente que rodou nos últimos meses volta pra lista de clientes
+      try {
+        const nCli = rfClientesRecuperar();
+        if (nCli) { console.log("[clientes] " + nCli + " cliente(s) recuperado(s) para a lista"); salvar(); }
+      } catch (e) { console.error("[clientes recuperar]", e); }
       // v256: romaneio sem viagem casa sozinho com a viagem aberta da mesma placa
       try {
         const nVinc = rfRomaneiosAutoVincular();
