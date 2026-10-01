@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v516)</title>
+<title>RF Logística — Painel da Frota (v517)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v516">
+<meta name="rf-versao" content="v517">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v516" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v517" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15318,6 +15318,13 @@ function ccLerDocIA(file) {
 function ccLerValorArquivo(input) {
   var f = input && input.files && input.files[0], alvo = document.getElementById("cc-valor"), st = document.getElementById("cc-ia");
   if (!f || !alvo) return;
+  /* v517: no tablet/celular Android o campo de arquivo às vezes "esquece" o arquivo (tocar de novo
+     em Escolher arquivos e voltar sem escolher limpa a seleção). A IA já tinha lido, os campos
+     ficavam preenchidos, e o Enviar acusava "Anexe o orçamento". Agora os arquivos escolhidos
+     ficam guardados na memória e o envio usa eles mesmo que o campo apareça vazio. */
+  state._ccArqs = Array.prototype.slice.call(input.files);
+  var gd = document.getElementById("cc-arq-guardado");
+  if (gd) gd.innerHTML = "✔ guardado: " + state._ccArqs.map(function (x) { return esc(x.name || "arquivo"); }).join(", ");
   if (st) st.textContent = "🤖 lendo o documento (fornecedor, serviços e valores)...";
   state._ccLido = null;
   ccLerDocIA(f).then(function (j) {
@@ -15330,6 +15337,10 @@ function ccLerValorArquivo(input) {
     set("cc-desc", itens.length ? (itens.length === 1 ? itens[0].descricao : itens[0].descricao + " + " + (itens.length - 1) + " serviço(s)") + (j.placa ? " — " + j.placa : "") : "");
     var sp = document.getElementById("cc-placa");
     if (sp && j.placa && !sp.value) { for (var i = 0; i < sp.options.length; i++) if (sp.options[i].value === j.placa) { sp.value = j.placa; break; } }
+    if (/ordem\s*de\s*servi/i.test(JSON.stringify(j)) && (document.getElementById("cc-tipo") || {}).value === "orcamento") {   // v517: documento é OS -> marca OS sozinho
+      var ros = document.querySelectorAll('input[name="cc-tipo-r"]'); for (var k = 0; k < ros.length; k++) ros[k].checked = /'os'/.test(ros[k].getAttribute("onchange") || "");
+      ccTipoSet("os");
+    }
     if ((document.getElementById("cc-tipo") || {}).value === "os") set("cc-nos", j.numero);   // v514
     try { ccAplicarCondLida(j); } catch (eC) { }
     ccPagPrev("ccn", null);
@@ -15440,13 +15451,13 @@ function ccVer(path) {
 
 /* ---- ações ---- */
 function ccToca(c) { if (c) c.atualizadoEm = Date.now(); salvar(); render(); }
-function ccNovaAbrir(on) { state._ccNova = on; state._ccLido = null; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
+function ccNovaAbrir(on) { state._ccNova = on; state._ccLido = null; state._ccArqs = null; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
 function ccCriar() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
   var desc = String(g("cc-desc")).trim(), forn = String(g("cc-forn")).trim(), valor = ccNum(g("cc-valor"));
   var tipo = g("cc-tipo") || "orcamento";
   var arq = document.getElementById("cc-arq");
-  var files = arq && arq.files ? arq.files : [];
+  var files = arq && arq.files && arq.files.length ? arq.files : (state._ccArqs || []);   // v517
   if (!desc) { alert("Escreva o que está sendo comprado."); return; }
   if (!(valor > 0)) { alert("Informe o valor."); return; }
   if (!files.length) { alert("Anexe " + (tipo === "nota" ? "o arquivo da nota fiscal" : tipo === "recibo" ? "o recibo" : tipo === "os" ? "a OS (ordem de serviço)" : "o orçamento") + " (foto ou PDF)."); return; }
@@ -15469,7 +15480,7 @@ function ccCriar() {
     if (tipo === "nota") c.semAprovacaoPrevia = true;
     if (ehOS) c.os = { numero: nOS };   // v514
     if (state._ccLido && (state._ccLido.itens || []).length) { c.itens = state._ccLido.itens; c.docLido = { fornecedor: state._ccLido.fornecedor || "", cnpj: state._ccLido.cnpj || "", numero: state._ccLido.numero || "", data: state._ccLido.data || "", placa: state._ccLido.placa || "", total: state._ccLido.total || 0, condicao: state._ccLido.condicao || "" }; }   // v506
-    state._ccLido = null;
+    state._ccLido = null; state._ccArqs = null;
     c.forma = ccCondTexto(c);
     ccLista().unshift(c);
     state._ccNova = false;
@@ -15813,6 +15824,10 @@ function ccCondBoleto(txt) {
 function ccAplicarCondLida(j) {
   var b = ccCondBoleto(j && (j.condicao || j.vencimento ? (j.condicao || "") + " " + (j.vencimento || "") : ""));
   if (!b) return;
+  if (!b.venc) {   // v517: condição "BOLETO" sem data -> o vencimento é a data mais à frente que aparece no documento lido
+    var ds = (JSON.stringify(j).match(/\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2}/g) || []).map(function (x) { return /\//.test(x) ? x.slice(6, 10) + "-" + x.slice(3, 5) + "-" + x.slice(0, 2) : x; }).filter(function (x) { return x >= hojeISO(); }).sort();
+    if (ds.length) b.venc = ds[ds.length - 1];
+  }
   var cond = document.getElementById("ccn-cond"); if (!cond || cond.value !== "avista") return;   // não mexe se a pessoa já escolheu
   cond.value = "faturado";
   var r = document.querySelectorAll('input[name="ccn-cond-r"]'); for (var i = 0; i < r.length; i++) r[i].checked = /faturado/.test(r[i].getAttribute("onchange") || "");
@@ -15841,6 +15856,7 @@ function ccNovaHTML() {
     + '<div id="cc-nnf-box" style="display:none;max-width:220px;">' + lab("Número da nota") + '<input id="cc-nnf" ' + inp + '></div>'
     + '<div id="cc-nos-box" style="display:none;max-width:220px;">' + lab("Número da OS") + '<input id="cc-nos" ' + inp + ' placeholder="ex.: 008405"></div>'
     + lab("Arquivo (foto ou PDF) *") + '<input id="cc-arq" type="file" accept="image/*,application/pdf" multiple style="font-size:12px;color:#ccc;width:auto;max-width:100%;" onchange="ccLerValorArquivo(this)">'
+    + '<div id="cc-arq-guardado" style="font-size:11px;color:#66BB6A;margin-top:3px;">' + ((state._ccArqs || []).length ? "✔ guardado: " + state._ccArqs.map(function (x) { return esc(x.name || "arquivo"); }).join(", ") : "") + '</div>'
     + '<div id="cc-itens-lidos"></div>'
     + ccPagFormHTML("ccn", { cond: "avista" }, null)
     + lab("Observação") + '<input id="cc-obs" ' + inp + ' placeholder="opcional">'
