@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v526)</title>
+<title>RF Logística — Painel da Frota (v527)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v526">
+<meta name="rf-versao" content="v527">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v526" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v527" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -847,7 +847,10 @@ function rfCarimbar(lista, snapAnterior, agora) {
        aprovada no celular voltou a "em andamento" e sem a foto de chegada depois
        que o tablet abriu). Agora, sem instantaneo, so se tira a foto do estado
        (linha de base); carimba apenas o que mudou DEPOIS dela. */
-    if (snapAnterior && (antes === undefined || antes !== json)) x.atualizadoEm = agora;
+    if (snapAnterior && (antes === undefined || antes !== json)) {
+      x.atualizadoEm = agora;
+      if (antes !== undefined) { try { rfRegistrarRemocoes(x, JSON.parse(antes), agora); json = JSON.stringify((function () { var c2 = {}; for (var k2 in x) { if (k2 !== "atualizadoEm") c2[k2] = x[k2]; } return c2; })()); } catch (eR) { } }   // v527
+    }
     snapNovo[k] = json;
   });
   if (snapAnterior) {
@@ -860,6 +863,98 @@ function rfCarimbar(lista, snapAnterior, agora) {
 /* v491: documento fiscal emitido nunca some na sincronizacao. Se a versao que ganhou (mais nova) nao tem o CT-e
    ou o MDF-e autorizado que a outra tem, copia da outra. Caso real 30/09 10:00: um aparelho desatualizado salvou a
    carga do OTQ9B07 por cima e os 7 CT-e sumiram da tela (a SEFAZ ja tinha autorizado). */
+/* v527 — DOIS APARELHOS MEXENDO NA MESMA COMPRA / NO MESMO EXTRATO.
+   Renato (01/10/2026): OS e anexos sumindo. Casos reais do dia: a NFS-e 469 da compra nº 12
+   sumiu 9 segundos depois de anexada; o comprovante que o financeiro anexou na nº 11 sumiu
+   quando o compras anexou a nota; a compra do Marcelo das 12:12 sumiu inteira.
+   Causas: (1) a atualização em TEMPO REAL substituía a lista inteira pela da nuvem (não unia
+   item a item como o download faz) e era ignorada se o aparelho tinha editado algo nos
+   últimos 6 s -- o aparelho ficava com cópia velha e, na próxima edição, a regra "vence o
+   mais novo" fazia a cópia velha ganhar; (2) na mesma compra, só um aparelho podia ganhar:
+   o anexo do outro sumia. Agora: o tempo real une item a item (nunca ignora), e se o que
+   veio da nuvem não tem algo que este aparelho tem, ele reenvia; e na MESMA compra os anexos
+   (notas, comprovantes, pagamentos do extrato, orçamentos) e o histórico dos dois lados são
+   somados -- só some o que alguém realmente tirou (fica anotado em _rem). No extrato, cada
+   linha fica com a versão mais recente de quem ligou/desfez (desfeitoEm). */
+function rfSigItem(campo, r) {
+  if (!r || typeof r !== "object") return campo + "|" + String(r);
+  var a = (r.arquivos && r.arquivos[0] && r.arquivos[0].path) || r.path || "";
+  if (campo === "historico") return "h|" + (r.em || "") + "|" + (r.o || "");
+  return campo + "|" + (r.em || "") + "|" + (r.linhaId || "") + "|" + a + "|" + (r.valor != null ? r.valor : "");
+}
+var RF_CC_CAMPOS = ["nfs", "compArqs", "comprovantes", "orcamentos"];
+function rfEhCompra(x) { return !!x && typeof x === "object" && /^cc/.test(String(x.id || "")) && Array.isArray(x.historico); }
+function rfEhExtrato(x) { return !!x && typeof x === "object" && Array.isArray(x.linhas) && /^ex/.test(String(x.id || "")); }
+function rfRegistrarRemocoes(x, antes, agora) {
+  if (!antes || typeof antes !== "object") return;
+  if (rfEhCompra(x)) {
+    var rem = Array.isArray(x._rem) ? x._rem : [];
+    RF_CC_CAMPOS.forEach(function (cp) {
+      var agoraS = {}; (x[cp] || []).forEach(function (r) { agoraS[rfSigItem(cp, r)] = 1; });
+      (antes[cp] || []).forEach(function (r) { var sg = rfSigItem(cp, r); if (!agoraS[sg] && rem.indexOf(sg) === -1) rem.push(sg); });
+    });
+    if (rem.length) x._rem = rem.slice(-300);
+  } else if (rfEhExtrato(x)) {
+    var porId = {}; (x.linhas || []).forEach(function (l) { if (l && l.id != null) porId[String(l.id)] = l; });
+    var remL = Array.isArray(x._remLin) ? x._remLin : [];
+    (antes.linhas || []).forEach(function (l0) {
+      if (!l0 || l0.id == null) return;
+      var l = porId[String(l0.id)];
+      if (!l) { if (remL.indexOf(String(l0.id)) === -1) remL.push(String(l0.id)); return; }
+      if (l0.vinc && !l.vinc) l.desfeitoEm = agora;
+    });
+    if (remL.length) x._remLin = remL.slice(-500);
+  }
+}
+function rfLinhaTs(l) { var t = l && l.vinc && l.vinc.em ? Date.parse(l.vinc.em) || 0 : 0; return Math.max(t, Number((l && l.desfeitoEm) || 0)); }
+function rfPreservarSync(ganha, perde) {
+  try {
+    if (!ganha || !perde || ganha === perde) return;
+    if (rfEhCompra(ganha) && rfEhCompra(perde)) {
+      var rem = {}; [].concat(ganha._rem || [], perde._rem || []).forEach(function (sg) { rem[sg] = 1; });
+      var mudou = false;
+      RF_CC_CAMPOS.concat(["historico"]).forEach(function (cp) {
+        var tem = {}, lista = Array.isArray(ganha[cp]) ? ganha[cp] : [];
+        var antesN = lista.length;
+        lista = lista.filter(function (r) { var sg = rfSigItem(cp, r); tem[sg] = 1; return cp === "historico" || !rem[sg]; });
+        var add = (perde[cp] || []).filter(function (r) { var sg = rfSigItem(cp, r); if (tem[sg] || (cp !== "historico" && rem[sg])) return false; tem[sg] = 1; return true; });
+        if (add.length || lista.length !== antesN) {
+          lista = lista.concat(add);
+          lista.sort(function (a, b) { var x = String(a.em || ""), y = String(b.em || ""); return x < y ? -1 : x > y ? 1 : (rfSigItem(cp, a) < rfSigItem(cp, b) ? -1 : 1); });
+          ganha[cp] = lista; mudou = true;
+        }
+      });
+      var uR = Object.keys(rem); if (uR.length) ganha._rem = uR.sort().slice(-300);
+      if (mudou && typeof ccTentarConciliar === "function") { try { ccTentarConciliar(ganha); } catch (e1) { } }
+    } else if (rfEhExtrato(ganha) && rfEhExtrato(perde)) {
+      var remL = {}; [].concat(ganha._remLin || [], perde._remLin || []).forEach(function (id) { remL[String(id)] = 1; });
+      var pm = {}; (perde.linhas || []).forEach(function (l) { if (l && l.id != null) pm[String(l.id)] = l; });
+      var vistos = {};
+      var novas = (ganha.linhas || []).filter(function (l) { return !(l && l.id != null && remL[String(l.id)]); }).map(function (l) {
+        if (!l || l.id == null) return l;
+        vistos[String(l.id)] = 1;
+        var o = pm[String(l.id)];
+        return o && rfLinhaTs(o) > rfLinhaTs(l) ? o : l;
+      });
+      (perde.linhas || []).forEach(function (l) { if (l && l.id != null && !vistos[String(l.id)] && !remL[String(l.id)]) novas.push(l); });
+      ganha.linhas = novas;
+      var uL = Object.keys(remL); if (uL.length) ganha._remLin = uL.slice(-500);
+    }
+  } catch (e) { }
+}
+/* v527: a nuvem (remoto) deixou de fora algo que este aparelho tem? */
+function rfLocalTemMaisNovo(unida, remotoJsonPorId, remotoIds) {
+  if (!Array.isArray(unida)) return false;
+  var ids = {};
+  for (var i = 0; i < unida.length; i++) {
+    var x = unida[i]; if (!x || x.id == null) continue;
+    var k = String(x.id); ids[k] = 1;
+    if (!(k in remotoJsonPorId)) return true;
+    var j; try { j = JSON.stringify(x); } catch (e) { continue; }
+    if (j !== remotoJsonPorId[k]) return true;
+  }
+  return remotoIds.some(function (k) { return !ids[k]; });   // item apagado aqui (lápide) que a nuvem ainda tem
+}
 function rfPreservarFiscal(ganha, perde) {
   try {
     if (!ganha || !perde || typeof ganha !== "object") return;
@@ -884,8 +979,8 @@ function rfUnirLista(local, nuvem, lapides) {
   local.forEach(function (x) {
     var k = String(x.id), n = por[k];
     if (!n) { por[k] = x; return; }
-    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) { por[k] = x; rfPreservarFiscal(x, n); }
-    else rfPreservarFiscal(n, x);
+    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) { por[k] = x; rfPreservarFiscal(x, n); rfPreservarSync(x, n); }
+    else { rfPreservarFiscal(n, x); rfPreservarSync(n, x); }   // v527
   });
   var lap = {};
   (lapides || []).forEach(function (l) {
@@ -15725,8 +15820,35 @@ function ccPagLer(px, total) {
   var cond = g("cond") || "avista";
   var n = cond === "avista" ? 1 : Math.max(1, Math.min(48, parseInt(g("n"), 10) || 1));
   var venc1 = g("venc") || hojeISO(), intervalo = parseInt(g("int"), 10) || 30;
-  return { cond: cond, forma: cond === "avista" ? (g("forma") || "PIX") : cond === "faturado" ? "Boleto" : "Cartão", n: n, venc1: venc1, intervalo: intervalo,
+  var out = { cond: cond, forma: cond === "avista" ? (g("forma") || "PIX") : cond === "faturado" ? "Boleto" : "Cartão", n: n, venc1: venc1, intervalo: intervalo,
     cartao: cond === "cartao" ? String(g("cartao") || "").trim().slice(0, 40) : "", parcelas: ccGerarParcelas(total, n, venc1, cond, intervalo) };
+  var ed = (window.__ccParc || {})[px];   // v527: valor e data de cada parcela ajustados à mão
+  if (ed && ed.on && Array.isArray(ed.lst) && ed.lst.length === n && cond !== "avista") {
+    out.parcelas = ed.lst.map(function (p, i) { return { n: i + 1, venc: p.venc || "", valor: Math.round((Number(p.valor) || 0) * 100) / 100 }; });
+    out.manual = true; out.venc1 = out.parcelas[0].venc || venc1;
+    var soma = Math.round(out.parcelas.reduce(function (a, p) { return a + p.valor; }, 0) * 100) / 100;
+    if (total > 0 && Math.abs(soma - total) >= 0.05) out.erro = "As parcelas somam " + fmtR(soma) + ", mas o total é " + fmtR(total) + ". Ajuste os valores (" + (soma < total ? "faltam " : "passou ") + fmtR(Math.abs(Math.round((total - soma) * 100) / 100)) + ").";
+    if (out.parcelas.some(function (p) { return !p.venc || !(p.valor > 0); })) out.erro = "Toda parcela precisa de data e valor.";
+  }
+  return out;
+}
+/* v527 — Renato (01/10/2026, OS 008396 Souza Santos): os boletos não têm o mesmo valor nem
+   a mesma distância. "✎ ajustar cada parcela" abre data e valor de cada uma; a soma tem que
+   bater com o total. Fica marcado pag.manual: anexar nota não refaz mais essas parcelas. */
+function ccParcModo(px, totalFixo, on) {
+  window.__ccParc = window.__ccParc || {};
+  var ed = window.__ccParc[px] = window.__ccParc[px] || {};
+  ed.on = on; if (!on) ed.lst = null;
+  ccPagPrev(px, totalFixo);
+}
+function ccParcEd(px, i, campo, el, totalFixo) {
+  var ed = (window.__ccParc || {})[px]; if (!ed || !ed.lst || !ed.lst[i]) return;
+  ed.lst[i][campo] = campo === "valor" ? ccNum(el.value) : el.value;
+  var total = totalFixo != null ? totalFixo : ccNum((document.getElementById("cc-valor") || {}).value);
+  var soma = Math.round(ed.lst.reduce(function (a, p) { return a + (Number(p.valor) || 0); }, 0) * 100) / 100;
+  var bx = document.getElementById(px + "-soma"); if (!bx) return;
+  var ok = Math.abs(soma - total) < 0.05;
+  bx.innerHTML = 'soma <b>' + fmtR(soma) + '</b> · total <b>' + fmtR(total) + '</b> ' + (ok ? '<b style="color:#66BB6A;">✓ bate</b>' : soma < total ? '<b style="color:#E57373;">faltam ' + fmtR(Math.round((total - soma) * 100) / 100) + '</b>' : '<b style="color:#E57373;">passou ' + fmtR(Math.round((soma - total) * 100) / 100) + '</b>');
 }
 function ccPagPrev(px, totalFixo) {
   var cond = (document.getElementById(px + "-cond") || {}).value || "avista";
@@ -15738,16 +15860,43 @@ function ccPagPrev(px, totalFixo) {
   var total = totalFixo != null ? totalFixo : ccNum((document.getElementById("cc-valor") || {}).value);
   var pv = document.getElementById(px + "-prev"); if (!pv) return;
   if (!(total > 0)) { pv.innerHTML = "informe o valor para ver as parcelas"; return; }
+  window.__ccParc = window.__ccParc || {};
+  var ed = window.__ccParc[px] = window.__ccParc[px] || {};
+  var tf = totalFixo != null ? String(Number(totalFixo)) : "null";
+  if (ed.on && cond !== "avista") {   // v527: editor de parcelas
+    var nN = Math.max(1, Math.min(48, parseInt((document.getElementById(px + "-n") || {}).value, 10) || 1));
+    if (!Array.isArray(ed.lst) || ed.lst.length !== nN) {
+      var base = (function () { var e0 = ed.on; ed.on = false; var gg = ccPagLer(px, total); ed.on = e0; return gg.parcelas; })();
+      ed.lst = base.map(function (p) { return { venc: p.venc, valor: p.valor }; });
+    }
+    var ip = 'style="font-size:12px;padding:4px 6px;background:#111;color:#eee;border:1px solid #333;border-radius:5px;"';
+    pv.innerHTML = '<div style="display:flex;flex-direction:column;gap:4px;">' + ed.lst.map(function (p, i) {
+        return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><b style="min-width:36px;">' + (i + 1) + '/' + ed.lst.length + '</b>'
+          + '<input type="date" id="' + px + '-pd-' + i + '" value="' + esc(p.venc || "") + '" ' + ip + ' onchange="ccParcEd(\'' + px + '\',' + i + ',\'venc\',this,' + tf + ')">'
+          + '<input id="' + px + '-pv-' + i + '" inputmode="decimal" value="' + esc(String((Number(p.valor) || 0).toFixed(2)).replace(".", ",")) + '" ' + ip.replace('style="', 'style="width:110px;') + ' oninput="ccParcEd(\'' + px + '\',' + i + ',\'valor\',this,' + tf + ')"></div>';
+      }).join("") + '</div><div id="' + px + '-soma" style="margin-top:4px;"></div>'
+      + '<a href="javascript:void(0)" style="color:#4FC3F7;" onclick="ccParcModo(\'' + px + '\',' + tf + ',false)">↺ dividir em partes iguais</a>';
+    var el0 = document.getElementById(px + "-pv-0"); if (el0) ccParcEd(px, 0, "valor", el0, totalFixo);
+    return;
+  }
   var g = ccPagLer(px, total);
   pv.innerHTML = g.parcelas.map(function (p) { return '<span style="display:inline-block;margin:0 10px 2px 0;">' + (g.parcelas.length > 1 ? "<b>" + p.n + "/" + g.parcelas.length + "</b> " : "") + exDataBr(p.venc) + " · <b style=\"color:#ddd;\">" + fmtR(p.valor) + "</b></span>"; }).join("")
+    + (cond !== "avista" ? ' <a href="javascript:void(0)" style="color:#4FC3F7;white-space:nowrap;" onclick="ccParcModo(\'' + px + '\',' + tf + ',true)">✎ ajustar valor e data de cada parcela</a>' : "")
     + (cond === "cartao" ? '<div style="color:#888;margin-top:3px;">cada parcela é baixada quando a fatura do cartão aparecer no extrato</div>' : "");
 }
-function ccPagEditar(id) { state._ccEdPag = state._ccEdPag === id ? "" : id; render(); setTimeout(function () { var c = ccAcha(id); if (c) ccPagPrev("ccp", ccValorNF(c) || Number(c.valor) || 0); }, 0); }
+function ccPagEditar(id) {
+  state._ccEdPag = state._ccEdPag === id ? "" : id;
+  window.__ccParc = window.__ccParc || {};
+  var c0 = ccAcha(id);
+  window.__ccParc.ccp = c0 && c0.pag && c0.pag.manual && Array.isArray(c0.pag.parcelas) ? { on: true, lst: c0.pag.parcelas.map(function (p) { return { venc: p.venc, valor: p.valor }; }) } : {};   // v527
+  render(); setTimeout(function () { var c = ccAcha(id); if (c) ccPagPrev("ccp", ccValorNF(c) || Number(c.valor) || 0); }, 0); }
 function ccPagSalvar(id) {
   var c = ccAcha(id); if (!c) return;
   if (ccValorPago(c) > 0.004 && !ehAdmin()) { alert("Já tem pagamento no extrato: só o administrador muda a condição."); return; }
   var total = ccValorNF(c) || Number(c.valor) || 0;
   var g = ccPagLer("ccp", total);
+  if (g.erro) { alert(g.erro); return; }   // v527
+  delete g.erro; if (!g.manual) delete g.manual;
   c.pag = g; c.forma = ccCondTexto(c);
   (c.historico = c.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "condição de pagamento: " + ccCondTexto(c) });
   state._ccEdPag = "";
@@ -15976,8 +16125,8 @@ function ccVer(path) {
 }
 
 /* ---- ações ---- */
-function ccToca(c) { if (c) c.atualizadoEm = Date.now(); salvar(); render(); }
-function ccNovaAbrir(on) { state._ccNova = on; state._ccLido = null; state._ccArqs = null; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
+function ccToca(c) { if (c) c.atualizadoEm = Date.now(); try { if (typeof exAutoLigarComprovantes === "function") window.__exAutoN = (window.__exAutoN || 0) + exAutoLigarComprovantes(); } catch (e) { } salvar(); render(); }   // v527
+function ccNovaAbrir(on) { window.__ccParc = window.__ccParc || {}; window.__ccParc.ccn = {}; state._ccNova = on; state._ccLido = null; state._ccArqs = null; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
 function ccCriar() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
   var desc = String(g("cc-desc")).trim(), forn = String(g("cc-forn")).trim(), valor = ccNum(g("cc-valor"));
@@ -15986,6 +16135,9 @@ function ccCriar() {
   var files = arq && arq.files && arq.files.length ? arq.files : (state._ccArqs || []);   // v517
   if (!desc) { alert("Escreva o que está sendo comprado."); return; }
   if (!(valor > 0)) { alert("Informe o valor."); return; }
+  var pagLido = ccPagLer("ccn", valor);   // v527: lê antes de enviar (a tela pode se redesenhar durante o envio)
+  if (pagLido.erro) { alert(pagLido.erro); return; }
+  delete pagLido.erro; if (!pagLido.manual) delete pagLido.manual;
   if (!files.length) { alert("Anexe " + (tipo === "nota" ? "o arquivo da nota fiscal" : tipo === "recibo" ? "o recibo" : tipo === "os" ? "a OS (ordem de serviço)" : "o orçamento") + " (foto ou PDF)."); return; }
   var ehRec = tipo === "recibo"; if (ehRec) tipo = "nota";
   var ehOS = tipo === "os"; if (ehOS) tipo = "orcamento";   // v514: OS segue o caminho do orçamento (aguarda aprovação)
@@ -15997,7 +16149,7 @@ function ccCriar() {
     var agora = new Date().toISOString();
     var c = {
       id: id, numero: ccProxNumero(), descricao: desc, fornecedor: forn, valor: valor,
-      categoria: g("cc-cat"), placa: g("cc-placa"), forma: "", pag: ccPagLer("ccn", valor), obs: String(g("cc-obs")).trim(),
+      categoria: g("cc-cat"), placa: g("cc-placa"), forma: "", pag: pagLido, obs: String(g("cc-obs")).trim(),
       criadoEm: agora, criadoPor: ccQuem(),
       orcamentos: tipo === "nota" ? [] : paths.map(function (p) { var o = { path: p.path, nome: p.nome, em: agora, por: ccQuem() }; if (ehOS) { o.tipoDoc = "os"; if (nOS) o.numero = nOS; } return o; }),
       nfs: tipo === "nota" ? [{ arquivos: paths, valor: valor, numero: String(g("cc-nnf")).trim(), em: agora, por: ccQuem(), tipoDoc: ehRec ? "recibo" : "nf" }] : [],
@@ -16081,7 +16233,9 @@ function ccAnexar(input, id, tipo) {
         ccLerDocIA(files[0]).then(function (j) { var c2 = ccAcha(cid); if (!c2 || j.erro || !(j.itens || []).length || (c2.itens && c2.itens.length)) return; c2.itens = j.itens; if (!c2.fornecedor && j.fornecedor) c2.fornecedor = j.fornecedor; ccToca(c2); });
       }
       var totNF = ccValorNF(c);   // v501: parcelas acompanham o valor da nota enquanto nada foi pago
-      if (c.pag && ccValorPago(c) < 0.005 && Math.abs(ccSoma(c.pag.parcelas) - totNF) >= 0.05) {
+      if (c.pag && c.pag.manual && Math.abs(ccSoma(c.pag.parcelas) - totNF) >= 0.05) {   // v527: parcelas ajustadas à mão não são refeitas
+        (c.historico = c.historico || []).push({ em: agora, por: "sistema", o: "notas somam " + fmtR(totNF) + " e as parcelas ajustadas à mão somam " + fmtR(ccSoma(c.pag.parcelas)) + " — confira em ✎ condição de pagamento" });
+      } else if (c.pag && ccValorPago(c) < 0.005 && Math.abs(ccSoma(c.pag.parcelas) - totNF) >= 0.05) {
         c.pag.parcelas = ccGerarParcelas(totNF, c.pag.n || (c.pag.parcelas || []).length || 1, c.pag.venc1, c.pag.cond, c.pag.intervalo);
         (c.historico = c.historico || []).push({ em: agora, por: "sistema", o: "parcelas recalculadas pelo valor da nota (" + fmtR(totNF) + ")" });
       }
@@ -16385,7 +16539,7 @@ function ccNovaHTML() {
   var inp = 'style="font-size:13px;padding:7px 9px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;width:100%;box-sizing:border-box;"';
   var lab = function (t) { return '<div style="font-size:10.5px;color:#999;margin:7px 0 3px;font-weight:700;">' + t + '</div>'; };
   var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean).sort();
-  return '<div style="border:1px solid ' + GOLD + ';border-radius:10px;padding:12px 14px;margin-bottom:14px;background:rgba(212,160,23,0.05);">'
+  return '<div id="cc-nova-box" style="border:1px solid ' + GOLD + ';border-radius:10px;padding:12px 14px;margin-bottom:14px;background:rgba(212,160,23,0.05);">'
     + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';">Nova compra</div>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px;">'
     + '<div>' + lab("O que está sendo comprado *") + '<input id="cc-desc" ' + inp + ' placeholder="ex.: 2 pneus 275/80 para o QEN6J82"></div>'
@@ -16535,6 +16689,55 @@ function ccContextoAssistente() {
 var EX_CAT_SAIDA = ["Pagamento de motorista", "Folha / salários", "Combustível", "Pedágio", "Imposto / DAS", "Tarifa bancária", "Parcela / dívida fixa", "Transferência entre contas", "Retirada do sócio", "Outros"];
 var EX_CAT_ENTRADA = ["Aporte do sócio", "Empréstimo / financiamento", "Transferência entre contas", "Estorno / devolução", "Rendimento", "Outros"];
 function exLista() { if (!Array.isArray(state.extratos)) state.extratos = []; return state.extratos; }
+/* v527 — Renato (01/10/2026): "o R$ 68 da Central não aparece quando vou conciliar". A tela abria
+   sempre no PRIMEIRO extrato da lista (Itaú de setembro) e o PIX estava no extrato do Nubank de
+   01/10. Agora abre no importado por último. */
+function exMaisRecenteId() {
+  var best = null;
+  exLista().forEach(function (e) {
+    if (e.manual) return;
+    var t = Number(e.importadoEm ? (typeof e.importadoEm === "number" ? e.importadoEm : Date.parse(e.importadoEm)) : 0) || Number(String(e.id).replace(/\D/g, "").slice(0, 13)) || 0;
+    if (!best || t > best.t) best = { id: e.id, t: t };
+  });
+  return best ? best.id : ((exLista()[0] || {}).id || "");
+}
+/* v527 — COMPROVANTE QUE BATE COM O EXTRATO LIGA SOZINHO. O comprovante anexado na compra
+   (valor, data e quem recebeu, lidos pela IA) e a saída do extrato são o mesmo pagamento:
+   mesmo valor, mesma data (±1 dia) e o nome de quem recebeu na descrição do banco. Achando
+   UMA saída só nessas condições, o sistema faz o "✓ é este pagamento" sozinho (só para o
+   administrador, que é quem concilia). Comprovante repartido entre várias compras segue o
+   caminho do v524. Desfazer no extrato continua funcionando. */
+function exAutoLigarComprovantes() {
+  if (typeof ehAdmin !== "function" || !ehAdmin() || !window.__rfDadosCarregados) return 0;
+  var livres = exTodasLinhas().filter(function (x) { return !x.l.vinc && x.l.valor < 0; });
+  if (!livres.length) return 0;
+  var dias = function (a, b) { return Math.abs((new Date(a + "T12:00:00Z") - new Date(b + "T12:00:00Z")) / 86400000); };
+  var n = 0;
+  ccLista().forEach(function (c) {
+    var st = ccStatus(c);
+    if (st === "cancelada" || st === "reprovada" || st === "conciliada" || st === "aprovacao" || ccCond(c) === "cartao") return;
+    (c.compArqs || []).forEach(function (r) {
+      if (!r || r.rateio || r.ligadoLinha || r.repartidoDe) return;
+      var v = Number(r.valor) || 0; if (!(v > 0) || !r.dataPag) return;
+      if (exCompraRestante(c) < v - 0.05) return;
+      if ((c.comprovantes || []).some(function (p) { return p.origem === "extrato" && Math.abs((Number(p.valor) || 0) - v) < 0.05 && dias(p.dataPag || r.dataPag, r.dataPag) <= 1; })) return;
+      var cands = livres.filter(function (x) { return !x.l.vinc && Math.abs(Math.abs(x.l.valor) - v) < 0.05 && x.l.data && dias(x.l.data, r.dataPag) <= 1; });
+      var nome = ccNormNome(r.recebedor || "").split(" ").filter(function (t) { return t.length >= 4 && !/^(ltda|comercio|servicos|servico|pagamentos|banco|brasil)$/.test(t); });
+      if (nome.length) cands = cands.filter(function (x) { var d = ccNormNome(x.l.desc); return nome.some(function (t) { return d.indexOf(t) !== -1; }); });
+      else cands = cands.filter(function (x) { return x.l.data === r.dataPag; });
+      if (cands.length > 1) { var mesmoDia = cands.filter(function (x) { return x.l.data === r.dataPag; }); if (mesmoDia.length) cands = mesmoDia; }
+      if (cands.length !== 1) return;
+      var x = cands[0], agora = new Date().toISOString();
+      x.l.vinc = { tipo: "compra", id: c.id, por: "automático (comprovante = extrato)", em: agora }; delete x.l.sug;
+      (c.comprovantes = c.comprovantes || []).push({ arquivos: x.e.arquivo ? [{ path: x.e.arquivo, nome: "Extrato " + x.e.banco }] : [], valor: Math.abs(x.l.valor), em: agora, por: "sistema",
+        origem: "extrato", extratoId: x.e.id, linhaId: x.l.id, dataPag: x.l.data, desc: x.l.desc });
+      (c.historico = c.historico || []).push({ em: agora, por: "sistema", o: "pagamento achado sozinho no extrato " + x.e.banco + " de " + exDataBr(x.l.data) + ": " + fmtR(Math.abs(x.l.valor)) + " — bate com o comprovante anexado" });
+      r.ligadoLinha = x.l.id;
+      ccTentarConciliar(c); c.atualizadoEm = Date.now(); x.e.atualizadoEm = Date.now(); n++;
+    });
+  });
+  return n;
+}
 function exAcha(id) { return exLista().filter(function (x) { return String(x.id) === String(id); })[0]; }
 function exDataBr(iso) { return iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(0, 4) : ""; }
 function exNumBR(s) {
@@ -17448,7 +17651,7 @@ function exAutoVincular(ext) {
   });
 }
 function exLinha(extId, linId) { var e = exAcha(extId); if (!e) return {}; return { e: e, l: (e.linhas || []).filter(function (x) { return x.id === linId; })[0] }; }
-function exSalvar(e) { e.atualizadoEm = Date.now(); exSincPago(); salvar(); render(); }
+function exSalvar(e) { e.atualizadoEm = Date.now(); try { window.__exAutoN = (window.__exAutoN || 0) + exAutoLigarComprovantes(); } catch (e2) { } exSincPago(); salvar(); render(); }   // v527
 function exVincCompra(extId, linId, compraId) {
   if (!ehAdmin()) return;
   var o = exLinha(extId, linId), c = ccAcha(compraId); if (!o.l || !c) return;
@@ -17799,7 +18002,7 @@ function exPainelEntradaNormal(e, l) {
 }
 function exTelaHTML() {
   if (!ehAdmin()) return '<div style="font-size:12px;color:#888;">O extrato bancário é conciliado só pelo administrador.</div>';
-  var exs = exLista(), sel = state._exSel || (exs[0] && exs[0].id) || "", filtro = state._exFiltro || "pendentes";
+  var exs = exLista(), sel = (state._exSel && exAcha(state._exSel) ? state._exSel : "") || exMaisRecenteId() || "", filtro = state._exFiltro || "pendentes";   // v527: abre no extrato importado por último
   var alvo = sel === "todos" ? exs : exs.filter(function (e) { return e.id === sel; });
   var linhas = []; alvo.forEach(function (e) { (e.linhas || []).forEach(function (l) { linhas.push({ e: e, l: l }); }); });
   linhas.sort(function (a, b) { return String(a.l.data).localeCompare(String(b.l.data)); });
@@ -21839,8 +22042,9 @@ function carregarPerfilEEntrar(sb, user) {
 // telefones diferentes mostrarem coisas diferentes para o MESMO usuario.
 // Esta funcao roda toda vez que o app abre (se ja tem sessao local) e busca o
 // perfil atual no banco, corrigindo a sessao local sem precisar deslogar.
-function revalidarSessaoAoAbrir() {
+function revalidarSessaoAoAbrir(tent) {
   if (!state.sessao || !state.sessao.uid) return;
+  if (typeof rfGetClient !== "function") { if ((tent || 0) < 40) setTimeout(function () { revalidarSessaoAoAbrir((tent || 0) + 1); }, 250); return; }   // v527: rfGetClient fica num bloco carregado depois -- erro "rfGetClient is not defined" em toda abertura
   rfGetClient().then(function (sb) {
     if (!sb) return;
     sb.from("profiles").select("*").eq("id", state.sessao.uid).single().then(function (res) {
@@ -30053,6 +30257,7 @@ function gerarContextoAssistente() {
   const blocoLogos = "ENVIO DE DOCUMENTOS (v433, 25/09/2026): todo CT-e e MDF-e emitido pelo app entra sozinho nos documentos fiscais da viagem, com XML e PDF (DACTE/DAMDFE) guardados; o encerramento feito pelo app tambem vira registro. No quadro do MDF-e ha o botao Enviar documentos: para o motorista manda os PDFs direto no WhatsApp (compartilhar do celular/tablet); para o Andre (v508) baixa um ZIP so com DACTE + espelho e copia o e-mail pronto com placa, motorista e numero, cliente, NF e chave de cada CT-e. O Tudo desta viagem (ZIP) tambem passa a levar a pasta pdf/. EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoAtualizacao = "ATUALIZACAO AUTOMATICA DO SISTEMA (v526, 01/10/2026 -- Renato: 'estou tendo que mandar o index para a Sandra porque no note dela nao atualiza; o note da Flavia atualiza'): todo aparelho confere sozinho, ao abrir, a cada 5 minutos e sempre que a tela volta a ficar visivel, qual e a versao publicada no GitHub (rflogistica.github.io/rf-logistica-app). Se a publicada for mais nova: (1) quem usa o sistema pelo endereco online ve a faixa dourada 'Nova versao vN' e o sistema se atualiza sozinho em 30 segundos, mas so quando ninguem esta digitando e o canto mostra sincronizado (senao espera e tenta de novo); tem o botao 'Atualizar agora'; (2) quem abriu uma COPIA SALVA do index.html no computador (arquivo local, file:///) ve a faixa avisando que aquela copia nao se atualiza e o botao 'Abrir a versao online' -- a solucao definitiva e usar sempre o endereco online (favorito ou app instalado a partir dele), nunca um arquivo baixado. Esta versao: " + RF_SISTEMA.versao + ", aberta " + (location.protocol === "file:" ? "como ARQUIVO LOCAL (nao atualiza sozinha)" : "pelo endereco " + location.host) + ".";
+  const bloco527 = "V527 (01/10/2026): (1) SINCRONIZACAO -- a atualizacao em tempo real vinda de outro aparelho deixou de substituir a lista inteira (e de ser ignorada nos 6 s depois de uma edicao); agora une item a item como o download e, se a nuvem ficou sem algo deste aparelho, reenvia. Na MESMA compra, notas, comprovantes, pagamentos do extrato, orcamentos e historico dos dois aparelhos sao somados (so some o que alguem realmente tirou, anotado em _rem); no mesmo extrato cada linha fica com quem ligou/desfez por ultimo. Casos que motivaram (01/10): NFS-e 469 da compra 12 sumiu, comprovante do financeiro na 11 sumiu, compra do Marcelo das 12:12 sumiu, OS da Sandra (ela usava copia salva do index, v519-v523 em Downloads). (2) NOVA COMPRA e CONDICAO DE PAGAMENTO nao se apagam mais quando a tela se redesenha (antes voltavam para a vista/1 parcela/orcamento/sem placa). (3) PARCELAS: link '✎ ajustar valor e data de cada parcela' -- cada boleto com seu valor e vencimento; a soma tem que bater com o total; anexar nota nao refaz parcelas ajustadas a mao. (4) CONCILIACAO abre no extrato importado por ultimo. (5) COMPROVANTE anexado que bate com uma saida do extrato (mesmo valor, data +-1 dia, nome de quem recebeu na descricao) e ligado sozinho -- historico 'pagamento achado sozinho no extrato'. Ligados sozinhos nesta sessao: " + (window.__exAutoN || 0) + ".";
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
   const blocoSync = _syncLigado
     ? "SINCRONIZACAO: ligada (dados da nuvem ja carregados nesta sessao)."
@@ -30719,6 +30924,7 @@ ${blocoSync}
 
 ${blocoUniao}
 ${blocoAtualizacao}
+${bloco527}
 ${blocoLogos}
 ${blocoDocsViagem}
 ${blocoConciliacao}
@@ -34732,6 +34938,31 @@ revalidarSessaoAoAbrir();
           // essa atualização recebida agora — ela pode ser mais antiga que a minha
           // edição em andamento. Assim que meu envio terminar e ultimoEnviado
           // atualizar, a próxima atualização real (se houver) passa normalmente.
+          /* v527: listas com id (compras, extratos, viagens...) NUNCA sao substituidas nem
+             ignoradas: une item a item com o que este aparelho tem; se a nuvem ficou sem
+             algo daqui (outro aparelho salvou por cima), reenvia. O que nao e lista segue
+             a regra antiga (6 s de protecao + substitui). */
+          var ehListaRT = RF_CHAVES_LISTA.indexOf(nova.chave) !== -1 && rfListaTemId(nova.valor) && (!Array.isArray(state[nova.chave]) || rfListaTemId(state[nova.chave]));
+          if (nova.chave === "lapides" && Array.isArray(nova.valor)) {
+            state.lapides = rfUnirLapides(state.lapides, nova.valor, Date.now());
+            ultimoEnviado.lapides = JSON.stringify(nova.valor);
+            try { localStorage.setItem(MAPA_LS.lapides, JSON.stringify(state.lapides)); } catch (e) {}
+            if (JSON.stringify(state.lapides) !== ultimoEnviado.lapides && dadosCarregados) agendarSubida();
+            return;
+          }
+          if (ehListaRT) {
+            if (!dadosCarregados) return;
+            try { rfCarimbarTudo(); } catch (e) {}   // carimba antes o que foi editado aqui e ainda nao subiu
+            var remJ = {}, remIds = [];
+            nova.valor.forEach(function (x) { if (x && x.id != null) { var kx = String(x.id); remIds.push(kx); try { remJ[kx] = JSON.stringify(x); } catch (e) {} } });
+            var unidaRT = rfUnirLista(state[nova.chave], nova.valor, state.lapides);
+            var reenviar = rfLocalTemMaisNovo(unidaRT, remJ, remIds);
+            state[nova.chave] = unidaRT;
+            ultimoEnviado[nova.chave] = txt;   // o que a nuvem tem agora
+            try { localStorage.setItem(MAPA_LS[nova.chave], JSON.stringify(unidaRT)); } catch (e) {}
+            try { window.__rfSnap = window.__rfSnap || {}; window.__rfSnap[nova.chave] = rfCarimbar(unidaRT, null, Date.now()).snap; } catch (e) {}   // linha de base: nao carimbar como "meu" o que veio de fora
+            if (reenviar) agendarSubida();
+          } else {
           if (Date.now() - _ultimaEdicaoLocalTs < 6000) return;
           state[nova.chave] = nova.chave === "motoristasCad"
             ? unirFichas(state[nova.chave], nova.valor)
@@ -34740,6 +34971,7 @@ revalidarSessaoAoAbrir();
             : nova.valor;
           ultimoEnviado[nova.chave] = JSON.stringify(state[nova.chave]);
           try { localStorage.setItem(MAPA_LS[nova.chave], ultimoEnviado[nova.chave]); } catch (e) {}
+          }
           if (nova.chave === "viagens") { migrarIdsViagens(); }
           if (nova.chave === "oleoTrocas") { migrarTrocasOleoFiltros(); }
           if (nova.chave === "usuarios" || nova.chave === "config") { garantirAcesso(); }
@@ -36651,6 +36883,74 @@ if ("serviceWorker" in navigator) {
   setInterval(checar, 5 * 60 * 1000);
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") checar(); });
   window.addEventListener("online", checar);
+})();
+</script>
+<!-- v527: (a) a NOVA COMPRA e a CONDICAO DE PAGAMENTO guardam o que a pessoa escolheu quando a
+     tela se redesenha (sincronizacao, IA terminando de ler). Caso real 01/10: OS 008396 marcada
+     3x saiu "a vista, 1 parcela, orcamento, sem placa". So mexe nesses dois formularios.
+     (b) a cada 15 s, para o administrador, liga sozinho o comprovante que bate com o extrato. -->
+<script>
+"use strict";
+(function () {
+  if (typeof render !== "function") return;
+  var orig = render;
+  function coletar() {
+    var o = { nova: null, ccp: null };
+    try {
+      var box = document.getElementById("cc-nova-box");
+      if (box && state._ccNova) {
+        o.nova = {};
+        box.querySelectorAll("input[id],select[id],textarea[id]").forEach(function (el) { if (el.type !== "file" && el.type !== "radio" && el.type !== "checkbox") o.nova[el.id] = el.value; });
+        ["cc-ia", "cc-itens-lidos"].forEach(function (id) { var el = document.getElementById(id); if (el && el.innerHTML) o.nova["#html#" + id] = el.innerHTML; });
+      }
+      if (state._ccEdPag && document.getElementById("ccp-cond")) {
+        o.ccp = { comp: state._ccEdPag, v: {} };
+        document.querySelectorAll('[id^="ccp-"]').forEach(function (el) { if ((el.tagName === "INPUT" || el.tagName === "SELECT") && el.type !== "radio") o.ccp.v[el.id] = el.value; });
+      }
+    } catch (e) { }
+    return o;
+  }
+  function marcarRadio(nome, valor) {
+    document.querySelectorAll('input[name="' + nome + '"]').forEach(function (r) { r.checked = (r.getAttribute("onchange") || "").indexOf("'" + valor + "'") !== -1; });
+  }
+  function devolver(o) {
+    try {
+      if (o.nova && state._ccNova && document.getElementById("cc-nova-box")) {
+        Object.keys(o.nova).forEach(function (id) {
+          if (id.indexOf("#html#") === 0) { var h = document.getElementById(id.slice(6)); if (h && !h.innerHTML) h.innerHTML = o.nova[id]; return; }
+          var el = document.getElementById(id); if (el && el.value !== o.nova[id]) el.value = o.nova[id];
+        });
+        var tp = o.nova["cc-tipo"]; if (tp) { marcarRadio("cc-tipo-r", tp); if (typeof ccTipoSet === "function") ccTipoSet(tp); }
+        var cd = o.nova["ccn-cond"]; if (cd) marcarRadio("ccn-cond-r", cd);
+        if (typeof ccPagPrev === "function") ccPagPrev("ccn", null);
+      }
+      if (o.ccp && state._ccEdPag === o.ccp.comp && document.getElementById("ccp-cond")) {
+        Object.keys(o.ccp.v).forEach(function (id) { var el = document.getElementById(id); if (el && el.value !== o.ccp.v[id]) el.value = o.ccp.v[id]; });
+        if (o.ccp.v["ccp-cond"]) marcarRadio("ccp-cond-r", o.ccp.v["ccp-cond"]);
+        var c = typeof ccAcha === "function" ? ccAcha(o.ccp.comp) : null;
+        if (c && typeof ccPagPrev === "function") ccPagPrev("ccp", ccValorNF(c) || Number(c.valor) || 0);
+      }
+    } catch (e) { }
+  }
+  render = function () {
+    var o = coletar();
+    var r = orig.apply(this, arguments);
+    if (o.nova || o.ccp) devolver(o);
+    return r;
+  };
+  window.__exAutoN = 0;
+  setInterval(function () {
+    try {
+      if (typeof exAutoLigarComprovantes !== "function") return;
+      var n = exAutoLigarComprovantes();
+      if (n > 0) {
+        window.__exAutoN += n;
+        salvar();
+        var a = document.activeElement;
+        if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render();
+      }
+    } catch (e) { try { window.rfLogErro && window.rfLogErro("autoliga", e && e.message, e && e.stack); } catch (e2) { } }
+  }, 15000);
 })();
 </script>
 
