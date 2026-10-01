@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v528)</title>
+<title>RF Logística — Painel da Frota (v529)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v528">
+<meta name="rf-versao" content="v529">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v528" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v529" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -16005,6 +16005,7 @@ function ccLerValorArquivo(input) {
   ccLerDocIA(f).then(function (j) {
     if (j.erro) { if (st) st.textContent = "🤖 não consegui ler (" + j.erro + ") — preencha à mão"; return; }
     state._ccLido = j;
+    try { var dupL = ccAcharDuplicada(ccNovoDocInfo()); if (dupL && st) { setTimeout(function () { var s2 = document.getElementById("cc-ia"); if (s2) s2.innerHTML = '<b style="color:#E57373;">⛔ Este documento já foi lançado: compra nº ' + esc(dupL.c.numero) + ' (' + esc(dupL.c.criadoPor || "") + ') — ' + esc(dupL.motivo) + '. Não vai ser aceito.</b>'; }, 50); } } catch (eD) { }   // v529
     var set = function (id, v) { var el = document.getElementById(id); if (el && v && !String(el.value || "").trim()) el.value = v; };
     if (j.total > 0 && !ccNum(alvo.value)) alvo.value = String(Number(j.total).toFixed(2)).replace(".", ",");
     set("cc-forn", j.fornecedor);
@@ -16127,6 +16128,96 @@ function ccVer(path) {
 /* ---- ações ---- */
 function ccToca(c) { if (c) c.atualizadoEm = Date.now(); try { if (typeof exAutoLigarComprovantes === "function") window.__exAutoN = (window.__exAutoN || 0) + exAutoLigarComprovantes(); } catch (e) { } salvar(); render(); }   // v527
 function ccNovaAbrir(on) { window.__ccParc = window.__ccParc || {}; window.__ccParc.ccn = {}; state._ccNova = on; state._ccLido = null; state._ccArqs = null; render(); if (on) setTimeout(function () { ccPagPrev("ccn", null); }, 0); }
+/* v529 — DOCUMENTO LANÇADO DUAS VEZES (Renato, 01/10/2026: "não pode ler duas vezes o mesmo
+   orçamento/OS, ex.: Sandra lança e depois Renato ou Flávia lança a mesma, o sistema tem que
+   identificar e não aceitar"). Duas travas, as duas antes de enviar:
+   (1) CONTEÚDO — o que a IA leu (e o que foi digitado) comparado com as compras que existem
+       (menos canceladas/reprovadas), do MESMO fornecedor (CNPJ, ou nome): mesmo nº de OS/
+       orçamento; ou mesmo valor + mesmos itens; ou mesmo valor + mesma data do documento.
+       Pega a mesma OS fotografada de novo ou mandada por outra pessoa no WhatsApp.
+   (2) ARQUIVO — impressão digital do arquivo (SHA-256; foto também pelo dHash) gravada na tabela
+       fotos_hash do banco ("compra <id>"). O mesmo arquivo não entra de novo nem se duas pessoas
+       enviarem no mesmo minuto em aparelhos diferentes: quem grava primeiro fica, o outro é
+       recusado. Cancelar, reprovar ou excluir a compra libera o documento.
+   Nota fiscal: o mesmo número de nota do mesmo fornecedor não entra em duas compras. */
+function ccDocNum(x) { return String(x == null ? "" : x).replace(/\D/g, "").replace(/^0+/, ""); }
+function ccFornTokens(nome) { return ccNormNome(nome).split(" ").filter(function (t) { return t.length >= 4 && !/^(comercio|servicos|servico|ltda|pecas|peca|distribuidora|auto|veiculos|para|equipadora|industria|transportes)$/.test(t); }); }
+function ccFornIgual(a, b) {
+  var ca = ccDocNum(a.cnpj), cb = ccDocNum(b.cnpj);
+  if (ca.length >= 11 && cb.length >= 11) return ca === cb;
+  var ta = ccFornTokens(a.nome), tb = ccFornTokens(b.nome);
+  return ta.length > 0 && ta.some(function (t) { return tb.indexOf(t) !== -1; });
+}
+function ccItensSig(itens) {
+  if (!Array.isArray(itens) || !itens.length) return "";
+  return itens.map(function (i) { return ccNormNome(i.descricao) + "=" + (Math.round((Number(i.valor) || 0) * 100)); }).sort().join("|");
+}
+function ccAcharDuplicada(novo, ignorarId) {
+  var achou = null;
+  ccLista().forEach(function (c) {
+    if (achou || String(c.id) === String(ignorarId || "")) return;
+    var st = ccStatus(c); if (st === "cancelada" || st === "reprovada") return;
+    var d = c.docLido || {};
+    if (!ccFornIgual({ cnpj: d.cnpj, nome: d.fornecedor || c.fornecedor }, { cnpj: novo.cnpj, nome: novo.nome })) return;
+    var nums = [ccDocNum(c.os && c.os.numero), ccDocNum(d.numero)].concat((c.orcamentos || []).map(function (o) { return ccDocNum(o.numero); })).filter(Boolean);
+    if (novo.num && nums.indexOf(novo.num) !== -1) { achou = { c: c, motivo: "o mesmo nº de OS/orçamento (" + novo.num + ")" }; return; }
+    var tot = Number(d.total) || Number(c.valor) || 0;
+    if (novo.total > 0 && Math.abs(tot - novo.total) < 0.05) {
+      if (novo.itens && novo.itens === ccItensSig(c.itens)) { achou = { c: c, motivo: "os mesmos itens e o mesmo valor (" + fmtR(tot) + ")" }; return; }
+      if (novo.data && d.data && novo.data === d.data) { achou = { c: c, motivo: "o mesmo valor (" + fmtR(tot) + ") e a mesma data do documento (" + d.data + ")" }; return; }
+    }
+  });
+  return achou;
+}
+function ccDupMsg(dup) {
+  var c = dup.c, quem = c.criadoPor || "", quando = c.criadoEm ? new Date(c.criadoEm).toLocaleString("pt-BR") : "";
+  return "⛔ ESTE DOCUMENTO JÁ FOI LANÇADO.\n\nCompra nº " + c.numero + " — " + (c.descricao || "") + "\nfornecedor " + (c.fornecedor || "") + " · " + fmtR(Number(c.valor) || 0)
+    + "\nlançada por " + quem + (quando ? " em " + quando : "") + " (" + (CC_ST[ccStatus(c)] ? CC_ST[ccStatus(c)].nome : ccStatus(c)) + ")"
+    + "\n\nMotivo: " + dup.motivo + ".\n\nNão foi lançado de novo.";
+}
+function ccNovoDocInfo() {
+  var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
+  var j = state._ccLido || {};
+  return { cnpj: j.cnpj || "", nome: j.fornecedor || g("cc-forn"), num: ccDocNum(g("cc-nos") || j.numero), total: Number(j.total) || ccNum(g("cc-valor")) || 0, data: j.data || "", itens: ccItensSig(j.itens) };
+}
+/* reserva no banco a impressão digital dos arquivos; {dup, dono} se alguém já usou */
+function ccDocReservar(files, ref, contexto, placa) {
+  var lista = Array.prototype.slice.call(files || []);
+  if (!lista.length || typeof rfFotoSha !== "function") return Promise.resolve({ dup: false });
+  /* só o SHA (arquivo idêntico: o mesmo arquivo reenviado ou encaminhado no WhatsApp). O dHash
+     das fotos NÃO é usado aqui: fotos de papel branco com texto dão dHash parecidos e iriam
+     recusar orçamentos diferentes. A mesma OS fotografada de novo é pega pela trava de conteúdo. */
+  var infos = [];
+  return lista.reduce(function (p, f) {
+    return p.then(function (r) { if (r && r.dup) return r; return rfFotoSha(f).then(function (sha) { if (sha) infos.push({ sha: sha }); return null; }); });
+  }, Promise.resolve(null)).then(function () {
+    return rfGetClient().then(function (sb) {
+      if (!sb) return { dup: false };
+      var shas = infos.map(function (i) { return i.sha; });
+      if (!shas.length) return { dup: false };
+      return sb.from(RF_FOTOS_TABELA).select("*").in("hash", shas).limit(1).then(function (resE) {
+      if (resE && !resE.error && resE.data && resE.data.length) return { dup: true, dono: resE.data[0], via: "arquivo idêntico" };
+      return infos.filter(function (i) { return i.sha; }).reduce(function (p, i) {
+        return p.then(function (r2) {
+          if (r2 && r2.dup) return r2;
+          return sb.from(RF_FOTOS_TABELA).insert({ hash: i.sha, dhash: null, contexto: contexto, caminho: "", placa: placa || "", referencia: ref,
+            quem: (state.sessao && state.sessao.uid) || null, quem_nome: (state.sessao && (state.sessao.nome || state.sessao.email)) || "", criado_em: Date.now() })
+            .then(function (res) {
+              if (res && res.error && /duplicate|already exists|23505/i.test((res.error.message || "") + (res.error.code || ""))) return { dup: true, dono: { referencia: "", quem_nome: "outra pessoa", criado_em: Date.now() }, via: "arquivo idêntico enviado agora há pouco" };
+              return null;
+            });
+        });
+      }, Promise.resolve(null)).then(function (r3) { return r3 || { dup: false }; });
+      });
+    });
+  }).catch(function () { return { dup: false }; });   // sem internet: não trava (a trava de conteúdo continua valendo)
+}
+function ccDupArqMsg(rv) {
+  var d = rv.dono || {}, ref = String(d.referencia || ""), m = ref.match(/^compra (\S+)/), c = m ? ccAcha(m[1]) : null;
+  if (c) return ccDupMsg({ c: c, motivo: "o mesmo arquivo (" + (rv.via || "idêntico") + ")" });
+  return "⛔ ESTE ARQUIVO JÁ FOI USADO" + (d.quem_nome ? " por " + d.quem_nome : "") + (d.criado_em ? " em " + new Date(Number(d.criado_em)).toLocaleString("pt-BR") : "") + (d.contexto ? " (" + d.contexto + ")" : "") + ".\n\nNão foi lançado de novo.";
+}
+function ccDocLiberar(c) { try { if (c && typeof rfFotoLimparReferencia === "function") rfFotoLimparReferencia("compra " + c.id); } catch (e) { } }
 function ccCriar() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
   var desc = String(g("cc-desc")).trim(), forn = String(g("cc-forn")).trim(), valor = ccNum(g("cc-valor"));
@@ -16143,9 +16234,17 @@ function ccCriar() {
   var ehRec = tipo === "recibo"; if (ehRec) tipo = "nota";
   var ehOS = tipo === "os"; if (ehOS) tipo = "orcamento";   // v514: OS segue o caminho do orçamento (aguarda aprovação)
   var nOS = ehOS ? String(g("cc-nos")).trim() : "";   // v505: recibo segue o caminho da nota, marcado como recibo
+  var dupC = ccAcharDuplicada(ccNovoDocInfo());   // v529
+  if (dupC) { alert(ccDupMsg(dupC)); return; }
   var id = "cc" + Date.now() + Math.random().toString(36).slice(2, 6);
   var btn = document.getElementById("cc-btn-criar");
-  if (btn) { btn.disabled = true; btn.textContent = "enviando..."; }
+  if (btn) { btn.disabled = true; btn.textContent = "conferindo se já foi lançado..."; }
+  var lidoAgora = state._ccLido;
+  ccDocReservar(files, "compra " + id, ehOS ? "compra-os" : "compra-orcamento", g("cc-placa")).then(function (rv) {
+  if (rv && rv.dup) { alert(ccDupArqMsg(rv)); if (btn) { btn.disabled = false; btn.textContent = "Enviar para aprovação"; } return; }
+  var dupC2 = ccAcharDuplicada(ccNovoDocInfo());   // pode ter chegado de outro aparelho enquanto conferia
+  if (dupC2) { ccDocLiberar({ id: id }); alert(ccDupMsg(dupC2)); if (btn) { btn.disabled = false; btn.textContent = "Enviar para aprovação"; } return; }
+  if (btn) btn.textContent = "enviando...";
   ccSubir(files, id, ehRec ? "recibo" : tipo === "nota" ? "nf" : ehOS ? "os" : "orcamento").then(function (paths) {
     var agora = new Date().toISOString();
     var c = {
@@ -16158,6 +16257,8 @@ function ccCriar() {
     };
     if (tipo === "nota") c.semAprovacaoPrevia = true;
     if (ehOS) c.os = { numero: nOS };   // v514
+    if (!state._ccLido && lidoAgora) state._ccLido = lidoAgora;
+    if (state._ccLido && !(state._ccLido.itens || []).length) c.docLido = { fornecedor: state._ccLido.fornecedor || "", cnpj: state._ccLido.cnpj || "", numero: state._ccLido.numero || "", data: state._ccLido.data || "", placa: state._ccLido.placa || "", total: state._ccLido.total || 0, condicao: state._ccLido.condicao || "" };   // v529: guarda o que leu mesmo sem itens (serve para achar duplicada)
     if (state._ccLido && (state._ccLido.itens || []).length) { c.itens = state._ccLido.itens; c.docLido = { fornecedor: state._ccLido.fornecedor || "", cnpj: state._ccLido.cnpj || "", numero: state._ccLido.numero || "", data: state._ccLido.data || "", placa: state._ccLido.placa || "", total: state._ccLido.total || 0, condicao: state._ccLido.condicao || "" }; }   // v506
     state._ccLido = null; state._ccArqs = null;
     c.forma = ccCondTexto(c);
@@ -16166,8 +16267,10 @@ function ccCriar() {
     state._ccNova = false;
     ccToca(c);
   }).catch(function (e) {
+    ccDocLiberar({ id: id });   // v529: envio falhou -> o documento fica livre de novo
     alert("Não consegui enviar o arquivo: " + (e.message || e));
     if (btn) { btn.disabled = false; btn.textContent = "Enviar para aprovação"; }
+  });
   });
 }
 function ccAprovar(id) {
@@ -16182,7 +16285,7 @@ function ccReprovar(id) {
   if (!ehAdmin()) { alert("Só o administrador reprova compras."); return; }
   var c = ccAcha(id); if (!c) return;
   var m = prompt("Motivo da reprovação:", ""); if (m == null) return;
-  c.reprovada = true; c.motivo = String(m).trim(); c.reprovadoEm = new Date().toISOString(); c.reprovadoPor = ccQuem();
+  c.reprovada = true; c.motivo = String(m).trim(); c.reprovadoEm = new Date().toISOString(); c.reprovadoPor = ccQuem(); ccDocLiberar(c);   // v529
   (c.historico = c.historico || []).push({ em: c.reprovadoEm, por: c.reprovadoPor, o: "reprovou" + (c.motivo ? ": " + c.motivo : "") });
   ccToca(c);
 }
@@ -16190,7 +16293,7 @@ function ccCancelar(id) {
   var c = ccAcha(id); if (!c) return;
   if (!ehAdmin() && c.aprovadoEm) { alert("Compra já aprovada só o administrador cancela."); return; }
   var m = prompt("Por que cancelar esta compra?", ""); if (m == null) return;
-  c.cancelada = true; c.motivo = String(m).trim(); c.canceladaEm = new Date().toISOString();
+  c.cancelada = true; c.motivo = String(m).trim(); c.canceladaEm = new Date().toISOString(); ccDocLiberar(c);   // v529
   (c.historico = c.historico || []).push({ em: c.canceladaEm, por: ccQuem(), o: "cancelou" + (c.motivo ? ": " + c.motivo : "") });
   ccToca(c);
 }
@@ -16223,6 +16326,14 @@ function ccAnexar(input, id, tipo) {
   var valor = ccNum(v);
   if (!(valor > 0)) { alert("Valor inválido."); input.value = ""; return; }
   var nnf = ehNF ? prompt(ehRecibo ? "Número do recibo (opcional):" : "Número da nota (opcional):", "") : null;
+  if (ehNF && !ehRecibo && ccDocNum(nnf)) {   // v529: a mesma nota do mesmo fornecedor em outra compra
+    var nN = ccNormNumNF(nnf), dN = null;
+    ccLista().forEach(function (x) { if (dN || x === c) return; var s3 = ccStatus(x); if (s3 === "cancelada" || s3 === "reprovada") return;
+      if (ccNumerosNF(x).indexOf(nN) !== -1 && ccFornIgual({ cnpj: (x.docLido || {}).cnpj, nome: (x.docLido || {}).fornecedor || x.fornecedor }, { cnpj: (c.docLido || {}).cnpj, nome: (c.docLido || {}).fornecedor || c.fornecedor })) dN = x; });
+    if (dN) { alert(ccDupMsg({ c: dN, motivo: "a nota nº " + nnf + " do mesmo fornecedor já está nesta compra" })); input.value = ""; return; }
+  }
+  ccDocReservar(ehNF ? files : [], "compra " + c.id, ehRecibo ? "compra-recibo" : "compra-nf", c.placa).then(function (rvN) {   // v529: o mesmo arquivo de nota não entra duas vezes
+  if (rvN && rvN.dup) { alert(ccDupArqMsg(rvN)); input.value = ""; return; }
   ccSubir(files, c.id, ehRecibo ? "recibo" : ehNF ? "nf" : "comprovante").then(function (paths) {
     var agora = new Date().toISOString();
     var reg = { arquivos: paths, valor: valor, em: agora, por: ccQuem() };
@@ -16247,6 +16358,7 @@ function ccAnexar(input, id, tipo) {
     input.value = "";
     ccToca(c);
   }).catch(function (e) { input.value = ""; alert("Não consegui enviar: " + (e.message || e)); });
+  });
 }
 /* v509 — COMPROVANTE DE PAGAMENTO (Renato, 30/09/2026): "não tem opção de colocar o
    comprovante de pagamento ou extrato, eu anexei o comprovante no local da NF e o sistema aceitou".
@@ -16394,7 +16506,7 @@ function ccExcluir(id) {
   if (!ehAdmin()) return;
   var c = ccAcha(id); if (!c) return;
   if (!confirm("Excluir a compra nº " + c.numero + " (" + c.descricao + ")?\n\nPara controle, o melhor é CANCELAR (fica o registro). Excluir apaga de vez.")) return;
-  state.compras = ccLista().filter(function (x) { return x !== c; });
+  state.compras = ccLista().filter(function (x) { return x !== c; }); ccDocLiberar(c);   // v529
   salvar(); render();
 }
 function ccFiltro(k, v) { state["_cc" + k] = v; render(); }
@@ -30302,6 +30414,7 @@ function gerarContextoAssistente() {
   const blocoLogos = "ENVIO DE DOCUMENTOS (v433, 25/09/2026): todo CT-e e MDF-e emitido pelo app entra sozinho nos documentos fiscais da viagem, com XML e PDF (DACTE/DAMDFE) guardados; o encerramento feito pelo app tambem vira registro. No quadro do MDF-e ha o botao Enviar documentos: para o motorista manda os PDFs direto no WhatsApp (compartilhar do celular/tablet); para o Andre (v508) baixa um ZIP so com DACTE + espelho e copia o e-mail pronto com placa, motorista e numero, cliente, NF e chave de cada CT-e. O Tudo desta viagem (ZIP) tambem passa a levar a pasta pdf/. EMISSAO PELO APP EM PRODUCAO (v432, 25/09/2026): Renato liberou a emissao REAL pelo app -- o servidor rf-fiscal esta em PRODUCAO, CT-e e MDF-e saem na SERIE 2 (o SimplesCTe continua na serie 1, entao os numeros nunca colidem), com valor fiscal, e a averbacao na AT&M e real. Regra: cada carga num sistema so -- conhecimento emitido no app nao pode ser emitido de novo no SimplesCTe (a NF ficaria com dois CT-e). O CIOT continua sendo gerado no SimplesCTe e o numero e digitado na hora do MDF-e. Dados de pagamento do MDF-e com um CT-e so: PIX comercial@rflogistica.com.br (Itau 341 ag. 7314 como reserva). A AT&M ainda devolve a apolice RC-DC em vez da RCTR-C -- o SimplesCTe tem o mesmo problema e a RF segue operando assim ate a NVZ ajustar. HISTORICO DO TESTE (v429 a v431 -- na v431 o Tentar de novo pergunta a IE outra vez quando a SEFAZ recusou pela IE (232/427), e o MDF-e ganhou o botao de consultar a situacao, que marca ENCERRADO quando a SEFAZ ja encerrou; na v430 os botoes Emitir CT-e/Emitir MDF-e ficam logo ao lado da faixa HOMOLOGACAO, porque na v429 eles caiam fora da tela do tablet): a RF contratou a Focus NFe (API de CT-e e MDF-e, 30 dias gratis a partir de 25/09/2026) sem cancelar o SimplesCTe. Na aba Carregamento Suzano, etapa de EMISSAO, cada conhecimento aberto tem o botao 'Emitir CT-e': o app manda os dados do espelho pro servidor (funcao rf-fiscal), a Focus transmite pra SEFAZ, e quando o CT-e e autorizado o XML vai SOZINHO pra AT&M e volta o numero da averbacao, que fica gravado no conhecimento junto com a chave, o DACTE e o XML. Com todos os CT-e da carga autorizados aparece 'Emitir MDF-e': pede tara do veiculo (fica guardada no cadastro), confirma nome e CPF do motorista pela ficha e pede o CIOT (que continua sendo gerado no SimplesCTe -- a Focus nao emite CIOT). O MDF-e sai com a apolice RCTR-C 1065406004324 e os numeros de averbacao, e e declarado na AT&M automaticamente. No fim da viagem use 'Encerrar': a SEFAZ recusa MDF-e novo na mesma placa com o anterior aberto (rejeicao 611). O bairro, CEP e codigo IBGE do destinatario vem da consulta publica de CNPJ (o espelho da Suzano nao traz). A IE do destinatario e obrigatoria (rejeicao 232) e passou a ser lida do espelho; se faltar, o app pergunta. Hoje esta tudo em HOMOLOGACAO: os documentos saem SEM VALOR FISCAL e a AT&M registra protocolo TESTE. Pendencias antes de produzir: (1) a AT&M devolve a apolice RC-DC 1065506002945 em vez da RCTR-C -- Renato vai tratar com o Marcelo Zagonel (NVZ); (2) cadastrar banco/agencia ou PIX da RF, exigido no MDF-e quando a carga tem um CT-e so; (3) definir a serie da Focus em producao para nao colidir com a serie 1 do SimplesCTe. LOGOS DOS CLIENTES (v422): as caixas de cliente da aba Viagens, o painel do cliente aberto e os cards de rota da roteirizacao (aba Carregamento Suzano, etapa 1) mostram a LOGO do cliente acima do nome. Logos cadastradas: Suzano, Yamaha, Mateus (casa com JT/Mateus) e Mercante (casa com Mercante/JDL) -- o casamento e por palavra no nome do cliente. Cliente sem logo (ex.: FM Transporte, JDL sozinha, CDJ) continua aparecendo so pelo nome; pra incluir uma logo nova e preciso mandar a imagem para a proxima versao. Na caixa de cliente sem viagem no mes a logo aparece apagada (cinza). CT-e COM MAIS DE UMA NOTA (v428): um conhecimento da Suzano pode ter DUAS ou mais NF para o mesmo destinatario (ex.: doc. transporte 1567053, CRIATIVA, NF 197148 e 197158). Ate a v427 o leitor do espelho pegava so a primeira nota e a primeira chave, e o CT-e saiu sem a segunda nota tres vezes. Agora o app le TODAS as notas e chaves do bloco, soma volumes, peso e mercadoria, e a tela de emissao mostra uma faixa amarela 'N NOTAS NESTE CONHECIMENTO' com todas as chaves. Se o CT-e ja importado nao tiver alguma dessas chaves, aparece um alerta vermelho dizendo qual NF faltou, e a conferencia NF->CT-e acusa a nota sem CT-e. Espelho lido antes da v428 com uma nota so e completado ao anexar o PDF de novo. Quando faltar nota num CT-e ja autorizado, o caminho e: cancelar o MDF-e, cancelar o CT-e, emitir de novo com todas as chaves, averbar e emitir MDF-e novo -- carta de correcao nao inclui nota. A partir da v425 as caixas das areas Carregamento Suzano, Carga Mateus e Carregamento Goias, na tela inicial e no seletor de areas, tambem mostram a logo do cliente (Goias foi incluida na v423). ABASTECIMENTO REJEITADO (v422): o motorista agora pode EXCLUIR abastecimento rejeitado -- um a um pelo botao 'excluir' do card, ou todos de uma vez pelo botao 'Excluir todos os rejeitados' no topo da lista de abastecimentos dele. Rejeitado nao entra em custo, combustivel da viagem nem hodometro, entao apagar nao muda conta nenhuma, nem em mes fechado. O banco (RLS) so deixa o motorista apagar o que e dele e esta pendente ou rejeitado; aprovado continua so a equipe.";
   /* v421: regra permanente -- toda versao nova alimenta o assistente. */
   const blocoAtualizacao = "ATUALIZACAO AUTOMATICA DO SISTEMA (v526, 01/10/2026 -- Renato: 'estou tendo que mandar o index para a Sandra porque no note dela nao atualiza; o note da Flavia atualiza'): todo aparelho confere sozinho, ao abrir, a cada 5 minutos e sempre que a tela volta a ficar visivel, qual e a versao publicada no GitHub (rflogistica.github.io/rf-logistica-app). Se a publicada for mais nova: (1) quem usa o sistema pelo endereco online ve a faixa dourada 'Nova versao vN' e o sistema se atualiza sozinho em 30 segundos, mas so quando ninguem esta digitando e o canto mostra sincronizado (senao espera e tenta de novo); tem o botao 'Atualizar agora'; (2) quem abriu uma COPIA SALVA do index.html no computador (arquivo local, file:///) ve a faixa avisando que aquela copia nao se atualiza e o botao 'Abrir a versao online' -- a solucao definitiva e usar sempre o endereco online (favorito ou app instalado a partir dele), nunca um arquivo baixado. Esta versao: " + RF_SISTEMA.versao + ", aberta " + (location.protocol === "file:" ? "como ARQUIVO LOCAL (nao atualiza sozinha)" : "pelo endereco " + location.host) + ".";
+  const bloco529 = "V529 (01/10/2026) DOCUMENTO EM DUPLICIDADE -- Renato: 'nao pode ler duas vezes o mesmo orcamento/OS (Sandra lanca e depois Renato ou Flavia lanca a mesma), o sistema tem que identificar e nao aceitar'. Ao lancar compra: (1) conteudo -- mesmo fornecedor (CNPJ ou nome) com o mesmo no de OS/orcamento, ou mesmo valor + mesmos itens, ou mesmo valor + mesma data do documento => recusa e diz qual compra, quem lancou e quando (o aviso ja aparece assim que a IA le); (2) arquivo -- impressao digital SHA-256/dHash reservada na tabela fotos_hash (referencia 'compra <id>'), vale entre aparelhos ao mesmo tempo. Nota fiscal: mesmo numero do mesmo fornecedor nao entra em duas compras, e o mesmo arquivo de nota nao entra duas vezes. Cancelar, reprovar ou excluir a compra libera o documento.";
   const bloco528 = "V528 (01/10/2026) ORDEM DO FLUXO TRAVADA -- Renato: 'pode retirar e trava, tem que seguir a ordem, orcamento/OS primeiro, depois segue o fluxo'. Toda compra comeca SO com orcamento ou OS (saiu lancar ja com nota/recibo); aprovacao; nota fiscal (ou recibo, pelo botao So tem recibo depois de aprovada); SO ENTAO comprovante e pagamento do extrato. O botao Anexar comprovante so aparece em compra em consolidacao; comprovante que cita nota sem compra lancada, ou maior que as compras das notas, NAO e anexado (o sistema diz o que falta lancar); repartir comprovante nao pode deixar sobra; a saida do extrato so liga em compra em consolidacao; criar compra a partir da saida do extrato cria a compra AGUARDANDO APROVACAO e a saida liga sozinha quando ela tiver a nota. O aviso de comprovantes esperando compras saiu.";
   const bloco527 = "V527 (01/10/2026): (1) SINCRONIZACAO -- a atualizacao em tempo real vinda de outro aparelho deixou de substituir a lista inteira (e de ser ignorada nos 6 s depois de uma edicao); agora une item a item como o download e, se a nuvem ficou sem algo deste aparelho, reenvia. Na MESMA compra, notas, comprovantes, pagamentos do extrato, orcamentos e historico dos dois aparelhos sao somados (so some o que alguem realmente tirou, anotado em _rem); no mesmo extrato cada linha fica com quem ligou/desfez por ultimo. Casos que motivaram (01/10): NFS-e 469 da compra 12 sumiu, comprovante do financeiro na 11 sumiu, compra do Marcelo das 12:12 sumiu, OS da Sandra (ela usava copia salva do index, v519-v523 em Downloads). (2) NOVA COMPRA e CONDICAO DE PAGAMENTO nao se apagam mais quando a tela se redesenha (antes voltavam para a vista/1 parcela/orcamento/sem placa). (3) PARCELAS: link '✎ ajustar valor e data de cada parcela' -- cada boleto com seu valor e vencimento; a soma tem que bater com o total; anexar nota nao refaz parcelas ajustadas a mao. (4) CONCILIACAO abre no extrato importado por ultimo. (5) COMPROVANTE anexado que bate com uma saida do extrato (mesmo valor, data +-1 dia, nome de quem recebeu na descricao) e ligado sozinho -- historico 'pagamento achado sozinho no extrato'. Ligados sozinhos nesta sessao: " + (window.__exAutoN || 0) + ".";
   const blocoUniao = "COMO DUAS PESSOAS EDITAM AO MESMO TEMPO (v421): ate a v420 cada aparelho subia a LISTA INTEIRA de cada aba e substituia a da nuvem, entao se duas pessoas editavam coisas diferentes ao mesmo tempo, quem salvasse por ultimo apagava o trabalho da outra, sem erro e sem aviso. A partir da v421 a juncao e ITEM A ITEM: no MESMO item vence quem editou por ultimo; itens DIFERENTES sobrevivem os dois; item apagado nao ressuscita quando o outro aparelho sincroniza. Cada item ganha um carimbo atualizadoEm quando muda, e cada exclusao deixa uma lapide {id, removidoEm} que tambem sincroniza e e descartada depois de 30 dias. Vale para veiculos, dividas, viagens, clientes, manutencoes, fechamentos, oleoTrocas, usuarios, pagamentosMotorista, fiscais, suzanoCargas, mateusCargas, motoristasCad e paradasNaoVieram. NAO vale para listas cujos itens nao tenham id (nessas o comportamento antigo continua, de proposito) nem para config, tarifas e frotaMes, que sao objetos e nao listas. Se alguem perguntar se ainda da pra perder edicao por dois usuarios ao mesmo tempo, a resposta e: nas listas acima, nao; o pior caso agora e a edicao mais antiga do MESMO item ser substituida pela mais nova, que e a regra desejada. Lapides guardadas nesta sessao: " + ((state.lapides || []).length) + ".";
@@ -30972,6 +31085,7 @@ ${blocoUniao}
 ${blocoAtualizacao}
 ${bloco527}
 ${bloco528}
+${bloco529}
 ${blocoLogos}
 ${blocoDocsViagem}
 ${blocoConciliacao}
