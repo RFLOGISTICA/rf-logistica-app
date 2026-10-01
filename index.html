@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v520)</title>
+<title>RF Logística — Painel da Frota (v523)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v520">
+<meta name="rf-versao" content="v523">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v520" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v523" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -3497,6 +3497,12 @@ function cmImportar(input) {
            tem "FICHA DE CADASTRO - MOTORISTA" na B4 e o nome da RF na B2; o
            Yamaha tem "FICHA DE CADASTRO" na D2. Na duvida, tenta os dois mapas
            e fica com o que achou mais campo preenchido. */
+        if (ajEhFicha(wb, ws)) {   // v523: ficha F.001 do AJUDANTE -- não é ficha de motorista
+          var ra = ajImportarFicha(wb, file.name);
+          if (!ra) erros.push(file.name + " (ficha de ajudante sem nome)");
+          else { lidas++; state._ajAberto = ra.f.id; if (modelos.indexOf("ajudante") < 0) modelos.push("ajudante"); }
+          proxima(i + 1); return;
+        }
         var textoDe = function (ref) { return ws[ref] && ws[ref].v != null ? String(ws[ref].v).trim() : ""; };
         var contar = function (mapa) {
           var n = 0;
@@ -3531,7 +3537,7 @@ function cmImportar(input) {
         else {
           /* ficha ja existente do mesmo CPF vira atualizacao, nao duplicata */
           var cpf = String((f.mot || {}).cpf || "").replace(/\D/g, "");
-          var ja = cpf ? cmFichas().find(function (x) { return String((x.mot || {}).cpf || "").replace(/\D/g, "") === cpf; }) : null;
+          var ja = cpf ? cmSoMotoristas().find(function (x) { return String((x.mot || {}).cpf || "").replace(/\D/g, "") === cpf; }) : null;
           if (ja) {
             ja.prop = f.prop; ja.mot = f.mot; ja.refs = f.refs; ja.veic = f.veic;
             ja.atualizadoEm = Date.now(); ja.importadaDe = file.name;
@@ -3854,7 +3860,7 @@ function cmSecaoTitulo(t) {
 }
 function cmBlocoHTML() {
   cmMigrarProprietario();
-  var fichas = cmFichas().slice().sort(function (a, b) { return (b.atualizadoEm || 0) - (a.atualizadoEm || 0); });
+  var fichas = cmSoMotoristas().slice().sort(function (a, b) { return (b.atualizadoEm || 0) - (a.atualizadoEm || 0); });   // v523: ajudantes têm bloco próprio
   var h = '<div style="background:#0A0A0A;border:1px solid ' + GOLD + ';border-radius:8px;padding:14px 16px;">'
     + '<div style="font-size:14px;color:' + GOLD + ';font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">\ud83e\udeaa Cadastro de Motorista</div>'
     + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">'
@@ -3870,10 +3876,10 @@ function cmBlocoHTML() {
     + '<span style="font-size:11px;color:#777;">lê os dois modelos (Yamaha e RF); mesmo CPF atualiza a ficha, não duplica</span>'
     + '</div>'
     + (state._cmImportMsg ? '<div style="margin-top:6px;font-size:11.5px;color:' + GOLD + ';">' + esc(state._cmImportMsg) + '</div>' : "")
-    + '<div style="margin-top:6px;font-size:11px;color:#666;">' + cmFichas().length + ' ficha(s) no sistema. As fichas sincronizam entre os aparelhos — quem preencher numa máquina aparece nas outras depois do próximo salvamento.</div>';
+    + '<div style="margin-top:6px;font-size:11px;color:#666;">' + cmSoMotoristas().length + ' ficha(s) no sistema. As fichas sincronizam entre os aparelhos — quem preencher numa máquina aparece nas outras depois do próximo salvamento.</div>';
 
   if (!fichas.length) {
-    return h + '<div style="margin-top:12px;font-size:12px;color:#777;">Nenhuma ficha cadastrada ainda.</div></div>';
+    return h + '<div style="margin-top:12px;font-size:12px;color:#777;">Nenhuma ficha cadastrada ainda.</div></div>' + ajBlocoHTML();   // v523
   }
 
   fichas.forEach(function (f) {
@@ -3964,7 +3970,316 @@ function cmBlocoHTML() {
     }
     h += '</div>';
   });
+  return h + '</div>' + ajBlocoHTML();   // v523
+}
+/* ============ v523 — CADASTRO DE AJUDANTE + PAGAMENTO SEMI-AUTOMÁTICO ============
+   Renato (01/10/2026): "preciso também que você já faça um local em cadastro de motorista para
+   cadastro de ajudante, pois tem muitos valores que são pagos a ajudante (a viagem e o operacional);
+   a Sandra vai lançar as fichas no sistema, assim você já vai saber igual sabe o motorista, assim
+   vincula o valor; se possível vincular ao pagamento, assim o pagamento fica semi-automático".
+   - A ficha do ajudante mora na MESMA lista das fichas de motorista (state.motoristasCad), marcada
+     com tipo "ajudante" e com os dados em f.aju (não em f.mot). Assim sincroniza entre os aparelhos
+     pelo mesmo caminho e NUNCA entra nas fichas Yamaha/RF de motorista (que leem f.mot).
+   - A viagem ganha o ajudante (v.ajudanteId). Sem escolher, vale o ajudante FIXO do caminhão
+     (campo "caminhão fixo" da ficha). Valor = vgPagAjudante da viagem (caminhão CLT = folha, 0 aqui).
+     Ao escolher o ajudante, o valor por viagem da ficha preenche a viagem (se ainda não foi paga).
+   - Extrato: PIX com o nome do ajudante é reconhecido sozinho; o sistema marca as viagens dele que
+     somam o valor e o que sobrar vai como "operacional" (ou diária, adiantamento...). Ao ligar,
+     as viagens ficam pagas ao ajudante na data do PIX (v.pagoAjudante / v.dataPagamentoAjudante).
+     Desfazer o vínculo desmarca o que ele marcou.
+   - Na ficha: "a pagar" (viagens + valor) com a chave PIX e um botão que copia chave + valor —
+     o financeiro paga, importa o extrato e o resto liga sozinho. */
+var AJ_CAMPOS = [   // v523: todos os campos da ficha F.001 (aba "Ajudante") + os do pagamento
+  ["nome", "NOME", "text"], ["cpf", "CPF", "text"], ["rg", "RG", "text"], ["rgOrgao", "ÓRGÃO EMISSOR", "text"],
+  ["rgCidade", "CIDADE/UF EMISSÃO", "text"], ["rgData", "DATA EMISSÃO RG", "date"], ["nascimento", "DATA DE NASC", "date"],
+  ["estadoCivil", "ESTADO CIVIL", "text"], ["naturalidade", "NATURALIDADE", "text"], ["ufNat", "UF NATURALIDADE", "text"],
+  ["pai", "NOME DO PAI", "text"], ["mae", "NOME DA MÃE", "text"],
+  ["endereco", "ENDEREÇO", "text"], ["numero", "NÚMERO", "text"], ["bairro", "BAIRRO", "text"], ["cep", "CEP", "text"],
+  ["cidade", "CIDADE", "text"], ["uf", "UF", "text"], ["pis", "PIS", "text"],
+  ["telResidencial", "TEL. RESIDENCIAL", "text"], ["contato", "CONTATO", "text"], ["celular", "TEL. CELULAR", "text"],
+  ["pix", "CHAVE PIX", "text"], ["banco", "BANCO / AGÊNCIA / CONTA", "text"],
+  ["valorViagem", "VALOR POR VIAGEM (R$)", "text"], ["placaFixa", "CAMINHÃO FIXO (placa)", "text"]
+];
+/* célula de cada campo na ficha F.001 do ajudante (aba "Ajudante", B2:M34) */
+var AJ_MAPA_FICHA = [
+  { c: "C7", k: "nome" }, { c: "J7", k: "cpf" }, { c: "C8", k: "rg" }, { c: "F8", k: "rgOrgao" }, { c: "H8", k: "rgCidade" }, { c: "K8", k: "rgData", d: 1 },
+  { c: "C9", k: "endereco" }, { c: "I9", k: "numero" }, { c: "K9", k: "cep" }, { c: "C10", k: "uf" }, { c: "E10", k: "cidade" }, { c: "H10", k: "bairro" }, { c: "K10", k: "pis" },
+  { c: "C11", k: "telResidencial" }, { c: "G11", k: "contato" }, { c: "K11", k: "celular" }, { c: "C12", k: "pai" }, { c: "H12", k: "mae" },
+  { c: "C13", k: "estadoCivil" }, { c: "F13", k: "nascimento", d: 1 }, { c: "I13", k: "naturalidade" }, { c: "L13", k: "ufNat" }
+];
+function ajEhFicha(wb, ws) {
+  var b4 = ws && ws.B4 && ws.B4.v != null ? String(ws.B4.v) : "";
+  return /CADASTRO\s*-\s*AJUDANTE/i.test(b4) || wb.SheetNames.some(function (n) { return String(n).trim().toUpperCase() === "AJUDANTE"; });
+}
+/* lê a ficha do ajudante; CPF que já existe vira atualização (sem perder PIX, valor, caminhão fixo) */
+function ajImportarFicha(wb, nomeArq) {
+  var nomeAba = wb.SheetNames.filter(function (n) { return String(n).trim().toUpperCase() === "AJUDANTE"; })[0] || wb.SheetNames[0];
+  var ws = wb.Sheets[nomeAba], a = {}, achou = 0;
+  AJ_MAPA_FICHA.forEach(function (it) {
+    var cel = ws[it.c]; if (!cel || cel.v == null || cel.v === "") return;
+    var v = it.d ? cmDataDeCelula(cel.v) : String(cel.w != null && typeof cel.v !== "number" ? cel.w : cel.v).trim();
+    if (v === "") return; a[it.k] = v; achou++;
+  });
+  a.refs = [16, 17, 18, 19].map(function (r) {
+    var g = function (col) { var c = ws[col + r]; return c && c.v != null ? String(c.v).trim() : ""; };
+    return { nome: g("C"), parentesco: g("I"), telefone: g("L") };
+  });
+  if (!achou || !a.nome) return null;
+  var cpf = String(a.cpf || "").replace(/\D/g, "");
+  var ja = cpf ? ajFichas().filter(function (x) { return String((x.aju || {}).cpf || "").replace(/\D/g, "") === cpf; })[0] : null;
+  if (!ja) ja = ajFichas().filter(function (x) { return exNormNome((x.aju || {}).nome) === exNormNome(a.nome); })[0];
+  if (ja) {
+    for (var k in a) ja.aju[k] = a[k];
+    ja.atualizadoEm = Date.now(); ja.importadaDe = nomeArq;
+    return { f: ja, novo: false };
+  }
+  a.regime = "diarista"; a.ativo = true;
+  var f = { id: uid(), tipo: "ajudante", criadoEm: Date.now(), atualizadoEm: Date.now(), aju: a, obs: "", importadaDe: nomeArq, modeloOrigem: "F.001 Ajudante" };
+  cmFichas().push(f);
+  return { f: f, novo: true };
+}
+function ajSetRef(id, i, campo, valor) {
+  var f = cmFicha(id); if (!f) return;
+  f.aju = f.aju || {}; f.aju.refs = f.aju.refs || [{}, {}, {}, {}];
+  f.aju.refs[i] = f.aju.refs[i] || {}; f.aju.refs[i][campo] = valor;
+  f.atualizadoEm = Date.now(); salvar();
+}
+var AJ_FINS = ["Operacional", "Diária / alimentação", "Adiantamento", "Outros"];
+function ajFichas() { return cmFichas().filter(function (f) { return f && f.tipo === "ajudante"; }); }
+function cmSoMotoristas() { return cmFichas().filter(function (f) { return f && f.tipo !== "ajudante"; }); }
+function ajAtivos() { return ajFichas().filter(function (f) { return f.aju && f.aju.nome && f.aju.ativo !== false; }); }
+function ajNome(f) { return (f && f.aju && f.aju.nome) || "(sem nome)"; }
+function ajNovo() {
+  var f = { id: uid(), tipo: "ajudante", criadoEm: Date.now(), atualizadoEm: Date.now(), aju: { regime: "diarista", ativo: true }, obs: "" };
+  cmFichas().push(f); state._ajAberto = f.id; salvar(); render();
+}
+function ajSet(id, campo, valor) {
+  var f = cmFicha(id); if (!f) return;
+  f.aju = f.aju || {};
+  if (campo === "placaFixa") valor = String(valor || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (campo === "ativo") valor = !!valor;
+  f.aju[campo] = valor; f.atualizadoEm = Date.now(); salvar();
+  if (campo === "placaFixa" || campo === "ativo" || campo === "regime") render();
+}
+function ajExcluir(id) {
+  var f = cmFicha(id); if (!f) return;
+  if (!confirm("Excluir a ficha do ajudante " + ajNome(f) + "? Isso não tem volta.\n\nSe ele só saiu da empresa, o melhor é desmarcar \"ativo\" — o histórico de pagamentos fica.")) return;
+  state.motoristasCad = cmFichas().filter(function (x) { return x !== f; });
+  salvar(); render();
+}
+function ajPlacaNorm(p) { return String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+/* ajudante da viagem: o escolhido, senão o fixo do caminhão */
+function ajudanteDaViagem(v) {
+  if (!v || v.temAjudante === false) return null;
+  if (v.ajudanteId) { var f = cmFicha(v.ajudanteId); return f && f.tipo === "ajudante" ? { f: f, auto: false } : null; }
+  var pl = ajPlacaNorm(v.placa); if (!pl) return null;
+  var fx = ajAtivos().filter(function (f) { return ajPlacaNorm(f.aju.placaFixa) === pl; })[0];
+  return fx ? { f: fx, auto: true } : null;
+}
+function ajValorViagem(v) {   // o que o ajudante recebe por esta viagem (caminhão CLT = folha, fora daqui)
+  if (!v || v.temAjudante === false) return 0;
+  try { if (regimeMotoristaDaPlaca(v.placa) === "clt") return 0; } catch (e) { }
+  return Number(v.vgPagAjudante) || 0;
+}
+function ajSetViagem(vid, aid) {
+  var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(vid); })[0]; if (!v) return;
+  try { if (typeof podeAlterarViagem === "function" && !podeAlterarViagem(v)) { alert("Esta viagem não pode mais ser alterada."); render(); return; } } catch (e) { }
+  v.ajudanteId = aid || "";
+  var f = aid ? cmFicha(aid) : null, vv = f && f.aju ? ccNum(f.aju.valorViagem) : 0;
+  if (vv > 0 && !v.pagoAjudante) v.vgPagAjudante = vv;
+  v.atualizadoEm = Date.now(); salvar(); render();
+}
+function ajSetPago(vid, on) {
+  var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(vid); })[0]; if (!v) return;
+  v.pagoAjudante = !!on; v.dataPagamentoAjudante = on ? (v.dataPagamentoAjudante || hojeISO()) : ""; if (!on) delete v.pagoAjudanteFonte;
+  v.atualizadoEm = Date.now(); salvar(); render();
+}
+function ajSelectViagemHTML(v) {   // célula da viagem: quem foi o ajudante
+  var a = ajudanteDaViagem(v), lista = ajAtivos();
+  if (!lista.length && !a) return '<div style="font-size:9px;color:#666;margin-top:2px;">cadastre ajudantes</div>';
+  var vid = esc(String(v.id));
+  return '<select onchange="ajSetViagem(\'' + vid + '\',this.value)" style="font-size:10px;padding:2px;max-width:120px;margin-top:3px;background:#111;color:#ccc;border:1px solid #333;">'
+    + '<option value="">' + (a && a.auto ? "fixo: " + esc(ajNome(a.f)) : "— ajudante —") + '</option>'
+    + lista.map(function (f) { return '<option value="' + esc(f.id) + '"' + (v.ajudanteId === f.id ? " selected" : "") + '>' + esc(ajNome(f)) + '</option>'; }).join("") + '</select>';
+}
+function ajPagoViagemHTML(v) {   // abaixo do valor do ajudante: pago ou a pagar
+  var val = ajValorViagem(v); if (!(val > 0)) return "";
+  return '<label style="display:flex;gap:3px;align-items:center;font-size:9px;color:' + (v.pagoAjudante ? "#66BB6A" : "#F2E600") + ';margin-top:2px;cursor:pointer;"><input type="checkbox" style="width:12px;height:12px;margin:0;"' + (v.pagoAjudante ? " checked" : "")
+    + ' onchange="ajSetPago(\'' + esc(String(v.id)) + '\',this.checked)">' + (v.pagoAjudante ? "pago " + exDataBr(String(v.dataPagamentoAjudante || "").slice(0, 10)) : "a pagar") + '</label>';
+}
+/* viagens do ajudante; as já ligadas a outro PIX ficam de fora */
+function ajViagensPagasPix(excetoLin) {
+  var m = {};
+  exTodasLinhas().forEach(function (x) { var v = x.l.vinc; if (v && v.tipo === "ajudante" && x.l.id !== excetoLin) (v.viagensAju || []).forEach(function (id) { m[String(id)] = x; }); });
+  return m;
+}
+function ajViagensDe(fid, excetoLin) {
+  var usadas = typeof exTodasLinhas === "function" ? ajViagensPagasPix(excetoLin) : {};
+  return (state.viagens || []).filter(function (v) { var a = ajudanteDaViagem(v); return a && a.f.id === fid && ajValorViagem(v) > 0 && !usadas[String(v.id)]; })
+    .sort(function (a, b) { return String(a.data || "").localeCompare(String(b.data || "")); });
+}
+function ajAPagar(fid) { return ajViagensDe(fid).filter(function (v) { return !v.pagoAjudante; }); }
+function ajSoma(vs) { return Math.round(vs.reduce(function (s, v) { return s + ajValorViagem(v); }, 0) * 100) / 100; }
+/* nome do ajudante na descrição do PIX: primeiro e último nome (aceita até 2 letras erradas) */
+function ajDoTexto(desc) {
+  var lista = (" " + exNormNome(desc).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ") + " ").trim().split(" "), achou = null, melhor = 0;
+  var tem = function (p) { return lista.indexOf(p) !== -1 || (p.length >= 6 && lista.some(function (w) { return Math.abs(w.length - p.length) <= 2 && w[0] === p[0] && exLev(w, p) <= 2; })); };
+  ajAtivos().forEach(function (f) {
+    var partes = exNormNome(f.aju.nome).replace(/[^A-Z ]/g, " ").split(/\s+/).filter(function (p) { return p.length >= 3 && ["DOS", "DAS", "DES"].indexOf(p) === -1; });
+    if (partes.length < 2) return;
+    var n = partes.filter(tem).length;
+    if (tem(partes[0]) && tem(partes[partes.length - 1]) && n > melhor) { achou = f; melhor = n; }
+  });
+  return achou;
+}
+function ajSugViagens(l, fid) {   // {ids, soma}: viagens a pagar que somam o PIX (ou as mais antigas que cabem)
+  var valor = Math.abs(l.valor), pend = ajViagensDe(fid, l.id).filter(function (v) { return !v.pagoAjudante && String(v.data || "") <= String(l.data || "9999"); }).slice(-15);
+  var n = pend.length, melhor = null;
+  for (var mask = 1; mask < (1 << n); mask++) {
+    var s = 0, ids = [];
+    for (var i = 0; i < n; i++) if (mask & (1 << i)) { s += ajValorViagem(pend[i]); ids.push(String(pend[i].id)); }
+    if (Math.abs(s - valor) < 0.05 && (!melhor || ids.length > melhor.ids.length)) melhor = { ids: ids, soma: Math.round(s * 100) / 100 };
+  }
+  if (melhor) return melhor;
+  var ids2 = [], s2 = 0;   // não bateu exato: as mais antigas que cabem; o resto vai como operacional
+  pend.forEach(function (v) { var x = ajValorViagem(v); if (s2 + x <= valor + 0.04) { ids2.push(String(v.id)); s2 += x; } });
+  return { ids: ids2, soma: Math.round(s2 * 100) / 100 };
+}
+function ajLigarLinha(o, fid, ids, fim, marcar) {   // grava o vínculo do PIX ao ajudante
+  var f = cmFicha(fid); if (!f) return false;
+  var vs = (state.viagens || []).filter(function (v) { return ids.indexOf(String(v.id)) !== -1; });
+  var somaVg = ajSoma(vs), valor = Math.abs(o.l.valor), resto = Math.round((valor - somaVg) * 100) / 100, marcadas = [];
+  if (marcar) vs.forEach(function (v) {
+    if (v.pagoAjudante) return;
+    try { if (typeof podeAlterarViagem === "function" && !podeAlterarViagem(v)) return; } catch (e) { }
+    v.pagoAjudante = true; v.dataPagamentoAjudante = o.l.data; v.pagoAjudanteFonte = "extrato"; v.atualizadoEm = Date.now(); marcadas.push(String(v.id));
+  });
+  fim = fim || "Operacional";
+  o.l.vinc = { tipo: "ajudante", ajudanteId: f.id, nome: ajNome(f), viagensAju: ids.slice(), valorViagens: somaVg, resto: Math.max(0, resto),
+    finalidade: ids.length && resto < 0.05 ? "Pagamento de viagens" : fim, marcadas: marcadas,
+    obs: (ids.length ? ids.length + " viagem(ns) " + fmtR(somaVg) : "") + (resto > 0.04 ? (ids.length ? " + " : "") + fmtR(resto) + " " + fim.toLowerCase() : "") + (marcadas.length ? " · " + marcadas.length + " marcada(s) paga(s) ao ajudante" : ""),
+    por: ccQuem(), em: new Date().toISOString() };
+  delete o.l.sug; return true;
+}
+function ajSelSet(lin, campo, val) {
+  var s = state._exAjSel && state._exAjSel.lin === lin ? state._exAjSel : (state._exAjSel = { lin: lin });
+  if (campo === "vg") { var ids = (s.ids || []).filter(function (x) { return x !== val.id; }); if (val.on) ids.push(val.id); s.ids = ids; }
+  else s[campo] = val;
+  if (campo === "id") { var l = null; exTodasLinhas().forEach(function (x) { if (x.l.id === lin) l = x.l; }); s.ids = l && val ? ajSugViagens(l, val).ids : []; }
+  render();
+}
+function exAjLigar(extId, linId) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l) return;
+  var s = state._exAjSel && state._exAjSel.lin === linId ? state._exAjSel : {};
+  var fid = s.id; if (!fid) { var f0 = ajDoTexto(o.l.desc); fid = f0 ? f0.id : ""; }
+  if (!fid) { alert("Escolha o ajudante."); return; }
+  var ids = s.ids || ajSugViagens(o.l, fid).ids, marcar = !!(document.getElementById("ex-ajmarca-" + linId) || { checked: true }).checked;
+  var soma = ajSoma((state.viagens || []).filter(function (v) { return ids.indexOf(String(v.id)) !== -1; }));
+  if (soma > Math.abs(o.l.valor) + 0.04 && !confirm("As viagens marcadas somam " + fmtR(soma) + ", mais que o PIX (" + fmtR(Math.abs(o.l.valor)) + "). Ligar assim mesmo?")) return;
+  if (!ajLigarLinha(o, fid, ids, s.fim, marcar)) return;
+  state._exAberta = ""; state._exAjSel = null;
+  exSalvar(o.e);
+}
+function exPainelAjudante(e, l) {
+  var lista = ajAtivos(); if (!lista.length) return "";
+  var eid = esc(e.id), lid = esc(l.id);
+  var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
+  var s = state._exAjSel && state._exAjSel.lin === l.id ? state._exAjSel : null;
+  var f0 = s && s.id != null ? cmFicha(s.id) : ajDoTexto(l.desc), fid = f0 ? f0.id : "";
+  var ids = s && s.ids ? s.ids : (fid ? ajSugViagens(l, fid).ids : []);
+  if (!s) state._exAjSel = s = { lin: l.id, id: fid, ids: ids.slice() };
+  var vs = fid ? ajViagensDe(fid, l.id).filter(function (v) { return !v.pagoAjudante || ids.indexOf(String(v.id)) !== -1 || Math.abs(exDiasEntre(v.dataPagamentoAjudante || v.data, l.data)) <= 10; }).slice(-40) : [];
+  var somaVg = ajSoma(vs.filter(function (v) { return ids.indexOf(String(v.id)) !== -1; })), valor = Math.abs(l.valor), resto = Math.round((valor - somaVg) * 100) / 100;
+  return '<div><div style="font-size:10.5px;color:#CE93D8;font-weight:800;margin-bottom:4px;">👷 PIX PARA O AJUDANTE (viagens dele e/ou operacional)</div>'
+    + '<select ' + sel + ' onchange="ajSelSet(\'' + lid + '\',\'id\',this.value)"><option value="">— ajudante —</option>' + lista.map(function (f) { return '<option value="' + esc(f.id) + '"' + (f.id === fid ? " selected" : "") + '>' + esc(ajNome(f)) + '</option>'; }).join("") + '</select> '
+    + '<button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#CE93D8;color:#CE93D8;" onclick="exAjLigar(\'' + eid + '\',\'' + lid + '\')">ligar ao ajudante</button>'
+    + (!fid ? "" : '<div style="margin-top:6px;border:1px solid #3a2a40;border-radius:6px;padding:7px 9px;background:#100b12;">'
+      + '<div style="font-size:11px;color:#CE93D8;font-weight:800;margin-bottom:4px;">VIAGENS DO AJUDANTE — marque as que este PIX pagou</div>'
+      + (vs.length ? '<div style="max-height:200px;overflow:auto;">' + vs.map(function (v) {
+          var on = ids.indexOf(String(v.id)) !== -1, id = esc(String(v.id));
+          return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "")
+            + ' onchange="ajSelSet(\'' + lid + '\',\'vg\',{id:\'' + id + '\',on:this.checked})"> ' + exDataBr(String(v.data || "").slice(0, 10)) + " · " + esc(v.placa || "") + " · " + esc(v.cliente || "") + (v.rota ? " · " + esc(v.rota) : "")
+            + ' · <b>' + fmtR(ajValorViagem(v)) + '</b>' + (v.pagoAjudante ? ' <span style="color:#66BB6A;">(marcada paga ' + exDataBr(String(v.dataPagamentoAjudante || "").slice(0, 10)) + ')</span>' : ' <span style="color:#F2E600;">(a pagar)</span>') + '</label>';
+        }).join("") + '</div>' : '<div style="font-size:11px;color:#777;">nenhuma viagem a pagar para esse ajudante — o PIX vai inteiro como operacional/outro.</div>')
+      + '<div style="font-size:12px;color:#ddd;margin-top:6px;">viagens <b>' + fmtR(somaVg) + '</b> · PIX <b>' + fmtR(valor) + '</b> · '
+      + (Math.abs(resto) < 0.05 ? '<b style="color:#66BB6A;">bate ✓</b>' : resto > 0 ? 'sobra <b style="color:#CE93D8;">' + fmtR(resto) + '</b> → vai como '
+          + '<select ' + sel + ' onchange="ajSelSet(\'' + lid + '\',\'fim\',this.value)">' + AJ_FINS.map(function (x) { return '<option' + ((s.fim || "Operacional") === x ? " selected" : "") + '>' + esc(x) + '</option>'; }).join("") + '</select>'
+        : '<b style="color:#E57373;">viagens passam do PIX em ' + fmtR(-resto) + '</b>')
+      + '</div><label style="display:flex;gap:7px;align-items:center;font-size:11px;color:#bbb;margin-top:5px;cursor:pointer;"><input id="ex-ajmarca-' + lid + '" type="checkbox" style="width:auto;margin:0;" checked> marcar as viagens "a pagar" como pagas ao ajudante em ' + exDataBr(l.data) + '</label></div>')
+    + '</div>';
+}
+/* pagamentos ligados ao ajudante no extrato */
+function ajPixDe(fid) { return exTodasLinhas().filter(function (x) { return x.l.vinc && x.l.vinc.tipo === "ajudante" && x.l.vinc.ajudanteId === fid; }); }
+function ajCopiarPix(id) {
+  var f = cmFicha(id); if (!f) return;
+  var vs = ajAPagar(id), tot = ajSoma(vs);
+  var txt = "Ajudante: " + ajNome(f) + "\nChave PIX: " + (f.aju.pix || "(sem chave cadastrada)") + "\nValor: " + fmtR(tot) + "\nReferente: " + vs.length + " viagem(ns) — " + vs.map(function (v) { return exDataBr(String(v.data || "").slice(0, 10)) + " " + (v.placa || ""); }).join(", ");
+  try { navigator.clipboard.writeText(txt).then(function () { alert("Copiado:\n\n" + txt); }, function () { prompt("Copie:", txt); }); } catch (e) { prompt("Copie:", txt); }
+}
+function ajBlocoHTML() {
+  var fichas = ajFichas().slice().sort(function (a, b) { return ajNome(a).localeCompare(ajNome(b), "pt-BR"); });
+  var inp = 'style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:5px 6px;font-size:12px;width:100%;"';
+  var totAP = 0; fichas.forEach(function (f) { totAP += ajSoma(ajAPagar(f.id)); });
+  var h = '<div style="margin-top:14px;background:#0A0A0A;border:1px solid #CE93D8;border-radius:8px;padding:14px 16px;">'
+    + '<div style="font-size:14px;color:#CE93D8;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;">👷 Cadastro de Ajudante</div>'
+    + '<div style="font-size:11.5px;color:#999;line-height:1.5;margin:6px 0 10px;">Ficha interna do ajudante (não é a ficha de motorista dos clientes). Com ela o sistema sabe quem foi o ajudante de cada viagem, quanto ele tem a receber, e reconhece o PIX dele no extrato: as viagens que o PIX pagou ficam pagas sozinhas e o que sobrar vai como operacional. '
+    + 'Na viagem, escolha o ajudante na coluna Ajudante — ou deixe o <b>caminhão fixo</b> preenchido aqui e ele entra sozinho nas viagens dessa placa.</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+    + '<button class="btn-outline" style="font-size:12px;border-color:#CE93D8;color:#CE93D8;" onclick="ajNovo()">＋ Novo ajudante</button>'
+    + '<label class="btn-outline" style="font-size:12px;border-color:#CE93D8;color:#CE93D8;cursor:pointer;">📥 Importar ficha do ajudante (.xlsx)<input type="file" accept=".xlsx,.xls" multiple style="display:none;" onchange="cmImportar(this)"></label>'
+    + '<span style="font-size:11.5px;color:#ddd;">' + fichas.length + ' ajudante(s)' + (totAP > 0 ? ' · <b style="color:#F2E600;">a pagar ' + fmtR(totAP) + '</b>' : "") + '</span></div>';
+  fichas.forEach(function (f) {
+    var a = f.aju || {}, aberta = state._ajAberto === f.id, ap = ajAPagar(f.id), tAp = ajSoma(ap), pix = ajPixDe(f.id);
+    var mes = hojeISO().slice(0, 7), pagoMes = pix.filter(function (x) { return String(x.l.data).slice(0, 7) === mes; }).reduce(function (s, x) { return s + Math.abs(x.l.valor); }, 0);
+    h += '<div style="margin-top:10px;border:1px solid #222;border-radius:8px;background:#0E0E0E;' + (a.ativo === false ? "opacity:.55;" : "") + '">'
+      + '<div style="padding:10px 12px;cursor:pointer;" onclick="state._ajAberto=state._ajAberto===\'' + f.id + '\'?\'\':\'' + f.id + '\';render()">'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;">'
+      + '<span style="font-size:15px;font-weight:800;color:#fff;">' + esc(ajNome(f)) + '</span>'
+      + (a.cpf ? '<span style="font-size:11.5px;color:#aaa;">CPF ' + esc(a.cpf) + '</span>' : "")
+      + (a.placaFixa ? '<span style="font-size:11.5px;color:' + GOLD + ';">fixo ' + esc(a.placaFixa) + '</span>' : "")
+      + '<span style="font-size:11px;color:#aaa;">' + (a.regime === "clt" ? "CLT" : "diarista") + (a.ativo === false ? " · INATIVO" : "") + '</span>'
+      + '<span style="margin-left:auto;font-size:11px;color:#777;">' + (aberta ? "▲ fechar" : "▼ abrir") + '</span></div>'
+      + '<div style="margin-top:4px;font-size:11px;">' + (tAp > 0 ? '<span style="color:#F2E600;">a pagar ' + fmtR(tAp) + ' (' + ap.length + ' viagem(ns))</span>' : '<span style="color:#66BB6A;">nada a pagar de viagem</span>')
+      + (pagoMes ? ' · <span style="color:#aaa;">PIX no mês ' + fmtR(pagoMes) + '</span>' : "") + (!a.pix ? ' · <span style="color:#E67E22;">sem chave PIX</span>' : "") + '</div></div>';
+    if (aberta) {
+      h += '<div style="padding:0 12px 14px;">'
+        + (tAp > 0 ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;padding:7px 9px;border:1px solid #4a4420;border-radius:6px;background:#12100a;font-size:11.5px;color:#ddd;">'
+          + '<b style="color:#F2E600;">A PAGAR ' + fmtR(tAp) + '</b> · ' + ap.map(function (v) { return exDataBr(String(v.data || "").slice(0, 10)) + " " + esc(v.placa || "") + " " + fmtR(ajValorViagem(v)); }).join(" · ")
+          + ' <button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#F2E600;color:#F2E600;" onclick="ajCopiarPix(\'' + f.id + '\')">📋 copiar chave PIX + valor</button>'
+          + '<div style="width:100%;font-size:10.5px;color:#888;">Pague pelo banco; quando o extrato for importado o PIX liga sozinho a essas viagens.</div></div>' : "")
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">'
+        + AJ_CAMPOS.map(function (d) {
+            return '<div style="display:flex;flex-direction:column;gap:2px;"><label style="font-size:9.5px;color:#888;text-transform:uppercase;letter-spacing:.3px;">' + esc(d[1]) + '</label>'
+              + '<input type="' + (d[2] === "date" ? "date" : "text") + '" value="' + esc(a[d[0]] == null ? "" : a[d[0]]) + '" onchange="ajSet(\'' + f.id + '\',\'' + d[0] + '\',this.value)" ' + inp + '></div>';
+          }).join("")
+        + '<div style="display:flex;flex-direction:column;gap:2px;"><label style="font-size:9.5px;color:#888;text-transform:uppercase;">REGIME</label><select onchange="ajSet(\'' + f.id + '\',\'regime\',this.value)" ' + inp + '>'
+        + '<option value="diarista"' + (a.regime !== "clt" ? " selected" : "") + '>Diarista (pago por viagem)</option><option value="clt"' + (a.regime === "clt" ? " selected" : "") + '>CLT (folha)</option></select></div>'
+        + '<label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#ddd;margin-top:14px;"><input type="checkbox" style="width:auto;margin:0;"' + (a.ativo !== false ? " checked" : "") + ' onchange="ajSet(\'' + f.id + '\',\'ativo\',this.checked)"> ativo</label>'
+        + '</div>'
+        + '<div style="margin-top:10px;font-size:9.5px;color:#888;text-transform:uppercase;letter-spacing:.3px;">Referências pessoais / comerciais</div>'
+        + [0, 1, 2, 3].map(function (i) { var r = (a.refs || [])[i] || {}; return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-top:4px;">'
+            + ["nome", "parentesco", "telefone"].map(function (k) { return '<input placeholder="' + k + '" value="' + esc(r[k] || "") + '" onchange="ajSetRef(\'' + f.id + '\',' + i + ',\'' + k + '\',this.value)" ' + inp + '>'; }).join("") + '</div>'; }).join("")
+        + (f.importadaDe ? '<div style="font-size:10.5px;color:#777;margin-top:6px;">importada de ' + esc(f.importadaDe) + '</div>' : "")
+        + '<div style="margin-top:10px;display:flex;flex-direction:column;gap:2px;"><label style="font-size:9.5px;color:#888;text-transform:uppercase;">Observações</label>'
+        + '<textarea onchange="cmSet(\'' + f.id + '\',\'raiz\',\'obs\',this.value)" style="background:#111;color:#ddd;border:1px solid #333;border-radius:5px;padding:6px;font-size:12px;min-height:44px;">' + esc(f.obs || "") + '</textarea></div>'
+        + (pix.length ? '<div style="margin-top:10px;font-size:10.5px;color:#CE93D8;font-weight:800;">PIX LIGADOS NO EXTRATO</div>' + pix.slice(-12).reverse().map(function (x) { return '<div style="font-size:11px;color:#aaa;">' + exDataBr(x.l.data) + ' · ' + fmtR(Math.abs(x.l.valor)) + ' · ' + esc(x.l.vinc.obs || x.l.vinc.finalidade || "") + '</div>'; }).join("") : "")
+        + '<div style="margin-top:10px;"><button class="btn-del" style="font-size:11px;" onclick="ajExcluir(\'' + f.id + '\')">✕ Excluir ficha</button></div>'
+        + '</div>';
+    }
+    h += '</div>';
+  });
   return h + '</div>';
+}
+function ajContextoAssistente() {
+  var fs = ajFichas();
+  var cab = "CADASTRO DE AJUDANTE (v523, 01/10/2026 -- Renato: 'tem muitos valores que sao pagos a ajudante, a viagem e o operacional; a Sandra vai lancar as fichas; vincula o valor e o pagamento, assim fica semi-automatico'): na aba Cadastro de Motorista, abaixo das fichas de motorista, fica o bloco '👷 Cadastro de Ajudante' (ficha interna: nome, CPF, RG, celular, endereco, chave PIX, banco, valor por viagem, caminhao fixo, regime diarista/CLT, ativo). NAO e a ficha FO_YL_026/F.001 dos clientes e nunca entra nela. Na viagem (coluna Ajudante) escolhe-se o ajudante; sem escolher vale o ajudante FIXO do caminhao. O valor e o vgPagAjudante da viagem (caminhao CLT = folha). No EXTRATO, PIX com o nome do ajudante e reconhecido sozinho (sugestao '👷 PIX para o ajudante'), as viagens a pagar que somam o valor sao marcadas pagas ao ajudante na data do PIX e a sobra vai como Operacional/Diaria/Adiantamento. Desfazer desmarca. Na ficha aparece o 'A PAGAR' com o botao 'copiar chave PIX + valor'. ";
+  cab += "IMPORTAR A FICHA DO AJUDANTE: a ficha da RF 'F.001 - FICHA DE CADASTRO - AJUDANTE' (aba 'Ajudante') e importada pelo botao '📥 Importar ficha do ajudante (.xlsx)' no bloco do ajudante OU pelo mesmo 'Importar ficha' do motorista -- o sistema reconhece que e de AJUDANTE (nao vira ficha de motorista) e le nome, CPF, RG/orgao/cidade/data, endereco/numero/CEP/bairro/cidade/UF, PIS, telefones, pai, mae, estado civil, nascimento, naturalidade e as 4 referencias. CPF ja cadastrado vira atualizacao, sem perder chave PIX, valor por viagem e caminhao fixo (esses a Sandra completa na ficha, porque nao estao no papel). ";
+  if (!fs.length) return cab + "Nenhum ajudante cadastrado ainda.";
+  return cab + "AJUDANTES (" + fs.length + "): " + fs.map(function (f) {
+    var a = f.aju || {}, ap = ajAPagar(f.id);
+    return ajNome(f) + (a.ativo === false ? " (inativo)" : "") + (a.placaFixa ? ", fixo " + a.placaFixa : "") + ", " + (a.regime === "clt" ? "CLT" : "diarista") + (a.pix ? "" : ", SEM chave PIX") + ", a pagar " + fmtR(ajSoma(ap)) + " (" + ap.length + " viagens)";
+  }).join("; ") + ".";
 }
 
 
@@ -15418,10 +15733,12 @@ function ccCandExtrato(c) {
     var l = x.l; if (l.vinc || !(l.valor < 0)) return;
     var v = Math.abs(l.valor), d = dias(l.data, ref);
     var bate = (prox && Math.abs(prox.valor - prox.pago - v) < 0.05) || Math.abs(rest - v) < 0.05;
+    var grp = !cartao && !bate && v > rest + 0.05 && (exMulGrupoComprovante(v).indexOf(String(c.id)) !== -1 || exMulGrupoFornecedorExato(v).indexOf(String(c.id)) !== -1);   // v521
+    if (grp) { out.push({ e: x.e, l: l, bate: false, grupo: true, d: d, dv: 0 }); return; }
     var fat = cartao && /FATURA|CART[AÃ]O|CARTAO|MASTERCARD|VISA|ELO\b/i.test(exNormNome(l.desc));
     if (cartao ? (fat && d <= 45) : (bate || d <= 20)) out.push({ e: x.e, l: l, bate: bate, d: d, dv: Math.abs(v - (prox ? prox.valor - prox.pago : rest)) });
   });
-  out.sort(function (a, b) { return (b.bate - a.bate) || (a.dv - b.dv) || (a.d - b.d); });
+  out.sort(function (a, b) { return (b.bate - a.bate) || ((b.grupo ? 1 : 0) - (a.grupo ? 1 : 0)) || (a.dv - b.dv) || (a.d - b.d); });
   return out.slice(0, 8);
 }
 function ccIrExtrato(extId, linId) { state.aba = "conciliacao"; state._ccTela = "extrato"; state._exSel = extId; state._exFiltro = "todos"; state._exAberta = linId; state._exSelV = null; render(); }
@@ -15451,9 +15768,11 @@ function ccBuscaExtratoHTML(c) {
     return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#ccc;padding:3px 0;border-top:1px solid #10202a;">'
       + '<span style="width:70px;color:#888;">' + exDataBr(x.l.data) + '</span><span style="flex:1;min-width:160px;">' + esc(x.l.desc) + '</span>'
       + '<b style="color:#E57373;">− ' + fmtR(Math.abs(x.l.valor)) + '</b>' + (x.bate ? '<span style="font-size:10px;font-weight:900;color:#000;background:#66BB6A;border-radius:4px;padding:0 6px;">VALOR BATE</span>' : "")
+      + (x.grupo ? '<span style="font-size:10px;font-weight:900;color:#000;background:#81C784;border-radius:4px;padding:0 6px;">BATE COM ESTA + OUTRAS COMPRAS</span>' : "")   // v521
       + (cartao ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="ccIrExtrato(\'' + eid + '\',\'' + lid + '\')">abrir a fatura no extrato →</button>'
-        : '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#66BB6A;color:#66BB6A;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',\'' + cid + '\')">✓ é este pagamento</button>')
-      + '</div>';
+        : (Math.abs(x.l.valor) <= exCompraRestante(c) + 0.05 ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#66BB6A;color:#66BB6A;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',\'' + cid + '\')">✓ é este pagamento</button>' : "")
+          + (Math.abs(x.l.valor) > exCompraRestante(c) + 0.05 ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#81C784;color:#81C784;" onclick="exMulAbrir(\'' + lid + '\',\'' + cid + '\')">' + (state._exMul && state._exMul.lin === x.l.id ? "▾ " : "") + '✓ paga esta e outras compras</button>' : ""))   // v521
+      + '</div>' + (!cartao && state._exMul && state._exMul.lin === x.l.id ? exPainelMulti(x.e, x.l, c.id) : "");
   }).join("") + '</div>';
 }
 function ccExportar() {
@@ -15654,6 +15973,7 @@ function ccCriar() {
     state._ccLido = null; state._ccArqs = null;
     c.forma = ccCondTexto(c);
     ccLista().unshift(c);
+    ccRatNotaNova(c);   // v522
     state._ccNova = false;
     ccToca(c);
   }).catch(function (e) {
@@ -15719,6 +16039,7 @@ function ccAnexar(input, id, tipo) {
     var reg = { arquivos: paths, valor: valor, em: agora, por: ccQuem() };
     if (ehNF) {
       reg.numero = String(nnf || "").trim(); reg.tipoDoc = ehRecibo ? "recibo" : "nf"; (c.nfs = c.nfs || []).push(reg);
+      ccRatNotaNova(c);   // v522: a nota estava citada num comprovante? entra nele
       if (!(c.itens && c.itens.length) && files[0]) {   // v506: lê os serviços da nota/recibo se a compra ainda não tem
         var cid = c.id;
         ccLerDocIA(files[0]).then(function (j) { var c2 = ccAcha(cid); if (!c2 || j.erro || !(j.itens || []).length || (c2.itens && c2.itens.length)) return; c2.itens = j.itens; if (!c2.fornecedor && j.fornecedor) c2.fornecedor = j.fornecedor; ccToca(c2); });
@@ -15801,10 +16122,13 @@ function ccAnexarComprovante(input, id) {
     state._ccLendo = ""; render();
     var conf = ccConfirmarComprovante(c, j);
     if (!conf) { input.value = ""; return; }
+    var notas = ccPerguntarNotas(c, j, conf.valor);   // v522
     ccSubir(files, c.id, "comprovante").then(function (paths) {
       var reg = ccRegComprovante(c, j, conf, { arquivos: paths });
       (c.compArqs = c.compArqs || []).push(reg);
       (c.historico = c.historico || []).push({ em: reg.em, por: ccQuem(), o: "anexou COMPROVANTE de pagamento " + fmtR(reg.valor) + " de " + exDataBr(reg.dataPag) + (reg.recebedor ? " para " + reg.recebedor : "") + (reg.bancoPagador ? " (" + reg.bancoPagador + ")" : "") + " — aguardando o extrato" });
+      if (notas.length) ccRatPorNotas(c, c.compArqs.length - 1, notas);   // v522: reparte pelas notas citadas
+      else ccRatTalvezAbrir(c, c.compArqs.length - 1);   // v521
       input.value = ""; ccToca(c);
     }).catch(function (e) { input.value = ""; alert("Não consegui enviar: " + (e.message || e)); });
   });
@@ -15827,12 +16151,15 @@ function ccMoverParaComprovante(id, idx) {
     state._ccLendo = ""; render();
     var conf = ccConfirmarComprovante(c, j && !j.erro ? j : { valor: r.valor });
     if (!conf) return;
+    var notas = ccPerguntarNotas(c, j && !j.erro ? j : null, conf.valor);   // v522
     var i2 = (c.nfs || []).indexOf(r); if (i2 < 0) return;
     c.nfs.splice(i2, 1);
     var reg = ccRegComprovante(c, j, conf, { arquivos: r.arquivos || [], movido: true });
     (c.compArqs = c.compArqs || []).push(reg);
     if (c.conciliadaEm && !(c.nfs && c.nfs.length)) { c.conciliadaEm = null; c.conciliadaPor = null; }
     (c.historico = c.historico || []).push({ em: reg.em, por: ccQuem(), o: "moveu anexo do lugar da nota/recibo para COMPROVANTE: " + fmtR(reg.valor) + " de " + exDataBr(reg.dataPag) + (reg.recebedor ? " para " + reg.recebedor : "") });
+    if (notas.length) ccRatPorNotas(c, c.compArqs.length - 1, notas);   // v522
+    else ccRatTalvezAbrir(c, c.compArqs.length - 1);   // v521
     ccToca(c);
   });
 }
@@ -15908,6 +16235,7 @@ function ccCardHTML(c) {
   if (st === "nota") { acoes.push(anexo("📄 Anexar nota fiscal", "nf", "#FFB74D")); acoes.push(anexo("🧾 Só tem recibo (fornecedor sem nota)", "recibo", "#BCAAA4")); }
   if (st === "nota" || st === "pagamento" || st === "aprovacao") acoes.push(anexo(state._ccLendo === c.id ? "🤖 lendo o comprovante..." : "💸 Anexar comprovante de pagamento", "comprovante_arq", "#81C784"));   // v509/v510
   if (adm && st === "pagamento") acoes.push(btn("📥 Importar extrato", "ccIrImportarExtrato()", "#4FC3F7"));   // v509
+  if ((st === "nota" || st === "pagamento" || st === "aprovacao") && (c.compArqs || []).some(function (r) { return !r.rateio; })) acoes.push(btn(state._ccRat && state._ccRat.orig === String(c.id) ? "▾ repartir comprovante" : "🔗 comprovante paga outras compras", "ccRepartirComprovante('" + id + "')", "#81C784"));   // v521
   if (adm && st === "pagamento" && ccValorPago(c) > 0) acoes.push(btn("✓ Fechar com a diferença (pago " + fmtR(ccValorNF(c) - ccValorPago(c)) + " a menos)", "ccFecharDivergente('" + id + "')", "#66BB6A"));   // v512: desconto / pago a menos
   if (st === "pagamento") {   // v501: o pagamento entra pelo extrato bancário
     if (adm) acoes.push(btn((state._ccBusEx === c.id ? "▾ " : "🏦 ") + (ccCond(c) === "cartao" ? "Procurar a fatura no extrato" : "Procurar o pagamento no extrato"), "ccBuscaExtrato('" + id + "')", "#4FC3F7"));
@@ -15951,6 +16279,7 @@ function ccCardHTML(c) {
     + (c.semLancamento ? '<span style="font-size:10px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 7px;" title="Apareceu no extrato do banco sem compra lançada antes">SAIU DO BANCO SEM COMPRA LANÇADA</span>' : "")
     + (ccTemRecibo(c) ? '<span style="font-size:10px;font-weight:900;color:#000;background:#BCAAA4;border-radius:4px;padding:1px 7px;" title="Fornecedor não emitiu nota fiscal, só recibo — não gera crédito no Lucro Real">🧾 ' + (ccSoRecibo(c) ? "SÓ RECIBO — SEM NOTA FISCAL" : "TEM RECIBO SEM NOTA") + '</span>' : "")
     + (c.semAprovacaoPrevia ? '<span style="font-size:10px;font-weight:900;color:#fff;background:#C0392B;border-radius:4px;padding:1px 7px;" title="A nota chegou sem orçamento aprovado antes">COMPROU ANTES DE APROVAR</span>' : "")
+    + ccRateioTexto(c)   // v521
     + (ccEhOS(c) ? '<span style="font-size:10px;font-weight:900;color:#000;background:#90CAF9;border-radius:4px;padding:1px 7px;" title="Ordem de serviço do fornecedor no lugar do orçamento — não é documento fiscal, ainda precisa da nota">📋 OS' + (c.os && c.os.numero ? ' nº ' + esc(c.os.numero) : "") + '</span>' : "")   // v514
     + '<span style="flex:1;"></span><span style="font-size:16px;font-weight:900;color:' + GOLD + ';">' + fmtR(c.valor) + '</span>'
     + '</div>'
@@ -15967,13 +16296,15 @@ function ccCardHTML(c) {
     + '</div>'
     + (c.itens && c.itens.length ? ccItensHTML(c.itens, c.docLido && c.docLido.total, ccSoma(c.itens)) : "")
     + ccParcelasHTML(c)
+    + ccRatNotasHTML(c)   // v522
     + '<div style="margin-bottom:7px;">' + ccArqLinks((c.orcamentos || []).filter(function (a) { return a.tipoDoc !== "os"; }), "Orçamento") + ccArqLinks((c.orcamentos || []).filter(function (a) { return a.tipoDoc === "os"; }), "OS") + ccArqLinks((c.nfs || []).filter(function (r) { return !ccEhRecibo(r); }), "Nota") + ccArqLinks((c.nfs || []).filter(ccEhRecibo), "Recibo") + ccArqLinks(c.compArqs, "Comprovante") + (c.compArqs || []).map(function (r) { return '<span style="font-size:10.5px;color:#81C784;margin-right:9px;">pago ' + exDataBr(r.dataPag) + (r.recebedor ? ' → ' + esc(r.recebedor) : "") + (r.bancoPagador ? ' · ' + esc(r.bancoPagador) : "") + '</span>'; }).join("") + ccArqLinks(c.comprovantes, "Extrato")
     + (st !== "conciliada" && st !== "cancelada" && (c.nfs || []).length ? (c.nfs || []).map(function (r, i) { return '<a href="javascript:void(0)" onclick="ccMoverParaComprovante(\'' + id + '\',' + i + ')" style="color:#81C784;font-size:10.5px;margin-right:9px;" title="Anexou o comprovante no lugar da nota? Mova para comprovante">↪ ' + (ccEhRecibo(r) ? "recibo" : "nota") + ' ' + fmtR(r.valor) + ' é comprovante de pagamento</a>'; }).join("") : "")
     + '</div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' + acoes.join("") + '</div>'
     + (state._ccEdPag === c.id ? ccPagFormHTML("ccp", c.pag || { cond: "avista", forma: c.forma }, ccValorNF(c) || Number(c.valor) || 0)
         + '<div style="margin-top:6px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:' + GOLD + ';color:' + GOLD + ';font-weight:800;" onclick="ccPagSalvar(\'' + id + '\')">salvar condição</button></div>' : "")
-    + (state._ccBusEx === c.id && st === "pagamento" && adm ? ccBuscaExtratoHTML(c) : "");
+    + (state._ccBusEx === c.id && st === "pagamento" && adm ? ccBuscaExtratoHTML(c) : "")
+    + ccRatHTML(c);   // v521
   if (state._ccHist === c.id) {
     h += '<div style="margin-top:8px;border-top:1px solid #222;padding-top:6px;">' + (c.historico || []).map(function (x) {
       return '<div style="font-size:10.5px;color:#888;">' + ccDataBr(x.em) + ' — <b style="color:#bbb;">' + esc(x.por || "") + '</b> ' + esc(x.o || "") + '</div>';
@@ -16121,6 +16452,7 @@ function ccTelaHTML() {
     + '<div style="font-size:20px;font-weight:900;color:#fff;">' + concMes.length + '</div>'
     + '<div style="font-size:10.5px;color:#888;">pago ' + fmtR(concMes.reduce(function (a, c) { return a + ccValorPago(c); }, 0)) + '</div></div>'
     + '</div>'
+    + ccRatPendentesHTML()   // v522
     + (semAprov ? '<div style="font-size:11.5px;color:#fff;background:rgba(192,57,43,0.25);border:1px solid #C0392B;border-radius:6px;padding:6px 10px;margin-bottom:10px;">⚠ ' + semAprov + ' compra(s) este mês chegaram com a nota <b>sem aprovação antes</b>.</div>' : "")
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">'
     + '<select ' + sel + ' onchange="ccFiltro(\'Sit\',this.value)">'
@@ -16144,7 +16476,7 @@ function ccContextoAssistente() {
   var abertas = l.filter(function (x) { return ["aprovacao", "nota", "pagamento", "divergente"].indexOf(ccStatus(x)) !== -1; }).slice(0, 15);
   var parcAb = [];
   l.forEach(function (x) { var s = ccStatus(x); if (s !== "pagamento" && s !== "nota") return; ccParcelasSit(x).forEach(function (p) { if (!p.paga) parcAb.push("nº" + x.numero + " parc " + p.n + "/" + ccPlano(x).length + " " + (p.venc ? exDataBr(p.venc) : "") + " " + fmtR(p.valor - p.pago) + (p.vencida ? " VENCIDA" : "")); }); });
-  return "ORDEM DE SERVIÇO (v514, 01/10/2026 -- Renato: 'eles nao fazem orcamento e sim OS... era bom aprovar tambem, depois segue o fluxo'): na Nova compra existe a opcao '📋 Ordem de Servico (OS da oficina/fornecedor)'. A OS entra no lugar do orcamento, fica AGUARDANDO APROVACAO e o admin aprova com '✓ Aprovar OS'; depois segue igual: nota fiscal (ou recibo) -> pagamento no extrato -> conciliada. A compra com OS tem o selo '📋 OS nº X'. A OS NAO e documento fiscal: depois de aprovada ainda precisa anexar a nota das pecas e a nota de servico. Se a IA ler na OS 'BOLETO' com data, a condicao ja vem como Faturado (boleto) com esse vencimento. " + "ETAPAS COM DESCONTO (v513): compra fechada com desconto mostra a etapa 'Pagamento no extrato (desconto de R$ X)' marcada e a parcela 'paga R$ Y no extrato · desconto de R$ X'. " + "PAGO A MENOS (v512, 30/09/2026 -- Renato: 'ja anexei o extrato, ja coloquei o comprovante, porem nao consolida a compra de 810 reais'): quando o pagamento no extrato e MENOR que a nota/recibo (desconto, arredondamento), a compra ficava presa com 'falta R$ X' -- so existia fechar com diferenca para pago A MAIS. Agora o admin tem o botao '✓ Fechar com a diferenca (pago R$ X a menos)' na compra em consolidacao que ja tem pagamento no extrato; pede a explicacao e a compra fica CONCILIADA com a justificativa registrada. " + "EXTRATO DO NUBANK (v511, 30/09/2026): a RF tem conta no Itau e no NUBANK PJ (agencia 0001, conta 618543374-7). O PDF do extrato do Nubank agora e lido direto em Conciliacao > Extrato > Importar extrato: o app reconhece o layout (data '25 SET 2026', blocos 'Total de entradas'/'Total de saidas', favorecido em varias linhas), marca o banco como Nubank sozinho e confere a leitura com os 'Saldo do dia' do proprio banco. Teste com o extrato de setembro/2026: 543 lancamentos, entradas R$ 200.100,00 e saidas R$ 181.027,74, iguais ao resumo do banco. " + "LEITURA DO COMPROVANTE (v510, 30/09/2026 -- Renato: 'o sistema tem que ler a data de pagamento do comprovante'): ao anexar o comprovante (ou ao mover um anexo errado para comprovante) a IA le sozinha o VALOR, a DATA DO PAGAMENTO, a hora, QUEM RECEBEU e o BANCO DE ORIGEM (Edge Function ler-comprovante); o Renato so confirma, e se estiver errado corrige. O cartao da compra mostra 'pago dd/mm -> recebedor · banco'. Compras podem ser pagas pelo Itau ou pelo Nubank da RF -- o extrato de cada banco e importado em Conciliacao > Extrato com o nome do banco. " + "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
+  return "COMPROVANTE COM AS NOTAS NA DESCRICAO (v522, 01/10/2026 -- Renato: 'esse comprovante vai pagar o valor de 120 e outros que ainda vamos lancar, porem estou orientando ao financeiro que coloque na descricao quais notas serao pagas naquele comprovante'): ao anexar um comprovante MAIOR que a compra, o sistema pergunta QUAIS NOTAS ele paga, ja preenchido com os numeros que a IA leu na descricao do comprovante (Pix) e com a nota da propria compra; boleto nao tem descricao, entao o financeiro digita os numeros ali. O comprovante e repartido sozinho entre as compras cujas notas batem; nota que ainda nao tem compra fica 'falta lancar' e o valor fica esperando no comprovante. Quando a compra e lancada com o numero da nota (ou a nota e anexada), ela entra sozinha no comprovante. A aba Compras mostra o aviso '🧾 N comprovante(s) esperando compras serem lancadas' com as notas que faltam e o valor sem compra. Comprovantes esperando agora: " + (function () { try { return ccRatPendentes().map(function (x) { return fmtR(x.r.rateio.total) + " (nº " + x.c.numero + ", faltam notas " + (x.r.rateio.faltam || []).join("/") + ", " + fmtR(x.r.rateio.sobra || 0) + " sem compra)"; }).join("; ") || "nenhum"; } catch (e) { return "?"; } })() + ". " + "UM PAGAMENTO PARA VARIAS COMPRAS (v521, 01/10/2026 -- Renato: 'esse servico e um de varios que dividimos, porem o recibo de pagamento vem como valor total, tem que considerar que esse recibo pode fechar mais de uma compra'): quando um servico/pedido do fornecedor e dividido em varias compras (ex.: uma por caminhao) e pago de uma vez so, (1) no EXTRATO a saida pode ser ligada a VARIAS compras -- em Conciliacao > Extrato > ligar a compra, painel '🔗 UM PAGAMENTO SO PARA VARIAS COMPRAS?', ou na propria compra pelo botao 'Procurar o pagamento no extrato' > '✓ paga esta e outras compras'; o sistema ja deixa marcadas as compras abertas do MESMO fornecedor que cabem no valor; cada compra recebe a parte dela e fecha sozinha quando a parte = nota; se o pago for menor que a soma, a ultima fica com o saldo (desconto -> 'Fechar com a diferenca'); se for maior, pede explicacao da sobra. (2) COMPROVANTE maior que a compra: ao anexar, abre 'o comprovante e maior que esta compra -- paga outras?' e o mesmo arquivo e repartido entre as compras marcadas (botao '🔗 comprovante paga outras compras' para repartir depois). Quando a saida do extrato chega com o total do comprovante, o extrato ja sugere ligar todas as compras dele. A compra paga junto mostra o selo '🔗 PAGO JUNTO COM nº X, Y'. Desfazer no extrato desfaz em todas. " + "ORDEM DE SERVIÇO (v514, 01/10/2026 -- Renato: 'eles nao fazem orcamento e sim OS... era bom aprovar tambem, depois segue o fluxo'): na Nova compra existe a opcao '📋 Ordem de Servico (OS da oficina/fornecedor)'. A OS entra no lugar do orcamento, fica AGUARDANDO APROVACAO e o admin aprova com '✓ Aprovar OS'; depois segue igual: nota fiscal (ou recibo) -> pagamento no extrato -> conciliada. A compra com OS tem o selo '📋 OS nº X'. A OS NAO e documento fiscal: depois de aprovada ainda precisa anexar a nota das pecas e a nota de servico. Se a IA ler na OS 'BOLETO' com data, a condicao ja vem como Faturado (boleto) com esse vencimento. " + "ETAPAS COM DESCONTO (v513): compra fechada com desconto mostra a etapa 'Pagamento no extrato (desconto de R$ X)' marcada e a parcela 'paga R$ Y no extrato · desconto de R$ X'. " + "PAGO A MENOS (v512, 30/09/2026 -- Renato: 'ja anexei o extrato, ja coloquei o comprovante, porem nao consolida a compra de 810 reais'): quando o pagamento no extrato e MENOR que a nota/recibo (desconto, arredondamento), a compra ficava presa com 'falta R$ X' -- so existia fechar com diferenca para pago A MAIS. Agora o admin tem o botao '✓ Fechar com a diferenca (pago R$ X a menos)' na compra em consolidacao que ja tem pagamento no extrato; pede a explicacao e a compra fica CONCILIADA com a justificativa registrada. " + "EXTRATO DO NUBANK (v511, 30/09/2026): a RF tem conta no Itau e no NUBANK PJ (agencia 0001, conta 618543374-7). O PDF do extrato do Nubank agora e lido direto em Conciliacao > Extrato > Importar extrato: o app reconhece o layout (data '25 SET 2026', blocos 'Total de entradas'/'Total de saidas', favorecido em varias linhas), marca o banco como Nubank sozinho e confere a leitura com os 'Saldo do dia' do proprio banco. Teste com o extrato de setembro/2026: 543 lancamentos, entradas R$ 200.100,00 e saidas R$ 181.027,74, iguais ao resumo do banco. " + "LEITURA DO COMPROVANTE (v510, 30/09/2026 -- Renato: 'o sistema tem que ler a data de pagamento do comprovante'): ao anexar o comprovante (ou ao mover um anexo errado para comprovante) a IA le sozinha o VALOR, a DATA DO PAGAMENTO, a hora, QUEM RECEBEU e o BANCO DE ORIGEM (Edge Function ler-comprovante); o Renato so confirma, e se estiver errado corrige. O cartao da compra mostra 'pago dd/mm -> recebedor · banco'. Compras podem ser pagas pelo Itau ou pelo Nubank da RF -- o extrato de cada banco e importado em Conciliacao > Extrato com o nome do banco. " + "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
     + (c.aprovacao || 0) + " aguardando aprovacao, " + (c.nota || 0) + " sem nota, " + (c.pagamento || 0) + " sem comprovante, " + (c.divergente || 0) + " com valores divergentes, " + (c.conciliada || 0) + " conciliadas, " + (c.reprovada || 0) + " reprovadas, " + (c.cancelada || 0) + " canceladas. "
     + (abertas.length ? "Em aberto: " + abertas.map(function (x) { return "nº" + x.numero + (ccEhOS(x) ? " [OS" + (x.os && x.os.numero ? " " + x.os.numero : "") + "]" : "") + " " + x.descricao + (x.placa ? " " + x.placa : "") + " (" + fmtR(x.valor) + ", " + CC_ST[ccStatus(x)].nome + ", pedido por " + (x.criadoPor || "?") + ")"; }).join("; ") + "." : "");
 }
@@ -16574,6 +16906,336 @@ function exVincFatura(extId, linId) {
   delete o.l.sug; state._exFat = null; state._exAberta = "";
   exSalvar(o.e);
 }
+/* ============ v521 — UM PAGAMENTO SÓ PARA VÁRIAS COMPRAS ============
+   Renato (01/10/2026, compra nº 8 "servico feixe dt — PKS6142", Souza Santos):
+   "esse serviço é um de vários que dividimos, porém o recibo de pagamento vem como valor
+   total, tem que considerar que esse recibo pode fechar mais de uma compra!"
+   - EXTRATO: uma saída do banco pode ser ligada a VÁRIAS compras (vinc tipo "compras",
+     itens [{id, valor}]). Cada compra recebe um registro em c.comprovantes com a parte dela
+     (rateio: true, grupo = id da linha). Se o pago for MENOR que a soma das compras
+     marcadas, as primeiras ficam quitadas e a última fica com o que sobrou (desconto ->
+     "Fechar com a diferença", v512). Se o pago for MAIOR, pede a explicação da sobra.
+   - COMPROVANTE: comprovante maior que a compra abre "este comprovante paga outras compras?"
+     e reparte o mesmo arquivo entre as compras marcadas (r.rateio = {grupo, total, ids}).
+     Quando a saída do extrato chega com o valor total, as compras desse comprovante já vêm
+     marcadas e o extrato sugere ligar todas de uma vez.
+   - pré-seleção: compras do comprovante repartido > compras abertas do MESMO fornecedor
+     (as mais antigas primeiro, enquanto couberem no valor). */
+function ccFornKey(c) { return ccNormNome(c && c.fornecedor); }
+function exComprasAbertasPag() {
+  return ccLista().filter(function (c) { var s = ccStatus(c); return s !== "cancelada" && s !== "reprovada" && s !== "conciliada" && ccCond(c) !== "cartao" && exCompraRestante(c) >= 0.05; });
+}
+function exMulGrupoComprovante(v) {   // compras de um comprovante repartido com esse valor total
+  var grupos = {}, ordem = [];
+  ccLista().forEach(function (c) {
+    (c.compArqs || []).forEach(function (r) {
+      if (!r.rateio || Math.abs((Number(r.rateio.total) || 0) - v) >= 0.05) return;
+      var g = String(r.rateio.grupo); if (!grupos[g]) { grupos[g] = []; ordem.push(g); }
+      if (grupos[g].indexOf(String(c.id)) === -1) grupos[g].push(String(c.id));
+    });
+  });
+  var abIds = exComprasAbertasPag().map(function (c) { return String(c.id); });
+  for (var i = 0; i < ordem.length; i++) { var ids = grupos[ordem[i]].filter(function (id) { return abIds.indexOf(id) !== -1; }); if (ids.length > 1) return ids; }
+  return [];
+}
+function exMulMesmoFornecedor(orig, v) {   // a compra de origem + as do mesmo fornecedor que cabem no valor
+  var ab = exComprasAbertasPag(), ids = [], soma = 0;
+  if (orig) { ids.push(String(orig.id)); soma = exCompraRestante(orig); }
+  var fk = orig ? ccFornKey(orig) : "";
+  if (!fk) return ids;
+  ab.filter(function (c) { return String(c.id) !== String(orig.id) && ccFornKey(c) === fk; })
+    .sort(function (a, b) { return String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")); })
+    .forEach(function (c) { var r = exCompraRestante(c); if (soma + r <= v + 0.04) { ids.push(String(c.id)); soma += r; } });
+  return ids;
+}
+function exMulGrupoFornecedorExato(v) {   // um fornecedor cujas compras abertas somam exatamente o valor
+  var por = {};
+  exComprasAbertasPag().forEach(function (c) { var k = ccFornKey(c); if (!k) return; (por[k] = por[k] || []).push(c); });
+  for (var k in por) {
+    if (por[k].length < 2) continue;
+    var s = por[k].reduce(function (a, c) { return a + exCompraRestante(c); }, 0);
+    if (Math.abs(s - v) < 0.05) return por[k].map(function (c) { return String(c.id); });
+  }
+  return [];
+}
+function exMulPreSel(l, origId) {
+  var v = Math.abs(l.valor), g = exMulGrupoComprovante(v);
+  if (g.length && (!origId || g.indexOf(String(origId)) !== -1)) return g;
+  if (origId) return exMulMesmoFornecedor(ccAcha(origId), v);
+  var gf = exMulGrupoFornecedorExato(v);
+  return gf.length ? gf : g;
+}
+function exMulSel(l) {
+  var m = state._exMul;
+  if (m && m.lin === l.id && m.ks) return m.ks.slice();
+  return exMulPreSel(l, m && m.lin === l.id ? m.orig : null);
+}
+function exMulAbrir(linId, origId) {
+  state._exMul = state._exMul && state._exMul.lin === linId && state._exMul.orig === (origId || "") ? null : { lin: linId, orig: origId || "", ks: null };
+  render();
+}
+function exMulToggle(linId, id, on) {
+  var l = null; exTodasLinhas().forEach(function (x) { if (x.l.id === linId) l = x.l; }); if (!l) return;
+  var ks = exMulSel(l).filter(function (x) { return x !== String(id); });
+  if (on) ks.push(String(id));
+  state._exMul = { lin: linId, orig: state._exMul && state._exMul.lin === linId ? state._exMul.orig : "", ks: ks };
+  render();
+}
+/* reparte um valor entre compras, na ordem dada: cada uma leva o que falta nela, a última leva o resto */
+function exMulRepartir(ids, total) {
+  var resta = Math.round(total * 100) / 100;
+  return ids.map(function (id) {
+    var c = ccAcha(id); if (!c) return null;
+    var falta = exCompraRestante(c), usa = Math.round(Math.min(falta, Math.max(0, resta)) * 100) / 100;
+    resta = Math.round((resta - usa) * 100) / 100;
+    return { c: c, falta: falta, valor: usa };
+  }).filter(function (x) { return x && x.valor > 0.004; });
+}
+function exPainelMulti(e, l, origId) {
+  var ab = exComprasAbertasPag(); if (ab.length < 2) return "";
+  var eid = esc(e.id), lid = esc(l.id), v = Math.abs(l.valor);
+  var ks = exMulSel(l), orig = origId ? ccAcha(origId) : null, fk = orig ? ccFornKey(orig) : "";
+  if (!fk && ks.length) { var c0 = ccAcha(ks[0]); fk = c0 ? ccFornKey(c0) : ""; }
+  ab.sort(function (a, b) {   // marcadas, depois mesmo fornecedor, depois as outras
+    var ma = ks.indexOf(String(a.id)) !== -1, mb = ks.indexOf(String(b.id)) !== -1;
+    if (ma !== mb) return ma ? -1 : 1;
+    var fa = fk && ccFornKey(a) === fk, fb = fk && ccFornKey(b) === fk;
+    if (fa !== fb) return fa ? -1 : 1;
+    return String(a.criadoEm || "").localeCompare(String(b.criadoEm || ""));
+  });
+  var sel = ks.map(ccAcha).filter(Boolean);
+  var soma = Math.round(sel.reduce(function (a, c) { return a + exCompraRestante(c); }, 0) * 100) / 100, dif = Math.round((v - soma) * 100) / 100;
+  return '<div style="border:1px solid #2a4a2f;border-radius:7px;padding:7px 9px;background:#08130b;margin-top:6px;">'
+    + '<div style="font-size:10.5px;color:#81C784;font-weight:800;margin-bottom:4px;">🔗 UM PAGAMENTO SÓ PARA VÁRIAS COMPRAS? marque as compras pagas nesta saída de ' + fmtR(v) + '</div>'
+    + '<div style="max-height:220px;overflow:auto;">' + ab.map(function (c) {
+        var on = ks.indexOf(String(c.id)) !== -1, mesmo = fk && ccFornKey(c) === fk;
+        return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "") + ' onchange="exMulToggle(\'' + lid + '\',\'' + esc(String(c.id)) + '\',this.checked)"> '
+          + 'nº ' + esc(c.numero) + ' · ' + esc(c.descricao) + (c.placa ? ' · ' + esc(c.placa) : "") + (c.fornecedor ? ' · <span style="color:' + (mesmo ? "#81C784" : "#888") + ';">' + esc(c.fornecedor) + '</span>' : "") + ' · falta <b>' + fmtR(exCompraRestante(c)) + '</b></label>';
+      }).join("") + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:#ddd;">' + sel.length + ' compra(s) <b>' + fmtR(soma) + '</b> · pago <b>' + fmtR(v) + '</b>'
+    + (!sel.length ? "" : Math.abs(dif) < 0.05 ? ' · <b style="color:#66BB6A;">bate ✓</b>' : dif > 0 ? ' · <b style="color:#E57373;">sobra ' + fmtR(dif) + ' sem compra</b>' : ' · <b style="color:#FFB74D;">pago ' + fmtR(-dif) + ' a menos — a última compra fica com o saldo</b>')
+    + ' <button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#81C784;color:#81C784;font-weight:800;" onclick="exVincCompras(\'' + eid + '\',\'' + lid + '\')">ligar este pagamento às compras marcadas</button></div></div>';
+}
+function exVincCompras(extId, linId) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l || o.l.vinc) return;
+  var ids = exMulSel(o.l).filter(function (id) { var c = ccAcha(id); return c && exCompraRestante(c) >= 0.05; });
+  if (!ids.length) { alert("Marque as compras pagas neste lançamento."); return; }
+  if (ids.length === 1) { exVincCompra(extId, linId, ids[0]); state._exMul = null; return; }
+  var v = Math.abs(o.l.valor), soma = Math.round(ids.reduce(function (a, id) { return a + exCompraRestante(ccAcha(id)); }, 0) * 100) / 100, resto = Math.round((v - soma) * 100) / 100, obs = "";
+  if (resto >= 0.05) {
+    obs = prompt("O pagamento tem " + fmtR(resto) + " além das compras marcadas.\nO que é essa diferença? (compra não lançada, juros, taxa...)", "");
+    if (obs == null) return;
+  } else if (resto <= -0.05 && !confirm("O pagamento (" + fmtR(v) + ") é " + fmtR(-resto) + " MENOR que as compras marcadas (" + fmtR(soma) + ").\n\nAs primeiras ficam quitadas e a última fica com o saldo em consolidação (desconto → use 'Fechar com a diferença' nela).\n\nContinuar?")) return;
+  var agora = new Date().toISOString(), rep = exMulRepartir(ids, v), nums = rep.map(function (x) { return "nº " + x.c.numero; }).join(", ");
+  rep.forEach(function (x) {
+    var c = x.c;
+    (c.comprovantes = c.comprovantes || []).push({ arquivos: o.e.arquivo ? [{ path: o.e.arquivo, nome: "Extrato " + o.e.banco }] : [], valor: x.valor, em: agora, por: ccQuem(),
+      origem: "extrato", extratoId: o.e.id, linhaId: o.l.id, dataPag: o.l.data, desc: o.l.desc, rateio: { grupo: o.l.id, total: v, ids: rep.map(function (y) { return String(y.c.id); }) } });
+    (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: "pago no extrato " + o.e.banco + " de " + exDataBr(o.l.data) + ": " + fmtR(x.valor) + " desta compra, num pagamento só de " + fmtR(v) + " junto com " + nums });
+    ccTentarConciliar(c); c.atualizadoEm = Date.now();
+  });
+  o.l.vinc = { tipo: "compras", itens: rep.map(function (x) { return { id: x.c.id, valor: x.valor }; }), soma: Math.min(soma, v), resto: Math.max(0, resto), obs: String(obs || "").trim(), por: ccQuem(), em: agora };
+  delete o.l.sug; state._exMul = null; state._exAberta = "";
+  exSalvar(o.e);
+}
+/* comprovante maior que a compra: repartir o mesmo comprovante entre outras compras */
+function ccRatSel(c) {
+  var m = state._ccRat; if (!m || m.orig !== String(c.id)) return [];
+  if (m.ks) return m.ks.slice();
+  var reg = (c.compArqs || [])[m.idx]; var total = reg ? Number(reg.valor) || 0 : 0;
+  var falta = function (x) { return Math.max(0, Math.round(((ccValorNF(x) || Number(x.valor) || 0) - ccValorPago(x)) * 100) / 100); };
+  var ids = [String(c.id)], soma = falta(c), fk = ccFornKey(c);
+  if (fk) exComprasAbertasPag().filter(function (x) { return String(x.id) !== String(c.id) && ccFornKey(x) === fk; })
+    .sort(function (a, b) { return String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")); })
+    .forEach(function (x) { var f = falta(x); if (soma + f <= total + 0.04) { ids.push(String(x.id)); soma += f; } });
+  return ids;
+}
+function ccRatToggle(origId, id, on) {
+  var c = ccAcha(origId); if (!c) return;
+  var ks = ccRatSel(c).filter(function (x) { return x !== String(id); }); if (on) ks.push(String(id));
+  if (ks.indexOf(String(origId)) === -1) ks.unshift(String(origId));
+  state._ccRat.ks = ks; render();
+}
+function ccRatHTML(c) {
+  var m = state._ccRat; if (!m || m.orig !== String(c.id)) return "";
+  var reg = (c.compArqs || [])[m.idx]; if (!reg) return "";
+  var id = esc(String(c.id)), total = Number(reg.valor) || 0, ks = ccRatSel(c), fk = ccFornKey(c);
+  var falta = function (x) { return Math.max(0, Math.round(((ccValorNF(x) || Number(x.valor) || 0) - ccValorPago(x)) * 100) / 100); };
+  var ab = exComprasAbertasPag().filter(function (x) { return String(x.id) !== String(c.id); });
+  ab.sort(function (a, b) { var fa = fk && ccFornKey(a) === fk, fb = fk && ccFornKey(b) === fk; if (fa !== fb) return fa ? -1 : 1; return String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")); });
+  var soma = Math.round(ks.map(ccAcha).filter(Boolean).reduce(function (a, x) { return a + falta(x); }, 0) * 100) / 100, dif = Math.round((total - soma) * 100) / 100;
+  return '<div style="margin-top:8px;border:1px solid #2a4a2f;border-radius:7px;padding:8px 10px;background:#08130b;">'
+    + '<div style="font-size:11px;color:#81C784;font-weight:800;margin-bottom:5px;">🔗 O COMPROVANTE DE ' + fmtR(total) + ' É MAIOR QUE ESTA COMPRA (' + fmtR(falta(c)) + '). Ele paga outras compras também? marque quais:</div>'
+    + '<div style="font-size:11.5px;color:#fff;padding:2px 0;">✓ nº ' + esc(c.numero) + ' · ' + esc(c.descricao) + ' · <b>' + fmtR(falta(c)) + '</b> <span style="color:#888;">(esta)</span></div>'
+    + '<div style="max-height:200px;overflow:auto;">' + (ab.length ? ab.map(function (x) {
+        var on = ks.indexOf(String(x.id)) !== -1, mesmo = fk && ccFornKey(x) === fk;
+        return '<label style="display:flex;gap:7px;align-items:center;font-size:11.5px;color:' + (on ? "#fff" : "#aaa") + ';padding:2px 0;cursor:pointer;"><input type="checkbox" style="width:auto;margin:0;"' + (on ? " checked" : "") + ' onchange="ccRatToggle(\'' + id + '\',\'' + esc(String(x.id)) + '\',this.checked)"> '
+          + 'nº ' + esc(x.numero) + ' · ' + esc(x.descricao) + (x.placa ? ' · ' + esc(x.placa) : "") + (x.fornecedor ? ' · <span style="color:' + (mesmo ? "#81C784" : "#888") + ';">' + esc(x.fornecedor) + '</span>' : "") + ' · <b>' + fmtR(falta(x)) + '</b></label>';
+      }).join("") : '<div style="font-size:11px;color:#888;">nenhuma outra compra em aberto — lance as outras compras e volte aqui.</div>') + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:11.5px;color:#ddd;">' + ks.length + ' compra(s) <b>' + fmtR(soma) + '</b> · comprovante <b>' + fmtR(total) + '</b>'
+    + (Math.abs(dif) < 0.05 ? ' · <b style="color:#66BB6A;">bate ✓</b>' : dif > 0 ? ' · <b style="color:#E57373;">sobra ' + fmtR(dif) + ' — falta lançar compra?</b>' : ' · <b style="color:#FFB74D;">' + fmtR(-dif) + ' a menos que as compras</b>')
+    + ' <button class="btn-outline" style="font-size:11px;padding:3px 10px;border-color:#81C784;color:#81C784;font-weight:800;" onclick="ccRatAplicar(\'' + id + '\')">repartir o comprovante</button>'
+    + ' <button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="state._ccRat=null;render()">deixar só nesta compra</button></div></div>';
+}
+function ccRatAplicar(origId) {
+  var c = ccAcha(origId), m = state._ccRat; if (!c || !m || m.orig !== String(c.id)) return;
+  var reg = (c.compArqs || [])[m.idx]; if (!reg) return;
+  var ids = ccRatSel(c); if (ids.indexOf(String(c.id)) === -1) ids.unshift(String(c.id));
+  if (ids.length < 2) { alert("Marque as outras compras pagas neste comprovante."); return; }
+  var total = Number(reg.valor) || 0, resta = total, agora = new Date().toISOString();
+  var falta = function (x) { return Math.max(0, Math.round(((ccValorNF(x) || Number(x.valor) || 0) - ccValorPago(x)) * 100) / 100); };
+  var parts = ids.map(ccAcha).filter(Boolean).map(function (x, i, arr) {
+    var usa = i === arr.length - 1 ? Math.max(0, resta) : Math.min(falta(x), Math.max(0, resta));
+    usa = Math.round(usa * 100) / 100; resta = Math.round((resta - usa) * 100) / 100;
+    return { c: x, valor: usa };
+  });
+  var rat = { grupo: "rat" + Date.now(), total: total, ids: parts.map(function (p) { return String(p.c.id); }) }, nums = parts.map(function (p) { return "nº " + p.c.numero; }).join(", ");
+  parts.forEach(function (p) {
+    if (p.c === c) { reg.valor = p.valor; reg.rateio = rat; }
+    else {
+      var r2 = JSON.parse(JSON.stringify(reg)); r2.valor = p.valor; r2.rateio = rat; r2.em = agora; r2.por = ccQuem(); r2.repartidoDe = c.id;
+      (p.c.compArqs = p.c.compArqs || []).push(r2);
+    }
+    (p.c.historico = p.c.historico || []).push({ em: agora, por: ccQuem(), o: "comprovante de " + fmtR(total) + " (" + exDataBr(reg.dataPag) + ") repartido entre " + nums + ": " + fmtR(p.valor) + " desta compra — aguardando o extrato" });
+    p.c.atualizadoEm = Date.now();
+  });
+  state._ccRat = null;
+  salvar(); render();
+}
+function ccRatTalvezAbrir(c, idx) {   // v521: comprovante maior que o que falta na compra -> pergunta se paga outras
+  var reg = (c.compArqs || [])[idx]; if (!reg || reg.rateio) return;
+  var falta = Math.max(0, (ccValorNF(c) || Number(c.valor) || 0) - ccValorPago(c));
+  var outras = exComprasAbertasPag().filter(function (x) { return String(x.id) !== String(c.id); });
+  if ((Number(reg.valor) || 0) > falta + 0.05 && outras.length) state._ccRat = { orig: String(c.id), idx: idx, ks: null };
+}
+function ccRepartirComprovante(id) {   // v521: botão no cartão para repartir um comprovante já anexado
+  var c = ccAcha(id); if (!c) return;
+  var i = -1; (c.compArqs || []).forEach(function (r, k) { if (!r.rateio) i = k; });
+  if (i < 0) { alert("Esta compra não tem comprovante para repartir (ou ele já foi repartido)."); return; }
+  state._ccRat = state._ccRat && state._ccRat.orig === String(c.id) ? null : { orig: String(c.id), idx: i, ks: null }; render();
+}
+function ccRateioTexto(c) {   // selo no cartão: pagamento junto com outras compras
+  var outros = {};
+  (c.comprovantes || []).concat(c.compArqs || []).forEach(function (r) { (r.rateio && r.rateio.ids || []).forEach(function (id) { if (String(id) !== String(c.id)) outros[id] = r.rateio.total; }); });
+  var ids = Object.keys(outros); if (!ids.length) return "";
+  var nums = ids.map(function (id) { var x = ccAcha(id); return x ? "nº " + x.numero : null; }).filter(Boolean);
+  return '<span style="font-size:10px;font-weight:900;color:#000;background:#81C784;border-radius:4px;padding:1px 7px;" title="Pago num pagamento só (' + fmtR(outros[ids[0]]) + ') junto com outras compras">🔗 PAGO JUNTO COM ' + esc(nums.join(", ")) + '</span>';
+}
+/* ============ v522 — COMPROVANTE DIZ QUAIS NOTAS ELE PAGA ============
+   Renato (01/10/2026, boleto Nubank de R$ 2.181,04 para a Souza Santos): "esse comprovante vai
+   pagar o valor de 120 e outros que ainda vamos lançar, porém estou orientando ao financeiro que
+   coloque na descrição quais notas serão pagas naquele comprovante, assim facilita na hora de conciliar".
+   - ao anexar um comprovante MAIOR que a compra, o sistema pergunta "quais notas este comprovante
+     paga?", já preenchido com os números que a IA leu na DESCRIÇÃO do comprovante (Pix) e com a
+     nota da própria compra. Boleto não tem descrição: o financeiro digita os números ali.
+   - o comprovante é repartido sozinho entre as compras cujas notas batem (c.nfs[].numero ou o nº
+     lido do documento). Nota que ainda não tem compra fica como "falta lançar" e o valor dela
+     fica guardado no comprovante, esperando.
+   - quando a nota que faltava é anexada (ou a compra é lançada já com a nota), a compra entra
+     sozinha no rateio daquele comprovante — sem ninguém precisar lembrar.
+   - r.rateio = { grupo, total, ids, notas, faltam, sobra } em cada pedaço; o pedaço de origem
+     não tem r.repartidoDe. */
+function ccNormNumNF(x) { return String(x == null ? "" : x).replace(/\D/g, "").replace(/^0+/, ""); }
+function ccNumerosNF(c) {
+  var out = [];
+  (c && c.nfs || []).forEach(function (r) { var n = ccNormNumNF(r.numero); if (n && out.indexOf(n) === -1) out.push(n); });
+  var d = c && c.docLido && ccNormNumNF(c.docLido.numero); if (d && out.indexOf(d) === -1) out.push(d);
+  return out;
+}
+function ccNumerosDoTexto(t) {   // "NF 1234, 1250 e 1301" -> ["1234","1250","1301"]; ignora valores em R$ e datas
+  var s = String(t || "").replace(/R\$\s*[\d.,]+/gi, " ").replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, " ").replace(/\b\d+[.,]\d{2}\b/g, " ");
+  var out = []; (s.match(/\d{2,9}/g) || []).forEach(function (x) { var n = ccNormNumNF(x); if (n && out.indexOf(n) === -1) out.push(n); });
+  return out;
+}
+function ccFaltaPagar(x) { return Math.max(0, Math.round(((ccValorNF(x) || Number(x.valor) || 0) - ccValorPago(x)) * 100) / 100); }
+/* pergunta as notas pagas no comprovante; devolve [] (só esta compra) ou a lista de números */
+function ccPerguntarNotas(c, j, valor) {
+  if (!(valor > ccFaltaPagar(c) + 0.05)) return [];
+  var sug = ccNumerosDoTexto(j && j.descricao).concat(ccNumerosNF(c)).filter(function (x, i, a) { return a.indexOf(x) === i; });
+  var r = prompt("Este comprovante de " + fmtR(valor) + " é MAIOR que esta compra (" + fmtR(ccFaltaPagar(c)) + ").\n\nQuais NOTAS ele paga? Números separados por vírgula"
+    + (j && j.descricao ? "\n(li na descrição: \"" + String(j.descricao).slice(0, 80) + "\")" : "")
+    + "\n\nDeixe em branco para escolher as compras na mão.", sug.join(", "));
+  if (r == null) return [];
+  return ccNumerosDoTexto(r);
+}
+function ccRatOrigem(grupo) {   // {c, r} do pedaço de origem do comprovante
+  var achou = null;
+  ccLista().forEach(function (c) { (c.compArqs || []).forEach(function (r) { if (!achou && r.rateio && r.rateio.grupo === grupo && !r.repartidoDe) achou = { c: c, r: r }; }); });
+  return achou;
+}
+/* reparte (de novo) o comprovante entre a compra de origem e as compras cujas notas estão na lista */
+function ccRatRecalcular(grupo) {
+  var o = ccRatOrigem(grupo); if (!o || !o.r.rateio || !(o.r.rateio.notas || []).length) return false;
+  var notas = o.r.rateio.notas, total = Number(o.r.rateio.total) || 0, agora = new Date().toISOString();
+  var membros = [o.c];
+  ccLista().filter(function (x) { var s = ccStatus(x); return x !== o.c && s !== "cancelada" && s !== "reprovada" && ccNumerosNF(x).some(function (n) { return notas.indexOf(n) !== -1; }); })
+    .sort(function (a, b) { return String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")); })
+    .forEach(function (x) { membros.push(x); });
+  var cobertas = []; membros.forEach(function (x) { ccNumerosNF(x).forEach(function (n) { if (notas.indexOf(n) !== -1 && cobertas.indexOf(n) === -1) cobertas.push(n); }); });
+  var faltam = notas.filter(function (n) { return cobertas.indexOf(n) === -1; });
+  var resta = total, ids = membros.map(function (x) { return String(x.id); }), novas = [];
+  var partes = membros.map(function (x) {
+    var usa = Math.round(Math.min(ccFaltaPagar(x), Math.max(0, resta)) * 100) / 100;
+    resta = Math.round((resta - usa) * 100) / 100;
+    return { c: x, valor: usa };
+  });
+  var info = function () { return { grupo: grupo, total: total, ids: ids.slice(), notas: notas.slice(), faltam: faltam.slice(), sobra: Math.max(0, resta) }; };
+  partes.forEach(function (p) {
+    var meu = (p.c.compArqs || []).filter(function (r) { return r.rateio && r.rateio.grupo === grupo; })[0];
+    if (meu) { meu.valor = p.valor; meu.rateio = info(); p.c.atualizadoEm = Date.now(); return; }
+    var r2 = JSON.parse(JSON.stringify(o.r)); r2.valor = p.valor; r2.rateio = info(); r2.em = agora; r2.por = ccQuem(); r2.repartidoDe = o.c.id;
+    (p.c.compArqs = p.c.compArqs || []).push(r2); novas.push(p.c);
+    (p.c.historico = p.c.historico || []).push({ em: agora, por: ccQuem(), o: "entrou no comprovante de " + fmtR(total) + " (" + exDataBr(o.r.dataPag) + ", lançado na compra nº " + o.c.numero + ") pela nota " + ccNumerosNF(p.c).filter(function (n) { return notas.indexOf(n) !== -1; }).join(", ") + ": " + fmtR(p.valor) + " desta compra — aguardando o extrato" });
+    p.c.atualizadoEm = Date.now();
+  });
+  return novas.length > 0;
+}
+function ccRatPorNotas(c, idx, notas) {
+  var reg = (c.compArqs || [])[idx]; if (!reg || !notas.length) return;
+  var total = Number(reg.valor) || 0, grupo = "rat" + Date.now() + Math.random().toString(36).slice(2, 5);
+  reg.rateio = { grupo: grupo, total: total, ids: [String(c.id)], notas: notas.slice(), faltam: [], sobra: 0 };
+  ccRatRecalcular(grupo);
+  var r = reg.rateio;
+  (c.historico = c.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "comprovante de " + fmtR(total) + " paga as notas " + notas.join(", ")
+    + " — repartido entre " + r.ids.length + " compra(s)" + (r.faltam.length ? "; falta lançar a(s) nota(s) " + r.faltam.join(", ") + " (" + fmtR(r.sobra) + " esperando)" : "") });
+}
+/* nota nova numa compra: entra sozinha no comprovante que já citava esse número */
+function ccRatNotaNova(c) {
+  var nums = ccNumerosNF(c); if (!nums.length) return;
+  var grupos = [];
+  ccLista().forEach(function (x) { (x.compArqs || []).forEach(function (r) {
+    if (r.repartidoDe || !r.rateio || !(r.rateio.notas || []).length) return;
+    if ((r.rateio.ids || []).indexOf(String(c.id)) !== -1) return;
+    if (nums.some(function (n) { return r.rateio.notas.indexOf(n) !== -1; }) && grupos.indexOf(r.rateio.grupo) === -1) grupos.push(r.rateio.grupo);
+  }); });
+  grupos.forEach(function (g) { ccRatRecalcular(g); });
+}
+function ccRatPendentes() {   // comprovantes que ainda esperam compras serem lançadas
+  var out = [];
+  ccLista().forEach(function (c) { (c.compArqs || []).forEach(function (r) {
+    if (!r.repartidoDe && r.rateio && (r.rateio.notas || []).length && ((r.rateio.faltam || []).length || (r.rateio.sobra || 0) >= 0.05)) out.push({ c: c, r: r });
+  }); });
+  return out;
+}
+function ccRatNotasHTML(c) {   // no cartão: o que o comprovante paga e o que falta lançar
+  var vistos = {};
+  return (c.compArqs || []).filter(function (r) { if (!r.rateio || !(r.rateio.notas || []).length || vistos[r.rateio.grupo]) return false; vistos[r.rateio.grupo] = 1; return true; }).map(function (r) {
+    var x = r.rateio;
+    return '<div style="font-size:11px;color:#81C784;margin:2px 0 6px;">🧾 comprovante de <b>' + fmtR(x.total) + '</b> (' + exDataBr(r.dataPag) + ') paga as notas <b>' + esc(x.notas.join(", ")) + '</b> · ' + (x.ids || []).length + ' compra(s) no sistema'
+      + ((x.faltam || []).length ? ' · <b style="color:#FFB74D;">falta lançar a(s) nota(s) ' + esc(x.faltam.join(", ")) + '</b>' : "")
+      + ((x.sobra || 0) >= 0.05 ? ' · <b style="color:#FFB74D;">' + fmtR(x.sobra) + ' ainda sem compra</b>' : "") + '</div>';
+  }).join("");
+}
+function ccRatPendentesHTML() {
+  var p = ccRatPendentes(); if (!p.length) return "";
+  return '<div style="font-size:11.5px;color:#ddd;background:rgba(255,183,77,0.10);border:1px solid #FFB74D;border-radius:6px;padding:6px 10px;margin-bottom:10px;">'
+    + '<b style="color:#FFB74D;">🧾 ' + p.length + ' comprovante(s) esperando compras serem lançadas</b>' + p.map(function (x) {
+      var r = x.r.rateio;
+      return '<div style="margin-top:3px;">' + fmtR(r.total) + ' de ' + exDataBr(x.r.dataPag) + (x.r.recebedor ? ' → ' + esc(x.r.recebedor) : "") + ' (anexado na nº ' + esc(x.c.numero) + ')'
+        + ((r.faltam || []).length ? ' · faltam as notas <b>' + esc(r.faltam.join(", ")) + '</b>' : "") + ' · <b>' + fmtR(r.sobra || 0) + '</b> sem compra</div>';
+    }).join("") + '<div style="color:#999;margin-top:3px;">Lance as compras com o número da nota: elas entram sozinhas no comprovante.</div></div>';
+}
 function exViagensAbertas() {
   var rec = exRecebidoPorViagem();
   return (state.viagens || []).filter(function (v) { return v && v.id != null && (Number(v.valorViagem) || 0) > 0 && exFaltaViagem(v, rec) >= 0.05; })
@@ -16616,11 +17278,17 @@ function exAutoVincular(ext) {
           finalidade: sgv && Math.abs(sgv.soma - Math.abs(l.valor)) < 0.05 ? "Pagamento de viagens" : "Combustível" };
         return;
       }
+      var aj = typeof ajDoTexto === "function" ? ajDoTexto(l.desc) : null;   // v523: PIX para ajudante
+      if (aj) { var sga = ajSugViagens(l, aj.id); l.sug = { tipo: "ajudante", id: aj.id, ids: sga.ids, soma: sga.soma }; return; }
       if (exEhPosto(l)) { var ab = exCandAbast(l); if (ab.length === 1) { l.sug = { tipo: "abastecimento", id: String(ab[0].id) }; return; } }
     }
     var cat = exSugCategoria(l);
     if (cat) { l.sug = { tipo: "outro", categoria: cat }; return; }
-    if (l.valor < 0) { var cc = exCandCompras(l); if (cc.length === 1) l.sug = { tipo: "compra", id: cc[0].id }; }
+    if (l.valor < 0) {
+      var cc = exCandCompras(l);
+      if (cc.length === 1) l.sug = { tipo: "compra", id: cc[0].id };
+      else if (!cc.length) { var gm = exMulGrupoComprovante(Math.abs(l.valor)); if (!gm.length) gm = exMulGrupoFornecedorExato(Math.abs(l.valor)); if (gm.length > 1) l.sug = { tipo: "compras", ids: gm }; }   // v521
+    }
     else { var vv = exCandViagens(l); if (vv.length === 1) l.sug = { tipo: "viagens", ids: [vv[0].id] }; }
   });
 }
@@ -16716,6 +17384,7 @@ function exAplicarSugSimples(l) {   // v457: sugestões que viram vínculo sem m
       finalidade: ids.length && resto < 0.05 ? "Pagamento de viagens" : (s.finalidade === "Pagamento de viagens" ? "Combustível" : (s.finalidade || "Combustível")),
       obs: "sugerido pelo sistema" + (ids.length ? " · " + ids.length + " viagem(ns) " + fmtR(s.valorViagens) + (marcadas ? ", " + marcadas + " marcada(s) paga(s)" : "") : ""), por: ccQuem(), em: agora };
   }
+  else if (s.tipo === "ajudante") { if (!ajLigarLinha({ l: l }, s.id, s.ids || [], "Operacional", true)) return false; }   // v523
   else if (s.tipo === "abastecimento") {
     var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(s.id); })[0]; if (!a) return false;
     l.vinc = { tipo: "abastecimento", id: String(a.id), motorista: a.motoristaNome || "", placa: a.placa || "", valorAbast: Number(a.valor) || 0, dataAbast: a.data || "", dif: Math.round((Math.abs(l.valor) - (Number(a.valor) || 0)) * 100) / 100, obs: "sugerido pelo sistema", por: ccQuem(), em: agora };
@@ -16724,15 +17393,16 @@ function exAplicarSugSimples(l) {   // v457: sugestões que viram vínculo sem m
 }
 function exAceitarSug(extId, linId) {
   var o = exLinha(extId, linId); if (!o.l || !o.l.sug) return;
-  if (o.l.sug.tipo === "motorista" || o.l.sug.tipo === "abastecimento") { if (!ehAdmin()) return; if (exAplicarSugSimples(o.l)) exSalvar(o.e); return; }
+  if (o.l.sug.tipo === "motorista" || o.l.sug.tipo === "abastecimento" || o.l.sug.tipo === "ajudante") { if (!ehAdmin()) return; if (exAplicarSugSimples(o.l)) exSalvar(o.e); return; }
   if (o.l.sug.tipo === "outro") { if (!ehAdmin()) return; o.l.vinc = { tipo: "outro", categoria: o.l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug; exSalvar(o.e); return; }
   if (o.l.sug.tipo === "compra") exVincCompra(extId, linId, o.l.sug.id);
+  else if (o.l.sug.tipo === "compras") { state._exMul = { lin: o.l.id, orig: "", ks: (o.l.sug.ids || []).map(String) }; exVincCompras(extId, linId); }   // v521
   else exVincViagens(extId, linId, o.l.sug.ids);
 }
 function exConfirmarSugCategorias(extId) {   // v449: confirma de uma vez as categorias sugeridas (posto, rendimento...)
   if (!ehAdmin()) return;
   var alvo = extId === "todos" ? exLista() : exLista().filter(function (e) { return e.id === extId; });
-  var simples = function (l) { return !l.vinc && l.sug && (l.sug.tipo === "outro" || l.sug.tipo === "motorista" || l.sug.tipo === "abastecimento"); };
+  var simples = function (l) { return !l.vinc && l.sug && (l.sug.tipo === "outro" || l.sug.tipo === "motorista" || l.sug.tipo === "abastecimento" || l.sug.tipo === "ajudante"); };
   var n = 0; alvo.forEach(function (e) { (e.linhas || []).forEach(function (l) { if (simples(l)) n++; }); });
   if (!n || !confirm("Confirmar " + n + " sugestão(ões) (PIX para motorista, abastecimento pago ao posto, rendimento, transferência entre contas...)?")) return;
   alvo.forEach(function (e) {
@@ -16745,6 +17415,21 @@ function exDesfazer(extId, linId) {
   if (!ehAdmin()) return;
   var o = exLinha(extId, linId); if (!o.l || !o.l.vinc) return;
   if (!confirm("Desfazer a conciliação deste lançamento?")) return;
+  if (o.l.vinc.tipo === "ajudante") {   // v523: desmarca as viagens que este PIX marcou
+    (state.viagens || []).forEach(function (v) {
+      if ((o.l.vinc.marcadas || []).indexOf(String(v.id)) === -1 || !v.pagoAjudante || v.dataPagamentoAjudante !== o.l.data) return;
+      v.pagoAjudante = false; v.dataPagamentoAjudante = ""; delete v.pagoAjudanteFonte; v.atualizadoEm = Date.now();
+    });
+  }
+  if (o.l.vinc.tipo === "compras") {   // v521
+    (o.l.vinc.itens || []).forEach(function (it) {
+      var cm = ccAcha(it.id); if (!cm) return;
+      cm.comprovantes = (cm.comprovantes || []).filter(function (r) { return r.linhaId !== o.l.id; });
+      if (!ccBatem(cm) || !(cm.comprovantes || []).length) cm.conciliadaEm = null;
+      (cm.historico = cm.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "desfez o pagamento único de " + exDataBr(o.l.data) + " (várias compras)" });
+      cm.atualizadoEm = Date.now();
+    });
+  }
   if (o.l.vinc.tipo === "fatura") {   // v501
     (o.l.vinc.itens || []).forEach(function (it) {
       var cf = ccAcha(it.id); if (!cf) return;
@@ -16786,7 +17471,7 @@ function exExcluirExtrato(extId) {
   var conc = (e.linhas || []).filter(function (l) { return l.vinc; }).length;
   if (!confirm("Excluir o extrato " + e.banco + " (" + exDataBr(e.periodoIni) + " a " + exDataBr(e.periodoFim) + ")?" + (conc ? "\n\nEle tem " + conc + " lançamento(s) conciliado(s) — os vínculos com compras serão desfeitos." : ""))) return;
   (e.linhas || []).forEach(function (l) {
-    var idsC = l.vinc && l.vinc.tipo === "compra" ? [l.vinc.id] : l.vinc && l.vinc.tipo === "fatura" ? (l.vinc.itens || []).map(function (it) { return it.id; }) : [];   // v501
+    var idsC = l.vinc && l.vinc.tipo === "compra" ? [l.vinc.id] : l.vinc && (l.vinc.tipo === "fatura" || l.vinc.tipo === "compras") ? (l.vinc.itens || []).map(function (it) { return it.id; }) : [];   // v501/v521
     idsC.forEach(function (cid) {
       var c = ccAcha(cid);
       if (c) { c.comprovantes = (c.comprovantes || []).filter(function (r) { return r.extratoId !== e.id; }); if (!ccBatem(c) || !(c.comprovantes || []).length) c.conciliadaEm = null; c.atualizadoEm = Date.now(); }
@@ -16815,6 +17500,9 @@ function exVincTexto(l) {
     + ((v.viagensMot || []).length ? (v.viagensMot.length + " viagem(ns) " + fmtR(v.valorViagens) + (v.resto > 0.04 ? " + " + fmtR(v.resto) + " " + esc(String(v.finalidade || "").toLowerCase()) : "")) : esc(v.finalidade || "Combustível"));
   if (v.tipo === "abastecimento") return "⛽ abastecimento pago ao posto · " + esc(exMotNomeBonito(v.motorista)) + " · " + esc(v.placa || "") + " · " + exDataBr(String(v.dataAbast || "").slice(0, 10)) + " · " + fmtR(v.valorAbast) + (Math.abs(v.dif || 0) >= 0.05 ? ' <span style="color:#FFB74D;">(diferença ' + fmtR(v.dif) + ')</span>' : "");
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
+  if (v.tipo === "ajudante") return "👷 PIX para o ajudante <b>" + esc(v.nome || "") + "</b>" + (v.obs ? " · " + esc(v.obs) : " · " + esc(v.finalidade || ""));   // v523
+  if (v.tipo === "compras") return "🔗 um pagamento para " + (v.itens || []).length + " compras: " + (v.itens || []).map(function (it) { var c = ccAcha(it.id); return c ? "nº " + esc(c.numero) + " " + fmtR(it.valor) : "(excluída)"; }).join(" + ")   // v521
+    + (v.resto >= 0.05 ? ' · <span style="color:#E57373;">' + fmtR(v.resto) + ' sem compra' + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
   if (v.tipo === "fatura") return "💳 fatura do cartão · " + (v.itens || []).length + " parcela(s) de compra " + fmtR(v.soma)
     + (v.resto >= 0.05 ? ' · <span style="color:#E57373;">' + fmtR(v.resto) + ' sem compra lançada' + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
   if (v.tipo === "viagens" && v.demonstrativo && v.demonstrativo.compensacao) return "🧾 compensação Suzano · " + (v.ids || []).length + " viagem(ns) · " + fmtR(v.soma)
@@ -16846,7 +17534,10 @@ function exLinhaHTML(e, l) {
       var st = l.sug.tipo === "motorista" ? "PIX para o motorista <b>" + esc(exMotNomeBonito(l.sug.motorista)) + "</b>"
           + ((l.sug.viagensMot || []).length ? " — " + l.sug.viagensMot.length + " viagem(ns) " + fmtR(l.sug.valorViagens) + (Math.abs(l.sug.valorViagens - Math.abs(l.valor)) < 0.05 ? " (bate)" : " + " + fmtR(Math.abs(l.valor) - l.sug.valorViagens) + " combustível") : " (combustível)")
         : l.sug.tipo === "abastecimento" ? (function () { var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(l.sug.id); })[0]; return a ? "abastecimento pago ao posto: " + exMotAbastRot(a) : ""; })()
-        : l.sug.tipo === "outro" ? esc(l.sug.categoria) : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
+        : l.sug.tipo === "outro" ? esc(l.sug.categoria)
+        : l.sug.tipo === "ajudante" ? (function () { var f = cmFicha(l.sug.id); return f ? "👷 PIX para o ajudante <b>" + esc(ajNome(f)) + "</b>" + ((l.sug.ids || []).length ? " — " + l.sug.ids.length + " viagem(ns) " + fmtR(l.sug.soma) + (Math.abs(l.sug.soma - Math.abs(l.valor)) < 0.05 ? " (bate)" : " + " + fmtR(Math.abs(l.valor) - l.sug.soma) + " operacional") : " (operacional)") : ""; })()   // v523
+        : l.sug.tipo === "compras" ? (l.sug.ids || []).length + " compras pagas juntas: " + (l.sug.ids || []).map(function (id) { var c = ccAcha(id); return c ? "nº " + esc(c.numero) + " " + esc(c.descricao) + " " + fmtR(exCompraRestante(c)) : ""; }).filter(Boolean).join(" + ")   // v521
+        : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
         : (function () { var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(l.sug.ids[0]); })[0]; return v ? "viagem " + exViagemRot(v) : ""; })();
       if (st) h += '<span style="font-size:11px;color:#F2E600;">sugestão: ' + st + '</span>' + btn("✓ confirmar", "exAceitarSug('" + eid + "','" + lid + "')", "#66BB6A");
     }
@@ -16862,6 +17553,7 @@ function exPainelSaida(e, l) {
   var sel = 'style="font-size:12px;padding:5px 7px;background:#111;color:#ddd;border:1px solid #333;border-radius:6px;width:auto;max-width:100%;"';
   var h = '<div style="margin-top:8px;border-top:1px solid #222;padding-top:8px;display:grid;gap:8px;">';
   h += exPainelMotorista(e, l);   // v457
+  h += exPainelAjudante(e, l);   // v523
   h += '<div><div style="font-size:10.5px;color:#4FC3F7;font-weight:800;margin-bottom:4px;">COMPRA LANÇADA NA ABA COMPRAS</div>'
     + (abertas.length ? '<select id="ex-cp-' + lid + '" ' + sel + '>' + abertas.map(function (c) {
         var ok = cand.indexOf(c) !== -1;
@@ -16870,6 +17562,7 @@ function exPainelSaida(e, l) {
       }).join("") + '</select> <button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',document.getElementById(\'ex-cp-' + lid + '\').value)">ligar</button>'
       : '<span style="font-size:11px;color:#777;">nenhuma compra em aberto.</span>')
     + ' <button class="btn-outline" style="font-size:11px;padding:3px 9px;border-color:#E57373;color:#E57373;" onclick="exNovaCompra(\'' + eid + '\',\'' + lid + '\')">+ criar compra com esta saída</button></div>';
+  h += exPainelMulti(e, l, null);   // v521: um pagamento para várias compras
   h += exPainelFatura(e, l);   // v501
   h += '<div><div style="font-size:10.5px;color:#aaa;font-weight:800;margin-bottom:4px;">OU NÃO É COMPRA</div>'
     + '<select id="ex-cat-' + lid + '" ' + sel + '><option value="">— categoria —</option>' + EX_CAT_SAIDA.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join("") + '</select> '
@@ -16996,7 +17689,7 @@ function exTelaHTML() {
     + tile("SAÍDA SEM COMPRA", "#C0392B", t.semCompra, "gasto que não passou pela conciliação", "semcompra")
     + tile("CONCILIADOS", "#66BB6A", linhas.length - t.pend, "de " + linhas.length + " lançamentos", "conciliados")
     + '</div>'
-    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo !== "compra" && x.l.sug.tipo !== "viagens"; }).length;
+    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo !== "compra" && x.l.sug.tipo !== "compras" && x.l.sug.tipo !== "viagens"; }).length;
         return n ? '<div style="margin-bottom:8px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#66BB6A;color:#66BB6A;" onclick="exConfirmarSugCategorias(\'' + esc(sel) + '\')">✓ confirmar as ' + n + ' sugestões de categoria</button></div>' : ""; })()
     + '<div style="font-size:11px;color:#777;margin-bottom:8px;">saldo do período (entradas − saídas): <b style="color:#ddd;">' + fmtR(t.ent - t.sai) + '</b> · mostrando ' + vis.length + ' lançamento(s)'
     + ' · <a href="javascript:void(0)" style="color:#4FC3F7;" onclick="state._exFiltro=\'todos\';render()">ver todos</a></div>';
@@ -29574,7 +30267,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
 
   // --- v397: cadastro de motorista (ficha FO_YL_026) ---
   const blocoCadMot = !podeVerAba("cadmotorista") ? "" : (function () {
-    const fichas = (state.motoristasCad || []);
+    const fichas = (state.motoristasCad || []).filter((f) => f && f.tipo !== "ajudante");   // v523: ajudante tem bloco próprio
     const cab = `CADASTRO DE MOTORISTA (aba "Cadastro de Motorista", v397): ficha no modelo FO_YL_026 da Yamaha Motor Logística — o mesmo formato que já foi aprovado pelos clientes, com as seções PROPRIETÁRIO, MOTORISTA, REFERÊNCIAS PESSOAIS/COMERCIAIS (5 linhas), DADOS DO VEÍCULO e CÓPIAS OBRIGATÓRIAS. `
       + `Os campos, a ordem e até as posições das células na exportação são os da ficha original, porque mudar o formato significa devolver a ficha para aprovação de novo. `
       + `O PROPRIETÁRIO transportador é a EMPRESA (RF Logística Transportes & Distribuição Ltda, CNPJ 24.916.554/0001-00, IE 240941190, RNTRC 58983277) — não a pessoa física. Até a v400 o padrão vinha com nome e CPF do Renato, herdado da ficha modelo da época em que a RF era firma individual; a v401 trocou e migra sozinha as fichas que ainda estavam com o padrão antigo, sem tocar em ficha editada à mão. Sendo PJ, os campos de CNH do proprietário ficam vazios e valem as cópias da coluna PESSOA JURÍDICA. `
@@ -29588,7 +30281,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       + `DOIS MODELOS (v402): a exportação tem dois botões — ficha YAMAHA (FO_YL_026, aba "Ficha de Cadastro", grade B2:N64, com bloco PROPRIETÁRIO, 5 referências, veículo completo e a lista longa de cópias com exames médicos) e ficha RF LOGÍSTICA (F.001 REV.:00, aba "Motorista", grade B2:M42, com cabeçalho da RF, seções DADOS PESSOAIS / DADOS DA CNH / DADOS DO VEÍCULO só com placa, modelo e tipo / 4 referências / cópias curtas / duas assinaturas / rodapé de controle de revisão, e o campo EAR que só existe nela). O mesmo cadastro alimenta os dois; campo que só existe num modelo não é escrito no outro. O pacote ZIP leva as duas fichas. `
       + `IMPORTAÇÃO (v399/v406): dá para importar fichas já preenchidas em xlsx nos DOIS modelos. O app reconhece qual é pelo texto fixo do formulário (o RF tem "FICHA DE CADASTRO - MOTORISTA" na B4 e a aba chamada Motorista; o Yamaha tem "FICHA DE CADASTRO" na D2) e, na dúvida, tenta os dois mapas e fica com o que achou mais campo preenchido. Ficha no modelo RF não traz o bloco do PROPRIETÁRIO, então ele entra com o padrão da empresa. Se o CPF já existir, atualiza a ficha em vez de duplicar. Até a v405 a importação só lia o modelo Yamaha e a ficha RF entrava sem nada. `
       + `O botão "Exportar pacote" gera um ZIP com a ficha em xlsx mais os quatro arquivos (o mais recente de cada tipo); o que faltar é listado num FALTANDO.txt dentro do próprio ZIP, em vez de sair um pacote incompleto sem aviso.`;
-    if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.`;
+    if (!fichas.length) return cab + ` Ainda não há nenhuma ficha cadastrada.` + "\n" + ajContextoAssistente();
     const linhas = fichas.map((f) => {
       const m = f.mot || {}, v = f.veic || {};
       const falta = cmFaltando(f);
@@ -29599,7 +30292,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
         + (falta.length ? ` · FALTA PREENCHER: ${falta.join(", ")}` : ` · ficha completa`)
         + (cmDocsPendencias(f).length ? ` · ANEXOS: ${cmDocsPendencias(f).join("; ")}` : ` · os 4 anexos estão em dia`);
     }).join("\n");
-    return `${cab}\nFICHAS CADASTRADAS (${fichas.length}):\n${linhas}`;
+    return `${cab}\nFICHAS CADASTRADAS (${fichas.length}):\n${linhas}` + "\n" + ajContextoAssistente();   // v523
   })();
 
   // --- v396: trava de foto repetida ---
@@ -31903,14 +32596,14 @@ function renderTabela() {
               ${c.faltouLitros > 0.3 ? `<div style="font-size:10px;color:#C0392B;margin-top:2px;">⚠ faltam ${c.faltouLitros.toFixed(1)} L no tanque — registre o abastecimento pra fechar a conta certa</div>` : ""}
             </td>
             <td style="color:#999;">${fmtR(c.alimMotorista)}<div style="font-size:9px;color:#777;">${c.dias}×${fmtR(c.diaria)}${c.noites > 0 && c.pernoite > 0 ? ` + ${c.noites}×${fmtR(c.pernoite)} pernoite` : ""}</div></td>
-            <td style="text-align:center;"><input type="checkbox" ${temAjudante ? "checked" : ""} onchange="atualizarViagem('${v.id}','temAjudante',this.checked)" style="width:18px;height:18px;"></td>
+            <td style="text-align:center;"><input type="checkbox" ${temAjudante ? "checked" : ""} onchange="atualizarViagem('${v.id}','temAjudante',this.checked)" style="width:18px;height:18px;">${temAjudante ? ajSelectViagemHTML(v) : ""}</td>
             <td style="color:${temAjudante ? "#999" : "#555"};">${fmtR(c.alimAjudante)}</td>
             <td>${c.ehCLT
               ? `<div style="font-weight:700;color:#999;">${fmtR(c.pagMotorista)}</div><div style="font-size:9px;color:${GOLD};">CLT: folha ÷ ${Number(state.config.diasUteisMes) || 22} × ${c.dias} dia${c.dias > 1 ? "s" : ""}</div>`
               : `<input type="number" value="${v.vgPagMotorista || 0}" onchange="atualizarViagem('${v.id}','vgPagMotorista',this.value)">`}</td>
             <td>${!temAjudante ? `<span style="color:#555;">—</span>` : (c.ehCLT
               ? `<div style="font-weight:700;color:#999;">${fmtR(c.pagAjudante)}</div><div style="font-size:9px;color:${GOLD};">CLT: folha ÷ ${Number(state.config.diasUteisMes) || 22} × ${c.dias} dia${c.dias > 1 ? "s" : ""}</div>`
-              : `<input type="number" value="${v.vgPagAjudante || 0}" onchange="atualizarViagem('${v.id}','vgPagAjudante',this.value)">`)}</td>
+              : `<input type="number" value="${v.vgPagAjudante || 0}" onchange="atualizarViagem('${v.id}','vgPagAjudante',this.value)">${ajPagoViagemHTML(v)}`)}</td>
             <td style="color:#999;">${fmtR(c.adm)}</td>
             <td style="color:#999;">${fmtR(c.manutencao)}</td>
             <td style="color:#999;">${fmtR(c.imposto)}</td>
