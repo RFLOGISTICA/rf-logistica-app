@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v523)</title>
+<title>RF Logística — Painel da Frota (v524)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v523">
+<meta name="rf-versao" content="v524">
 <meta name="rf-data" content="2026-10-01">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v523" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v524" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -15729,16 +15729,20 @@ function ccCandExtrato(c) {
   var ref = prox && prox.venc ? prox.venc : hojeISO();
   var dias = function (a, b) { return Math.abs((new Date(a + "T12:00:00Z") - new Date(b + "T12:00:00Z")) / 86400000); };
   var out = [];
+  var meusComp = [];   // v524: comprovantes repartidos desta compra
+  (c.compArqs || []).forEach(function (r) { if (r.rateio && r.rateio.grupo && meusComp.every(function (m) { return m.g !== r.rateio.grupo; })) meusComp.push({ g: r.rateio.grupo, total: Number(r.rateio.total) || 0, data: r.dataPag }); });
   exTodasLinhas().forEach(function (x) {
     var l = x.l; if (l.vinc || !(l.valor < 0)) return;
     var v = Math.abs(l.valor), d = dias(l.data, ref);
+    var mc = cartao ? null : meusComp.filter(function (m) { return Math.abs(m.total - v) < 0.05 && !exLinhaDoGrupo(m.g); })[0];
+    if (mc) { out.push({ e: x.e, l: l, bate: true, comp: mc.g, d: d, dv: -1 }); return; }
     var bate = (prox && Math.abs(prox.valor - prox.pago - v) < 0.05) || Math.abs(rest - v) < 0.05;
     var grp = !cartao && !bate && v > rest + 0.05 && (exMulGrupoComprovante(v).indexOf(String(c.id)) !== -1 || exMulGrupoFornecedorExato(v).indexOf(String(c.id)) !== -1);   // v521
     if (grp) { out.push({ e: x.e, l: l, bate: false, grupo: true, d: d, dv: 0 }); return; }
     var fat = cartao && /FATURA|CART[AÃ]O|CARTAO|MASTERCARD|VISA|ELO\b/i.test(exNormNome(l.desc));
     if (cartao ? (fat && d <= 45) : (bate || d <= 20)) out.push({ e: x.e, l: l, bate: bate, d: d, dv: Math.abs(v - (prox ? prox.valor - prox.pago : rest)) });
   });
-  out.sort(function (a, b) { return (b.bate - a.bate) || ((b.grupo ? 1 : 0) - (a.grupo ? 1 : 0)) || (a.dv - b.dv) || (a.d - b.d); });
+  out.sort(function (a, b) { return ((b.comp ? 1 : 0) - (a.comp ? 1 : 0)) || (b.bate - a.bate) || ((b.grupo ? 1 : 0) - (a.grupo ? 1 : 0)) || (a.dv - b.dv) || (a.d - b.d); });
   return out.slice(0, 8);
 }
 function ccIrExtrato(extId, linId) { state.aba = "conciliacao"; state._ccTela = "extrato"; state._exSel = extId; state._exFiltro = "todos"; state._exAberta = linId; state._exSelV = null; render(); }
@@ -15767,9 +15771,10 @@ function ccBuscaExtratoHTML(c) {
     var eid = esc(x.e.id), lid = esc(x.l.id);
     return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#ccc;padding:3px 0;border-top:1px solid #10202a;">'
       + '<span style="width:70px;color:#888;">' + exDataBr(x.l.data) + '</span><span style="flex:1;min-width:160px;">' + esc(x.l.desc) + '</span>'
-      + '<b style="color:#E57373;">− ' + fmtR(Math.abs(x.l.valor)) + '</b>' + (x.bate ? '<span style="font-size:10px;font-weight:900;color:#000;background:#66BB6A;border-radius:4px;padding:0 6px;">VALOR BATE</span>' : "")
+      + '<b style="color:#E57373;">− ' + fmtR(Math.abs(x.l.valor)) + '</b>' + (x.bate && !x.comp ? '<span style="font-size:10px;font-weight:900;color:#000;background:#66BB6A;border-radius:4px;padding:0 6px;">VALOR BATE</span>' : "")
       + (x.grupo ? '<span style="font-size:10px;font-weight:900;color:#000;background:#81C784;border-radius:4px;padding:0 6px;">BATE COM ESTA + OUTRAS COMPRAS</span>' : "")   // v521
-      + (cartao ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="ccIrExtrato(\'' + eid + '\',\'' + lid + '\')">abrir a fatura no extrato →</button>'
+      + (x.comp ? '<span style="font-size:10px;font-weight:900;color:#000;background:#81C784;border-radius:4px;padding:0 6px;">É O PAGAMENTO DO COMPROVANTE</span> <button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#81C784;color:#81C784;font-weight:800;" onclick="exVincComprovante(\'' + eid + '\',\'' + lid + '\',\'' + esc(x.comp) + '\')">✓ ligar ao comprovante (cada compra com a sua parte)</button>' : "")   // v524
+      + (x.comp ? "" : cartao ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#4FC3F7;color:#4FC3F7;" onclick="ccIrExtrato(\'' + eid + '\',\'' + lid + '\')">abrir a fatura no extrato →</button>'
         : (Math.abs(x.l.valor) <= exCompraRestante(c) + 0.05 ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#66BB6A;color:#66BB6A;" onclick="exVincCompra(\'' + eid + '\',\'' + lid + '\',\'' + cid + '\')">✓ é este pagamento</button>' : "")
           + (Math.abs(x.l.valor) > exCompraRestante(c) + 0.05 ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;border-color:#81C784;color:#81C784;" onclick="exMulAbrir(\'' + lid + '\',\'' + cid + '\')">' + (state._exMul && state._exMul.lin === x.l.id ? "▾ " : "") + '✓ paga esta e outras compras</button>' : ""))   // v521
       + '</div>' + (!cartao && state._exMul && state._exMul.lin === x.l.id ? exPainelMulti(x.e, x.l, c.id) : "");
@@ -16476,7 +16481,7 @@ function ccContextoAssistente() {
   var abertas = l.filter(function (x) { return ["aprovacao", "nota", "pagamento", "divergente"].indexOf(ccStatus(x)) !== -1; }).slice(0, 15);
   var parcAb = [];
   l.forEach(function (x) { var s = ccStatus(x); if (s !== "pagamento" && s !== "nota") return; ccParcelasSit(x).forEach(function (p) { if (!p.paga) parcAb.push("nº" + x.numero + " parc " + p.n + "/" + ccPlano(x).length + " " + (p.venc ? exDataBr(p.venc) : "") + " " + fmtR(p.valor - p.pago) + (p.vencida ? " VENCIDA" : "")); }); });
-  return "COMPROVANTE COM AS NOTAS NA DESCRICAO (v522, 01/10/2026 -- Renato: 'esse comprovante vai pagar o valor de 120 e outros que ainda vamos lancar, porem estou orientando ao financeiro que coloque na descricao quais notas serao pagas naquele comprovante'): ao anexar um comprovante MAIOR que a compra, o sistema pergunta QUAIS NOTAS ele paga, ja preenchido com os numeros que a IA leu na descricao do comprovante (Pix) e com a nota da propria compra; boleto nao tem descricao, entao o financeiro digita os numeros ali. O comprovante e repartido sozinho entre as compras cujas notas batem; nota que ainda nao tem compra fica 'falta lancar' e o valor fica esperando no comprovante. Quando a compra e lancada com o numero da nota (ou a nota e anexada), ela entra sozinha no comprovante. A aba Compras mostra o aviso '🧾 N comprovante(s) esperando compras serem lancadas' com as notas que faltam e o valor sem compra. Comprovantes esperando agora: " + (function () { try { return ccRatPendentes().map(function (x) { return fmtR(x.r.rateio.total) + " (nº " + x.c.numero + ", faltam notas " + (x.r.rateio.faltam || []).join("/") + ", " + fmtR(x.r.rateio.sobra || 0) + " sem compra)"; }).join("; ") || "nenhum"; } catch (e) { return "?"; } })() + ". " + "UM PAGAMENTO PARA VARIAS COMPRAS (v521, 01/10/2026 -- Renato: 'esse servico e um de varios que dividimos, porem o recibo de pagamento vem como valor total, tem que considerar que esse recibo pode fechar mais de uma compra'): quando um servico/pedido do fornecedor e dividido em varias compras (ex.: uma por caminhao) e pago de uma vez so, (1) no EXTRATO a saida pode ser ligada a VARIAS compras -- em Conciliacao > Extrato > ligar a compra, painel '🔗 UM PAGAMENTO SO PARA VARIAS COMPRAS?', ou na propria compra pelo botao 'Procurar o pagamento no extrato' > '✓ paga esta e outras compras'; o sistema ja deixa marcadas as compras abertas do MESMO fornecedor que cabem no valor; cada compra recebe a parte dela e fecha sozinha quando a parte = nota; se o pago for menor que a soma, a ultima fica com o saldo (desconto -> 'Fechar com a diferenca'); se for maior, pede explicacao da sobra. (2) COMPROVANTE maior que a compra: ao anexar, abre 'o comprovante e maior que esta compra -- paga outras?' e o mesmo arquivo e repartido entre as compras marcadas (botao '🔗 comprovante paga outras compras' para repartir depois). Quando a saida do extrato chega com o total do comprovante, o extrato ja sugere ligar todas as compras dele. A compra paga junto mostra o selo '🔗 PAGO JUNTO COM nº X, Y'. Desfazer no extrato desfaz em todas. " + "ORDEM DE SERVIÇO (v514, 01/10/2026 -- Renato: 'eles nao fazem orcamento e sim OS... era bom aprovar tambem, depois segue o fluxo'): na Nova compra existe a opcao '📋 Ordem de Servico (OS da oficina/fornecedor)'. A OS entra no lugar do orcamento, fica AGUARDANDO APROVACAO e o admin aprova com '✓ Aprovar OS'; depois segue igual: nota fiscal (ou recibo) -> pagamento no extrato -> conciliada. A compra com OS tem o selo '📋 OS nº X'. A OS NAO e documento fiscal: depois de aprovada ainda precisa anexar a nota das pecas e a nota de servico. Se a IA ler na OS 'BOLETO' com data, a condicao ja vem como Faturado (boleto) com esse vencimento. " + "ETAPAS COM DESCONTO (v513): compra fechada com desconto mostra a etapa 'Pagamento no extrato (desconto de R$ X)' marcada e a parcela 'paga R$ Y no extrato · desconto de R$ X'. " + "PAGO A MENOS (v512, 30/09/2026 -- Renato: 'ja anexei o extrato, ja coloquei o comprovante, porem nao consolida a compra de 810 reais'): quando o pagamento no extrato e MENOR que a nota/recibo (desconto, arredondamento), a compra ficava presa com 'falta R$ X' -- so existia fechar com diferenca para pago A MAIS. Agora o admin tem o botao '✓ Fechar com a diferenca (pago R$ X a menos)' na compra em consolidacao que ja tem pagamento no extrato; pede a explicacao e a compra fica CONCILIADA com a justificativa registrada. " + "EXTRATO DO NUBANK (v511, 30/09/2026): a RF tem conta no Itau e no NUBANK PJ (agencia 0001, conta 618543374-7). O PDF do extrato do Nubank agora e lido direto em Conciliacao > Extrato > Importar extrato: o app reconhece o layout (data '25 SET 2026', blocos 'Total de entradas'/'Total de saidas', favorecido em varias linhas), marca o banco como Nubank sozinho e confere a leitura com os 'Saldo do dia' do proprio banco. Teste com o extrato de setembro/2026: 543 lancamentos, entradas R$ 200.100,00 e saidas R$ 181.027,74, iguais ao resumo do banco. " + "LEITURA DO COMPROVANTE (v510, 30/09/2026 -- Renato: 'o sistema tem que ler a data de pagamento do comprovante'): ao anexar o comprovante (ou ao mover um anexo errado para comprovante) a IA le sozinha o VALOR, a DATA DO PAGAMENTO, a hora, QUEM RECEBEU e o BANCO DE ORIGEM (Edge Function ler-comprovante); o Renato so confirma, e se estiver errado corrige. O cartao da compra mostra 'pago dd/mm -> recebedor · banco'. Compras podem ser pagas pelo Itau ou pelo Nubank da RF -- o extrato de cada banco e importado em Conciliacao > Extrato com o nome do banco. " + "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
+  return "EXTRATO DO COMPROVANTE QUE AINDA ESPERA COMPRAS (v524, 01/10/2026 -- Renato: 'ja anexei o extrato porem ele nao finalizou, esse e o caso onde pagamos varias notas juntas'): a saida do extrato com o MESMO valor de um comprovante repartido aparece em primeiro em 'Procurar o pagamento no extrato' com 'E O PAGAMENTO DO COMPROVANTE' e o botao '✓ ligar ao comprovante (cada compra com a sua parte)'; o extrato tambem sugere sozinho. Cada compra do comprovante recebe SO a parte dela e fecha (nunca fica 'pago a mais'); a sobra fica na linha do extrato como 'aguardando lancar as compras'. Quando as outras compras entram no comprovante (lancadas com o numero da nota citada, ou incluindo a nota em '✎ notas do comprovante'), elas recebem a parte desse mesmo pagamento e fecham sozinhas. " + "COMPROVANTE COM AS NOTAS NA DESCRICAO (v522, 01/10/2026 -- Renato: 'esse comprovante vai pagar o valor de 120 e outros que ainda vamos lancar, porem estou orientando ao financeiro que coloque na descricao quais notas serao pagas naquele comprovante'): ao anexar um comprovante MAIOR que a compra, o sistema pergunta QUAIS NOTAS ele paga, ja preenchido com os numeros que a IA leu na descricao do comprovante (Pix) e com a nota da propria compra; boleto nao tem descricao, entao o financeiro digita os numeros ali. O comprovante e repartido sozinho entre as compras cujas notas batem; nota que ainda nao tem compra fica 'falta lancar' e o valor fica esperando no comprovante. Quando a compra e lancada com o numero da nota (ou a nota e anexada), ela entra sozinha no comprovante. A aba Compras mostra o aviso '🧾 N comprovante(s) esperando compras serem lancadas' com as notas que faltam e o valor sem compra. Comprovantes esperando agora: " + (function () { try { return ccRatPendentes().map(function (x) { return fmtR(x.r.rateio.total) + " (nº " + x.c.numero + ", faltam notas " + (x.r.rateio.faltam || []).join("/") + ", " + fmtR(x.r.rateio.sobra || 0) + " sem compra)"; }).join("; ") || "nenhum"; } catch (e) { return "?"; } })() + ". " + "UM PAGAMENTO PARA VARIAS COMPRAS (v521, 01/10/2026 -- Renato: 'esse servico e um de varios que dividimos, porem o recibo de pagamento vem como valor total, tem que considerar que esse recibo pode fechar mais de uma compra'): quando um servico/pedido do fornecedor e dividido em varias compras (ex.: uma por caminhao) e pago de uma vez so, (1) no EXTRATO a saida pode ser ligada a VARIAS compras -- em Conciliacao > Extrato > ligar a compra, painel '🔗 UM PAGAMENTO SO PARA VARIAS COMPRAS?', ou na propria compra pelo botao 'Procurar o pagamento no extrato' > '✓ paga esta e outras compras'; o sistema ja deixa marcadas as compras abertas do MESMO fornecedor que cabem no valor; cada compra recebe a parte dela e fecha sozinha quando a parte = nota; se o pago for menor que a soma, a ultima fica com o saldo (desconto -> 'Fechar com a diferenca'); se for maior, pede explicacao da sobra. (2) COMPROVANTE maior que a compra: ao anexar, abre 'o comprovante e maior que esta compra -- paga outras?' e o mesmo arquivo e repartido entre as compras marcadas (botao '🔗 comprovante paga outras compras' para repartir depois). Quando a saida do extrato chega com o total do comprovante, o extrato ja sugere ligar todas as compras dele. A compra paga junto mostra o selo '🔗 PAGO JUNTO COM nº X, Y'. Desfazer no extrato desfaz em todas. " + "ORDEM DE SERVIÇO (v514, 01/10/2026 -- Renato: 'eles nao fazem orcamento e sim OS... era bom aprovar tambem, depois segue o fluxo'): na Nova compra existe a opcao '📋 Ordem de Servico (OS da oficina/fornecedor)'. A OS entra no lugar do orcamento, fica AGUARDANDO APROVACAO e o admin aprova com '✓ Aprovar OS'; depois segue igual: nota fiscal (ou recibo) -> pagamento no extrato -> conciliada. A compra com OS tem o selo '📋 OS nº X'. A OS NAO e documento fiscal: depois de aprovada ainda precisa anexar a nota das pecas e a nota de servico. Se a IA ler na OS 'BOLETO' com data, a condicao ja vem como Faturado (boleto) com esse vencimento. " + "ETAPAS COM DESCONTO (v513): compra fechada com desconto mostra a etapa 'Pagamento no extrato (desconto de R$ X)' marcada e a parcela 'paga R$ Y no extrato · desconto de R$ X'. " + "PAGO A MENOS (v512, 30/09/2026 -- Renato: 'ja anexei o extrato, ja coloquei o comprovante, porem nao consolida a compra de 810 reais'): quando o pagamento no extrato e MENOR que a nota/recibo (desconto, arredondamento), a compra ficava presa com 'falta R$ X' -- so existia fechar com diferenca para pago A MAIS. Agora o admin tem o botao '✓ Fechar com a diferenca (pago R$ X a menos)' na compra em consolidacao que ja tem pagamento no extrato; pede a explicacao e a compra fica CONCILIADA com a justificativa registrada. " + "EXTRATO DO NUBANK (v511, 30/09/2026): a RF tem conta no Itau e no NUBANK PJ (agencia 0001, conta 618543374-7). O PDF do extrato do Nubank agora e lido direto em Conciliacao > Extrato > Importar extrato: o app reconhece o layout (data '25 SET 2026', blocos 'Total de entradas'/'Total de saidas', favorecido em varias linhas), marca o banco como Nubank sozinho e confere a leitura com os 'Saldo do dia' do proprio banco. Teste com o extrato de setembro/2026: 543 lancamentos, entradas R$ 200.100,00 e saidas R$ 181.027,74, iguais ao resumo do banco. " + "LEITURA DO COMPROVANTE (v510, 30/09/2026 -- Renato: 'o sistema tem que ler a data de pagamento do comprovante'): ao anexar o comprovante (ou ao mover um anexo errado para comprovante) a IA le sozinha o VALOR, a DATA DO PAGAMENTO, a hora, QUEM RECEBEU e o BANCO DE ORIGEM (Edge Function ler-comprovante); o Renato so confirma, e se estiver errado corrige. O cartao da compra mostra 'pago dd/mm -> recebedor · banco'. Compras podem ser pagas pelo Itau ou pelo Nubank da RF -- o extrato de cada banco e importado em Conciliacao > Extrato com o nome do banco. " + "COMPROVANTE NA COMPRA (v509, 30/09/2026 -- Renato: 'nao tem opcao de colocar o comprovante de pagamento ou extrato, anexei o comprovante no local da NF e o sistema aceitou'): cada compra tem o botao '💸 Anexar comprovante de pagamento' (pede valor e data). O comprovante fica guardado e aparece como 'comprovante R$ X (aguardando o extrato)', mas NAO conta como pago -- a compra so concilia quando a saida aparece no extrato do banco (regra v501 mantida). Ao anexar nota ou recibo o sistema pergunta se o arquivo e mesmo a nota/recibo; se for comprovante, vai para o lugar certo. Anexo que ja entrou errado no lugar da nota/recibo tem o link '↪ ... e comprovante de pagamento', que move o arquivo e a compra volta a pedir a nota/recibo. O admin tem o botao '📥 Importar extrato' na compra em consolidacao, que abre Conciliacao > Extrato para subir o extrato novo. " + "ABA COMPRAS (v501, 30/09/2026 -- a RF vai para o LUCRO REAL e o Renato quer controle total de gasto): as compras sairam da aba Conciliacao e ganharam aba propria '🛒 Compras' (grupo Financeiro). Fluxo: 1) anexa o ORCAMENTO (foto ou PDF; v506: a IA le o documento inteiro, inclusive escrito a mao -- fornecedor, placa, a LISTA DE SERVICOS/ITENS com o valor de cada um e o total -- preenche o formulario e guarda os itens na compra; se a compra nao tinha itens, le tambem a nota/recibo anexado depois; os itens aparecem no cartao da compra, na busca e no Excel da contabilidade) e escolhe a CONDICAO DE PAGAMENTO: A VISTA (PIX, transferencia, boleto, debito ou dinheiro, com a data), FATURADO (boletos: numero de parcelas, vencimento do 1o boleto e intervalo em dias, padrao 30) ou CARTAO DE CREDITO (1x ou parcelado, vencimento da 1a fatura, uma parcela por mes, apelido do cartao); o sistema mostra as parcelas com data e valor. 2) o administrador clica 'Aprovar orcamento' (ou reprova). 3) fica AGUARDANDO NOTA FISCAL OU RECIBO (v505: fornecedor que nao emite nota -> botao 'So tem recibo (fornecedor sem nota)', ou 'Recibo' ja no lancamento; o recibo substitui a nota na consolidacao, mas a compra fica marcada 'SO RECIBO -- SEM NOTA FISCAL' porque no Lucro Real recibo nao gera credito, e o Excel da contabilidade tem a coluna Documento); ao anexar a nota (pede o valor) comeca a CONSOLIDACAO e, se nada foi pago ainda, as parcelas sao recalculadas pelo valor da nota. 4) a consolidacao SO FINALIZA com o pagamento no EXTRATO BANCARIO -- nao existe mais anexar comprovante solto: cada saida do extrato ligada a compra (aba Conciliacao > Extrato, ou na propria compra pelo botao 'Procurar o pagamento no extrato', que lista as saidas com o mesmo valor ou perto do vencimento) paga as parcelas na ordem do vencimento; no CARTAO a parcela e baixada pela linha da FATURA do cartao no extrato ('E a fatura do cartao?' marca as parcelas daquela fatura; o que sobrar da fatura aparece como gasto no cartao SEM compra lancada e pede explicacao). Quando o pago no extrato = valor da nota a compra fica CONCILIADA sozinha. Situacoes: aguardando aprovacao, aguardando nota fiscal, em consolidacao (tem nota, falta pagamento no extrato), pago a mais, conciliada, reprovada, cancelada. Parcela vencida sem aparecer no extrato gera aviso vermelho. Botao 'Excel p/ contabilidade' (admin) exporta as compras do filtro com condicao, parcelas, NF, pago e datas. '✎ condicao de pagamento' muda a condicao enquanto nada foi pago (depois so o admin). Quem tinha acesso a Conciliacao tem acesso a Compras. Parcelas em aberto agora: " + (parcAb.length ? parcAb.slice(0, 20).join("; ") : "nenhuma") + ". HISTORICO: CONCILIACAO DE COMPRAS (v447, 28/09/2026): pedido do Renato porque havia gasto que ele nao sabia -- TODA compra da RF, ate um doce, passa por la. Fluxo: quem compra lanca a compra com o ORCAMENTO (ou com a NOTA, se ja comprou -- ai fica marcada 'COMPROU ANTES DE APROVAR'); o administrador (Renato) APROVA ou REPROVA; depois anexa a NOTA FISCAL (pede o valor da nota) e o COMPROVANTE de pagamento/extrato (pede o valor pago). Se nota e pago tem o mesmo valor a compra fecha sozinha como CONCILIADA; se nao batem fica 'valores nao batem' ate o admin fechar com justificativa. So o admin aprova, reprova, reabre, fecha com diferenca e exclui; o ideal e CANCELAR (fica o registro). Arquivos no Storage em compras/<id>/. Situacao agora: "
     + (c.aprovacao || 0) + " aguardando aprovacao, " + (c.nota || 0) + " sem nota, " + (c.pagamento || 0) + " sem comprovante, " + (c.divergente || 0) + " com valores divergentes, " + (c.conciliada || 0) + " conciliadas, " + (c.reprovada || 0) + " reprovadas, " + (c.cancelada || 0) + " canceladas. "
     + (abertas.length ? "Em aberto: " + abertas.map(function (x) { return "nº" + x.numero + (ccEhOS(x) ? " [OS" + (x.os && x.os.numero ? " " + x.os.numero : "") + "]" : "") + " " + x.descricao + (x.placa ? " " + x.placa : "") + " (" + fmtR(x.valor) + ", " + CC_ST[ccStatus(x)].nome + ", pedido por " + (x.criadoPor || "?") + ")"; }).join("; ") + "." : "");
 }
@@ -17021,7 +17026,7 @@ function exVincCompras(extId, linId) {
   var o = exLinha(extId, linId); if (!o.l || o.l.vinc) return;
   var ids = exMulSel(o.l).filter(function (id) { var c = ccAcha(id); return c && exCompraRestante(c) >= 0.05; });
   if (!ids.length) { alert("Marque as compras pagas neste lançamento."); return; }
-  if (ids.length === 1) { exVincCompra(extId, linId, ids[0]); state._exMul = null; return; }
+  if (ids.length === 1 && Math.abs(o.l.valor) <= exCompraRestante(ccAcha(ids[0])) + 0.05) { exVincCompra(extId, linId, ids[0]); state._exMul = null; return; }   // v524: maior que a compra segue como pagamento com sobra
   var v = Math.abs(o.l.valor), soma = Math.round(ids.reduce(function (a, id) { return a + exCompraRestante(ccAcha(id)); }, 0) * 100) / 100, resto = Math.round((v - soma) * 100) / 100, obs = "";
   if (resto >= 0.05) {
     obs = prompt("O pagamento tem " + fmtR(resto) + " além das compras marcadas.\nO que é essa diferença? (compra não lançada, juros, taxa...)", "");
@@ -17101,6 +17106,7 @@ function ccRatAplicar(origId) {
     p.c.atualizadoEm = Date.now();
   });
   state._ccRat = null;
+  if (typeof exLinhaDoGrupo === "function" && exLinhaDoGrupo(rat.grupo)) exComprovanteCompletar(rat.grupo);   // v524
   salvar(); render();
 }
 function ccRatTalvezAbrir(c, idx) {   // v521: comprovante maior que o que falta na compra -> pergunta se paga outras
@@ -17175,8 +17181,10 @@ function ccRatRecalcular(grupo) {
   var cobertas = []; membros.forEach(function (x) { ccNumerosNF(x).forEach(function (n) { if (notas.indexOf(n) !== -1 && cobertas.indexOf(n) === -1) cobertas.push(n); }); });
   var faltam = notas.filter(function (n) { return cobertas.indexOf(n) === -1; });
   var resta = total, ids = membros.map(function (x) { return String(x.id); }), novas = [];
+  var lxG = typeof exLinhaDoGrupo === "function" ? exLinhaDoGrupo(grupo) : null, lidG = lxG ? lxG.l.id : null;   // v524
+  var faltaG = function (x) { var alvo = ccValorNF(x) || Number(x.valor) || 0; var pago = ccSoma((x.comprovantes || []).filter(function (r) { return !lidG || r.linhaId !== lidG; })); return Math.max(0, Math.round((alvo - pago) * 100) / 100); };
   var partes = membros.map(function (x) {
-    var usa = Math.round(Math.min(ccFaltaPagar(x), Math.max(0, resta)) * 100) / 100;
+    var usa = Math.round(Math.min(faltaG(x), Math.max(0, resta)) * 100) / 100;
     resta = Math.round((resta - usa) * 100) / 100;
     return { c: x, valor: usa };
   });
@@ -17189,6 +17197,7 @@ function ccRatRecalcular(grupo) {
     (p.c.historico = p.c.historico || []).push({ em: agora, por: ccQuem(), o: "entrou no comprovante de " + fmtR(total) + " (" + exDataBr(o.r.dataPag) + ", lançado na compra nº " + o.c.numero + ") pela nota " + ccNumerosNF(p.c).filter(function (n) { return notas.indexOf(n) !== -1; }).join(", ") + ": " + fmtR(p.valor) + " desta compra — aguardando o extrato" });
     p.c.atualizadoEm = Date.now();
   });
+  if (lxG) exComprovanteCompletar(grupo);   // v524: o pagamento já está no extrato -> a compra nova recebe a parte dela
   return novas.length > 0;
 }
 function ccRatPorNotas(c, idx, notas) {
@@ -17224,7 +17233,9 @@ function ccRatNotasHTML(c) {   // no cartão: o que o comprovante paga e o que f
     var x = r.rateio;
     return '<div style="font-size:11px;color:#81C784;margin:2px 0 6px;">🧾 comprovante de <b>' + fmtR(x.total) + '</b> (' + exDataBr(r.dataPag) + ') paga as notas <b>' + esc(x.notas.join(", ")) + '</b> · ' + (x.ids || []).length + ' compra(s) no sistema'
       + ((x.faltam || []).length ? ' · <b style="color:#FFB74D;">falta lançar a(s) nota(s) ' + esc(x.faltam.join(", ")) + '</b>' : "")
-      + ((x.sobra || 0) >= 0.05 ? ' · <b style="color:#FFB74D;">' + fmtR(x.sobra) + ' ainda sem compra</b>' : "") + '</div>';
+      + ((x.sobra || 0) >= 0.05 ? ' · <b style="color:#FFB74D;">' + fmtR(x.sobra) + ' ainda sem compra</b>' : "")
+      + (exLinhaDoGrupo(x.grupo) ? ' · <b style="color:#4FC3F7;">pagamento já no extrato ✓</b>' : "")   // v524
+      + ' <a href="javascript:void(0)" onclick="ccRatEditarNotas(\'' + esc(String(c.id)) + '\',\'' + esc(x.grupo) + '\')" style="color:#81C784;">✎ notas do comprovante</a></div>';
   }).join("");
 }
 function ccRatPendentesHTML() {
@@ -17233,8 +17244,95 @@ function ccRatPendentesHTML() {
     + '<b style="color:#FFB74D;">🧾 ' + p.length + ' comprovante(s) esperando compras serem lançadas</b>' + p.map(function (x) {
       var r = x.r.rateio;
       return '<div style="margin-top:3px;">' + fmtR(r.total) + ' de ' + exDataBr(x.r.dataPag) + (x.r.recebedor ? ' → ' + esc(x.r.recebedor) : "") + ' (anexado na nº ' + esc(x.c.numero) + ')'
-        + ((r.faltam || []).length ? ' · faltam as notas <b>' + esc(r.faltam.join(", ")) + '</b>' : "") + ' · <b>' + fmtR(r.sobra || 0) + '</b> sem compra</div>';
-    }).join("") + '<div style="color:#999;margin-top:3px;">Lance as compras com o número da nota: elas entram sozinhas no comprovante.</div></div>';
+        + ((r.faltam || []).length ? ' · faltam as notas <b>' + esc(r.faltam.join(", ")) + '</b>' : "") + ' · <b>' + fmtR(r.sobra || 0) + '</b> sem compra'
+        + (exLinhaDoGrupo(r.grupo) ? ' · <span style="color:#4FC3F7;">pagamento já no extrato</span>' : "")
+        + ' <a href="javascript:void(0)" onclick="ccRatEditarNotas(\'' + esc(String(x.c.id)) + '\',\'' + esc(r.grupo) + '\')" style="color:#81C784;">✎ notas do comprovante</a></div>';   // v524
+    }).join("") + '<div style="color:#999;margin-top:3px;">Lance as compras com o número da nota: elas entram sozinhas no comprovante (e, se o pagamento já está no extrato, fecham). Nota que o financeiro não escreveu: use "✎ notas do comprovante".</div></div>';
+}
+/* ============ v524 — EXTRATO DO COMPROVANTE QUE AINDA ESPERA COMPRAS ============
+   Renato (01/10/2026, nº 8 Souza Santos, boleto Nubank R$ 2.181,04): "já anexei o extrato porém ele
+   não finalizou, esse é o caso onde pagamos várias notas juntas".
+   Causa: o comprovante tinha só a nº 8 (R$ 120) no sistema e R$ 2.061,04 ainda sem compra.
+   (1) a saída de R$ 2.181,04 nem aparecia em "Procurar o pagamento" (a lista só mostra 8 linhas,
+   ordenadas pela diferença de valor — a de 2.181 ficava fora); (2) se ligasse pelo "é este
+   pagamento", a nº 8 ficaria com R$ 2.181,04 pagos = "PAGO A MAIS".
+   Agora:
+   - a saída do extrato com o MESMO valor de um comprovante repartido vira "É O PAGAMENTO DO
+     COMPROVANTE": aparece em primeiro na compra e o extrato já sugere sozinho;
+   - ligar dá a cada compra do comprovante SÓ a parte dela (a nº 8 fecha com R$ 120, conciliada) e a
+     sobra fica na própria linha do extrato como "aguardando compras" (vinc.grupoComp);
+   - quando as outras compras entram no comprovante (nota citada ou "✎ notas do comprovante"), elas
+     recebem a parte delas DESSA linha do extrato e fecham sozinhas — sem religar nada.
+   - "✎ notas do comprovante": incluir depois as notas que o financeiro não escreveu. */
+function exLinhaDoGrupo(grupo) {
+  var achou = null;
+  exTodasLinhas().forEach(function (x) { if (!achou && x.l.vinc && x.l.vinc.grupoComp === grupo) achou = x; });
+  return achou;
+}
+function ccRatMembros(grupo) {   // [{c, r}] compras com pedaço deste comprovante
+  var out = [];
+  ccLista().forEach(function (c) { var s = ccStatus(c); if (s === "cancelada" || s === "reprovada") return;
+    (c.compArqs || []).forEach(function (r) { if (r.rateio && r.rateio.grupo === grupo) out.push({ c: c, r: r }); }); });
+  return out;
+}
+/* comprovantes repartidos cujo total bate com o valor (e que ainda não estão ligados a uma saída) */
+function exGruposComprovante(v, data) {
+  var vistos = {}, out = [];
+  ccLista().forEach(function (c) { (c.compArqs || []).forEach(function (r) {
+    var g = r.rateio && r.rateio.grupo; if (!g || vistos[g]) return; vistos[g] = 1;
+    if (Math.abs((Number(r.rateio.total) || 0) - v) >= 0.05 || exLinhaDoGrupo(g)) return;
+    if (data && r.dataPag && Math.abs(exDiasEntre(r.dataPag, data)) > 7) return;
+    out.push(g);
+  }); });
+  return out;
+}
+/* liga a saída do extrato ao comprovante: cada compra recebe a parte dela; o resto espera */
+function exVincComprovante(extId, linId, grupo) {
+  if (!ehAdmin()) return;
+  var o = exLinha(extId, linId); if (!o.l || o.l.vinc) return;
+  var agora = new Date().toISOString();
+  o.l.vinc = { tipo: "compras", grupoComp: grupo, itens: [], soma: 0, resto: Math.abs(o.l.valor), obs: "", por: ccQuem(), em: agora };
+  delete o.l.sug; state._exMul = null; state._exAberta = "";
+  exComprovanteCompletar(grupo);
+  exSalvar(o.e);
+}
+/* acerta a linha do extrato com as compras que estão no comprovante agora */
+function exComprovanteCompletar(grupo) {
+  var x = exLinhaDoGrupo(grupo); if (!x) return;
+  var l = x.l, e = x.e, vinc = l.vinc, v = Math.abs(l.valor), agora = new Date().toISOString();
+  var membros = ccRatMembros(grupo);
+  membros.forEach(function (m) {
+    var c = m.c, parte = Math.round((Number(m.r.valor) || 0) * 100) / 100;
+    var reg = (c.comprovantes || []).filter(function (r) { return r.linhaId === l.id; })[0];
+    if (reg) { if (Math.abs((Number(reg.valor) || 0) - parte) >= 0.005) { reg.valor = parte; c.atualizadoEm = Date.now(); } }
+    else if (parte > 0.004) {
+      (c.comprovantes = c.comprovantes || []).push({ arquivos: e.arquivo ? [{ path: e.arquivo, nome: "Extrato " + e.banco }] : [], valor: parte, em: agora, por: ccQuem(),
+        origem: "extrato", extratoId: e.id, linhaId: l.id, dataPag: l.data, desc: l.desc, rateio: { grupo: l.id, total: v, ids: membros.map(function (y) { return String(y.c.id); }) } });
+      (c.historico = c.historico || []).push({ em: agora, por: ccQuem(), o: "pago no extrato " + e.banco + " de " + exDataBr(l.data) + ": " + fmtR(parte) + " desta compra, dentro do pagamento de " + fmtR(v) + " (comprovante repartido)" });
+      c.atualizadoEm = Date.now();
+    }
+    if (c.conciliadaEm && !ccBatem(c) && c.conciliadaPor === "automático (nota = pago)") c.conciliadaEm = null;
+    ccTentarConciliar(c);
+  });
+  var itens = membros.map(function (m) { return { id: m.c.id, valor: Math.round((Number(m.r.valor) || 0) * 100) / 100 }; }).filter(function (it) { return it.valor > 0.004; });
+  var soma = Math.round(itens.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100, resto = Math.round((v - soma) * 100) / 100;
+  var org = ccRatOrigem(grupo), faltam = org && org.r.rateio ? (org.r.rateio.faltam || []) : [];
+  vinc.itens = itens; vinc.soma = soma; vinc.resto = Math.max(0, resto); vinc.aguardando = resto >= 0.05;
+  vinc.obs = resto >= 0.05 ? "aguardando lançar as compras do comprovante" + (faltam.length ? " (notas " + faltam.join(", ") + ")" : "") : "";
+  e.atualizadoEm = Date.now();
+}
+/* incluir/corrigir as notas pagas por um comprovante já anexado */
+function ccRatEditarNotas(cid, grupo) {
+  var o = ccRatOrigem(grupo); if (!o) return;
+  var atual = (o.r.rateio.notas || []).join(", ");
+  var r = prompt("Notas pagas neste comprovante de " + fmtR(o.r.rateio.total) + " (números separados por vírgula).\nAs compras dessas notas entram sozinhas no comprovante e, se o pagamento já está no extrato, fecham.", atual);
+  if (r == null) return;
+  var notas = ccNumerosDoTexto(r);
+  ccNumerosNF(o.c).forEach(function (n) { if (notas.indexOf(n) === -1) notas.unshift(n); });
+  o.r.rateio.notas = notas;
+  ccRatRecalcular(grupo);
+  (o.c.historico = o.c.historico || []).push({ em: new Date().toISOString(), por: ccQuem(), o: "notas do comprovante de " + fmtR(o.r.rateio.total) + " agora: " + notas.join(", ") });
+  o.c.atualizadoEm = Date.now(); salvar(); render();
 }
 function exViagensAbertas() {
   var rec = exRecebidoPorViagem();
@@ -17287,6 +17385,7 @@ function exAutoVincular(ext) {
     if (l.valor < 0) {
       var cc = exCandCompras(l);
       if (cc.length === 1) l.sug = { tipo: "compra", id: cc[0].id };
+      else if (!cc.length && exGruposComprovante(Math.abs(l.valor), l.data).length) l.sug = { tipo: "comprovante", grupo: exGruposComprovante(Math.abs(l.valor), l.data)[0] };   // v524
       else if (!cc.length) { var gm = exMulGrupoComprovante(Math.abs(l.valor)); if (!gm.length) gm = exMulGrupoFornecedorExato(Math.abs(l.valor)); if (gm.length > 1) l.sug = { tipo: "compras", ids: gm }; }   // v521
     }
     else { var vv = exCandViagens(l); if (vv.length === 1) l.sug = { tipo: "viagens", ids: [vv[0].id] }; }
@@ -17396,6 +17495,7 @@ function exAceitarSug(extId, linId) {
   if (o.l.sug.tipo === "motorista" || o.l.sug.tipo === "abastecimento" || o.l.sug.tipo === "ajudante") { if (!ehAdmin()) return; if (exAplicarSugSimples(o.l)) exSalvar(o.e); return; }
   if (o.l.sug.tipo === "outro") { if (!ehAdmin()) return; o.l.vinc = { tipo: "outro", categoria: o.l.sug.categoria, obs: "sugerido pelo sistema", por: ccQuem(), em: new Date().toISOString() }; delete o.l.sug; exSalvar(o.e); return; }
   if (o.l.sug.tipo === "compra") exVincCompra(extId, linId, o.l.sug.id);
+  else if (o.l.sug.tipo === "comprovante") exVincComprovante(extId, linId, o.l.sug.grupo);   // v524
   else if (o.l.sug.tipo === "compras") { state._exMul = { lin: o.l.id, orig: "", ks: (o.l.sug.ids || []).map(String) }; exVincCompras(extId, linId); }   // v521
   else exVincViagens(extId, linId, o.l.sug.ids);
 }
@@ -17501,6 +17601,8 @@ function exVincTexto(l) {
   if (v.tipo === "abastecimento") return "⛽ abastecimento pago ao posto · " + esc(exMotNomeBonito(v.motorista)) + " · " + esc(v.placa || "") + " · " + exDataBr(String(v.dataAbast || "").slice(0, 10)) + " · " + fmtR(v.valorAbast) + (Math.abs(v.dif || 0) >= 0.05 ? ' <span style="color:#FFB74D;">(diferença ' + fmtR(v.dif) + ')</span>' : "");
   if (v.tipo === "compra") { var c = ccAcha(v.id); return "compra nº " + (c ? esc(c.numero) + " — " + esc(c.descricao) : "(excluída)"); }
   if (v.tipo === "ajudante") return "👷 PIX para o ajudante <b>" + esc(v.nome || "") + "</b>" + (v.obs ? " · " + esc(v.obs) : " · " + esc(v.finalidade || ""));   // v523
+  if (v.tipo === "compras" && v.grupoComp) return "🧾 pagamento do comprovante · " + (v.itens || []).map(function (it) { var c = ccAcha(it.id); return c ? "nº " + esc(c.numero) + " " + fmtR(it.valor) : "(excluída)"; }).join(" + ")   // v524
+    + (v.aguardando ? ' · <span style="color:#FFB74D;font-weight:800;">' + fmtR(v.resto) + ' aguardando lançar as compras' + (v.obs && v.obs.indexOf("notas") !== -1 ? v.obs.slice(v.obs.indexOf(" (")) : "") + '</span>' : "");
   if (v.tipo === "compras") return "🔗 um pagamento para " + (v.itens || []).length + " compras: " + (v.itens || []).map(function (it) { var c = ccAcha(it.id); return c ? "nº " + esc(c.numero) + " " + fmtR(it.valor) : "(excluída)"; }).join(" + ")   // v521
     + (v.resto >= 0.05 ? ' · <span style="color:#E57373;">' + fmtR(v.resto) + ' sem compra' + (v.obs ? " (" + esc(v.obs) + ")" : "") + '</span>' : "");
   if (v.tipo === "fatura") return "💳 fatura do cartão · " + (v.itens || []).length + " parcela(s) de compra " + fmtR(v.soma)
@@ -17536,6 +17638,7 @@ function exLinhaHTML(e, l) {
         : l.sug.tipo === "abastecimento" ? (function () { var a = (state.abastecimentos || []).filter(function (x) { return String(x.id) === String(l.sug.id); })[0]; return a ? "abastecimento pago ao posto: " + exMotAbastRot(a) : ""; })()
         : l.sug.tipo === "outro" ? esc(l.sug.categoria)
         : l.sug.tipo === "ajudante" ? (function () { var f = cmFicha(l.sug.id); return f ? "👷 PIX para o ajudante <b>" + esc(ajNome(f)) + "</b>" + ((l.sug.ids || []).length ? " — " + l.sug.ids.length + " viagem(ns) " + fmtR(l.sug.soma) + (Math.abs(l.sug.soma - Math.abs(l.valor)) < 0.05 ? " (bate)" : " + " + fmtR(Math.abs(l.valor) - l.sug.soma) + " operacional") : " (operacional)") : ""; })()   // v523
+        : l.sug.tipo === "comprovante" ? (function () { var m = ccRatMembros(l.sug.grupo), org = ccRatOrigem(l.sug.grupo); return "pagamento do comprovante " + (org ? fmtR(org.r.rateio.total) : "") + " — " + m.map(function (x) { return "nº " + esc(x.c.numero) + " " + fmtR(x.r.valor); }).join(" + ") + (org && org.r.rateio.sobra >= 0.05 ? " + " + fmtR(org.r.rateio.sobra) + " aguardando compras" : ""); })()   // v524
         : l.sug.tipo === "compras" ? (l.sug.ids || []).length + " compras pagas juntas: " + (l.sug.ids || []).map(function (id) { var c = ccAcha(id); return c ? "nº " + esc(c.numero) + " " + esc(c.descricao) + " " + fmtR(exCompraRestante(c)) : ""; }).filter(Boolean).join(" + ")   // v521
         : l.sug.tipo === "compra" ? (function () { var c = ccAcha(l.sug.id); return c ? "compra nº " + esc(c.numero) + " — " + esc(c.descricao) : ""; })()
         : (function () { var v = (state.viagens || []).filter(function (x) { return String(x.id) === String(l.sug.ids[0]); })[0]; return v ? "viagem " + exViagemRot(v) : ""; })();
@@ -17689,7 +17792,7 @@ function exTelaHTML() {
     + tile("SAÍDA SEM COMPRA", "#C0392B", t.semCompra, "gasto que não passou pela conciliação", "semcompra")
     + tile("CONCILIADOS", "#66BB6A", linhas.length - t.pend, "de " + linhas.length + " lançamentos", "conciliados")
     + '</div>'
-    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo !== "compra" && x.l.sug.tipo !== "compras" && x.l.sug.tipo !== "viagens"; }).length;
+    + (function () { var n = linhas.filter(function (x) { return !x.l.vinc && x.l.sug && x.l.sug.tipo !== "compra" && x.l.sug.tipo !== "compras" && x.l.sug.tipo !== "comprovante" && x.l.sug.tipo !== "viagens"; }).length;
         return n ? '<div style="margin-bottom:8px;"><button class="btn-outline" style="font-size:11.5px;padding:4px 12px;border-color:#66BB6A;color:#66BB6A;" onclick="exConfirmarSugCategorias(\'' + esc(sel) + '\')">✓ confirmar as ' + n + ' sugestões de categoria</button></div>' : ""; })()
     + '<div style="font-size:11px;color:#777;margin-bottom:8px;">saldo do período (entradas − saídas): <b style="color:#ddd;">' + fmtR(t.ent - t.sai) + '</b> · mostrando ' + vis.length + ' lançamento(s)'
     + ' · <a href="javascript:void(0)" style="color:#4FC3F7;" onclick="state._exFiltro=\'todos\';render()">ver todos</a></div>';
