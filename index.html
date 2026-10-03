@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v540)</title>
+<title>RF Logística — Painel da Frota (v541)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v540">
+<meta name="rf-versao" content="v541">
 <meta name="rf-data" content="2026-10-02">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v221: opcao FATURADO na manutencao.
@@ -715,7 +715,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v540" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v541" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1007,7 +1007,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "oficina"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes; v541: oficina
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -1280,6 +1280,7 @@ var RF_ICO_AREA = {
   conciliacao: '<path d="M12 4v16M7 20h10M4 7h16"/><path d="M6.5 7 4 13a2.5 2.5 0 0 0 5 0zM17.5 7 15 13a2.5 2.5 0 0 0 5 0z"/>',   // v502
   compras: '<path d="M3 4h2.2l2.3 11h10.8l2-7.5H6.4"/><circle cx="9.5" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',   // v502
   medicoes: '<rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 4.5V3.5h6v1M8.5 10h7M8.5 13.5h7M8.5 17h4.5"/>',   // v502
+  oficina: '<rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 4.5V3.5h6v1"/><path d="m8.5 11 1.5 1.5 3-3M8.5 16.5l1.5 1.5 3-3M15 11.5h1.5M15 17h1.5"/>',   // v541
   usuarios: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.8-3.2 3.2-5 6-5s5.2 1.8 6 5"/><path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.8c1.8.6 3 2.2 3.5 4.7"/>'
 };
 /* v439: ícones em 3D, mais realistas (pedido do Renato: "queria as imagens
@@ -6745,6 +6746,7 @@ function salvar() {
     localStorage.setItem("rf-frota-compras-v1", JSON.stringify(state.compras || []));   // v446
     localStorage.setItem("rf-frota-extratos-v1", JSON.stringify(state.extratos || []));   // v448
     localStorage.setItem("rf-frota-medicoes-v1", JSON.stringify(state.medicoes || []));   // v467
+    localStorage.setItem("rf-frota-oficina-v1", JSON.stringify(state.oficina || []));   // v541
   } catch (e) {}
 }
 
@@ -6782,6 +6784,7 @@ let state = {
   compras: carregar("rf-frota-compras-v1", () => []),   // v446: conciliacao de compras
   extratos: carregar("rf-frota-extratos-v1", () => []),   // v448: extratos bancarios
   medicoes: carregar("rf-frota-medicoes-v1", () => []),   // v467: medições do cliente
+  oficina: carregar("rf-frota-oficina-v1", () => []),   // v541: entrada/saída da oficina
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -8052,6 +8055,7 @@ function atualizarViagem(id, campo, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
   if (v.trancada && !ehAdmin()) return; // v136: viagem travada — edição bloqueada de verdade, não só escondida na tela
+  if (campo === "placa" && valor && valor !== v.placa && typeof hmAvisoEscala === "function" && !hmAvisoEscala(valor)) { render(); return; }   // v541: caminhão na oficina
   if (campo === "pesoKg") v.pesoKg = Number(String(valor).replace(",", ".")) || 0;   // v264: peso da carga (kg)
   else v[campo] = (campo === "cliente" && typeof valor === "string") ? valor.trim() : valor;
   // v131: quando a placa é definida/trocada, "congela" quem dirigia o caminhão
@@ -8757,7 +8761,7 @@ function exportarViagensExcel() {
 }
 
 function exportarDados() {
-  const payload = { veiculos: state.veiculos, dividas: state.dividas, viagens: state.viagens, clientes: state.clientes, manutencoes: state.manutencoes, fechamentos: state.fechamentos, frotaMes: state.frotaMes, config: state.config, almoxarifado: state.almoxarifado, tarifas: state.tarifas, oleoTrocas: state.oleoTrocas, usuarios: state.usuarios, pagamentosMotorista: state.pagamentosMotorista, abastecimentos: state.abastecimentos, exportadoEm: new Date().toISOString() };
+  const payload = { veiculos: state.veiculos, dividas: state.dividas, viagens: state.viagens, clientes: state.clientes, manutencoes: state.manutencoes, fechamentos: state.fechamentos, frotaMes: state.frotaMes, config: state.config, almoxarifado: state.almoxarifado, tarifas: state.tarifas, oleoTrocas: state.oleoTrocas, usuarios: state.usuarios, pagamentosMotorista: state.pagamentosMotorista, abastecimentos: state.abastecimentos, oficina: state.oficina, exportadoEm: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -8782,6 +8786,7 @@ function importarDados(input) {
       if (payload.abastecimentos) state.abastecimentos = payload.abastecimentos;
       if (payload.clientes) state.clientes = payload.clientes;
       if (payload.manutencoes) state.manutencoes = payload.manutencoes;
+      if (payload.oficina) state.oficina = payload.oficina;   // v541
       if (payload.fechamentos) state.fechamentos = payload.fechamentos;
       if (payload.frotaMes) state.frotaMes = payload.frotaMes;
       if (payload.config) state.config = payload.config;
@@ -9473,6 +9478,466 @@ function adicionarManutencaoPara(placa) {
   adicionarManutencao();                 // já faz salvar() + render()
   state.mtFiltroPlaca = antes;
   render();
+}
+
+/* ===================== v541: HISTÓRICO DE MANUTENÇÃO — ENTRADA E SAÍDA DA OFICINA =====================
+   Pedido do Renato (02/10/2026): um caminhão saiu da revisão com um dos defeitos
+   que o motorista tinha relatado, porque não havia registro do que ele trouxe na
+   ENTRADA. Regra: o caminhão só sai quando TODOS os itens anotados na entrada
+   estiverem aprovados.
+
+   Uma lista só na caixa geral, `state.oficina`, com dois tipos de registro:
+     tipo "relato": defeito relatado com o caminhão rodando (o motorista falou,
+                    alguém anotou). Fica esperando a próxima entrada na oficina.
+     tipo "os"    : a entrada na oficina. Puxa sozinha os relatos em aberto
+                    daquela placa e os itens ADIADOS da revisão anterior.
+   Cada item da OS termina em um de três estados aprovados:
+     resolvido  -> exige escrever o que foi feito
+     naoprocede -> exige escrever por que não procede (testado e não reproduziu)
+     adiado     -> SÓ ADMIN, exige o motivo; o item volta sozinho na próxima entrada
+   Enquanto houver item "pendente", o botão de saída fica TRAVADO.
+   A lista entra na união item a item da v421 (RF_CHAVES_LISTA), então duas
+   pessoas mexendo em OS diferentes não se apagam.
+   Todas as funções ficam no BLOCO 1 de <script>: o render() alcança (regra v215). */
+var HM_STATUS = {
+  pendente:   { rot: "Pendente",     cor: "#E67E22", ico: "⏳" },
+  resolvido:  { rot: "Resolvido",    cor: "#27AE60", ico: "✅" },
+  naoprocede: { rot: "Não procede",  cor: "#7F8C8D", ico: "🚫" },
+  adiado:     { rot: "Adiado",       cor: "#8E44AD", ico: "⏸" }
+};
+var HM_ORIGEM = { motorista: "relato do motorista", relato: "relatado antes da entrada", equipe: "equipe", oficina: "achado pela oficina", adiado: "adiado da revisão anterior" };
+
+function hmLista() { if (!Array.isArray(state.oficina)) state.oficina = []; return state.oficina; }
+function hmHoje() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function hmDataBr(iso) { if (!iso) return "—"; var p = String(iso).slice(0, 10).split("-"); return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(iso); }
+function hmQuando(ms) { if (!ms) return ""; try { var d = new Date(ms); return hmDataBr(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); } catch (e) { return ""; } }
+function hmDias(deIso, ateIso) {
+  if (!deIso) return 0;
+  var a = new Date(String(deIso).slice(0, 10) + "T12:00:00"), b = new Date(String(ateIso || hmHoje()).slice(0, 10) + "T12:00:00");
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
+function hmOS(id) { return hmLista().filter(function (x) { return x && x.tipo === "os" && String(x.id) === String(id); })[0] || null; }
+function hmOSAberta(placa) { return hmLista().filter(function (x) { return x && x.tipo === "os" && x.status === "aberta" && x.placa === placa; })[0] || null; }
+function hmOSAbertas() { return hmLista().filter(function (x) { return x && x.tipo === "os" && x.status === "aberta"; }); }
+function hmRelatosPendentes(placa) { return hmLista().filter(function (x) { return x && x.tipo === "relato" && !x.osId && (!placa || x.placa === placa); }); }
+function hmAdiadosPendentes(placa) {
+  var out = [];
+  hmLista().forEach(function (o) {
+    if (!o || o.tipo !== "os" || o.status !== "liberada" || (placa && o.placa !== placa)) return;
+    (o.itens || []).forEach(function (it) { if (it.status === "adiado" && !it.levadoPara) out.push({ os: o, it: it }); });
+  });
+  return out;
+}
+function hmPendentesDaOS(o) { return (o && o.itens || []).filter(function (it) { return !it.status || it.status === "pendente"; }); }
+function hmPodeLiberar(o) { return !!o && o.status === "aberta" && (o.itens || []).length > 0 && hmPendentesDaOS(o).length === 0; }
+function hmLog(o, txt) { o.log = o.log || []; o.log.push({ em: Date.now(), por: ccQuem(), txt: txt }); }
+function hmToca(o) { o.atualizadoEm = Date.now(); }
+function hmVeiculo(placa) { return (state.veiculos || []).filter(function (v) { return v.placa === placa; })[0] || null; }
+function hmPlacasFrota() { return (state.veiculos || []).map(function (v) { return v.placa; }).filter(function (p) { return p && !rfPlacaTeste(p); }); }
+function hmItemDe(o, itemId) { return (o.itens || []).filter(function (x) { return String(x.id) === String(itemId); })[0] || null; }
+function hmCustoDaOS(o) {
+  var t = 0;
+  (state.manutencoes || []).forEach(function (m) { if (m && String(m.osId || "") === String(o.id)) { try { t += mtSomaPecas(m) + (Number(m.maoObra) || 0); } catch (e) { } } });
+  return t;
+}
+/* viagem que SAIU com o caminhão depois da entrada na oficina, sem a OS liberada */
+function hmSaiuSemLiberar(o) {
+  if (!o || o.status !== "aberta") return null;
+  return (state.viagens || []).filter(function (v) {
+    return v && v.placa === o.placa && v.fotoKmSaida && !v.fotoKmChegada && String(v.data || "") >= String(o.entradaEm || "");
+  })[0] || null;
+}
+
+/* ---- relatos (caminhão rodando) ---- */
+function hmRelatoAdicionar() {
+  var f = state._hmRel || {};
+  var placa = f.placa || "", texto = String(f.texto || "").trim();
+  if (!placa) { alert("Escolha o caminhão."); return; }
+  if (!texto) { alert("Escreva o defeito que foi relatado."); return; }
+  var v = hmVeiculo(placa);
+  var linhas = texto.split(/\n+/).map(function (s) { return s.replace(/^[-•*\s]+/, "").trim(); }).filter(Boolean);
+  var aberta = hmOSAberta(placa);
+  linhas.forEach(function (t) {
+    if (aberta) {   // caminhão já está na oficina: entra direto na OS
+      aberta.itens.push({ id: uid(), texto: t, origem: "motorista", relatadoPor: f.quem || (v && v.motorista) || "", status: "pendente", solucao: "", criadoEm: Date.now(), criadoPor: ccQuem() });
+      hmLog(aberta, "Item incluído pelo relato: " + t); hmToca(aberta);
+    } else {
+      hmLista().unshift({ id: uid(), tipo: "relato", placa: placa, texto: t, quem: f.quem || (v && v.motorista) || "", em: hmHoje(), criadoEm: Date.now(), criadoPor: ccQuem(), osId: "" });
+    }
+  });
+  state._hmRel = { placa: placa, quem: "", texto: "" };
+  salvar(); render();
+  if (aberta) alert(placa + " já está na oficina — " + linhas.length + " item(ns) incluído(s) direto na revisão aberta.");
+}
+function hmRelatoRemover(id) {
+  var r = hmLista().filter(function (x) { return x && x.tipo === "relato" && String(x.id) === String(id); })[0];
+  if (!r) return;
+  if (!confirm("Retirar este relato?\n\n" + r.placa + " — " + r.texto + "\n\nUse só se foi anotado por engano. Defeito que foi consertado na estrada também pode ser retirado.")) return;
+  state.oficina = hmLista().filter(function (x) { return x !== r; });
+  salvar(); render();
+}
+
+/* ---- entrada na oficina ---- */
+function hmEntradaSet(campo, valor) {
+  state._hmEnt = state._hmEnt || {};
+  state._hmEnt[campo] = valor;
+  if (campo === "placa") {
+    var v = hmVeiculo(valor);
+    state._hmEnt.motorista = (v && v.motorista) || "";
+    state._hmEnt.km = v ? (kmAtualVeiculo(v) || "") : "";
+    render();
+  }
+}
+function hmAbrirEntrada() {
+  var f = state._hmEnt || {};
+  var placa = f.placa || "";
+  if (!placa) { alert("Escolha o caminhão que está entrando na oficina."); return; }
+  if (hmOSAberta(placa)) { alert(placa + " já tem uma entrada aberta na oficina. Inclua os itens nela."); return; }
+  var queixas = String(f.queixas || "").split(/\n+/).map(function (s) { return s.replace(/^[-•*\s]+/, "").trim(); }).filter(Boolean);
+  var relatos = hmRelatosPendentes(placa), adiados = hmAdiadosPendentes(placa);
+  if (!queixas.length && !relatos.length && !adiados.length) {
+    alert("Escreva pelo menos um item: o que o motorista relatou ou o motivo da entrada (ex.: revisão preventiva). Um por linha.");
+    return;
+  }
+  var os = { id: uid(), tipo: "os", placa: placa, motorista: f.motorista || "", entradaEm: f.data || hmHoje(), kmEntrada: Number(f.km) || 0,
+    oficina: f.oficina || "", status: "aberta", itens: [], criadoEm: Date.now(), criadoPor: ccQuem(), log: [] };
+  adiados.forEach(function (a) {
+    os.itens.push({ id: uid(), texto: a.it.texto, origem: "adiado", status: "pendente", solucao: "", herdadoDe: a.os.id, motivoAdiado: a.it.solucao || "", criadoEm: Date.now(), criadoPor: ccQuem() });
+    a.it.levadoPara = os.id; hmToca(a.os);
+  });
+  relatos.forEach(function (r) {
+    os.itens.push({ id: uid(), texto: r.texto, origem: "relato", relatadoPor: r.quem || "", relatadoEm: r.em || "", status: "pendente", solucao: "", criadoEm: Date.now(), criadoPor: ccQuem() });
+    r.osId = os.id; r.atualizadoEm = Date.now();
+  });
+  queixas.forEach(function (t) {
+    os.itens.push({ id: uid(), texto: t, origem: f.origem || "motorista", relatadoPor: f.motorista || "", status: "pendente", solucao: "", criadoEm: Date.now(), criadoPor: ccQuem() });
+  });
+  hmLog(os, "Entrada registrada com " + os.itens.length + " item(ns)" + (adiados.length ? " (" + adiados.length + " adiado(s) da revisão anterior)" : "") + (relatos.length ? " (" + relatos.length + " relato(s) anotado(s) antes)" : ""));
+  hmLista().unshift(os);
+  state._hmEnt = {};
+  state._hmAberta = os.id;
+  salvar(); render();
+}
+function hmOSSet(osId, campo, valor) {
+  var o = hmOS(osId); if (!o) return;
+  if (o.status !== "aberta" && !ehAdmin()) { alert("Esta revisão já foi encerrada."); return; }
+  if (campo === "kmEntrada" || campo === "kmSaida") valor = Number(valor) || 0;
+  o[campo] = valor; hmToca(o);
+  salvar();
+}
+function hmItemAdicionar(osId) {
+  var o = hmOS(osId); if (!o || o.status !== "aberta") return;
+  var el = document.getElementById("hm-novo-" + osId);
+  var txt = String(el && el.value || "").trim();
+  if (!txt) { alert("Escreva o item."); return; }
+  var origem = (document.getElementById("hm-novo-or-" + osId) || {}).value || "oficina";
+  txt.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (t) {
+    o.itens.push({ id: uid(), texto: t, origem: origem, status: "pendente", solucao: "", criadoEm: Date.now(), criadoPor: ccQuem() });
+    hmLog(o, "Item incluído (" + (HM_ORIGEM[origem] || origem) + "): " + t);
+  });
+  hmToca(o); salvar(); render();
+}
+function hmItemRemover(osId, itemId) {
+  var o = hmOS(osId); if (!o || o.status !== "aberta") return;
+  var it = hmItemDe(o, itemId); if (!it) return;
+  if (it.status !== "pendente") { alert("Só dá pra retirar item que ainda está pendente."); return; }
+  if (!confirm("Retirar este item da revisão?\n\n" + it.texto + "\n\nUse só se foi anotado por engano — defeito que não existe se marca como \"Não procede\".")) return;
+  o.itens = o.itens.filter(function (x) { return x !== it; });
+  hmLog(o, "Item retirado (anotado por engano): " + it.texto);
+  hmToca(o); salvar(); render();
+}
+function hmItemSolucao(osId, itemId, valor) {
+  var o = hmOS(osId); if (!o || o.status !== "aberta") return;
+  var it = hmItemDe(o, itemId); if (!it) return;
+  it.solucao = String(valor || ""); hmToca(o); salvar();
+}
+function hmItemStatus(osId, itemId, novo) {
+  var o = hmOS(osId); if (!o || o.status !== "aberta") return;
+  var it = hmItemDe(o, itemId); if (!it) return;
+  var campo = document.getElementById("hm-sol-" + itemId);
+  if (campo && String(campo.value || "").trim()) it.solucao = String(campo.value);   // o que está digitado na tela manda; campo vazio não apaga o que já foi gravado
+  var sol = String(it.solucao || "").trim();
+  if (novo === "resolvido" && !sol) { alert("Escreva o que foi feito antes de marcar como resolvido."); if (campo) campo.focus(); return; }
+  if (novo === "naoprocede" && !sol) { alert("Escreva por que não procede (ex.: testado na rua e não reproduziu)."); if (campo) campo.focus(); return; }
+  if (novo === "adiado") {
+    if (!ehAdmin()) { alert("Só administrador pode adiar um item. O caminhão fica na oficina até resolver ou alguém da administração autorizar."); return; }
+    if (!sol) { alert("Escreva o motivo do adiamento (ex.: peça em falta, volta dia tal)."); if (campo) campo.focus(); return; }
+  }
+  var de = it.status || "pendente";
+  it.status = novo;
+  if (novo === "pendente") { it.conferidoPor = ""; it.conferidoEm = 0; }
+  else { it.conferidoPor = ccQuem(); it.conferidoEm = Date.now(); }
+  hmLog(o, (HM_STATUS[de] || {}).rot + " → " + (HM_STATUS[novo] || {}).rot + ": " + it.texto + (sol && novo !== "pendente" ? " — " + sol : ""));
+  hmToca(o); salvar(); render();
+}
+function hmLiberar(osId) {
+  var o = hmOS(osId); if (!o) return;
+  var pend = hmPendentesDaOS(o);
+  if (pend.length) { alert("Saída BLOQUEADA: ainda há " + pend.length + " item(ns) pendente(s):\n\n• " + pend.map(function (x) { return x.texto; }).join("\n• ")); return; }
+  if (!(o.itens || []).length) { alert("Revisão sem nenhum item anotado."); return; }
+  var kmEl = document.getElementById("hm-kmsaida-" + osId);
+  if (kmEl && kmEl.value) o.kmSaida = Number(kmEl.value) || 0;
+  var resumo = o.itens.map(function (it) { return (HM_STATUS[it.status] || {}).ico + " " + it.texto + (it.solucao ? " — " + it.solucao : ""); }).join("\n");
+  var ad = o.itens.filter(function (it) { return it.status === "adiado"; }).length;
+  if (!confirm("Liberar a saída do " + o.placa + "?\n\n" + resumo + (ad ? "\n\n⚠ " + ad + " item(ns) ADIADO(s) voltam sozinhos na próxima entrada deste caminhão." : ""))) return;
+  o.status = "liberada"; o.saidaEm = hmHoje(); o.liberadoPor = ccQuem(); o.liberadoEm = Date.now();
+  hmLog(o, "Saída liberada" + (o.kmSaida ? " com " + o.kmSaida + " km" : ""));
+  hmToca(o); salvar(); render();
+}
+function hmReabrir(osId) {
+  var o = hmOS(osId); if (!o) return;
+  if (!ehAdmin()) { alert("Só administrador reabre uma revisão encerrada."); return; }
+  var mot = prompt("Motivo para reabrir a revisão do " + o.placa + " (ex.: voltou com o mesmo defeito):");
+  if (mot === null) return;
+  if (hmOSAberta(o.placa)) { alert(o.placa + " já tem outra entrada aberta."); return; }
+  o.status = "aberta"; o.saidaEm = ""; o.liberadoPor = ""; o.liberadoEm = 0;
+  hmLog(o, "Revisão REABERTA" + (mot ? ": " + mot : ""));
+  state._hmAberta = o.id;
+  hmToca(o); salvar(); render();
+}
+function hmCancelar(osId) {
+  var o = hmOS(osId); if (!o || o.status !== "aberta") return;
+  if (!ehAdmin()) { alert("Só administrador cancela uma entrada."); return; }
+  var mot = prompt("Motivo do cancelamento desta entrada do " + o.placa + " (ex.: aberta por engano):");
+  if (mot === null) return;
+  // devolve os relatos e os adiados para esperarem a próxima entrada
+  hmLista().forEach(function (x) {
+    if (x && x.tipo === "relato" && String(x.osId) === String(o.id)) { x.osId = ""; x.atualizadoEm = Date.now(); }
+    if (x && x.tipo === "os") (x.itens || []).forEach(function (it) { if (String(it.levadoPara || "") === String(o.id)) { it.levadoPara = ""; hmToca(x); } });
+  });
+  o.status = "cancelada"; o.canceladoPor = ccQuem(); o.canceladoEm = Date.now();
+  hmLog(o, "Entrada CANCELADA" + (mot ? ": " + mot : ""));
+  hmToca(o); salvar(); render();
+}
+function hmToggle(osId) { state._hmAberta = (state._hmAberta === osId) ? "" : osId; render(); }
+/* lança o custo na aba Manutenção já ligado a esta revisão */
+function hmLancarCusto(osId) {
+  var o = hmOS(osId); if (!o) return;
+  adicionarManutencaoPara(o.placa);
+  var m = (state.manutencoes || [])[0];
+  if (m && m.placa === o.placa && !m.osId) {
+    m.osId = o.id; m.oficina = o.oficina || m.oficina; m.km = o.kmEntrada || m.km; m.categoria = "Corretiva";
+    var feitos = (o.itens || []).filter(function (it) { return it.status === "resolvido"; });
+    if (feitos.length && m.itens && m.itens[0] && !m.itens[0].servico) m.itens[0].servico = feitos.map(function (it) { return it.solucao || it.texto; }).join("; ").slice(0, 200);
+    m.atualizadoEm = Date.now();
+    hmLog(o, "Custo lançado na aba Manutenção"); hmToca(o);
+  }
+  state.aba = "mtcustos"; state._mtAberta = o.placa;
+  salvar(); render();
+}
+function hmImprimir(osId) {
+  var o = hmOS(osId); if (!o) return;
+  var linhas = (o.itens || []).map(function (it, i) {
+    return '<tr><td style="text-align:center">' + (i + 1) + '</td><td>' + esc(it.texto) + '<div style="font-size:10px;color:#666">' + esc(HM_ORIGEM[it.origem] || it.origem || "") + (it.relatadoPor ? " · " + esc(it.relatadoPor) : "") + '</div></td><td>' + esc((HM_STATUS[it.status] || {}).rot || "Pendente") + '</td><td>' + esc(it.solucao || "") + '</td><td style="width:70px"></td></tr>';
+  }).join("");
+  var html = '<!doctype html><html><head><meta charset="utf-8"><title>Revisão ' + esc(o.placa) + ' ' + hmDataBr(o.entradaEm) + '</title>'
+    + '<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{border:1px solid #444;padding:6px;font-size:12px;vertical-align:top}th{background:#000;color:#fff}.c{font-size:12px;margin:2px 0}.ass{margin-top:40px;display:flex;gap:40px}.ass div{flex:1;border-top:1px solid #000;padding-top:4px;font-size:11px;text-align:center}</style></head><body>'
+    + '<h1>RF LOGÍSTICA — ORDEM DE REVISÃO / CHECKLIST DE SAÍDA</h1>'
+    + '<div class="c"><b>Caminhão:</b> ' + esc(o.placa) + ' &nbsp; <b>Motorista:</b> ' + esc(o.motorista || "—") + ' &nbsp; <b>Oficina:</b> ' + esc(o.oficina || "—") + '</div>'
+    + '<div class="c"><b>Entrada:</b> ' + hmDataBr(o.entradaEm) + ' &nbsp; <b>KM entrada:</b> ' + (o.kmEntrada ? Number(o.kmEntrada).toLocaleString("pt-BR") : "—") + ' &nbsp; <b>Situação:</b> ' + (o.status === "liberada" ? "LIBERADO em " + hmDataBr(o.saidaEm) + " por " + esc(o.liberadoPor || "") : o.status === "cancelada" ? "CANCELADA" : "NA OFICINA") + '</div>'
+    + '<p style="font-size:12px;margin-top:10px"><b>O caminhão só pode sair com TODOS os itens abaixo conferidos.</b></p>'
+    + '<table><tr><th>#</th><th>Item relatado</th><th>Situação</th><th>O que foi feito</th><th>Visto</th></tr>' + linhas + '</table>'
+    + '<div class="ass"><div>Mecânico / oficina</div><div>Conferente RF</div><div>Motorista</div></div>'
+    + '<script>setTimeout(function(){window.print()},300)<\/script></body></html>';
+  try {
+    var w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); return; }
+  } catch (e) { }
+  try { var u = URL.createObjectURL(new Blob([html], { type: "text/html" })); location.href = u; } catch (e) { alert("Não consegui abrir a impressão neste aparelho."); }
+}
+function hmExportar() {
+  var cab = ["Placa", "Entrada", "Saida", "Dias na oficina", "Situacao", "Motorista", "Oficina", "KM entrada", "KM saida", "Item", "Origem", "Relatado por", "Status do item", "O que foi feito / motivo", "Conferido por", "Liberado por", "Custo lancado (R$)"];
+  var linhas = [];
+  hmLista().filter(function (o) { return o && o.tipo === "os"; }).forEach(function (o) {
+    var custo = hmCustoDaOS(o);
+    (o.itens || []).forEach(function (it) {
+      linhas.push([o.placa, hmDataBr(o.entradaEm), o.saidaEm ? hmDataBr(o.saidaEm) : "", hmDias(o.entradaEm, o.saidaEm || hmHoje()), o.status, o.motorista || "", o.oficina || "", o.kmEntrada || "", o.kmSaida || "",
+        it.texto, HM_ORIGEM[it.origem] || it.origem || "", it.relatadoPor || "", (HM_STATUS[it.status] || {}).rot || "Pendente", it.solucao || "", it.conferidoPor || "", o.liberadoPor || "", custo]);
+    });
+  });
+  exportarCSV("rf-historico-manutencao-" + hmHoje() + ".csv", cab, linhas);
+}
+
+/* ---- tela ---- */
+function hmItemHTML(o, it) {
+  var st = HM_STATUS[it.status] || HM_STATUS.pendente;
+  var aberta = o.status === "aberta";
+  var orig = HM_ORIGEM[it.origem] || it.origem || "";
+  var info = esc(orig) + (it.relatadoPor ? " · " + esc(it.relatadoPor) : "") + (it.relatadoEm ? " · " + hmDataBr(it.relatadoEm) : "")
+    + (it.origem === "adiado" && it.motivoAdiado ? " · motivo do adiamento: " + esc(it.motivoAdiado) : "");
+  var conf = it.conferidoPor && it.status !== "pendente" ? '<div style="font-size:10px;color:#777;margin-top:3px;">' + st.ico + " " + esc(st.rot) + " por " + esc(it.conferidoPor) + " em " + hmQuando(it.conferidoEm) + '</div>' : "";
+  var h = '<div style="border:1px solid #262626;border-left:4px solid ' + st.cor + ';border-radius:8px;padding:9px 10px;margin-bottom:8px;background:#0E0E0E;">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'
+    + '<div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:700;color:#eee;">' + esc(it.texto) + '</div><div style="font-size:10.5px;color:#888;margin-top:2px;">' + info + '</div></div>'
+    + '<span style="font-size:10.5px;font-weight:900;color:#000;background:' + st.cor + ';border-radius:4px;padding:2px 7px;white-space:nowrap;">' + st.ico + " " + esc(st.rot) + '</span></div>';
+  if (aberta) {
+    h += '<textarea id="hm-sol-' + it.id + '" rows="2" placeholder="O que foi feito (ou por que não procede / motivo do adiamento)" onchange="hmItemSolucao(\'' + o.id + '\',\'' + it.id + '\',this.value)" style="width:100%;margin-top:7px;font-size:12px;box-sizing:border-box;">' + esc(it.solucao || "") + '</textarea>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">';
+    if (it.status === "pendente" || !it.status) {
+      h += '<button class="btn-gold" style="font-size:11px;padding:4px 10px;" onclick="hmItemStatus(\'' + o.id + '\',\'' + it.id + '\',\'resolvido\')">✅ Resolvido</button>'
+        + '<button class="btn-outline" style="font-size:11px;padding:4px 10px;" onclick="hmItemStatus(\'' + o.id + '\',\'' + it.id + '\',\'naoprocede\')">🚫 Não procede</button>'
+        + (ehAdmin() ? '<button class="btn-outline-gray" style="font-size:11px;padding:4px 10px;" onclick="hmItemStatus(\'' + o.id + '\',\'' + it.id + '\',\'adiado\')">⏸ Adiar</button>' : "")
+        + '<button class="btn-del" style="font-size:11px;padding:4px 8px;margin-left:auto;" title="Retirar (anotado por engano)" onclick="hmItemRemover(\'' + o.id + '\',\'' + it.id + '\')">✕</button>';
+    } else {
+      h += '<button class="btn-outline-gray" style="font-size:11px;padding:4px 10px;" onclick="hmItemStatus(\'' + o.id + '\',\'' + it.id + '\',\'pendente\')">↩ Voltar a pendente</button>';
+    }
+    h += '</div>';
+  } else if (it.solucao) {
+    h += '<div style="font-size:12px;color:#ccc;margin-top:6px;"><b style="color:' + GOLD + ';">' + (it.status === "resolvido" ? "Feito:" : it.status === "adiado" ? "Motivo:" : "Por quê:") + '</b> ' + esc(it.solucao) + '</div>';
+    if (it.status === "adiado") h += '<div style="font-size:10.5px;color:#B784D6;margin-top:3px;">' + (it.levadoPara ? "↪ levado para a entrada seguinte" : "⏳ volta sozinho na próxima entrada deste caminhão") + '</div>';
+  }
+  return h + conf + '</div>';
+}
+function hmCardOSHTML(o) {
+  var aberta = o.status === "aberta";
+  var itens = o.itens || [];
+  var pend = hmPendentesDaOS(o).length, ok = itens.length - pend;
+  var dias = hmDias(o.entradaEm, o.saidaEm || hmHoje());
+  var saiu = hmSaiuSemLiberar(o);
+  var custo = hmCustoDaOS(o);
+  var aber = state._hmAberta === o.id || aberta;
+  var corBorda = aberta ? (pend ? "#E67E22" : "#27AE60") : (o.status === "cancelada" ? "#444" : "#2b2b2b");
+  var h = '<div style="border:1px solid ' + corBorda + ';border-radius:10px;padding:12px;margin-bottom:12px;background:#121212;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;' + (aberta ? "" : "cursor:pointer;") + '"' + (aberta ? "" : ' onclick="hmToggle(\'' + o.id + '\')"') + '>'
+    + '<div><span style="font-size:17px;font-weight:900;color:' + GOLD + ';">' + esc(o.placa) + '</span>'
+    + ' <span style="font-size:12px;color:#aaa;">' + (o.motorista ? "· " + esc(o.motorista) + " " : "") + (o.oficina ? "· " + esc(o.oficina) : "") + '</span>'
+    + '<div style="font-size:11.5px;color:#999;margin-top:2px;">Entrada ' + hmDataBr(o.entradaEm) + (o.kmEntrada ? " · " + Number(o.kmEntrada).toLocaleString("pt-BR") + " km" : "")
+    + (o.status === "liberada" ? " → saída " + hmDataBr(o.saidaEm) + " · " + dias + " dia(s) parado · liberado por " + esc(o.liberadoPor || "") : o.status === "cancelada" ? " · CANCELADA" : " · há " + dias + " dia(s) na oficina")
+    + (custo ? " · custo " + fmtR(custo) : "") + '</div></div>'
+    + '<div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:' + (pend ? "#E67E22" : "#27AE60") + ';">' + ok + "/" + itens.length + '</div><div style="font-size:10px;color:#888;">itens aprovados</div></div></div>';
+  if (saiu) h += '<div style="margin-top:8px;font-size:12px;font-weight:700;color:#fff;background:rgba(192,57,43,0.35);border:1px solid #C0392B;border-radius:6px;padding:7px 10px;">🚨 Este caminhão já saiu em viagem (' + hmDataBr(saiu.data) + (saiu.cliente ? ", " + esc(saiu.cliente) : "") + ') SEM a revisão liberada.</div>';
+  if (!aber) return h + '</div>';
+  h += '<div style="margin-top:10px;">' + itens.map(function (it) { return hmItemHTML(o, it); }).join("") + '</div>';
+  if (aberta) {
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0 10px;">'
+      + '<input id="hm-novo-' + o.id + '" placeholder="+ incluir item (ex.: oficina achou folga na direção)" style="flex:1;min-width:200px;font-size:12px;">'
+      + '<select id="hm-novo-or-' + o.id + '" style="font-size:11px;"><option value="oficina">achado pela oficina</option><option value="motorista">relato do motorista</option><option value="equipe">equipe</option></select>'
+      + '<button class="btn-outline" style="font-size:11px;" onclick="hmItemAdicionar(\'' + o.id + '\')">Incluir</button></div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #222;padding-top:10px;">'
+      + '<label style="font-size:11px;color:#999;">KM saída <input id="hm-kmsaida-' + o.id + '" type="number" value="' + (o.kmSaida || "") + '" style="width:100px;font-size:12px;"></label>'
+      + (hmPodeLiberar(o)
+        ? '<button class="btn-gold" style="font-size:13px;padding:7px 14px;" onclick="hmLiberar(\'' + o.id + '\')">✅ Liberar saída do caminhão</button>'
+        : '<button disabled style="font-size:12.5px;padding:7px 14px;background:#2a1a10;color:#E67E22;border:1px solid #E67E22;border-radius:6px;cursor:not-allowed;">🔒 Saída bloqueada — ' + pend + ' item(ns) pendente(s)</button>')
+      + '<button class="btn-outline" style="font-size:11px;" onclick="hmImprimir(\'' + o.id + '\')">🖨 Imprimir para a oficina</button>'
+      + '<button class="btn-outline" style="font-size:11px;" onclick="hmLancarCusto(\'' + o.id + '\')">💰 Lançar custo</button>'
+      + (ehAdmin() ? '<button class="btn-outline-gray" style="font-size:11px;margin-left:auto;" onclick="hmCancelar(\'' + o.id + '\')">Cancelar entrada</button>' : "")
+      + '</div>';
+  } else {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">'
+      + '<button class="btn-outline" style="font-size:11px;" onclick="hmImprimir(\'' + o.id + '\')">🖨 Imprimir</button>'
+      + (o.status === "liberada" && ehAdmin() ? '<button class="btn-outline-gray" style="font-size:11px;" onclick="hmReabrir(\'' + o.id + '\')">↺ Reabrir</button>' : "") + '</div>';
+  }
+  if ((o.log || []).length) {
+    h += '<details style="margin-top:8px;"><summary style="font-size:11px;color:#888;cursor:pointer;">Registro de alterações (' + o.log.length + ')</summary><div style="font-size:10.5px;color:#888;margin-top:4px;">'
+      + o.log.slice().reverse().map(function (l) { return hmQuando(l.em) + " · " + esc(l.por || "") + " — " + esc(l.txt || ""); }).join("<br>") + '</div></details>';
+  }
+  return h + '</div>';
+}
+function hmTelaHTML() {
+  var placas = hmPlacasFrota();
+  var abertas = hmOSAbertas();
+  var relatos = hmRelatosPendentes();
+  var adiados = hmAdiadosPendentes();
+  var ent = state._hmEnt || {}, rel = state._hmRel || {};
+  var opts = function (sel, vazio) { return '<option value="">' + vazio + '</option>' + placas.map(function (p) { var aberto = hmOSAberta(p); return '<option value="' + esc(p) + '"' + (sel === p ? " selected" : "") + '>' + esc(p) + (aberto ? " (na oficina)" : "") + '</option>'; }).join(""); };
+  var relPlaca = ent.placa ? hmRelatosPendentes(ent.placa) : [], adPlaca = ent.placa ? hmAdiadosPendentes(ent.placa) : [];
+
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">'
+    + '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';">📋 Histórico de Manutenção</div>'
+    + '<button class="btn-outline" onclick="hmExportar()">⬇ Exportar Excel</button></div>'
+    + '<div style="font-size:12px;color:#999;margin-bottom:16px;">Tudo o que o caminhão trouxe na ENTRADA da oficina fica anotado aqui. A saída só é liberada quando todos os itens estiverem aprovados (resolvido, não procede ou adiado pela administração).</div>';
+
+  // 1) na oficina agora
+  h += '<div style="font-size:14px;font-weight:800;color:#eee;margin:6px 0 8px;">🔧 Na oficina agora (' + abertas.length + ')</div>';
+  h += abertas.length ? abertas.map(hmCardOSHTML).join("") : '<div style="color:#777;font-size:12px;padding:14px;border:1px dashed #333;border-radius:8px;margin-bottom:12px;">Nenhum caminhão na oficina.</div>';
+
+  // 2) registrar entrada
+  h += '<div style="border:1px solid #2b2b2b;border-radius:10px;padding:12px;margin:14px 0;background:#0F0F0F;">'
+    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';margin-bottom:8px;">➕ Registrar entrada na oficina</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+    + '<label style="font-size:11px;color:#999;">Caminhão<br><select onchange="hmEntradaSet(\'placa\',this.value)" style="min-width:140px;">' + opts(ent.placa || "", "— escolha —") + '</select></label>'
+    + '<label style="font-size:11px;color:#999;">Data<br><input type="date" value="' + esc(ent.data || hmHoje()) + '" onchange="hmEntradaSet(\'data\',this.value)"></label>'
+    + '<label style="font-size:11px;color:#999;">Motorista<br><input value="' + esc(ent.motorista || "") + '" onchange="hmEntradaSet(\'motorista\',this.value)" style="width:150px;"></label>'
+    + '<label style="font-size:11px;color:#999;">KM entrada<br><input type="number" value="' + esc(ent.km || "") + '" onchange="hmEntradaSet(\'km\',this.value)" style="width:110px;"></label>'
+    + '<label style="font-size:11px;color:#999;">Oficina<br><input value="' + esc(ent.oficina || "") + '" onchange="hmEntradaSet(\'oficina\',this.value)" placeholder="ex.: galpão RF" style="width:150px;"></label></div>'
+    + ((relPlaca.length || adPlaca.length) ? '<div style="font-size:12px;color:#ddd;background:rgba(212,160,23,0.10);border:1px solid #5a4710;border-radius:6px;padding:8px 10px;margin-top:10px;">Já entram sozinhos nesta revisão:'
+      + adPlaca.map(function (a) { return '<div>⏸ ' + esc(a.it.texto) + ' <span style="color:#999;">(adiado em ' + hmDataBr(a.os.saidaEm) + ')</span></div>'; }).join("")
+      + relPlaca.map(function (r) { return '<div>📝 ' + esc(r.texto) + ' <span style="color:#999;">(relatado ' + hmDataBr(r.em) + (r.quem ? " por " + esc(r.quem) : "") + ')</span></div>'; }).join("") + '</div>' : "")
+    + '<label style="font-size:11px;color:#999;display:block;margin-top:10px;">O que o motorista relatou / motivo da entrada — <b>um item por linha</b><br>'
+    + '<textarea rows="4" onchange="hmEntradaSet(\'queixas\',this.value)" placeholder="Barulho na suspensão dianteira&#10;Freio puxando para a direita&#10;Luz do ABS acesa" style="width:100%;box-sizing:border-box;font-size:13px;">' + esc(ent.queixas || "") + '</textarea></label>'
+    + '<button class="btn-gold" style="margin-top:8px;" onclick="var t=this.parentNode.querySelector(\'textarea\'); if(t) hmEntradaSet(\'queixas\',t.value); hmAbrirEntrada()">Registrar entrada</button></div>';
+
+  // 3) relatos e adiados aguardando
+  h += '<div style="border:1px solid #2b2b2b;border-radius:10px;padding:12px;margin:14px 0;background:#0F0F0F;">'
+    + '<div style="font-size:14px;font-weight:800;color:' + GOLD + ';margin-bottom:4px;">📝 Defeito relatado com o caminhão rodando</div>'
+    + '<div style="font-size:11.5px;color:#999;margin-bottom:8px;">O motorista falou de um problema e o caminhão ainda não foi pra oficina? Anote aqui — entra sozinho na próxima entrada dele.</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">'
+    + '<label style="font-size:11px;color:#999;">Caminhão<br><select onchange="state._hmRel=state._hmRel||{};state._hmRel.placa=this.value">' + opts(rel.placa || "", "— escolha —") + '</select></label>'
+    + '<label style="font-size:11px;color:#999;">Quem relatou<br><input value="' + esc(rel.quem || "") + '" onchange="state._hmRel=state._hmRel||{};state._hmRel.quem=this.value" placeholder="motorista" style="width:150px;"></label>'
+    + '<label style="font-size:11px;color:#999;flex:1;min-width:220px;">Defeito (um por linha)<br><textarea rows="2" onchange="state._hmRel=state._hmRel||{};state._hmRel.texto=this.value" style="width:100%;box-sizing:border-box;font-size:12px;">' + esc(rel.texto || "") + '</textarea></label>'
+    + '<button class="btn-outline" onclick="var t=this.parentNode.querySelector(\'textarea\'); state._hmRel=state._hmRel||{}; if(t) state._hmRel.texto=t.value; hmRelatoAdicionar()">Anotar</button></div>';
+  if (relatos.length || adiados.length) {
+    h += '<div style="margin-top:10px;">'
+      + relatos.map(function (r) { return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;color:#ddd;border-top:1px solid #1e1e1e;padding:6px 0;"><b style="color:' + GOLD + ';min-width:70px;">' + esc(r.placa) + '</b><span style="flex:1;">📝 ' + esc(r.texto) + ' <span style="color:#888;">— ' + hmDataBr(r.em) + (r.quem ? ", " + esc(r.quem) : "") + '</span></span><button class="btn-del" style="padding:2px 7px;font-size:11px;" onclick="hmRelatoRemover(\'' + r.id + '\')">✕</button></div>'; }).join("")
+      + adiados.map(function (a) { return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;color:#ddd;border-top:1px solid #1e1e1e;padding:6px 0;"><b style="color:' + GOLD + ';min-width:70px;">' + esc(a.os.placa) + '</b><span style="flex:1;">⏸ ' + esc(a.it.texto) + ' <span style="color:#888;">— adiado em ' + hmDataBr(a.os.saidaEm) + (a.it.solucao ? ": " + esc(a.it.solucao) : "") + '</span></span></div>'; }).join("")
+      + '</div>';
+  }
+  h += '</div>';
+
+  // 4) histórico
+  var fp = state._hmFiltroPlaca || "";
+  var hist = hmLista().filter(function (o) { return o && o.tipo === "os" && o.status !== "aberta" && (!fp || o.placa === fp); })
+    .sort(function (a, b) { return String(b.entradaEm || "").localeCompare(String(a.entradaEm || "")) || (b.criadoEm || 0) - (a.criadoEm || 0); });
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:18px 0 8px;">'
+    + '<div style="font-size:14px;font-weight:800;color:#eee;">🗂 Revisões encerradas (' + hist.length + ')</div>'
+    + '<select onchange="state._hmFiltroPlaca=this.value;render()"><option value="">Todos os caminhões</option>' + placas.map(function (p) { return '<option' + (fp === p ? " selected" : "") + '>' + esc(p) + '</option>'; }).join("") + '</select></div>';
+  h += hist.length ? hist.slice(0, 120).map(hmCardOSHTML).join("") : '<div style="color:#777;font-size:12px;padding:14px;border:1px dashed #333;border-radius:8px;">Nenhuma revisão encerrada ainda.</div>';
+  return h;
+}
+
+/* aviso ao escalar caminhão que está na oficina (chamado em atualizarViagem) */
+function hmAvisoEscala(placa) {
+  var o = hmOSAberta(placa);
+  if (!o) return true;
+  var pend = hmPendentesDaOS(o);
+  return confirm("⚠ " + placa + " está NA OFICINA (entrada " + hmDataBr(o.entradaEm) + ")" + (pend.length ? " com " + pend.length + " item(ns) pendente(s):\n\n• " + pend.map(function (x) { return x.texto; }).join("\n• ") : ", aguardando a liberação da saída.")
+    + "\n\nA saída só é liberada na aba Histórico de Manutenção. Escalar este caminhão mesmo assim?");
+}
+
+/* diagnóstico proativo (rfDiagnosticoSistema) */
+function hmDiagnostico(add) {
+  hmOSAbertas().forEach(function (o) {
+    var saiu = hmSaiuSemLiberar(o), pend = hmPendentesDaOS(o).length, dias = hmDias(o.entradaEm);
+    if (saiu) add("alto", o.placa + " saiu em viagem (" + hmDataBr(saiu.data) + ") com a revisão AINDA ABERTA na oficina" + (pend ? " e " + pend + " item(ns) pendente(s)" : "") + ". Aba Histórico de Manutenção.");
+    else if (dias >= 3) add("medio", o.placa + " está na oficina há " + dias + " dia(s)" + (pend ? " com " + pend + " item(ns) pendente(s)" : ", tudo aprovado — falta só liberar a saída") + ". Aba Histórico de Manutenção.");
+  });
+  var rel = hmRelatosPendentes();
+  if (rel.length) {
+    var pp = {}; rel.forEach(function (r) { pp[r.placa] = (pp[r.placa] || 0) + 1; });
+    add("medio", rel.length + " defeito(s) relatado(s) por motorista esperando entrada na oficina: " + Object.keys(pp).map(function (p) { return p + " (" + pp[p] + ")"; }).join(", ") + ". Aba Histórico de Manutenção.");
+  }
+  var ad = hmAdiadosPendentes();
+  if (ad.length) add("medio", ad.length + " item(ns) de revisão ADIADO(s) esperando a próxima entrada: " + ad.map(function (a) { return a.os.placa + " — " + a.it.texto; }).join("; ") + ".");
+}
+
+/* contexto da assistente (regra permanente) */
+function hmContextoAssistente() {
+  var linhaOS = function (o) {
+    var itens = (o.itens || []).map(function (it) {
+      return "    · " + it.texto + " [" + ((HM_STATUS[it.status] || {}).rot || "Pendente") + (it.solucao ? ": " + it.solucao : "") + "]" + " (" + (HM_ORIGEM[it.origem] || it.origem || "") + (it.relatadoPor ? ", " + it.relatadoPor : "") + (it.conferidoPor ? "; conferido por " + it.conferidoPor : "") + ")";
+    }).join("\n");
+    return "- " + o.placa + " | entrada " + hmDataBr(o.entradaEm) + (o.kmEntrada ? " | " + o.kmEntrada + " km" : "") + (o.oficina ? " | oficina " + o.oficina : "") + (o.motorista ? " | motorista " + o.motorista : "")
+      + (o.status === "liberada" ? " | saída " + hmDataBr(o.saidaEm) + " (" + hmDias(o.entradaEm, o.saidaEm) + " dia(s)), liberado por " + (o.liberadoPor || "") : o.status === "cancelada" ? " | CANCELADA" : " | NA OFICINA há " + hmDias(o.entradaEm) + " dia(s), " + hmPendentesDaOS(o).length + " pendente(s)" + (hmSaiuSemLiberar(o) ? " | ALERTA: saiu em viagem sem liberar" : ""))
+      + (hmCustoDaOS(o) ? " | custo lançado " + fmtR(hmCustoDaOS(o)) : "") + "\n" + itens;
+  };
+  var abertas = hmOSAbertas();
+  var hist = hmLista().filter(function (o) { return o && o.tipo === "os" && o.status !== "aberta"; }).sort(function (a, b) { return String(b.entradaEm || "").localeCompare(String(a.entradaEm || "")); }).slice(0, 40);
+  var rel = hmRelatosPendentes(), ad = hmAdiadosPendentes();
+  return "HISTÓRICO DE MANUTENÇÃO — ENTRADA E SAÍDA DA OFICINA (aba 📋 Histórico de Manutenção, v541, 02/10/2026). Nasceu porque um caminhão saiu da revisão com um defeito que o motorista tinha relatado e ninguém tinha anotado na entrada. REGRA: na entrada da oficina se anota TUDO o que o motorista relatou, um item por linha; cada item só fica aprovado como RESOLVIDO (com o que foi feito), NÃO PROCEDE (com o porquê) ou ADIADO (só administrador, com motivo — volta sozinho na próxima entrada daquele caminhão). Enquanto houver item pendente o botão de liberar a saída fica TRAVADO. Defeito relatado com o caminhão rodando se anota em 'Defeito relatado com o caminhão rodando' e entra sozinho na próxima entrada. Ao escalar numa viagem um caminhão que está na oficina, o sistema avisa e pede confirmação. 'Lançar custo' cria o lançamento na aba Manutenção ligado à revisão (campo osId); o custo da revisão é a soma desses lançamentos. Se alguém perguntar o histórico de um caminhão, responda com as revisões abaixo (datas, itens, o que foi feito, quem liberou). Se perguntarem se um caminhão pode sair, só pode se não houver pendente na revisão aberta dele.\n"
+    + "Na oficina agora (" + abertas.length + "):\n" + (abertas.map(linhaOS).join("\n") || "(nenhum)") + "\n"
+    + "Defeitos relatados esperando entrada (" + rel.length + "): " + (rel.map(function (r) { return r.placa + " — " + r.texto + " (" + hmDataBr(r.em) + (r.quem ? ", " + r.quem : "") + ")"; }).join("; ") || "nenhum") + "\n"
+    + "Itens adiados esperando a próxima entrada (" + ad.length + "): " + (ad.map(function (a) { return a.os.placa + " — " + a.it.texto + " (motivo: " + (a.it.solucao || "") + ")"; }).join("; ") || "nenhum") + "\n"
+    + "Últimas revisões encerradas (até 40, mais recente primeiro):\n" + (hist.map(linhaOS).join("\n") || "(nenhuma ainda)");
 }
 
 /* ===================== GRÁFICOS — VISÃO GERAL DA FROTA (v89) =====================
@@ -22579,6 +23044,7 @@ var ABAS_DEF = [
   { id: "frota", label: "🚛 Frota", grupo: "FROTA" },
   { id: "manutencao", label: "🗓️ Vencimentos", grupo: "FROTA" },
   { id: "mtcustos", label: "Manutenção 🔧", grupo: "FROTA" },
+  { id: "oficina", label: "📋 Histórico de Manutenção", grupo: "FROTA" },   // v541
   { id: "oleo", label: "Óleo & Filtros 🛢️", grupo: "FROTA" },
   { id: "almox", label: "Almoxarifado 📦", grupo: "FROTA" },
   { id: "operacao", label: "🧭 Operação", grupo: "OPERAÇÃO" },
@@ -22609,6 +23075,7 @@ var TAB_DESCRICOES = {
   cargamateus: "Importa o PDF da carga da Mateus e estima KM, custo e margem da rota",
   manutencao: "Vencimentos de documentos, seguro e revisões",
   mtcustos: "Lançamento de manutenções e custos por veículo",
+  oficina: "Entrada e saída da oficina: tudo o que o motorista relatou fica anotado e o caminhão só sai com todos os itens aprovados",
   oleo: "Controle de troca de óleo e filtros",
   almox: "Estoque de peças e materiais",
   operacao: "Alocação dos veículos por cliente/contrato",
@@ -22754,10 +23221,11 @@ function podeVerAba(id) {
   if (ehAdmin()) {   // v503: master vê tudo; outro admin só é limitado se o master marcou "limitar abas"
     var mA = state.sessao && Array.isArray(state.sessao.modulos) ? state.sessao.modulos : [];
     if (ehMaster() || mA.indexOf("_restrito") === -1) return true;
-    return mA.indexOf(id) !== -1 || (id === "compras" && mA.indexOf("conciliacao") !== -1);
+    return mA.indexOf(id) !== -1 || (id === "compras" && mA.indexOf("conciliacao") !== -1) || (id === "oficina" && mA.indexOf("mtcustos") !== -1);
   }
   var mods = state.sessao && Array.isArray(state.sessao.modulos) ? state.sessao.modulos : [];
   if (id === "compras" && mods.indexOf("conciliacao") !== -1) return true;   // v501: quem lançava compras na Conciliação continua lançando
+  if (id === "oficina" && mods.indexOf("mtcustos") !== -1) return true;   // v541: quem lança manutenção controla a entrada/saída da oficina
   return mods.indexOf(id) !== -1;
 }
 function abasPermitidas() { return ABAS_DEF.map((a) => a.id).filter((id) => podeVerAba(id)); }
@@ -22947,12 +23415,12 @@ function logout() {
   state.manutencoes = []; state.fechamentos = []; state.frotaMes = {}; state.config = {};
   state.almoxarifado = []; state.tarifas = {}; state.oleoTrocas = [];
   state.usuarios = []; state.pagamentosMotorista = []; state.abastecimentos = []; state.viagensFinalizadas = [];
-  state.compras = []; state.extratos = []; state.medicoes = [];   // v446/v448/v467
+  state.compras = []; state.extratos = []; state.medicoes = []; state.oficina = [];   // v446/v448/v467/v541
   try {
     ["rf-frota-veiculos-v4", "rf-frota-dividas-v1", "rf-frota-viagens-v1", "rf-frota-clientes-v1",
      "rf-frota-manutencoes-v1", "rf-frota-fechamentos-v1", "rf-frota-frotames-v1", "rf-frota-config-v1",
      "rf-frota-almox-v1", "rf-frota-tarifas-v1", "rf-frota-oleotrocas-v1", "rf-frota-usuarios-v1",
-     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1", "rf-frota-medicoes-v1"].forEach(function (k) { localStorage.removeItem(k); });
+     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1", "rf-frota-medicoes-v1", "rf-frota-oficina-v1"].forEach(function (k) { localStorage.removeItem(k); });
   } catch (e) {}
   salvarSessaoLocal(); render();
 }
@@ -31753,6 +32221,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
   const blocoDocsViagem = !podeVerAba("docsviagem") ? "" : (function () { try { return dvContextoAssistente(); } catch (e) { return ""; } })();   // v435
+  const blocoOficina = !podeVerAba("oficina") ? "" : (function () { try { return hmContextoAssistente(); } catch (e) { return ""; } })();   // v541
 
   return `${blocoTributario}
 
@@ -31770,6 +32239,7 @@ ${bloco529}
 ${bloco530}
 ${blocoLogos}
 ${blocoDocsViagem}
+${blocoOficina}
 ${blocoConciliacao}
 ${blocoTela}
 ${blocoDonoDaRota}
@@ -32105,6 +32575,8 @@ function rfDiagnosticoSistema() {
         + ". Aba Manutenção, a caixa do veículo está vermelha.");
     }
   } catch (e) {}
+  // v541: oficina — caminhão que saiu sem liberar, parado demais, relatos e adiados esperando
+  try { hmDiagnostico(add); } catch (e) {}
   // caminhões sem nenhum documento anexado
   const idx = state._docsIndex || {};
   const semDoc = vs.filter(function (v) { return !idx[v.placa] || !idx[v.placa].length; }).map(function (v) { return v.placa; });
@@ -34138,6 +34610,10 @@ function renderTabela() {
     wrap.innerHTML = mdTelaHTML();
     return;
   }
+  if (state.aba === "oficina") {   // v541
+    wrap.innerHTML = hmTelaHTML();
+    return;
+  }
   if (state.aba === "conciliacao" || state.aba === "compras") {   // v446 / v501
     wrap.innerHTML = ccTelaHTML();
     return;
@@ -35354,7 +35830,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423; v467: medicoes
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "oficina"];   // v423; v467: medicoes; v541: oficina
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -35421,7 +35897,8 @@ revalidarSessaoAoAbrir();
     goiasBips: "rf-frota-goiasbips-v1",           /* v423 */
     compras: "rf-frota-compras-v1",               /* v446 */
     extratos: "rf-frota-extratos-v1",             /* v448 */
-    medicoes: "rf-frota-medicoes-v1"              /* v467 */
+    medicoes: "rf-frota-medicoes-v1",             /* v467 */
+    oficina: "rf-frota-oficina-v1"                /* v541 */
   };
 
   var sb = null;
