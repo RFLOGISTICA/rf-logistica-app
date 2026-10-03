@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v542)</title>
+<title>RF Logística — Painel da Frota (v543)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v542">
+<meta name="rf-versao" content="v543">
 <meta name="rf-data" content="2026-10-03">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v543 (03/10/2026): DASHBOARD SEM TELAS PRETAS. No tablet os gráficos do Dashboard
+     ficavam como caixas pretas vazias (Chart.js vindo da internet + redesenho da
+     sincronização). Os 4 gráficos agora são desenhados direto em SVG/HTML, sem
+     biblioteca nenhuma, e as caixas lado a lado não esticam mais até a altura da
+     vizinha (era o resto do espaço preto). -->
 <!-- v542 (03/10/2026): TELA INICIAL POR SETOR. Os grupos viraram 6 setores (Frota,
      Manutenção, Viagens, Carregamento, Financeiro, Cadastros + Administração pro admin).
      A tela inicial mostra primeiro os setores; tocar num setor abre só as áreas dele.
@@ -728,7 +733,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v542" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v543" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -33084,6 +33089,72 @@ function dbCaixa(titulo, corpo, extra) {
 }
 function dbPct(n) { return (isFinite(n) ? n : 0).toFixed(1).replace(".", ",") + "%"; }
 function dbNum(n) { return Math.round(n || 0).toLocaleString("pt-BR"); }
+/* v543: os gráficos do Dashboard passaram a ser desenhados direto em SVG/HTML,
+   sem Chart.js. No tablet (Android) as caixas ficavam PRETAS: o Chart.js vem da
+   internet (cdnjs) e, quando demorava ou o redesenho da sincronização ("atualizado
+   de outro PC") caía no meio, a tela ficava com o espaço do gráfico vazio. Agora o
+   gráfico nasce junto com o HTML -- não depende de biblioteca, de rede nem de tempo. */
+function dbFmtK(v) {
+  var a = Math.abs(v), sg = v < 0 ? "-" : "";
+  if (a >= 1e6) return sg + "R$ " + (a / 1e6).toFixed(1).replace(".", ",") + " mi";
+  if (a >= 1e3) return sg + "R$ " + Math.round(a / 1e3) + " mil";
+  return sg + "R$ " + Math.round(a);
+}
+function dbSvgEvolucao(evol) {
+  var W = 1000, H = 280, L = 70, R = 12, T = 16, B = 34;
+  var vals = []; evol.forEach(function (m) { vals.push(m.faturamento, m.custo, m.resultado); });
+  var max = Math.max.apply(null, vals.concat([0])), min = Math.min.apply(null, vals.concat([0]));
+  if (max === min) max = min + 1;
+  var y = function (v) { return T + (max - v) / (max - min) * (H - T - B); };
+  var n = evol.length, slot = (W - L - R) / n, bw = Math.min(46, slot * 0.32);
+  var o = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;" font-family="inherit">';
+  for (var k = 0; k <= 4; k++) {
+    var v = min + (max - min) * k / 4, yy = y(v);
+    o += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + yy.toFixed(1) + '" y2="' + yy.toFixed(1) + '" stroke="#222"/>'
+      + '<text x="' + (L - 6) + '" y="' + (yy + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="#888">' + dbFmtK(v) + '</text>';
+  }
+  var y0 = y(0);
+  o += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y0.toFixed(1) + '" y2="' + y0.toFixed(1) + '" stroke="#444"/>';
+  var pts = [];
+  evol.forEach(function (m, i) {
+    var cx = L + slot * i + slot / 2;
+    [[m.faturamento, GOLD, -bw - 2], [m.custo, "#5a5a5a", 2]].forEach(function (b) {
+      var yt = Math.min(y(b[0]), y0), h = Math.abs(y(b[0]) - y0);
+      o += '<rect x="' + (cx + b[2]).toFixed(1) + '" y="' + yt.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(h, 0.5).toFixed(1) + '" rx="3" fill="' + b[1] + '"><title>' + (b[1] === GOLD ? "Faturamento " : "Custo total ") + fmtR(b[0]) + '</title></rect>';
+    });
+    pts.push([cx, y(m.resultado), m.resultado]);
+    o += '<text x="' + cx.toFixed(1) + '" y="' + (H - 12) + '" text-anchor="middle" font-size="12" fill="#aaa">' + mesLabel(m.mes).replace(/\/(\d\d)(\d\d)$/, "/$2") + '</text>';
+  });
+  o += '<polyline fill="none" stroke="#2E7D32" stroke-width="2.5" points="' + pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ") + '"/>';
+  pts.forEach(function (p) {
+    o += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="4.5" fill="' + (p[2] >= 0 ? "#2E7D32" : "#C0392B") + '"><title>Resultado ' + fmtR(p[2]) + '</title></circle>';
+  });
+  o += '</svg>';
+  var leg = function (cor, t, linha) { return '<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;"><span style="width:14px;height:' + (linha ? "3px" : "10px") + ';background:' + cor + ';border-radius:2px;"></span>' + t + '</span>'; };
+  return '<div style="font-size:12px;color:#ccc;margin-bottom:8px;">' + leg(GOLD, "Faturamento") + leg("#5a5a5a", "Custo total") + leg("#2E7D32", "Resultado", true) + '</div>' + o;
+}
+function dbBarrasH(itens, corFn, rotFn) {
+  var max = 0; itens.forEach(function (x) { max = Math.max(max, Math.abs(x.v)); });
+  if (!max) max = 1;
+  return itens.map(function (x) {
+    var pct = Math.abs(x.v) / max * 100;
+    return '<div style="display:grid;grid-template-columns:minmax(70px,110px) 1fr auto;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">'
+      + '<span style="color:#ddd;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(x.rot) + '</span>'
+      + '<span style="background:#1a1a1a;border-radius:4px;height:16px;display:block;"><span style="display:block;height:16px;width:' + pct.toFixed(1) + '%;min-width:2px;background:' + corFn(x) + ';border-radius:4px;"></span></span>'
+      + '<span style="color:#fff;white-space:nowrap;text-align:right;min-width:86px;">' + rotFn(x) + '</span></div>';
+  }).join("");
+}
+function dbSvgRosca(lista) {
+  var tot = lista.reduce(function (s, x) { return s + Math.max(0, x.v); }, 0) || 1;
+  var r = 70, c = 2 * Math.PI * r, acc = 0;
+  var o = '<svg viewBox="0 0 200 200" style="width:200px;max-width:100%;height:auto;display:block;margin:0 auto;"><g transform="rotate(-90 100 100)">';
+  lista.forEach(function (x) {
+    var f = Math.max(0, x.v) / tot, len = f * c;
+    o += '<circle cx="100" cy="100" r="' + r + '" fill="none" stroke="' + x.cor + '" stroke-width="30" stroke-dasharray="' + len.toFixed(2) + ' ' + (c - len).toFixed(2) + '" stroke-dashoffset="' + (-acc).toFixed(2) + '"><title>' + esc(x.rot) + ' ' + fmtR(x.v) + '</title></circle>';
+    acc += len;
+  });
+  return o + '</g><text x="100" y="96" text-anchor="middle" font-size="11" fill="#999">custo total</text><text x="100" y="114" text-anchor="middle" font-size="14" font-weight="800" fill="#fff">' + dbFmtK(tot) + '</text></svg>';
+}
 function dashboardHTML() {
   var D = dbDados(), A = D.atual, P = D.ant;
   var corRes = A.resultado >= 0 ? "#2E7D32" : "#C0392B";
@@ -33104,7 +33175,7 @@ function dashboardHTML() {
 
   var evolHTML = D.evol.length < 2
     ? '<div style="text-align:center;color:#777;padding:30px;">Ainda não há meses suficientes para comparar.</div>'
-    : '<div style="height:280px;position:relative;"><canvas id="db-evolucao"></canvas></div>';
+    : dbSvgEvolucao(D.evol);
 
   var totCli = A.listaClientes.reduce(function (s, c) { return s + c.receita; }, 0);
   var cliTabela = !A.listaClientes.length ? '<div style="text-align:center;color:#777;padding:24px;">Nenhuma viagem neste mês.</div>'
@@ -33112,20 +33183,20 @@ function dashboardHTML() {
       + A.listaClientes.map(function (c) {
         var mg = c.receita > 0 ? (c.sobra / c.receita) * 100 : 0;
         return '<tr><td style="font-weight:700;">' + esc(c.nome) + '</td><td style="text-align:right;">' + c.qtd + '</td><td style="text-align:right;">' + fmtR(c.receita)
-          + '</td><td style="text-align:right;">' + dbPct(totCli ? c.receita / totCli * 100 : 0) + '</td><td style="text-align:right;">' + (c.km ? fmtR(c.receita / c.km) : "—")
+          + '</td><td style="text-align:right;">' + dbPct(totCli ? c.receita / totCli * 100 : 0) + '</td><td style="text-align:right;white-space:nowrap;">' + (c.km ? fmtR(c.receita / c.km) : "—")
           + '</td><td style="text-align:right;font-weight:700;color:' + (mg >= 0 ? "#2E7D32" : "#C0392B") + ';">' + dbPct(mg) + '</td></tr>';
       }).join("") + '</tbody></table></div>';
 
   var compTot = A.custoTotal;
   var compHTML = !A.composicao.length ? '<div style="text-align:center;color:#777;padding:30px;">Sem custos neste mês.</div>'
-    : '<div style="height:240px;position:relative;"><canvas id="db-composicao"></canvas></div>'
+    : dbSvgRosca(A.composicao.map(function (x, i) { return { rot: x.rot, v: x.v, cor: GRAF_PALETA[i % GRAF_PALETA.length] }; }))
       + '<div style="margin-top:10px;font-size:12px;">' + A.composicao.map(function (x, i) { return { rot: x.rot, v: x.v, cor: GRAF_PALETA[i % GRAF_PALETA.length] }; }).sort(function (a, b) { return b.v - a.v; }).map(function (x) {
         return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid #1a1a1a;"><span style="color:#ccc;"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:' + x.cor + ';"></span>' + x.rot + '</span><span style="color:#fff;white-space:nowrap;">' + fmtR(x.v) + ' <span style="color:#777;">' + dbPct(compTot ? x.v / compTot * 100 : 0) + '</span></span></div>';
       }).join("") + (A.ajuste ? '<div style="color:#888;margin-top:6px;">Ajuste manual do mês no Financeiro: ' + fmtR(A.ajuste) + '</div>' : "") + '</div>';
 
   var cam = D.caminhoes;
   var camHTML = !cam.length ? '<div style="text-align:center;color:#777;padding:30px;">Nenhum caminhão rodou neste mês.</div>'
-    : '<div style="height:' + Math.max(200, cam.length * 30) + 'px;position:relative;"><canvas id="db-caminhoes"></canvas></div>'
+    : dbBarrasH(cam.map(function (c) { return { rot: c.placa, v: c.sobra }; }), function (x) { return x.v >= 0 ? "#2E7D32" : "#C0392B"; }, function (x) { return '<span style="color:' + (x.v >= 0 ? "#81C784" : "#E57373") + ';">' + fmtR(x.v) + '</span>'; })
       + '<div style="overflow-x:auto;margin-top:12px;"><table style="width:100%;min-width:520px;"><thead><tr><th>Placa</th><th style="text-align:right;">Viagens</th><th style="text-align:right;">KM</th><th style="text-align:right;">Receita</th><th style="text-align:right;">Custo</th><th style="text-align:right;">Sobra</th></tr></thead><tbody>'
       + cam.map(function (c) {
         return '<tr><td style="font-weight:700;">' + esc(c.placa) + '</td><td style="text-align:right;">' + c.viagens + '</td><td style="text-align:right;">' + dbNum(c.km) + '</td><td style="text-align:right;">' + fmtR(c.receita)
@@ -33158,11 +33229,11 @@ function dashboardHTML() {
     + kpis
     + '<div style="display:grid;grid-template-columns:1fr;gap:18px;">'
     + dbCaixa("Faturamento, custo e resultado — últimos " + D.evol.length + " meses", evolHTML)
-    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:18px;">'
-    + dbCaixa("Frete por cliente", (A.listaClientes.length ? '<div style="height:' + Math.max(160, A.listaClientes.length * 34) + 'px;position:relative;margin-bottom:12px;"><canvas id="db-clientes"></canvas></div>' : "") + cliTabela)
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:18px;align-items:start;">'
+    + dbCaixa("Frete por cliente", (A.listaClientes.length ? '<div style="margin-bottom:12px;">' + dbBarrasH(A.listaClientes.map(function (c) { return { rot: c.nome, v: c.receita }; }), function () { return GOLD; }, function (x) { return fmtR(x.v); }) + '</div>' : "") + cliTabela)
     + dbCaixa("Para onde foi o dinheiro (custo real do mês)", compHTML)
     + '</div>'
-    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:18px;">'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:18px;align-items:start;">'
     + dbCaixa("Resultado por caminhão", camHTML)
     + dbCaixa("Viagens e entregas", opHTML)
     + '</div></div>'
@@ -33171,57 +33242,8 @@ function dashboardHTML() {
     + 'A <b>margem da viagem</b> por cliente usa a sobra de cada viagem, que já desconta as reservas de ADM, manutenção e pneus; por isso ela não soma com o resultado do mês. '
     + 'O <b>resultado por caminhão</b> é o da aba Gráficos: receita das viagens − custo das viagens − manutenção real da placa (sem rateio das dívidas fixas).</div>';
 }
-function dbRenderCharts(tentativa) {
-  tentativa = tentativa || 0;
-  if (typeof Chart === "undefined") {
-    if (tentativa >= 20) return;
-    setTimeout(function () { if (state.aba === "dashboard" && document.getElementById("db-evolucao")) dbRenderCharts(tentativa + 1); }, 500);
-    return;
-  }
-  if (!window.__rfCharts) window.__rfCharts = {};
-  var D = dbDados(), A = D.atual;
-  var eixo = function () { return { ticks: { color: "#999", callback: function (v) { return Math.abs(v) >= 1000 ? "R$ " + (v / 1000).toLocaleString("pt-BR") + "k" : "R$ " + v; } }, grid: { color: "#1f1f1f" } }; };
-  var tip = { callbacks: { label: function (c) { var v = c.parsed && (c.parsed.x != null && c.chart.options.indexAxis === "y" ? c.parsed.x : (c.parsed.y != null ? c.parsed.y : c.parsed)); return (c.dataset.label ? c.dataset.label + ": " : (c.label ? c.label + ": " : "")) + fmtR(v); } } };
-
-  graficoDestruir("db-evolucao");
-  var el = document.getElementById("db-evolucao");
-  if (el && D.evol.length >= 2) {
-    window.__rfCharts["db-evolucao"] = new Chart(el, {
-      data: { labels: D.evol.map(function (m) { return mesLabel(m.mes).replace(/\/(\d\d)(\d\d)$/, "/$2"); }), datasets: [
-        { type: "bar", label: "Faturamento", data: D.evol.map(function (m) { return Math.round(m.faturamento); }), backgroundColor: GOLD, borderRadius: 4, order: 2 },
-        { type: "bar", label: "Custo total", data: D.evol.map(function (m) { return Math.round(m.custo); }), backgroundColor: "#555555", borderRadius: 4, order: 3 },
-        { type: "line", label: "Resultado", data: D.evol.map(function (m) { return Math.round(m.resultado); }), borderColor: "#2E7D32", backgroundColor: "#2E7D32", tension: 0.25, pointRadius: 4, borderWidth: 2, order: 1 },
-      ] },
-      options: Object.assign(graficoBase(), { plugins: Object.assign({}, graficoBase().plugins, { tooltip: tip }), scales: { x: { ticks: { color: "#999" }, grid: { display: false } }, y: eixo() } }),
-    });
-  }
-  graficoDestruir("db-clientes");
-  el = document.getElementById("db-clientes");
-  if (el && A.listaClientes.length) {
-    window.__rfCharts["db-clientes"] = new Chart(el, {
-      type: "bar",
-      data: { labels: A.listaClientes.map(function (c) { return c.nome; }), datasets: [{ label: "Faturamento", data: A.listaClientes.map(function (c) { return Math.round(c.receita * 100) / 100; }), backgroundColor: GOLD, borderRadius: 4 }] },
-      options: Object.assign(graficoBase(), { indexAxis: "y", plugins: Object.assign({}, graficoBase().plugins, { legend: { display: false }, tooltip: tip }), scales: { x: eixo(), y: { ticks: { color: "#ddd" }, grid: { display: false } } } }),
-    });
-  }
-  graficoDestruir("db-composicao");
-  el = document.getElementById("db-composicao");
-  if (el && A.composicao.length) {
-    window.__rfCharts["db-composicao"] = new Chart(el, {
-      type: "doughnut",
-      data: { labels: A.composicao.map(function (x) { return x.rot; }), datasets: [{ data: A.composicao.map(function (x) { return Math.round(x.v * 100) / 100; }), backgroundColor: GRAF_PALETA, borderColor: "#0E0E0E", borderWidth: 2 }] },
-      options: Object.assign(graficoBase(), { cutout: "58%", plugins: Object.assign({}, graficoBase().plugins, { legend: { display: false }, tooltip: tip }) }),
-    });
-  }
-  graficoDestruir("db-caminhoes");
-  el = document.getElementById("db-caminhoes");
-  if (el && D.caminhoes.length) {
-    window.__rfCharts["db-caminhoes"] = new Chart(el, {
-      type: "bar",
-      data: { labels: D.caminhoes.map(function (c) { return c.placa; }), datasets: [{ label: "Sobra", data: D.caminhoes.map(function (c) { return Math.round(c.sobra * 100) / 100; }), backgroundColor: D.caminhoes.map(function (c) { return c.sobra >= 0 ? "#2E7D32" : "#C0392B"; }), borderRadius: 4 }] },
-      options: Object.assign(graficoBase(), { indexAxis: "y", plugins: Object.assign({}, graficoBase().plugins, { legend: { display: false }, tooltip: tip }), scales: { x: eixo(), y: { ticks: { color: "#ddd" }, grid: { display: false } } } }),
-    });
-  }
+function dbRenderCharts() {   // v543: sem Chart.js -- os gráficos já saem prontos no HTML
+  ["db-evolucao", "db-clientes", "db-composicao", "db-caminhoes"].forEach(function (id) { try { graficoDestruir(id); } catch (e) { } });
 }
 function dbExportarExcel() {
   var D = dbDados(), A = D.atual;
