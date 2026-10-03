@@ -2,12 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v543)</title>
+<title>RF Logística — Painel da Frota (v544)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v543">
+<meta name="rf-versao" content="v544">
 <meta name="rf-data" content="2026-10-03">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v544 (03/10/2026): TELA INICIAL AGRUPADA, SEM OCULTAR. Renato: "é para agrupar, não
+     ocultar, pois me atrasa ao abrir". Todas as áreas voltam a aparecer de uma vez,
+     separadas por setor (Frota, Manutenção, Viagens, Carregamento, Financeiro,
+     Cadastros, Administração) com título e descrição do setor. Um toque abre a área. -->
 <!-- v543 (03/10/2026): DASHBOARD SEM TELAS PRETAS. No tablet os gráficos do Dashboard
      ficavam como caixas pretas vazias (Chart.js vindo da internet + redesenho da
      sincronização). Os 4 gráficos agora são desenhados direto em SVG/HTML, sem
@@ -733,7 +737,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v543" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v544" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -23702,8 +23706,6 @@ function abrirGrupoInicio(nome) {   // v542
   try { window.scrollTo(0, 0); } catch (e) { }
 }
 function voltarTelaInicial() {
-  // v542: volta pro grupo da área de onde a pessoa saiu (não pra lista de grupos)
-  if (!state._telaInicial && state.aba) state._grupoInicio = grupoDaAba(state.aba);
   state._telaInicial = true;
   state._trocarArea = false;
   render();
@@ -23720,25 +23722,10 @@ function telaInicialHTML() {
     grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
   }
   const nome = esc((usuarioLogado() || {}).nome || "");
-  /* v542: a tela inicial mostra primeiro os GRUPOS (setores). Tocar num grupo
-     abre só as áreas dele; "← Todos os grupos" volta. Quem enxerga um grupo só
-     já cai direto nas áreas dele. O grupo aberto é transitório (não sobe pra nuvem). */
-  if (grupos.length === 1) state._grupoInicio = grupos[0].nome;
-  if (state._grupoInicio && !grupos.some((g) => g.nome === state._grupoInicio)) state._grupoInicio = "";
-  const grupoAberto = grupos.find((g) => g.nome === state._grupoInicio) || null;
+  /* v544: Renato -- "a tela principal é para AGRUPAR, não ocultar". Todas as áreas
+     ficam à mostra, separadas pelo título do setor. (A v542 escondia as áreas atrás
+     de um toque no setor -- desfeito.) */
   const rotGrupo = (n) => n === "ADMINISTRACAO" ? "Administração" : n.charAt(0) + n.slice(1).toLowerCase();
-  const cartaoGrupo = (g) => `<button onclick="abrirGrupoInicio('${esc(g.nome)}')" title="${esc(GRUPOS_DESC[g.nome] || "")}"
-      style="background:rgba(10,10,10,0.86); border:1px solid rgba(78,78,78,0.95); border-radius:14px; padding:16px;
-             text-align:left; cursor:pointer; color:#fff; min-height:118px; display:flex; flex-direction:column; gap:6px;
-             backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); transition:border-color .15s, background .15s;"
-      onmouseover="this.style.borderColor='${GOLD}'; this.style.background='rgba(25,20,8,0.92)';"
-      onmouseout="this.style.borderColor='rgba(78,78,78,0.95)'; this.style.background='rgba(10,10,10,0.86)';">
-      <span style="display:flex; align-items:center; gap:10px;">${(function () { for (var k = 0; k < g.itens.length; k++) { var h = rfIconeAreaHTML(g.itens[k].id); if (h) return h; } return ""; })()}
-        <span style="font-size:17px; font-weight:800; color:${GOLD}; letter-spacing:.5px;">${esc(rotGrupo(g.nome))}</span>
-        <span style="margin-left:auto; font-size:11px; color:#999; background:#1a1a1a; border:1px solid #333; border-radius:20px; padding:2px 9px; white-space:nowrap;">${g.itens.length} ${g.itens.length === 1 ? "área" : "áreas"}</span></span>
-      <span style="font-size:11.5px; color:#9a9a9a; line-height:1.35;">${esc(GRUPOS_DESC[g.nome] || "")}</span>
-      <span style="font-size:11px; color:#666; line-height:1.35;">${g.itens.map((a) => esc(rfRotuloSemEmoji(a.label))).join(" · ")}</span>
-    </button>`;
   const cartao = (a) => {
     const desc = TAB_DESCRICOES[a.id] || "";
     return `<button onclick="abrirAreaDoInicio('${a.id}')" title="${esc(desc)}"
@@ -23789,16 +23776,16 @@ function telaInicialHTML() {
       </div>
       <div style="padding:16px 24px 0; font-size:13.5px; color:#b0b0b0; text-align:center; letter-spacing:.5px;
                   text-shadow:0 2px 10px rgba(0,0,0,0.95);">
-        ${grupoAberto ? (grupos.length > 1 ? "Áreas de " + esc(rotGrupo(grupoAberto.nome)) : "Escolha a \u00e1rea que quer abrir") : "Escolha o setor"}
+        Escolha a \u00e1rea que quer abrir
       </div>
       <div style="padding:22px 24px 44px; max-width:1420px; margin:0 auto;">
-        ${!grupoAberto ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%,300px),1fr)); gap:12px;">${grupos.map(cartaoGrupo).join("")}</div>` : ""}
-        ${grupoAberto && grupos.length > 1 ? `<div style="margin-bottom:14px;"><button class="btn-outline" onclick="abrirGrupoInicio('')">← Todos os grupos</button></div>` : ""}
-        ${(grupoAberto ? [grupoAberto] : []).map((g) => `
-          <div style="margin-bottom:22px;">
-            <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1.6px;
-                        font-weight:700; margin-bottom:9px; padding-left:2px;
-                        text-shadow:0 2px 10px rgba(0,0,0,0.95);">${esc(g.nome)}</div>
+        ${grupos.map((g) => `
+          <div id="ini-grupo-${esc(g.nome)}" style="margin-bottom:26px;">
+            <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; padding:0 2px 6px;
+                        border-bottom:1px solid rgba(212,160,23,0.35); text-shadow:0 2px 10px rgba(0,0,0,0.95);">
+              <span style="font-size:15px; color:${GOLD}; text-transform:uppercase; letter-spacing:1.6px; font-weight:800;">${esc(rotGrupo(g.nome))}</span>
+              <span style="font-size:11.5px; color:#9a9a9a;">${esc(GRUPOS_DESC[g.nome] || "")}</span>
+            </div>
             <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(210px,1fr)); gap:10px;">
               ${g.itens.map(cartao).join("")}
             </div>
@@ -31816,7 +31803,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Tocar no setor abre as áreas dele; cada login só vê os setores das áreas que tem permissão.";
+  const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoDocsViagem = !podeVerAba("docsviagem") ? "" : (function () { try { return dvContextoAssistente(); } catch (e) { return ""; } })();   // v435
 
