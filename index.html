@@ -2,12 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v541)</title>
+<title>RF Logística — Painel da Frota (v542)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v541">
+<meta name="rf-versao" content="v542">
 <meta name="rf-data" content="2026-10-03">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v542 (03/10/2026): TELA INICIAL POR SETOR. Os grupos viraram 6 setores (Frota,
+     Manutenção, Viagens, Carregamento, Financeiro, Cadastros + Administração pro admin).
+     A tela inicial mostra primeiro os setores; tocar num setor abre só as áreas dele.
+     Voltar pelo 🏠 Início reabre o setor de onde se saiu. A barra de abas segue os
+     mesmos grupos. Ninguém ganhou nem perdeu acesso: o que cada login vê continua
+     vindo das permissões em Usuários. -->
 <!-- v541 (03/10/2026): aba nova 📊 DASHBOARD no grupo Financeiro (só equipe interna,
      aba sensível). Mostra o mês do 📅 do topo comparado com o anterior: faturamento,
      resultado e margem (mesma conta da aba Financeiro, via calcularCaixaMeses), viagens,
@@ -722,7 +728,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v541" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v542" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -22584,36 +22590,50 @@ function alertasVeiculos() {
    só um resumo local (uid/email/papel/modulos/nome) para renderizar rápido
    sem esperar rede, e sempre revalidamos ao carregar (ver bloco de restauração
    de sessão no fim do arquivo). ======================================= */
+/* v542: telas agrupadas por SETOR (pedido do Renato, 03/10/2026: "dividir a tela
+   inicial em grupo, quem faz parte do financeiro fica no financeiro, quem é de
+   manutenção fica no seu grupo"). A ordem aqui é a ordem dos grupos na tela
+   inicial e na barra de abas -- cada grupo tem que ficar contíguo. */
 var ABAS_DEF = [
   { id: "frota", label: "🚛 Frota", grupo: "FROTA" },
-  { id: "manutencao", label: "🗓️ Vencimentos", grupo: "FROTA" },
-  { id: "mtcustos", label: "Manutenção 🔧", grupo: "FROTA" },
-  { id: "oleo", label: "Óleo & Filtros 🛢️", grupo: "FROTA" },
-  { id: "almox", label: "Almoxarifado 📦", grupo: "FROTA" },
-  { id: "operacao", label: "🧭 Operação", grupo: "OPERAÇÃO" },
-  { id: "viagem", label: "🛣️ Viagens", grupo: "OPERAÇÃO" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
-  { id: "abastecimento", label: "⛽ Abastecimento", grupo: "OPERAÇÃO" },
-  { id: "conferencia", label: "📦 Conferência de Carga", grupo: "OPERAÇÃO" },
-  { id: "carregasuzano", label: "🏭 Carregamento Suzano", grupo: "OPERAÇÃO" },   // v228
-  { id: "docsviagem", label: "📁 Documentos da Viagem", grupo: "OPERAÇÃO" },   // v435
-  { id: "goiascarga", label: "🟢 Carregamento Goiás", grupo: "OPERAÇÃO" },   // v423
-  { id: "cargamateus", label: "🗺️ Carga Mateus", grupo: "OPERAÇÃO" },   // v372
-  { id: "statusdia", label: "📍 Status do Dia", grupo: "OPERAÇÃO" },
-  { id: "motoristas", label: "Motoristas 💰", grupo: "OPERAÇÃO" },
+  { id: "operacao", label: "🧭 Operação", grupo: "FROTA" },
+  { id: "manutencao", label: "🗓️ Vencimentos", grupo: "MANUTENÇÃO" },
+  { id: "mtcustos", label: "Manutenção 🔧", grupo: "MANUTENÇÃO" },
+  { id: "oleo", label: "Óleo & Filtros 🛢️", grupo: "MANUTENÇÃO" },
+  { id: "almox", label: "Almoxarifado 📦", grupo: "MANUTENÇÃO" },
+  { id: "viagem", label: "🛣️ Viagens", grupo: "VIAGENS" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
+  { id: "abastecimento", label: "⛽ Abastecimento", grupo: "VIAGENS" },
+  { id: "statusdia", label: "📍 Status do Dia", grupo: "VIAGENS" },
+  { id: "docsviagem", label: "📁 Documentos da Viagem", grupo: "VIAGENS" },   // v435
+  { id: "motoristas", label: "Motoristas 💰", grupo: "VIAGENS" },
+  { id: "carregasuzano", label: "🏭 Carregamento Suzano", grupo: "CARREGAMENTO" },   // v228
+  { id: "goiascarga", label: "🟢 Carregamento Goiás", grupo: "CARREGAMENTO" },   // v423
+  { id: "cargamateus", label: "🗺️ Carga Mateus", grupo: "CARREGAMENTO" },   // v372
+  { id: "conferencia", label: "📦 Conferência de Carga", grupo: "CARREGAMENTO" },
+  { id: "dashboard", label: "📊 Dashboard", grupo: "FINANCEIRO" },   // v541
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
   { id: "custos", label: "Análise de Custos 📊", grupo: "FINANCEIRO" },
-  { id: "dashboard", label: "📊 Dashboard", grupo: "FINANCEIRO" },   // v541
   { id: "graficos", label: "📈 Gráficos", grupo: "FINANCEIRO" },
   { id: "custoreal", label: "⛽ Custo Real", grupo: "FINANCEIRO" },   // v357
   { id: "saldocaminhao", label: "🚚 Saldo por Caminhão", grupo: "FINANCEIRO" },
   { id: "dividas", label: "📉 Dívidas Fixas", grupo: "FINANCEIRO" },
-  { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "compras", label: "🛒 Compras", grupo: "FINANCEIRO" },   // v501
   { id: "conciliacao", label: "🧾 Conciliação", grupo: "FINANCEIRO" },   // v446
   { id: "medicoes", label: "📑 Medições", grupo: "FINANCEIRO" },   // v467
+  { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
   { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
 ];
+var GRUPOS_DESC = {   // v542
+  "FROTA": "Caminhões e alocação por cliente",
+  "MANUTENÇÃO": "Vencimentos, manutenções, óleo e estoque de peças",
+  "VIAGENS": "Viagens, abastecimentos, status do dia e motoristas",
+  "CARREGAMENTO": "Carregamento e conferência de carga por cliente",
+  "FINANCEIRO": "Resultado, custos, compras, contas e conciliação",
+  "CADASTROS": "Documentos e cadastro de motoristas",
+  "ADMINISTRACAO": "Usuários e permissões",
+};
+function grupoDaAba(id) { var a = ABAS_DEF.find(function (x) { return x.id === id; }); return a ? a.grupo : (id === "usuarios" ? "ADMINISTRACAO" : ""); }   // v542
 var TAB_DESCRICOES = {
   frota: "Cadastro e status de cada caminhão da frota",
   cargamateus: "Importa o PDF da carga da Mateus e estima KM, custo e margem da rota",
@@ -23671,7 +23691,14 @@ function abrirAreaDoInicio(id) {
      sempre abre do topo. */
   try { window.scrollTo(0, 0); } catch (e) { }
 }
+function abrirGrupoInicio(nome) {   // v542
+  state._grupoInicio = nome || "";
+  render();
+  try { window.scrollTo(0, 0); } catch (e) { }
+}
 function voltarTelaInicial() {
+  // v542: volta pro grupo da área de onde a pessoa saiu (não pra lista de grupos)
+  if (!state._telaInicial && state.aba) state._grupoInicio = grupoDaAba(state.aba);
   state._telaInicial = true;
   state._trocarArea = false;
   render();
@@ -23688,6 +23715,25 @@ function telaInicialHTML() {
     grupos.push({ nome: "ADMINISTRACAO", itens: [{ id: "usuarios", label: "\u{1F464} Usu\u00e1rios" }] });
   }
   const nome = esc((usuarioLogado() || {}).nome || "");
+  /* v542: a tela inicial mostra primeiro os GRUPOS (setores). Tocar num grupo
+     abre só as áreas dele; "← Todos os grupos" volta. Quem enxerga um grupo só
+     já cai direto nas áreas dele. O grupo aberto é transitório (não sobe pra nuvem). */
+  if (grupos.length === 1) state._grupoInicio = grupos[0].nome;
+  if (state._grupoInicio && !grupos.some((g) => g.nome === state._grupoInicio)) state._grupoInicio = "";
+  const grupoAberto = grupos.find((g) => g.nome === state._grupoInicio) || null;
+  const rotGrupo = (n) => n === "ADMINISTRACAO" ? "Administração" : n.charAt(0) + n.slice(1).toLowerCase();
+  const cartaoGrupo = (g) => `<button onclick="abrirGrupoInicio('${esc(g.nome)}')" title="${esc(GRUPOS_DESC[g.nome] || "")}"
+      style="background:rgba(10,10,10,0.86); border:1px solid rgba(78,78,78,0.95); border-radius:14px; padding:16px;
+             text-align:left; cursor:pointer; color:#fff; min-height:118px; display:flex; flex-direction:column; gap:6px;
+             backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); transition:border-color .15s, background .15s;"
+      onmouseover="this.style.borderColor='${GOLD}'; this.style.background='rgba(25,20,8,0.92)';"
+      onmouseout="this.style.borderColor='rgba(78,78,78,0.95)'; this.style.background='rgba(10,10,10,0.86)';">
+      <span style="display:flex; align-items:center; gap:10px;">${(function () { for (var k = 0; k < g.itens.length; k++) { var h = rfIconeAreaHTML(g.itens[k].id); if (h) return h; } return ""; })()}
+        <span style="font-size:17px; font-weight:800; color:${GOLD}; letter-spacing:.5px;">${esc(rotGrupo(g.nome))}</span>
+        <span style="margin-left:auto; font-size:11px; color:#999; background:#1a1a1a; border:1px solid #333; border-radius:20px; padding:2px 9px; white-space:nowrap;">${g.itens.length} ${g.itens.length === 1 ? "área" : "áreas"}</span></span>
+      <span style="font-size:11.5px; color:#9a9a9a; line-height:1.35;">${esc(GRUPOS_DESC[g.nome] || "")}</span>
+      <span style="font-size:11px; color:#666; line-height:1.35;">${g.itens.map((a) => esc(rfRotuloSemEmoji(a.label))).join(" · ")}</span>
+    </button>`;
   const cartao = (a) => {
     const desc = TAB_DESCRICOES[a.id] || "";
     return `<button onclick="abrirAreaDoInicio('${a.id}')" title="${esc(desc)}"
@@ -23738,10 +23784,12 @@ function telaInicialHTML() {
       </div>
       <div style="padding:16px 24px 0; font-size:13.5px; color:#b0b0b0; text-align:center; letter-spacing:.5px;
                   text-shadow:0 2px 10px rgba(0,0,0,0.95);">
-        Escolha a \u00e1rea que quer abrir
+        ${grupoAberto ? (grupos.length > 1 ? "Áreas de " + esc(rotGrupo(grupoAberto.nome)) : "Escolha a \u00e1rea que quer abrir") : "Escolha o setor"}
       </div>
       <div style="padding:22px 24px 44px; max-width:1420px; margin:0 auto;">
-        ${grupos.map((g) => `
+        ${!grupoAberto ? `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%,300px),1fr)); gap:12px;">${grupos.map(cartaoGrupo).join("")}</div>` : ""}
+        ${grupoAberto && grupos.length > 1 ? `<div style="margin-bottom:14px;"><button class="btn-outline" onclick="abrirGrupoInicio('')">← Todos os grupos</button></div>` : ""}
+        ${(grupoAberto ? [grupoAberto] : []).map((g) => `
           <div style="margin-bottom:22px;">
             <div style="font-size:11px; color:${GOLD}; text-transform:uppercase; letter-spacing:1.6px;
                         font-weight:700; margin-bottom:9px; padding-left:2px;
@@ -31763,6 +31811,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
+  const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Tocar no setor abre as áreas dele; cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoDocsViagem = !podeVerAba("docsviagem") ? "" : (function () { try { return dvContextoAssistente(); } catch (e) { return ""; } })();   // v435
 
@@ -31781,6 +31830,7 @@ ${bloco528}
 ${bloco529}
 ${bloco530}
 ${blocoLogos}
+${bloco542}
 ${blocoDashboard}
 ${blocoDocsViagem}
 ${blocoConciliacao}
