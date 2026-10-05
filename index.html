@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v563)</title>
+<title>RF Logística — Painel da Frota (v564)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v563">
+<meta name="rf-versao" content="v564">
 <meta name="rf-data" content="2026-10-05">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v564 (05/10/2026): aba 📣 CAMPANHAS (grupo MARKETING). A equipe (Sandra) manda a foto + a ideia do post;
+     a Edge Function rf-campanha-ia (gpt-image-2 + gpt-5.6-terra) devolve a foto melhorada com a logo RF no baú e
+     os textos; o app monta a arte 1080x1350 no canvas (layouts Diagonal, Faixa escura, Card) no padrão dos posts da
+     Horizonte. Pedir ajuste à IA, editar texto à mão, enviar para aprovação; SÓ o login master aprova. Lista nova
+     sincronizada: state.campanhas (arquivos em documentos/campanhas/<id>/). Assistente alimentado (cpContextoAssistente). -->
 <!-- v563 (05/10/2026): TRAVA DE EXCLUSAO EM MASSA. Incidente: em 03/10 13:48 um aparelho gerou 653 lapides
      de uma vez; em 05/10 elas apagaram 178 viagens, 30 compras, 337 manutencoes e 5 clientes (restaurados do
      backup horario no banco, com carimbo novo). Agora: (1) um salvar que faria sumir 10+ itens E 30%+ de uma
@@ -835,7 +840,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v563" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v564" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1145,7 +1150,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "campanhas"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -1420,6 +1425,7 @@ var RF_ICO_AREA = {
   cadmotorista: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2.2"/><path d="M5.3 16c.6-1.6 1.8-2.4 3.2-2.4s2.6.8 3.2 2.4M14.5 10h4M14.5 13.5h3"/>',
   conciliacao: '<path d="M12 4v16M7 20h10M4 7h16"/><path d="M6.5 7 4 13a2.5 2.5 0 0 0 5 0zM17.5 7 15 13a2.5 2.5 0 0 0 5 0z"/>',   // v502
   compras: '<path d="M3 4h2.2l2.3 11h10.8l2-7.5H6.4"/><circle cx="9.5" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',   // v502
+  campanhas: '<path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12"/>',   // v564
   medicoes: '<rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 4.5V3.5h6v1M8.5 10h7M8.5 13.5h7M8.5 17h4.5"/>',   // v502
   usuarios: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.8-3.2 3.2-5 6-5s5.2 1.8 6 5"/><path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.8c1.8.6 3 2.2 3.5 4.7"/>'
 };
@@ -6888,6 +6894,7 @@ function salvar() {
     localStorage.setItem("rf-frota-compras-v1", JSON.stringify(state.compras || []));   // v446
     localStorage.setItem("rf-frota-extratos-v1", JSON.stringify(state.extratos || []));   // v448
     localStorage.setItem("rf-frota-medicoes-v1", JSON.stringify(state.medicoes || []));   // v467
+    localStorage.setItem("rf-frota-campanhas-v1", JSON.stringify(state.campanhas || []));   // v564
   } catch (e) {}
 }
 
@@ -6925,6 +6932,7 @@ let state = {
   compras: carregar("rf-frota-compras-v1", () => []),   // v446: conciliacao de compras
   extratos: carregar("rf-frota-extratos-v1", () => []),   // v448: extratos bancarios
   medicoes: carregar("rf-frota-medicoes-v1", () => []),   // v467: medições do cliente
+  campanhas: carregar("rf-frota-campanhas-v1", () => []),   // v564: campanhas de publicidade
   sessao: carregarSessaoLocal(),
   aba: "frota",
   filtroTipo: "Todos",
@@ -22828,6 +22836,7 @@ var ABAS_DEF = [
   { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
   { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
+  { id: "campanhas", label: "📣 Campanhas", grupo: "MARKETING" },   // v564
   { id: "pessoal", label: "🔒 Pessoal", grupo: "PESSOAL" },   // v549: só o login master
 ];
 var GRUPOS_DESC = {   // v542
@@ -22837,6 +22846,7 @@ var GRUPOS_DESC = {   // v542
   "CARREGAMENTO": "Carregamento e conferência de carga por cliente",
   "FINANCEIRO": "Resultado, custos, compras, contas e conciliação",
   "CADASTROS": "Documentos e cadastro de motoristas",
+  "MARKETING": "Campanhas de publicidade: fotos, artes e legendas para as redes sociais",   // v564
   "PESSOAL": "Seus ganhos e despesas pessoais — só você vê, protegido por senha",
   "ADMINISTRACAO": "Usuários e permissões",
 };
@@ -22871,6 +22881,7 @@ var TAB_DESCRICOES = {
   tributario: "Simulação de regime tributário: Simples, Simples Híbrido (IBS/CBS) e Lucro Presumido sobre a base real de 12 meses",
   documentos: "Documentos da empresa e da frota",
   pessoal: "Ganhos e despesas pessoais — só o seu login vê, criptografado com a sua senha",
+  campanhas: "Posts das redes sociais: manda a foto, a IA melhora e coloca a logo RF, o sistema monta a arte e o Renato aprova",   // v564
   cadmotorista: "Ficha de cadastro do motorista no modelo aprovado pelos clientes (FO_YL_026), pronta para exportar",
   usuarios: "Acessos e permissões de cada usuário",
 };
@@ -23194,7 +23205,7 @@ function logout() {
     ["rf-frota-veiculos-v4", "rf-frota-dividas-v1", "rf-frota-viagens-v1", "rf-frota-clientes-v1",
      "rf-frota-manutencoes-v1", "rf-frota-fechamentos-v1", "rf-frota-frotames-v1", "rf-frota-config-v1",
      "rf-frota-almox-v1", "rf-frota-tarifas-v1", "rf-frota-oleotrocas-v1", "rf-frota-usuarios-v1",
-     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1", "rf-frota-medicoes-v1"].forEach(function (k) { localStorage.removeItem(k); });
+     "rf-frota-pagamotorista-v1", "rf-frota-abastecimentos-v1", "rf-frota-viagensfim-v1", "rf-frota-compras-v1", "rf-frota-extratos-v1", "rf-frota-medicoes-v1", "rf-frota-campanhas-v1"].forEach(function (k) { localStorage.removeItem(k); });
   } catch (e) {}
   salvarSessaoLocal(); render();
 }
@@ -32012,6 +32023,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
+  const blocoCampanhas = !podeVerAba("campanhas") ? "" : cpContextoAssistente();   // v564
   const blocoDocsViagem = !podeVerAba("docsviagem") ? "" : (function () { try { return dvContextoAssistente(); } catch (e) { return ""; } })();   // v435
 
   return `${blocoTributario}
@@ -32032,6 +32044,7 @@ ${blocoLogos}
 ${blocoPessoal}
 ${bloco542}
 ${blocoPenteFino}
+${blocoCampanhas}
 ${blocoDashboard}
 ${blocoDocsViagem}
 ${blocoConciliacao}
@@ -33746,6 +33759,495 @@ function pfContextoAssistente() {
   } catch (e) { return ""; }
 }
 /* =================== fim v545 =================== */
+/* ===================== v564: 📣 CAMPANHAS DE PUBLICIDADE =====================
+   Renato (05/10/2026): "vamos ter que fazer um atalho no nosso sistema, uma aba campanha
+   de publicidade, Sandra vai postar os posters e vc melhora e devolve a ela, isso tudo
+   dentro do sistema". Padrão a seguir: os posts da Horizonte no @rflogisticaoficial
+   (caminhão realista com a logo RF pintada no baú, fundo claro, título pesado condensado,
+   detalhe dourado, logo no topo).
+   Fluxo:
+   1) a equipe manda a FOTO (ou só a ideia) + o que quer comunicar;
+   2) a Edge Function rf-campanha-ia devolve a FOTO MELHORADA (IA de imagem: luz de anúncio
+      + logo RF no baú) e os TEXTOS (chamada, título, subtítulo, selo, legenda, hashtags);
+   3) o APP monta a arte 1080x1350 no canvas (layout Diagonal, Faixa escura ou Card) --
+      o texto da arte é desenhado aqui, então sai exato, sem letra errada de IA;
+   4) a equipe ajusta (texto à mão ou "pedir à IA") e envia para aprovação;
+   5) SÓ o login master aprova (regra: nada vai para as redes sem o OK do Renato);
+   6) aprovado -> baixar a arte + copiar a legenda -> marcar como publicado.
+   Arquivos no bucket "documentos", pasta campanhas/<id>/. Lista sincronizada: state.campanhas. */
+var CP_FN = "/functions/v1/rf-campanha-ia";
+var CP_W = 1080, CP_H = 1350;
+var CP_STATUS = {
+  gerando: { t: "Gerando…", c: "#90A4AE" },
+  rascunho: { t: "Em revisão", c: "#BDBDBD" },
+  aguardando: { t: "Aguardando aprovação", c: "#D4A017" },
+  ajuste: { t: "Ajuste pedido", c: "#E57373" },
+  aprovado: { t: "Aprovado", c: "#81C784" },
+  publicado: { t: "Publicado", c: "#64B5F6" },
+  erro: { t: "Erro", c: "#E57373" },
+};
+var CP_LAYOUTS = { diagonal: "Diagonal (fundo claro)", faixa: "Faixa escura", card: "Card (foto emoldurada)" };
+var __cp = window.__cp || (window.__cp = { msg: "", ocup: {}, arq: null, prev: "", urls: {}, img: {} });
+
+function cpLista() { if (!Array.isArray(state.campanhas)) state.campanhas = []; return state.campanhas; }
+function cpAcha(id) { return cpLista().find(function (c) { return String(c.id) === String(id); }) || null; }
+function cpQuem() { return (state.sessao && (state.sessao.nome || state.sessao.email)) || "?"; }
+function cpPodeAprovar() { return ehMaster(); }
+function cpHist(c, acao) { if (!Array.isArray(c.historico)) c.historico = []; c.historico.push({ em: Date.now(), quem: cpQuem(), acao: acao }); }
+function cpToca(c, semRender) { if (c) c.atualizadoEm = Date.now(); salvar(); if (!semRender) render(); }
+function cpDataBr(ms) { try { var d = new Date(ms); return ("0" + d.getDate()).slice(-2) + "/" + ("0" + (d.getMonth() + 1)).slice(-2) + " " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); } catch (e) { return ""; } }
+
+/* ---------- arquivos ---------- */
+function cpBlobB64(blob) {
+  return new Promise(function (ok, erro) { var r = new FileReader(); r.onload = function () { ok(String(r.result || "").split(",")[1] || ""); }; r.onerror = function () { erro(new Error("não consegui ler a imagem")); }; r.readAsDataURL(blob); });
+}
+function cpB64Blob(b64, tipo) { var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: tipo || "image/png" }); }
+function cpSubir(id, nome, blob, tipo) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com a nuvem");
+    var path = "campanhas/" + id + "/" + nome + "-" + Date.now() + "." + (/png/.test(tipo) ? "png" : "jpg");
+    return sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: tipo, upsert: false }).then(function (r) { if (r.error) throw r.error; return path; });
+  });
+}
+function cpUrl(path) {
+  var c = __cp.urls[path];
+  if (c && c.exp > Date.now()) return Promise.resolve(c.url);
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com a nuvem");
+    return sb.storage.from(RF_BUCKET).createSignedUrl(path, 3600).then(function (r) {
+      if (r.error || !r.data) throw new Error("arquivo não encontrado");
+      __cp.urls[path] = { url: r.data.signedUrl, exp: Date.now() + 50 * 60 * 1000 };
+      return r.data.signedUrl;
+    });
+  });
+}
+function cpBaixarBlob(path) { return cpUrl(path).then(function (u) { return fetch(u); }).then(function (r) { if (!r.ok) throw new Error("falha ao baixar a imagem"); return r.blob(); }); }
+function cpCarregarImg(src) {
+  return new Promise(function (ok, erro) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = function () { erro(new Error("imagem não abriu")); }; im.src = src; });
+}
+function cpImgDoPath(path) {
+  if (__cp.img[path]) return Promise.resolve(__cp.img[path]);
+  return cpBaixarBlob(path).then(function (b) { return cpCarregarImg(URL.createObjectURL(b)); }).then(function (im) { __cp.img[path] = im; return im; });
+}
+/* depois do render: preenche as <img data-cp-path> com link assinado */
+function cpHidratar() {
+  try {
+    document.querySelectorAll("img[data-cp-path]").forEach(function (el) {
+      var p = el.getAttribute("data-cp-path"); if (!p || el.getAttribute("data-ok") === p) return;
+      el.setAttribute("data-ok", p);
+      cpUrl(p).then(function (u) { el.src = u; }).catch(function () { el.alt = "imagem indisponível"; });
+    });
+  } catch (e) { }
+}
+
+/* ---------- chamada da IA ---------- */
+function cpChamarIA(corpo) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com o servidor");
+    return sb.auth.getSession().then(function (res) {
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if (!token) throw new Error("o seu login venceu neste aparelho — saia e entre de novo");
+      return fetch(RF_SB_URL + CP_FN, { method: "POST", headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(corpo) })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && (j.error || j.erro)) || ("servidor respondeu " + r.status)); return j; }); });
+    });
+  });
+}
+function cpFotoParaIA(c) {   // sempre parte da foto ORIGINAL (refazer em cima do refeito degrada)
+  if (!c.fotoOrig || !c.fotoOrig.path) return Promise.resolve(null);
+  return cpBaixarBlob(c.fotoOrig.path).then(function (b) { return cpBlobB64(b).then(function (b64) { return { b64: b64, tipo: b.type || "image/jpeg" }; }); });
+}
+function cpTamanhoIA(c) { return c.layout === "card" ? "1536x1024" : (c.layout === "faixa" ? "1536x1024" : "1536x1024"); }
+function cpAplicarTextos(c, t) {
+  if (!t) return;
+  c.textos = { chamada: t.chamada || "", titulo: t.titulo || "", subtitulo: t.subtitulo || "", selo: t.selo || "" };
+  if (t.legenda) c.legenda = t.legenda;
+  if (t.hashtags) c.hashtags = t.hashtags;
+  if (c.layoutAuto && t.layout && CP_LAYOUTS[t.layout]) c.layout = t.layout;
+}
+function cpAplicarImagem(c, j) {
+  if (!j || !j.imagemBase64) return Promise.resolve();
+  var blob = cpB64Blob(j.imagemBase64, "image/png");
+  return rfComprimirImagem(blob, 1600, 900000).then(function (jpg) { return cpSubir(c.id, "ia", jpg, "image/jpeg"); }).then(function (path) {
+    if (!Array.isArray(c.versoesIA)) c.versoesIA = [];
+    if (c.fotoIA && c.fotoIA.path) c.versoesIA.push(c.fotoIA);
+    c.fotoIA = { path: path, em: Date.now(), modelo: j.modeloImagem || "" };
+  });
+}
+
+/* ---------- nova campanha ---------- */
+function cpNovaAbrir(on) { state._cpNova = !!on; __cp.arq = null; __cp.prev = ""; __cp.msg = ""; render(); }
+function cpEscolherFoto(inp) {
+  var f = inp && inp.files && inp.files[0]; if (!f) return;
+  __cp.arq = f;
+  var r = new FileReader(); r.onload = function () { __cp.prev = String(r.result || ""); render(); }; r.readAsDataURL(f);
+}
+function cpGerar() {
+  var ideia = ((document.getElementById("cpIdeia") || {}).value || "").trim();
+  var lay = (document.getElementById("cpLayout") || {}).value || "auto";
+  var logo = !!(document.getElementById("cpLogo") || {}).checked;
+  if (!__cp.arq && !ideia) { alert("Mande uma foto ou escreva o que o post deve comunicar."); return; }
+  var c = {
+    id: "cp" + Date.now() + Math.floor(Math.random() * 1000), criadoEm: Date.now(), atualizadoEm: Date.now(), autor: cpQuem(),
+    ideia: ideia, layout: lay === "auto" ? "diagonal" : lay, layoutAuto: lay === "auto", aplicarLogo: logo,
+    textos: { chamada: "", titulo: "", subtitulo: "", selo: "" }, legenda: "", hashtags: "", status: "gerando", historico: [],
+  };
+  cpHist(c, "criou" + (__cp.arq ? " com foto" : " só com a ideia"));
+  cpLista().unshift(c);
+  state._cpNova = false; state._cpAberta = c.id;
+  var arq = __cp.arq; __cp.arq = null; __cp.prev = "";
+  __cp.ocup[c.id] = "A IA está melhorando a foto e escrevendo os textos (leva cerca de 1 minuto)…";
+  cpToca(c);
+  var foto = null;
+  (arq ? rfComprimirImagem(arq, 1600, 900000).then(function (b) {
+    return cpSubir(c.id, "original", b, "image/jpeg").then(function (path) { c.fotoOrig = { path: path, nome: arq.name || "" }; return cpBlobB64(b); }).then(function (b64) { foto = { b64: b64, tipo: "image/jpeg" }; });
+  }) : Promise.resolve()).then(function () {
+    return cpChamarIA({ acao: "tudo", fotoBase64: foto ? foto.b64 : "", mimeType: foto ? foto.tipo : "", ideia: ideia, aplicarLogo: logo, tamanho: cpTamanhoIA(c) });
+  }).then(function (j) {
+    cpAplicarTextos(c, j.textos);
+    var avisos = [];
+    if (j.erroImagem) avisos.push("a foto não foi melhorada (" + String(j.erroImagem).slice(0, 120) + ")");
+    if (j.erroTextos) avisos.push("os textos não vieram (" + String(j.erroTextos).slice(0, 120) + ")");
+    return cpAplicarImagem(c, j).then(function () { return avisos; });
+  }).then(function (avisos) {
+    cpHist(c, "IA gerou foto e textos");
+    return cpMontarESubir(c).then(function () { c.status = "rascunho"; delete __cp.ocup[c.id]; __cp.msg = avisos.length ? "⚠ Pronto, mas " + avisos.join("; ") + "." : "✓ Arte pronta. Revise os textos e envie para aprovação."; cpToca(c); });
+  }).catch(function (e) {
+    c.status = "erro"; c.erro = String((e && e.message) || e).slice(0, 300); delete __cp.ocup[c.id];
+    __cp.msg = "✖ " + c.erro; cpToca(c);
+  });
+}
+
+/* ---------- pedir à IA (ajustes) ---------- */
+function cpRefazer(id, oque) {
+  var c = cpAcha(id); if (!c) return;
+  var aj = ((document.getElementById("cpAj-" + id) || {}).value || "").trim();
+  if (oque === "textos" && !aj) { alert("Escreva o que a IA deve mudar nos textos."); return; }
+  __cp.ocup[id] = oque === "imagem" ? "A IA está refazendo a foto (cerca de 1 minuto)…" : "A IA está reescrevendo os textos…";
+  render();
+  cpFotoParaIA(c).then(function (foto) {
+    return cpChamarIA({ acao: oque, fotoBase64: foto ? foto.b64 : "", mimeType: foto ? foto.tipo : "", ideia: c.ideia || "", ajuste: aj, aplicarLogo: c.aplicarLogo !== false, textosAtuais: { textos: c.textos, legenda: c.legenda, hashtags: c.hashtags }, tamanho: cpTamanhoIA(c) });
+  }).then(function (j) {
+    if (oque === "textos") { if (!j.textos) throw new Error(j.erroTextos || "a IA não devolveu os textos"); var la = c.layoutAuto; c.layoutAuto = false; cpAplicarTextos(c, j.textos); c.layoutAuto = la; return; }
+    if (!j.imagemBase64) throw new Error(j.erroImagem || "a IA não devolveu a foto");
+    return cpAplicarImagem(c, j);
+  }).then(function () {
+    cpHist(c, "pediu à IA (" + oque + ")" + (aj ? ": " + aj : ""));
+    if (c.status === "aprovado" || c.status === "aguardando") c.status = "rascunho";
+    return cpMontarESubir(c);
+  }).then(function () { delete __cp.ocup[id]; __cp.msg = "✓ Ajuste feito."; cpToca(c); })
+    .catch(function (e) { delete __cp.ocup[id]; __cp.msg = "✖ " + ((e && e.message) || e); render(); });
+}
+function cpVoltarVersao(id) {
+  var c = cpAcha(id); if (!c || !Array.isArray(c.versoesIA) || !c.versoesIA.length) return;
+  var ant = c.versoesIA.pop(); c.versoesIA.unshift(c.fotoIA); c.fotoIA = ant;
+  cpHist(c, "voltou para a foto anterior");
+  __cp.ocup[id] = "Remontando a arte…"; render();
+  cpMontarESubir(c).then(function () { delete __cp.ocup[id]; cpToca(c); }).catch(function (e) { delete __cp.ocup[id]; __cp.msg = "✖ " + ((e && e.message) || e); render(); });
+}
+
+/* ---------- edição manual ---------- */
+function cpCampo(id, campo, valor) {
+  var c = cpAcha(id); if (!c) return;
+  if (/^t\./.test(campo)) { c.textos = c.textos || {}; c.textos[campo.slice(2)] = valor; c.arteVelha = true; }
+  else { c[campo] = valor; if (campo === "layout") { c.layoutAuto = false; c.arteVelha = true; } }
+  if (c.status === "aprovado" && /^t\.|^layout$/.test(campo)) c.status = "rascunho";
+  cpToca(c, campo !== "layout");
+  if (campo === "layout") cpAtualizarArte(id);
+}
+function cpAtualizarArte(id) {
+  var c = cpAcha(id); if (!c) return Promise.resolve();
+  __cp.ocup[id] = "Montando a arte…"; render();
+  return cpMontarESubir(c).then(function () { delete __cp.ocup[id]; cpToca(c); }).catch(function (e) { delete __cp.ocup[id]; __cp.msg = "✖ " + ((e && e.message) || e); render(); });
+}
+
+/* ---------- aprovação ---------- */
+function cpEnviarAprovacao(id) {
+  var c = cpAcha(id); if (!c) return;
+  if (!(c.textos && c.textos.titulo)) { alert("Falta o título da arte."); return; }
+  (c.arteVelha || !c.arte ? cpAtualizarArte(id) : Promise.resolve()).then(function () {
+    c.status = "aguardando"; c.obsAprovacao = ""; cpHist(c, "enviou para aprovação"); __cp.msg = "✓ Enviado para o Renato aprovar."; cpToca(c);
+  });
+}
+function cpAprovar(id) {
+  var c = cpAcha(id); if (!c || !cpPodeAprovar()) return;
+  c.status = "aprovado"; c.aprovadoEm = Date.now(); c.aprovadoPor = cpQuem(); cpHist(c, "APROVOU"); cpToca(c);
+}
+function cpPedirAjuste(id) {
+  var c = cpAcha(id); if (!c || !cpPodeAprovar()) return;
+  var obs = prompt("O que precisa mudar?", c.obsAprovacao || ""); if (obs == null) return;
+  c.status = "ajuste"; c.obsAprovacao = obs; cpHist(c, "pediu ajuste: " + obs); cpToca(c);
+}
+function cpMarcarPublicado(id) {
+  var c = cpAcha(id); if (!c || c.status !== "aprovado") return;
+  c.status = "publicado"; c.publicadoEm = Date.now(); cpHist(c, "marcou como publicado"); cpToca(c);
+}
+function cpExcluir(id) {
+  var c = cpAcha(id); if (!c) return;
+  if (c.status === "publicado" && !ehMaster()) { alert("Post já publicado: só o Renato exclui."); return; }
+  if (!confirm("Excluir esta campanha?")) return;
+  state.campanhas = cpLista().filter(function (x) { return x !== c; });
+  if (state._cpAberta === id) state._cpAberta = null;
+  salvar(); render();
+}
+function cpBaixar(id) {
+  var c = cpAcha(id); if (!c || !c.arte) return;
+  cpBaixarBlob(c.arte.path).then(function (b) {
+    var a = document.createElement("a"); a.href = URL.createObjectURL(b);
+    a.download = "RF_post_" + String((c.textos && c.textos.titulo) || c.id).replace(/[^\wÀ-ÿ]+/g, "_").slice(0, 40) + ".jpg";
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }).catch(function (e) { alert("Não consegui baixar: " + ((e && e.message) || e)); });
+}
+function cpCopiarLegenda(id) {
+  var c = cpAcha(id); if (!c) return;
+  var t = (c.legenda || "") + (c.hashtags ? "\n\n" + c.hashtags : "");
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { __cp.msg = "✓ Legenda copiada."; render(); })
+    .catch(function () { prompt("Copie a legenda:", t); });
+}
+
+/* ---------- montagem da arte (canvas) ---------- */
+var __cpFontes = null;
+function cpFontes() {
+  if (__cpFontes) return __cpFontes;
+  try {
+    if (!document.getElementById("cpFontesCss")) {
+      var l = document.createElement("link"); l.id = "cpFontesCss"; l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=Anton&family=Poppins:wght@400;600;700&display=swap";
+      document.head.appendChild(l);
+    }
+  } catch (e) { }
+  var espera = function (f) { try { return document.fonts.load(f); } catch (e) { return Promise.resolve(); } };
+  __cpFontes = Promise.race([
+    new Promise(function (ok) { setTimeout(ok, 300); }).then(function () { return Promise.all([espera("100px Anton"), espera("400 30px Poppins"), espera("600 30px Poppins"), espera("700 30px Poppins")]); }),
+    new Promise(function (ok) { setTimeout(ok, 6000); }),
+  ]).catch(function () { });
+  return __cpFontes;
+}
+var __cpLogos = null;
+function cpLogos() {   // versões da logo-mãe (RF_LOGO_SRC, fundo preto) sem o fundo
+  if (__cpLogos) return __cpLogos;
+  __cpLogos = cpCarregarImg(RF_LOGO_SRC).then(function (im) {
+    function base(w) {
+      var cv = document.createElement("canvas"); cv.width = w; cv.height = Math.round(im.height * w / im.width);
+      var x = cv.getContext("2d"); x.drawImage(im, 0, 0, cv.width, cv.height);
+      var d = x.getImageData(0, 0, cv.width, cv.height), px = d.data, W = cv.width, H = cv.height;
+      var visto = new Uint8Array(W * H), pilha = [];
+      for (var i = 0; i < W; i++) { pilha.push(i, (H - 1) * W + i); }
+      for (var j = 0; j < H; j++) { pilha.push(j * W, j * W + W - 1); }
+      while (pilha.length) {
+        var p = pilha.pop(); if (visto[p]) continue; visto[p] = 1;
+        var k = p * 4; if (Math.max(px[k], px[k + 1], px[k + 2]) >= 40) continue;
+        px[k + 3] = 0; var xx = p % W;
+        if (xx > 0) pilha.push(p - 1); if (xx < W - 1) pilha.push(p + 1); if (p >= W) pilha.push(p - W); if (p < (H - 1) * W) pilha.push(p + W);
+      }
+      return { cv: cv, x: x, d: d, W: W, H: H };
+    }
+    var e = base(900); e.x.putImageData(e.d, 0, 0);   // fundo escuro: texto branco mantido
+    var c = base(900), corte = Math.round(c.W * 370 / 1228), px = c.d.data;
+    for (var y = 0; y < c.H; y++) for (var x2 = corte; x2 < c.W; x2++) {
+      var k = (y * c.W + x2) * 4; if (!px[k + 3]) continue;
+      var mx = Math.max(px[k], px[k + 1], px[k + 2]), mn = Math.min(px[k], px[k + 1], px[k + 2]);
+      if (mx - mn < 40 && mx > 60) { px[k] = 17; px[k + 1] = 17; px[k + 2] = 17; } else if (mx < 60) px[k + 3] = 0;
+    }
+    c.x.putImageData(c.d, 0, 0);   // fundo claro: "LOGÍSTICA" em preto
+    var es = document.createElement("canvas"), f = e.W / 1228;
+    es.width = Math.round(328 * f); es.height = Math.round(390 * f);
+    es.getContext("2d").drawImage(e.cv, Math.round(12 * f), Math.round(12 * f), es.width, es.height, 0, 0, es.width, es.height);
+    return { claro: c.cv, escuro: e.cv, escudo: es };
+  });
+  return __cpLogos;
+}
+function cpCobrir(x, im, dx, dy, dw, dh, fx, fy) {
+  var s = Math.max(dw / im.width, dh / im.height), sw = dw / s, sh = dh / s;
+  var sx = Math.max(0, Math.min(im.width - sw, (im.width - sw) * (fx == null ? 0.5 : fx)));
+  var sy = Math.max(0, Math.min(im.height - sh, (im.height - sh) * (fy == null ? 0.5 : fy)));
+  x.drawImage(im, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+function cpQuebrar(x, txt, maxW) {
+  var pal = String(txt || "").split(/\s+/).filter(Boolean), lin = [], at = "";
+  pal.forEach(function (p) { var t = at ? at + " " + p : p; if (x.measureText(t).width <= maxW || !at) at = t; else { lin.push(at); at = p; } });
+  if (at) lin.push(at);
+  return lin;
+}
+function cpAjustar(x, txt, fonte, maxW, maxLin, ini, min) {   // maior fonte que cabe em maxLin linhas
+  for (var s = ini; s >= min; s -= 4) {
+    x.font = fonte.replace("{s}", s); var l = cpQuebrar(x, txt, maxW);
+    if (l.length <= maxLin && l.every(function (z) { return x.measureText(z).width <= maxW; })) return { s: s, l: l };
+  }
+  x.font = fonte.replace("{s}", min); return { s: min, l: cpQuebrar(x, txt, maxW) };
+}
+function cpEspaco(x, v) { try { x.letterSpacing = v; } catch (e) { } }
+function cpSelo(x, txt, cx, y, alinhar) {   // etiqueta dourada
+  if (!txt) return 0;
+  x.font = "600 26px Poppins, Arial"; cpEspaco(x, "0px");
+  var w = x.measureText(txt).width + 44, h = 46, left = alinhar === "centro" ? cx - w / 2 : cx;
+  var g = x.createLinearGradient(left, 0, left + w, 0); g.addColorStop(0, "#E9BE45"); g.addColorStop(1, "#C9961C");
+  x.fillStyle = g; x.beginPath(); if (x.roundRect) x.roundRect(left, y, w, h, 23); else x.rect(left, y, w, h); x.fill();
+  x.fillStyle = "#1a1a1a"; x.textBaseline = "middle"; x.textAlign = "left"; x.fillText(txt, left + 22, y + h / 2 + 1); x.textBaseline = "alphabetic";
+  return h;
+}
+function cpMontar(c) {
+  return Promise.all([cpFontes(), cpLogos(), (c.fotoIA || c.fotoOrig) ? cpImgDoPath((c.fotoIA || c.fotoOrig).path) : Promise.resolve(null)]).then(function (r) {
+    var L = r[1], foto = r[2], T = c.textos || {}, lay = CP_LAYOUTS[c.layout] ? c.layout : "diagonal";
+    var cv = document.createElement("canvas"); cv.width = CP_W; cv.height = CP_H;
+    var x = cv.getContext("2d"); x.textAlign = "left";
+    var ouro = x.createLinearGradient(0, 0, CP_W, 0); ouro.addColorStop(0, "#E9BE45"); ouro.addColorStop(1, "#C9961C");
+    var TIT = "{s}px Anton, Impact, 'Arial Narrow', sans-serif";
+    if (lay === "diagonal") {
+      x.fillStyle = "#FDF7E9"; x.fillRect(0, 0, CP_W, CP_H);
+      var y0 = 1250, y1 = 560;   // linha da diagonal: (0,y0) -> (1080,y1)
+      if (foto) { x.save(); x.beginPath(); x.moveTo(0, y0); x.lineTo(CP_W, y1); x.lineTo(CP_W, CP_H); x.lineTo(0, CP_H); x.closePath(); x.clip(); cpCobrir(x, foto, 0, y1, CP_W, CP_H - y1, 0.6, 0.6); x.restore(); }
+      x.strokeStyle = ouro; x.lineWidth = 22; x.beginPath(); x.moveTo(-20, y0 + 13); x.lineTo(CP_W + 20, y1 - 13); x.stroke();
+      var lw = 300, lh = lw * L.claro.height / L.claro.width; x.drawImage(L.claro, (CP_W - lw) / 2, 34, lw, lh);
+      var yy = 34 + lh + 56;
+      if (T.chamada) { x.font = "700 28px Poppins, Arial"; cpEspaco(x, "4px"); x.fillStyle = "#B8860B"; x.fillText(T.chamada, 80, yy); cpEspaco(x, "0px"); yy += 18; }
+      var tt = cpAjustar(x, String(T.titulo || "").toUpperCase(), TIT, 860, 3, 124, 64);
+      x.font = TIT.replace("{s}", tt.s); x.fillStyle = "#151515";
+      tt.l.forEach(function (ln) { yy += tt.s * 1.1; x.fillText(ln, 80, yy); });
+      x.fillStyle = "#D4A017"; x.fillRect(80, yy + 34, 90, 8);
+      yy += 90;
+      if (T.subtitulo) { x.font = "400 31px Poppins, Arial"; x.fillStyle = "#4a4a4a"; cpQuebrar(x, T.subtitulo, 560).slice(0, 3).forEach(function (ln) { x.fillText(ln, 80, yy); yy += 42; }); }
+      if (T.selo) cpSelo(x, T.selo, 80, yy + 6, "esq");
+    } else if (lay === "faixa") {
+      var fy = 820, NAVY = "#0E1624";
+      x.fillStyle = NAVY; x.fillRect(0, 0, CP_W, CP_H);
+      if (foto) cpCobrir(x, foto, 0, 0, CP_W, fy + 60, 0.5, 0.55);
+      var gr = x.createLinearGradient(0, fy - 260, 0, fy + 60); gr.addColorStop(0, "rgba(14,22,36,0)"); gr.addColorStop(1, NAVY);
+      x.fillStyle = gr; x.fillRect(0, fy - 260, CP_W, 320);
+      x.fillStyle = NAVY; x.fillRect(0, fy + 60, CP_W, CP_H - fy - 60);
+      var gt = x.createLinearGradient(0, 0, 0, 200); gt.addColorStop(0, "rgba(0,0,0,0.45)"); gt.addColorStop(1, "rgba(0,0,0,0)"); x.fillStyle = gt; x.fillRect(0, 0, CP_W, 200);
+      var ew = 92, eh = ew * L.escudo.height / L.escudo.width; x.drawImage(L.escudo, (CP_W - ew) / 2, 34, ew, eh);
+      var y2 = fy + 20;
+      if (T.selo) { cpSelo(x, T.selo, 80, y2 - 70, "esq"); }
+      if (T.chamada) { x.font = "700 26px Poppins, Arial"; cpEspaco(x, "4px"); x.fillStyle = "#E0B23A"; x.fillText(T.chamada, 80, y2 + 30); cpEspaco(x, "0px"); y2 += 40; }
+      var t2 = cpAjustar(x, T.titulo || "", TIT, 920, 2, 96, 58);
+      x.font = TIT.replace("{s}", t2.s); x.fillStyle = "#FFFFFF";
+      t2.l.forEach(function (ln) { y2 += t2.s * 1.12; x.fillText(ln, 80, y2); });
+      y2 += 62;
+      if (T.subtitulo) { x.font = "400 29px Poppins, Arial"; x.fillStyle = "#B9C2CF"; cpQuebrar(x, T.subtitulo, 900).slice(0, 2).forEach(function (ln) { x.fillText(ln, 80, y2); y2 += 40; }); }
+      x.fillStyle = ouro; x.fillRect(0, CP_H - 12, CP_W, 12);
+      var lw2 = 230, lh2 = lw2 * L.escuro.height / L.escuro.width; x.drawImage(L.escuro, (CP_W - lw2) / 2, CP_H - 30 - lh2, lw2, lh2);
+    } else {   // card
+      x.fillStyle = "#F5F3EE"; x.fillRect(0, 0, CP_W, CP_H);
+      x.strokeStyle = ouro; x.lineWidth = 30; x.beginPath(); x.arc(CP_W + 10, -10, 170, 0, Math.PI * 2); x.stroke();
+      x.lineWidth = 10; x.beginPath(); x.arc(-30, CP_H + 30, 150, 0, Math.PI * 2); x.stroke();
+      var lw3 = 280, lh3 = lw3 * L.claro.height / L.claro.width; x.drawImage(L.claro, (CP_W - lw3) / 2, 34, lw3, lh3);
+      var y3 = 34 + lh3 + 60; x.textAlign = "center";
+      if (T.chamada) { x.font = "700 26px Poppins, Arial"; cpEspaco(x, "4px"); x.fillStyle = "#B8860B"; x.fillText(T.chamada, CP_W / 2, y3); cpEspaco(x, "0px"); y3 += 14; }
+      var t3 = cpAjustar(x, String(T.titulo || "").toUpperCase(), TIT, 940, 2, 128, 64);
+      x.font = TIT.replace("{s}", t3.s); x.fillStyle = "#151515";
+      t3.l.forEach(function (ln) { y3 += t3.s * 1.1; x.fillText(ln, CP_W / 2, y3); });
+      y3 += 66;
+      if (T.subtitulo) { x.font = "400 29px Poppins, Arial"; x.fillStyle = "#555"; cpQuebrar(x, T.subtitulo, 860).slice(0, 2).forEach(function (ln) { x.fillText(ln, CP_W / 2, y3); y3 += 40; }); }
+      x.textAlign = "left";
+      if (T.selo) { y3 += 4; y3 += cpSelo(x, T.selo, CP_W / 2, y3, "centro") + 10; }
+      var ct = Math.max(y3 + 26, 640), cb = CP_H - 60, cx0 = 70, cw = CP_W - 140, ch = cb - ct;
+      x.save(); x.shadowColor = "rgba(0,0,0,0.25)"; x.shadowBlur = 40; x.shadowOffsetY = 16; x.fillStyle = "#fff";
+      x.beginPath(); if (x.roundRect) x.roundRect(cx0, ct, cw, ch, 36); else x.rect(cx0, ct, cw, ch); x.fill(); x.restore();
+      if (foto) { x.save(); x.beginPath(); if (x.roundRect) x.roundRect(cx0, ct, cw, ch, 36); else x.rect(cx0, ct, cw, ch); x.clip(); cpCobrir(x, foto, cx0, ct, cw, ch, 0.5, 0.55); x.restore(); }
+    }
+    return new Promise(function (ok, erro) { cv.toBlob(function (b) { if (b) ok(b); else erro(new Error("não consegui gerar a arte")); }, "image/jpeg", 0.92); });
+  });
+}
+function cpMontarESubir(c) {
+  return cpMontar(c).then(function (b) { return cpSubir(c.id, "arte", b, "image/jpeg"); }).then(function (path) { c.arte = { path: path, em: Date.now() }; c.arteVelha = false; });
+}
+
+/* ---------- tela ---------- */
+function campanhasHTML() {
+  var L = cpLista(), aberta = state._cpAberta ? cpAcha(state._cpAberta) : null;
+  var cont = {}; L.forEach(function (c) { cont[c.status] = (cont[c.status] || 0) + 1; });
+  var btn = function (t, on, cor, extra) { return '<button onclick="' + on + '" style="background:' + (cor || "#262626") + ';color:' + (cor === GOLD ? "#111" : "#eee") + ';border:1px solid ' + (cor || "#3a3a3a") + ';border-radius:6px;padding:7px 12px;font-size:13px;font-weight:600;' + (extra || "") + '">' + t + '</button>'; };
+  var h = '<div style="max-width:1100px;margin:0 auto;padding:12px;">'
+    + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;"><h2 style="margin:0;color:' + GOLD + ';">📣 Campanhas de publicidade</h2>'
+    + '<span style="color:#999;font-size:13px;">' + (cont.aguardando ? '<b style="color:' + GOLD + ';">' + cont.aguardando + ' aguardando aprovação</b> · ' : '') + L.length + ' post(s)</span>'
+    + '<span style="margin-left:auto;">' + btn("+ Nova campanha", "cpNovaAbrir(true)", GOLD) + '</span></div>'
+    + '<div style="color:#999;font-size:12.5px;margin-bottom:12px;">Mande a foto (caminhão, equipe, carga, galpão) e diga o que o post deve comunicar. A IA melhora a foto, coloca a logo RF no baú e escreve os textos; o sistema monta a arte no padrão RF. Tudo passa pela aprovação do Renato antes de ir para as redes.</div>'
+    + (__cp.msg ? '<div style="background:#111;border:1px solid #333;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#ddd;">' + esc(__cp.msg) + ' <a href="javascript:void(0)" onclick="__cp.msg=\'\';render()" style="color:#888;margin-left:8px;">fechar</a></div>' : '');
+  if (state._cpNova) {
+    h += '<div style="background:#141414;border:1px solid ' + GOLD + ';border-radius:10px;padding:14px;margin-bottom:16px;">'
+      + '<div style="font-weight:700;color:' + GOLD + ';margin-bottom:10px;">Nova campanha</div>'
+      + '<div style="display:flex;gap:14px;flex-wrap:wrap;">'
+      + '<label style="width:220px;height:220px;border:2px dashed #444;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;background:#0d0d0d;color:#888;font-size:13px;text-align:center;">'
+      + (__cp.prev ? '<img src="' + __cp.prev + '" style="width:100%;height:100%;object-fit:cover;">' : '📷<br>Toque para escolher a foto<br><small>(opcional)</small>')
+      + '<input type="file" accept="image/*" style="display:none" onchange="cpEscolherFoto(this)"></label>'
+      + '<div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:8px;">'
+      + '<textarea id="cpIdeia" rows="4" placeholder="O que o post deve comunicar? Ex.: nossa frota própria de 3/4 pronta para atender toda a Bahia; ou Dia do Motorista; ou a nova base em Salvador…" style="width:100%;background:#262626;color:#eee;border:1px solid #3a3a3a;border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;font-family:inherit;"></textarea>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;color:#bbb;">Layout: <select id="cpLayout" style="width:auto;"><option value="auto">Automático (a IA escolhe)</option>'
+      + Object.keys(CP_LAYOUTS).map(function (k) { return '<option value="' + k + '">' + CP_LAYOUTS[k] + '</option>'; }).join("") + '</select>'
+      + '<label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="cpLogo" checked style="width:auto;"> Colocar a logo RF no caminhão</label></div>'
+      + '<div style="display:flex;gap:8px;">' + btn("✨ Gerar com a IA", "cpGerar()", GOLD) + btn("Cancelar", "cpNovaAbrir(false)") + '</div>'
+      + '</div></div></div>';
+  }
+  if (aberta) h += cpEditorHTML(aberta);
+  var ordem = { aguardando: 0, ajuste: 1, gerando: 2, rascunho: 3, erro: 4, aprovado: 5, publicado: 6 };
+  var lista = L.slice().sort(function (a, b) { return (ordem[a.status] - ordem[b.status]) || (b.atualizadoEm - a.atualizadoEm); });
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;">';
+  lista.forEach(function (c) {
+    var st = CP_STATUS[c.status] || CP_STATUS.rascunho, sel = aberta && aberta.id === c.id;
+    h += '<div onclick="state._cpAberta=\'' + c.id + '\';render();window.scrollTo(0,0)" style="cursor:pointer;background:#141414;border:1px solid ' + (sel ? GOLD : "#2a2a2a") + ';border-radius:10px;overflow:hidden;">'
+      + '<div style="aspect-ratio:4/5;background:#0d0d0d;display:flex;align-items:center;justify-content:center;color:#666;font-size:12px;">'
+      + (c.arte ? '<img data-cp-path="' + esc(c.arte.path) + '" style="width:100%;height:100%;object-fit:cover;">' : (__cp.ocup[c.id] ? "⏳ gerando…" : "sem arte"))
+      + '</div><div style="padding:8px 10px;"><div style="font-size:13px;font-weight:700;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc((c.textos && c.textos.titulo) || c.ideia || "(sem título)") + '</div>'
+      + '<div style="font-size:11.5px;color:' + st.c + ';margin-top:3px;">● ' + st.t + '</div>'
+      + '<div style="font-size:11px;color:#777;margin-top:2px;">' + esc(c.autor || "") + ' · ' + cpDataBr(c.atualizadoEm) + '</div></div></div>';
+  });
+  h += '</div>' + (L.length ? '' : '<div style="color:#777;text-align:center;padding:30px;">Nenhuma campanha ainda. Toque em “+ Nova campanha”.</div>') + '</div>';
+  return h;
+}
+function cpEditorHTML(c) {
+  var st = CP_STATUS[c.status] || CP_STATUS.rascunho, T = c.textos || {}, ocup = __cp.ocup[c.id], id = c.id;
+  var inp = function (campo, rot, val, max) { return '<label style="display:block;font-size:12px;color:#999;margin-bottom:6px;">' + rot + '<input value="' + esc(val || "") + '" maxlength="' + (max || 120) + '" onchange="cpCampo(\'' + id + '\',\'' + campo + '\',this.value)" style="margin-top:3px;font-size:13px;padding:6px 8px;"></label>'; };
+  var b = function (t, on, cor) { return '<button onclick="' + on + '" style="background:' + (cor || "#262626") + ';color:' + (cor === GOLD ? "#111" : "#eee") + ';border:1px solid ' + (cor || "#3a3a3a") + ';border-radius:6px;padding:7px 11px;font-size:12.5px;font-weight:600;">' + t + '</button>'; };
+  var h = '<div style="background:#101010;border:1px solid ' + GOLD + ';border-radius:12px;padding:14px;margin-bottom:18px;">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;"><b style="color:#eee;">' + esc(T.titulo || c.ideia || "Campanha") + '</b><span style="font-size:12px;color:' + st.c + ';border:1px solid ' + st.c + ';border-radius:10px;padding:1px 8px;">' + st.t + '</span>'
+    + '<a href="javascript:void(0)" onclick="state._cpAberta=null;render()" style="margin-left:auto;color:#888;font-size:13px;">fechar ✕</a></div>';
+  if (c.status === "ajuste" && c.obsAprovacao) h += '<div style="background:#2a1212;border:1px solid #C0392B;border-radius:6px;padding:8px 10px;color:#f1c0c0;font-size:13px;margin-bottom:10px;">↩ Renato pediu: ' + esc(c.obsAprovacao) + '</div>';
+  if (c.status === "erro") h += '<div style="background:#2a1212;border:1px solid #C0392B;border-radius:6px;padding:8px 10px;color:#f1c0c0;font-size:13px;margin-bottom:10px;">✖ ' + esc(c.erro || "falha") + '</div>';
+  h += '<div style="display:flex;gap:16px;flex-wrap:wrap;">'
+    + '<div style="width:min(360px,100%);">'
+    + '<div style="aspect-ratio:4/5;background:#0d0d0d;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#888;font-size:13px;text-align:center;padding:0;">'
+    + (ocup ? '<div style="padding:20px;">⏳ ' + esc(ocup) + '</div>' : (c.arte ? '<img data-cp-path="' + esc(c.arte.path) + '" style="width:100%;height:100%;object-fit:contain;">' : 'sem arte'))
+    + '</div>'
+    + (c.arteVelha && !ocup ? '<div style="color:' + GOLD + ';font-size:12px;margin-top:6px;">Textos alterados — toque em “Atualizar arte”.</div>' : '')
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + b("↻ Atualizar arte", "cpAtualizarArte('" + id + "')") + (c.arte ? b("⬇ Baixar arte", "cpBaixar('" + id + "')") : '') + '</div>'
+    + ((c.fotoOrig || c.fotoIA) ? '<div style="display:flex;gap:8px;margin-top:10px;font-size:11px;color:#888;">'
+      + (c.fotoOrig ? '<div style="flex:1;">Foto enviada<img data-cp-path="' + esc(c.fotoOrig.path) + '" style="width:100%;border-radius:6px;margin-top:3px;"></div>' : '')
+      + (c.fotoIA ? '<div style="flex:1;">Melhorada pela IA<img data-cp-path="' + esc(c.fotoIA.path) + '" style="width:100%;border-radius:6px;margin-top:3px;"></div>' : '') + '</div>' : '')
+    + '</div>'
+    + '<div style="flex:1;min-width:260px;">'
+    + inp("t.chamada", "Chamada (acima do título)", T.chamada, 40)
+    + inp("t.titulo", "Título", T.titulo, 70)
+    + inp("t.subtitulo", "Subtítulo", T.subtitulo, 120)
+    + inp("t.selo", "Selo dourado (opcional)", T.selo, 40)
+    + '<label style="display:block;font-size:12px;color:#999;margin-bottom:6px;">Layout <select onchange="cpCampo(\'' + id + '\',\'layout\',this.value)" style="margin-top:3px;font-size:13px;">'
+    + Object.keys(CP_LAYOUTS).map(function (k) { return '<option value="' + k + '"' + (c.layout === k ? " selected" : "") + '>' + CP_LAYOUTS[k] + '</option>'; }).join("") + '</select></label>'
+    + '<label style="display:block;font-size:12px;color:#999;margin-bottom:6px;">Legenda do post<textarea rows="5" onchange="cpCampo(\'' + id + '\',\'legenda\',this.value)" style="width:100%;margin-top:3px;background:#262626;color:#eee;border:1px solid #3a3a3a;border-radius:4px;padding:6px 8px;font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(c.legenda || "") + '</textarea></label>'
+    + inp("hashtags", "Hashtags", c.hashtags, 300)
+    + '<div style="background:#161616;border:1px solid #2e2e2e;border-radius:8px;padding:10px;margin:10px 0;">'
+    + '<div style="font-size:12.5px;color:' + GOLD + ';font-weight:700;margin-bottom:6px;">🤖 Pedir à IA</div>'
+    + '<textarea id="cpAj-' + id + '" rows="2" placeholder="Ex.: deixe o céu mais azul; tire a pessoa do fundo; título mais curto; fale de segurança da carga…" style="width:100%;background:#262626;color:#eee;border:1px solid #3a3a3a;border-radius:4px;padding:6px 8px;font-size:13px;box-sizing:border-box;font-family:inherit;"></textarea>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">' + b("🖼 Refazer a foto", "cpRefazer('" + id + "','imagem')") + b("✍ Reescrever os textos", "cpRefazer('" + id + "','textos')")
+    + (Array.isArray(c.versoesIA) && c.versoesIA.length ? b("↶ Foto anterior", "cpVoltarVersao('" + id + "')") : '') + '</div></div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+    + (["rascunho", "ajuste", "erro"].indexOf(c.status) >= 0 ? b("📤 Enviar para aprovação", "cpEnviarAprovacao('" + id + "')", GOLD) : '')
+    + (c.status === "aguardando" && cpPodeAprovar() ? b("✅ Aprovar", "cpAprovar('" + id + "')", GOLD) + b("↩ Pedir ajuste", "cpPedirAjuste('" + id + "')") : '')
+    + (c.status === "aguardando" && !cpPodeAprovar() ? '<span style="color:' + GOLD + ';font-size:12.5px;align-self:center;">Aguardando o Renato aprovar.</span>' : '')
+    + (c.status === "aprovado" ? b("📋 Copiar legenda", "cpCopiarLegenda('" + id + "')") + b("✔ Marcar como publicado", "cpMarcarPublicado('" + id + "')", GOLD) : '')
+    + (c.status === "publicado" ? '<span style="color:#64B5F6;font-size:12.5px;align-self:center;">Publicado em ' + cpDataBr(c.publicadoEm) + '</span>' + b("📋 Copiar legenda", "cpCopiarLegenda('" + id + "')") : '')
+    + b("🗑 Excluir", "cpExcluir('" + id + "')") + '</div>'
+    + '<details style="margin-top:10px;font-size:12px;color:#888;"><summary>Histórico</summary>' + (c.historico || []).slice().reverse().map(function (x) { return '<div>' + cpDataBr(x.em) + ' · ' + esc(x.quem) + ' — ' + esc(x.acao) + '</div>'; }).join("") + (c.ideia ? '<div style="margin-top:4px;">Ideia original: ' + esc(c.ideia) + '</div>' : '') + '</details>'
+    + '</div></div></div>';
+  return h;
+}
+function cpContextoAssistente() {
+  try {
+    var L = cpLista();
+    var linhas = L.slice(0, 30).map(function (c) { var st = CP_STATUS[c.status] || {}; return "- " + ((c.textos && c.textos.titulo) || c.ideia || "(sem título)") + " · " + (st.t || c.status) + " · por " + (c.autor || "?") + " · " + cpDataBr(c.atualizadoEm) + (c.obsAprovacao && c.status === "ajuste" ? " · ajuste pedido: " + c.obsAprovacao : ""); });
+    return "\nCAMPANHAS DE PUBLICIDADE (aba 📣 Campanhas, v564): a equipe (ex.: Sandra) cria um post mandando a FOTO (opcional) e o que quer comunicar; a IA (Edge Function rf-campanha-ia: gpt-image-2 para a foto, gpt-5.6-terra para o texto) devolve a foto melhorada com a LOGO RF pintada no baú do caminhão e os textos (chamada, título, subtítulo, selo dourado, legenda e hashtags); o próprio sistema monta a arte 1080x1350 no padrão RF (layouts Diagonal fundo claro, Faixa escura ou Card). Dá para editar os textos à mão (depois tocar em 'Atualizar arte') ou escrever no quadro '🤖 Pedir à IA' e tocar em 'Refazer a foto' ou 'Reescrever os textos' (a foto sempre é refeita a partir da original; '↶ Foto anterior' volta a versão). Status: Em revisão -> 'Enviar para aprovação' -> Aguardando aprovação -> SÓ o login master (Renato) aprova ou pede ajuste -> Aprovado -> 'Baixar arte' + 'Copiar legenda' -> postar -> 'Marcar como publicado'. Regra: nada vai para as redes sem a aprovação do Renato. Marca: frota própria de 25 veículos (Toco e 3/4), Bahia e Nordeste, WhatsApp (75) 99971-7578, nunca citar nome de cliente. Cada geração da IA tem custo pequeno de API (centavos de dólar por foto). A aba aparece para quem tiver o módulo 'campanhas' marcado na aba Usuários.\n"
+      + (linhas.length ? "Campanhas (" + L.length + "): " + linhas.join("\n") : "(nenhuma campanha criada ainda)") + "\n";
+  } catch (e) { return ""; }
+}
+/* =================== fim v564 =================== */
 /* ===================== v547: CONSOLIDAÇÃO AUTOMÁTICA (PENTE-FINO) =====================
    Renato (03/10/2026): "o pente-fino tem que ajudar a consolidar, por valor, data,
    descrição no comprovante -- tem muita coisa que o sistema tem que associar com
@@ -36575,6 +37077,11 @@ function renderTabela() {
     wrap.innerHTML = pessoalHTML();
   }
 
+  if (state.aba === "campanhas") {   // v564
+    wrap.innerHTML = campanhasHTML();
+    setTimeout(cpHidratar, 0);
+  }
+
   if (state.aba === "pentefino") {   // v545
     pfAutoAoAbrir();   // v547
     wrap.innerHTML = pentefinoHTML();
@@ -37440,7 +37947,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes"];   // v423; v467: medicoes
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "campanhas"];   // v423; v467: medicoes; v564: campanhas
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -37507,7 +38014,8 @@ revalidarSessaoAoAbrir();
     goiasBips: "rf-frota-goiasbips-v1",           /* v423 */
     compras: "rf-frota-compras-v1",               /* v446 */
     extratos: "rf-frota-extratos-v1",             /* v448 */
-    medicoes: "rf-frota-medicoes-v1"              /* v467 */
+    medicoes: "rf-frota-medicoes-v1",             /* v467 */
+    campanhas: "rf-frota-campanhas-v1"            /* v564 */
   };
 
   var sb = null;
