@@ -2,12 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v559)</title>
+<title>RF Logística — Painel da Frota (v560)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v559">
+<meta name="rf-versao" content="v560">
 <meta name="rf-data" content="2026-10-05">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v560 (05/10/2026): PESSOAL > APLICAÇÕES -- APLICAR MAIS / RETIRAR PARTE (Renato: "coloquei mais
+     14 mil no 99Pay e não consigo achar o caminho"). Botões "+ aplicar" e "− retirar" em cada aplicação:
+     pedem valor e data; o saldo da data é refeito (saldoInf = saldo estimado ± valor) e o movimento fica
+     no histórico (movs). Retirar o saldo todo marca como resgatada. -->
 <!-- v559 (05/10/2026): PESSOAL > RESUMO -- o quadro de empréstimos do mês não fica mais "apagado"
      quando ainda não houve recebimento (Renato: "a parte de recebido em outubro está apagada/escura").
      Virou "Empréstimos em <mês>": total RECEBIDO x A RECEBER, a lista do que vence no mês (data, pessoa,
@@ -810,7 +814,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v559" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v560" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -31895,7 +31899,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir. Na aba Aplicacoes (v556) ha o quadro 'Por instituicao' (saldo, % do total e rendimento de cada banco) e a lista vem agrupada por banco com subtotal. Previsao (v557): o sistema projeta sozinho, pela taxa de cada aplicacao, o saldo no ultimo dia do mes e o rendimento do mes ('Previsto em <data>'); nao precisa de print novo, o print so serve para corrigir a base com 'saldo real'. Transferencia (v558): botao 'Transferir entre bancos' na aba Aplicacoes tira o valor de uma aplicacao e soma em outra na data escolhida, mostrando antes quanto passa a render a mais por mes; a coluna 'Rende % a.m.' com estrela mostra o banco mais lucrativo. Resumo (v559): o quadro 'Emprestimos em <mes>' mostra recebido x a receber e a lista do que vence no mes com o botao 'recebi'." : "";
+  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir. Na aba Aplicacoes (v556) ha o quadro 'Por instituicao' (saldo, % do total e rendimento de cada banco) e a lista vem agrupada por banco com subtotal. Previsao (v557): o sistema projeta sozinho, pela taxa de cada aplicacao, o saldo no ultimo dia do mes e o rendimento do mes ('Previsto em <data>'); nao precisa de print novo, o print so serve para corrigir a base com 'saldo real'. Transferencia (v558): botao 'Transferir entre bancos' na aba Aplicacoes tira o valor de uma aplicacao e soma em outra na data escolhida, mostrando antes quanto passa a render a mais por mes; a coluna 'Rende % a.m.' com estrela mostra o banco mais lucrativo. Resumo (v559): o quadro 'Emprestimos em <mes>' mostra recebido x a receber e a lista do que vence no mes com o botao 'recebi'. Aplicar mais/retirar (v560): em cada aplicacao, botoes '+ aplicar' (colocou dinheiro novo) e '- retirar' (tirou parte); o saldo e a previsao se ajustam sozinhos." : "";
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
@@ -34122,6 +34126,22 @@ function pvPrevMes(a, mes) {   // v557: previsão do mês inteiro pela taxa (sal
   var liq = a.isento ? bruto : bruto * (1 - pvAliqIR(pvDias(a.inicio, fimEf)));
   return { bruto: bruto, liquido: liq, saldoFim: a.resgate && a.resgate <= s1 ? 0 : pvSaldoBruto(a, s1, base) };
 }
+function pvMovimentar(id, sinal) {   // v560: aporte (+1) ou retirada parcial (-1)
+  var a = pvAchar(id); if (!a) return;
+  var v = prompt((sinal > 0 ? "Quanto você colocou a mais em " : "Quanto você retirou de ") + a.banco + " (" + (a.produto || "") + ")?\n\nSaldo estimado hoje: " + fmtR(pvSaldoHoje(a)), "");
+  if (v == null) return; v = pfNum(v); if (!(v > 0)) { alert("Valor inválido."); return; }
+  var d = prompt("Data (dd/mm/aaaa):", exDataBr(pvHoje())); if (d == null) return;
+  var m = String(d).match(/(\d{2})\/(\d{2})\/(\d{4})/); if (!m) { alert("Data inválida."); return; }
+  var iso = m[3] + "-" + m[2] + "-" + m[1];
+  if (iso < a.inicio) { alert("A data é anterior ao início desta aplicação (" + exDataBr(a.inicio) + ")."); return; }
+  var atual = pvSaldoBruto(a, iso), novo = atual + sinal * v;
+  if (sinal < 0 && novo < -0.01 && !confirm("A retirada (" + fmtR(v) + ") é maior que o saldo estimado (" + fmtR(atual) + "). Continuar e zerar?")) return;
+  a.movs = (a.movs || []).concat([{ data: iso, tipo: sinal > 0 ? "entrada" : "saida", valor: v, par: sinal > 0 ? "aporte" : "retirada" }]);
+  if (novo <= 0.01) { a.resgate = iso; a.saldoInf = { valor: 0, data: iso }; }
+  else a.saldoInf = { valor: Math.round(novo * 100) / 100, data: iso };
+  __pf.msg = "✓ " + (sinal > 0 ? "Aplicado +" : "Retirado −") + fmtR(v) + " em " + a.banco + ". Novo saldo " + fmtR(Math.max(0, novo)) + ".";
+  pvGravar(a);
+}
 function pvTransfPrev() {   // v558: mostra o efeito da transferência antes de confirmar
   var o = pvAchar(pvG("pv-t-de")), d = pvAchar(pvG("pv-t-para")), el = document.getElementById("pv-t-prev"); if (!el) return;
   var tudo = !!(document.getElementById("pv-t-tudo") || {}).checked, data = pvG("pv-t-data") || pvHoje();
@@ -34303,13 +34323,13 @@ function pvAplicacoesHTML() {
         cab = '<tr style="background:#1a1408;"><td colspan="3" style="font-weight:900;color:' + GOLD + ';">🏦 ' + esc(bk) + ' <span style="font-weight:400;color:#999;font-size:11.5px;">· ' + g.n + ' produto(s)</span></td><td style="text-align:right;font-weight:900;color:' + GOLD + ';white-space:nowrap;">' + fmtR(g.saldo) + '</td><td style="text-align:right;font-weight:900;color:#81C784;white-space:nowrap;">' + fmtR(g.rend) + '</td><td></td></tr>';
       return cab + '<tr style="' + (at ? "" : "opacity:.5;") + '"><td><b>' + esc(a.banco) + '</b> · ' + esc(a.produto || "") + '<div style="font-size:11px;color:#888;">desde ' + exDataBr(a.inicio)
         + (a.vencimento ? ' · vence ' + exDataBr(a.vencimento) : "") + (a.isento ? " · isento IR" : "") + (a.saldoInf ? ' · saldo real ' + fmtR(a.saldoInf.valor) + ' em ' + exDataBr(a.saldoInf.data) : "")
-        + (a.resgate ? ' · <b style="color:#E57373;">resgatada ' + exDataBr(a.resgate) + '</b>' : "") + (vencendo ? ' · <b style="color:' + GOLD + ';">⚠ vence em ' + pvDias(hoje, a.vencimento) + ' dia(s)</b>' : "") + (a.obs ? '<br>' + esc(a.obs) : "") + (a.movs && a.movs.length ? '<br>' + a.movs.slice(-3).map(function (m) { return (m.tipo === "entrada" ? "⬅ entrou " : "➡ saiu ") + fmtR(m.valor) + ' em ' + exDataBr(m.data) + (m.tipo === "entrada" ? " de " : " para ") + esc(m.par); }).join(" · ") : "") + '</div></td>'
+        + (a.resgate ? ' · <b style="color:#E57373;">resgatada ' + exDataBr(a.resgate) + '</b>' : "") + (vencendo ? ' · <b style="color:' + GOLD + ';">⚠ vence em ' + pvDias(hoje, a.vencimento) + ' dia(s)</b>' : "") + (a.obs ? '<br>' + esc(a.obs) : "") + (a.movs && a.movs.length ? '<br>' + a.movs.slice(-3).map(function (m) { return (m.tipo === "entrada" ? "⬅ entrou " : "➡ saiu ") + fmtR(m.valor) + ' em ' + exDataBr(m.data) + (m.par === "aporte" || m.par === "retirada" ? "" : (m.tipo === "entrada" ? " de " : " para ") + esc(m.par)); }).join(" · ") : "") + '</div></td>'
         + '<td style="white-space:nowrap;">' + pvTaxaTxt(a) + '<div style="font-size:11px;color:#888;">≈ ' + (pvTaxaMes(a) * 100).toFixed(2).replace(".", ",") + '% a.m.</div></td>'
         + '<td style="text-align:right;white-space:nowrap;">' + fmtR(a.valor) + '</td>'
         + '<td style="text-align:right;white-space:nowrap;font-weight:800;">' + (at ? fmtR(pvSaldoHoje(a)) : "—") + '</td>'
         + '<td style="text-align:right;white-space:nowrap;font-weight:800;color:#81C784;">' + (at ? fmtR(r.liquido) : "—") + '</td>'
         + '<td style="white-space:nowrap;text-align:right;">'
-        + (at ? '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvSaldoReal(\'' + a.id + '\')" title="Informar o saldo que aparece no app do banco">saldo real</button> <button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvResgatar(\'' + a.id + '\')">resgatar</button> '
+        + (at ? '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvSaldoReal(\'' + a.id + '\')" title="Informar o saldo que aparece no app do banco">saldo real</button> <button class="btn-outline" style="font-size:10.5px;padding:2px 7px;" onclick="pvMovimentar(\'' + a.id + '\',1)" title="Colocou mais dinheiro nesta aplicação">+ aplicar</button> <button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvMovimentar(\'' + a.id + '\',-1)" title="Tirou parte do dinheiro">− retirar</button> <button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvResgatar(\'' + a.id + '\')">resgatar</button> '
           : '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvReativar(\'' + a.id + '\')">reativar</button> ')
         + '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="state._pvEdApl=\'' + a.id + '\';render()">editar</button> <button class="btn-del" onclick="pvApagarReg(\'' + a.id + '\')">✕</button></td></tr>';
     }).join("") + '</tbody></table></div>';
