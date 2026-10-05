@@ -2,12 +2,28 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v560)</title>
+<title>RF Logística — Painel da Frota (v562)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v560">
+<meta name="rf-versao" content="v562">
 <meta name="rf-data" content="2026-10-05">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v562 (05/10/2026): CT-e DE SUBCONTRATAÇÃO POR VIAGEM (JT/Mateus). Renato: "estou pedindo à JT as
+     CT-e para emitir CT-e de subcontratação, como a da JDL... assim que for gerada, o sistema dá baixa na
+     viagem e consolida, porém deixa ele gerar/confirmar". O módulo v470 (medição JDL) agora aceita também
+     uma VIAGEM (id "v:<id>"; subAcha/subEhVg). Aba Viagens > caixa JT/Mateus: quadro "📄 CT-e de
+     subcontratação — por viagem" com cada viagem (sem CT-e / CT-e emitido aguardando pagamento /
+     CONSOLIDADA) e "+ emitir CT-e": anexa o CT-e da JT (PDF, foto ou XML) → Conferir → testar → ⚡ Emitir
+     (com confirmação). Autorizado em produção → subVgBaixa: viagem FATURADA (faturadaSub, cteSubNumero,
+     cteSubChave, dataFaturamento); com o pagamento no extrato (pago) aparece CONSOLIDADA. Cancelar o CT-e
+     desfaz a baixa. A coluna "Pago?" mostra o selo do CT-e. A medição da JDL continua igual. -->
+<!-- v561 (05/10/2026): PESSOAL -- aba 💸 CONTAS (Renato: "não achei o local de colocar as dívidas, como
+     água, luz, internet, compra mensal, pagamento do caseiro... coloca um local para ler os boletos").
+     Atalhos para as contas fixas (Água, Luz, Internet, Compra mensal, Caseiro, Gás, Condomínio, Escola,
+     Plano de saúde), cada uma repetindo todo mês; total do mês, pago, a pagar e vencidas; "✓ pago" por
+     mês (campo pagos[mes]); e "📷 Ler boleto": PDF com texto -> linha digitável lida SEM IA (valor e
+     vencimento saem do próprio código); foto ou PDF escaneado -> Edge Function ler-print-banco v2
+     (tipo "boleto", só o master). As contas são as mesmas despesas da aba Lançamentos e entram no Resumo. -->
 <!-- v560 (05/10/2026): PESSOAL > APLICAÇÕES -- APLICAR MAIS / RETIRAR PARTE (Renato: "coloquei mais
      14 mil no 99Pay e não consigo achar o caminho"). Botões "+ aplicar" e "− retirar" em cada aplicação:
      pedem valor e data; o saldo da data é refeito (saldoInf = saldo estimado ± valor) e o movimento fica
@@ -814,7 +830,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v560" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v562" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -19889,6 +19905,7 @@ function mdContextoAssistente() {
     return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado. v469: o casamento recibo→viagem aceita placa com um caractere diferente (a leitura confunde I e J), usa também a data em que a viagem foi cadastrada e, se o primeiro nome do motorista bate, aceita até 10 dias de diferença; recibo que ficou \"sem viagem no sistema\" tem, no card da medição, um seletor para escolher a viagem e o botão vincular (pede tratamento e justificativa se o valor divergir).\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
       + scContextoAssistente() + (typeof ciotContextoAssistente === "function" ? ciotContextoAssistente() : "")
+      + "\nCT-e DE SUBCONTRATAÇÃO POR VIAGEM (v562, JT/Mateus): na aba Viagens, caixa JT/Mateus, o quadro '📄 CT-e de subcontratação — por viagem' lista cada viagem do mês com a situação: sem CT-e (vermelho), CT-e emitido aguardando o pagamento no extrato (laranja) ou CONSOLIDADA (verde, CT-e + pagamento). '+ emitir CT-e' abre o mesmo fluxo da JDL, mas para UMA viagem: anexar o CT-e que a JT emitiu daquela viagem (PDF, foto ou XML) → Conferir → testar (homologação) → ⚡ Emitir na SEFAZ, sempre com confirmação do Renato. O valor padrão é o valor da viagem (ou 'outro'); tomador vazio = a transportadora que emitiu o CT-e de referência (a JT). Autorizado, o sistema dá baixa sozinho: a viagem fica FATURADA com o nº do CT-e (selo na coluna Pago?) e vira CONSOLIDADA quando o pagamento estiver no extrato. Cancelar o CT-e desfaz a baixa. Viagens JT sem CT-e agora: " + (function () { try { return (state.viagens || []).filter(function (v) { return v.cliente === "JT/Mateus" && String(v.data || "") >= "2026-09-21" && !subVgCteOk(v); }).map(function (v) { return String(v.data).slice(0, 10) + " " + v.placa + " " + fmtR(v.valorViagem); }).join("; ") || "nenhuma"; } catch (e) { return "?"; } })() + "."
       + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
       + mdSubContexto()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
@@ -20389,13 +20406,49 @@ function subChavesDoTexto(t) {
   });
   return out.filter(function (c, i) { return out.indexOf(c) === i; });
 }
+/* v562 — o mesmo CT-e de subcontratação, agora também POR VIAGEM (JT/Mateus). Renato (05/10/2026):
+   "estou pedindo à JT as CT-e para emitir CT-e de subcontratação, como a da JDL... assim que for
+   gerada, o sistema dá baixa na viagem e consolida, porém deixa ele gerar/confirmar". Mesmo fluxo
+   (anexa o CT-e da JT → Conferir → testar → ⚡ Emitir com confirmação). A viagem é achada pelo id
+   "v:<id da viagem>"; a medição continua pelo id dela. Autorizado em produção → a viagem fica
+   FATURADA (CT-e nº X) e, com o pagamento já no extrato (pago), CONSOLIDADA. Cancelar desfaz. */
+function subAcha(id) {
+  id = String(id == null ? "" : id);
+  if (id.slice(0, 2) === "v:") { var vid = id.slice(2); return (state.viagens || []).filter(function (v) { return String(v.id) === vid; })[0] || null; }
+  return mdAcha(id);
+}
+function subEhVg(o) { return !!o && mdAcha(o.id) !== o; }
+function subIdDe(o) { return subEhVg(o) ? "v:" + o.id : o.id; }
+function subBruto(o) { return subEhVg(o) ? (Number(o.valorViagem) || 0) : o.totalFrete; }
+function subLiq(o) { return subEhVg(o) ? (Number(o.valorViagem) || 0) : o.totalAPagar; }
+function subVgCteOk(v) { var ok = (v && v.ctesSub || []).filter(function (x) { return x.status === "autorizado" && x.amb === "producao"; }); return ok[ok.length - 1] || null; }
+// dá baixa (ou desfaz) na viagem conforme o CT-e de subcontratação dela
+function subVgBaixa(v) {
+  if (!v) return;
+  var u = subVgCteOk(v);
+  if (u) { v.faturadaSub = true; v.cteSubNumero = u.numero; v.cteSubChave = u.chave; v.dataFaturamento = String(u.em || "").slice(0, 10); }
+  else { v.faturadaSub = false; delete v.cteSubNumero; delete v.cteSubChave; delete v.dataFaturamento; }
+  v.atualizadoEm = Date.now();
+}
+function subVgSituacao(v) {
+  var u = subVgCteOk(v);
+  if (!u) return { cod: "sem", txt: "sem CT-e", cor: "#E57373" };
+  if (v.pago) return { cod: "ok", txt: "✓ CONSOLIDADA · CT-e " + u.numero + " · paga " + exDataBr(String(v.dataPagamento || "").slice(0, 10)), cor: "#66BB6A" };
+  return { cod: "fat", txt: "CT-e " + u.numero + " emitido · aguardando o pagamento no extrato", cor: "#FFB74D" };
+}
 function subObsPadrao(md) {
-  var l = (md.recibos || []).map(function (r) { return "recibo " + (r.recibo || "?") + " " + (r.placa || "") + " " + String(r.inicio || "").replace(/\/\d{4}$/, "") + " " + fmtR(r.valorFrete); });
+  if (subEhVg(md)) {
+    var dt = String(md.data || "").slice(0, 10).split("-").reverse().join("/");
+    return "Servico de transporte subcontratado por " + (md.cliente || "") + " - viagem de " + dt + ", placa " + (md.placa || "")
+      + (md.rota ? ", rota " + md.rota : "") + (md.cargaMateus ? ", carga " + md.cargaMateus : "") + (Number(md.km) > 0 ? ", " + md.km + " km" : "")
+      + ". Valor do frete " + fmtR(Number(md.valorViagem) || 0) + ".";
+  }
+  var l =(md.recibos || []).map(function (r) { return "recibo " + (r.recibo || "?") + " " + (r.placa || "") + " " + String(r.inicio || "").replace(/\/\d{4}$/, "") + " " + fmtR(r.valorFrete); });
   return "Servico de transporte subcontratado por " + (md.cliente || "") + " - medicao " + (md.ref || "") + ", " + l.length + " viagem(ns): " + l.join("; ")
     + ". Total do frete " + fmtR(md.totalFrete) + ". Descontos da medicao " + fmtR(md.totalDesc) + ". Valor liquido a pagar " + fmtR(md.totalAPagar) + ".";
 }
 function subAbrir(medId) {
-  var md = mdAcha(medId); if (!md) return;
+  var md = subAcha(medId); if (!md) return;
   state._sub = { id: medId, chaveAnt: "", remCnpj: "", remIe: "", destCnpj: "", destIe: "", tomCnpj: "", tomIe: "", valorOutro: "", lidoResumo: "",
     nfes: "", valorCarga: "", peso: "", volumes: "", produto: "", cfop: "5360", base: "bruto", obs: subObsPadrao(md), previa: null, msg: "" };
   render();
@@ -20476,7 +20529,7 @@ function subLerRef(input) {
 }
 function subSet(k, v, re) { if (state._sub) { state._sub[k] = v; if (k !== "previa" && k !== "msg") state._sub.previa = null; } if (re) render(); }
 function subCorpo(s, md) {
-  var valor = s.base === "liquido" ? md.totalAPagar : s.base === "outro" ? ccNum(s.valorOutro) : md.totalFrete;
+  var valor = s.base === "liquido" ? subLiq(md) : s.base === "outro" ? ccNum(s.valorOutro) : subBruto(md);   // v562
   return { chaveAnt: subDig(s.chaveAnt), remCnpj: subDig(s.remCnpj), remIe: subDig(s.remIe), destCnpj: subDig(s.destCnpj), destIe: subDig(s.destIe),
     tomCnpj: subDig(s.tomCnpj), tomIe: subDig(s.tomIe), nfes: subChavesDoTexto(s.nfes).filter(subChaveOk), valorFrete: Math.round(valor * 100) / 100,
     valorCarga: ccNum(s.valorCarga), peso: subNum3(s.peso), volumes: ccNum(s.volumes), produto: String(s.produto || "").trim(), cfop: s.cfop, obs: String(s.obs || "").trim() };
@@ -20494,7 +20547,7 @@ function subValidar(s) {
   return e;
 }
 function subPrevia() {
-  var s = state._sub, md = s && mdAcha(s.id); if (!md) return;
+  var s = state._sub, md = s && subAcha(s.id); if (!md) return;
   var e = subValidar(s); if (e.length) { alert("Falta ou está errado:\n• " + e.join("\n• ")); return; }
   s.msg = "⏳ conferindo os CNPJs na Receita..."; render();
   rfSefazChamar({ acao: "cte_subcontratacao", previa: true, sub: subCorpo(s, md) }).then(function (j) {
@@ -20505,24 +20558,26 @@ function subPrevia() {
 }
 function subEmitir(homolog) {
   if (!ehAdmin()) return;
-  var s = state._sub, md = s && mdAcha(s.id); if (!md) return;
+  var s = state._sub, md = s && subAcha(s.id); if (!md) return;
   if (!s.previa) { alert("Clique primeiro em Conferir, para ver os dados que vão no CT-e."); return; }
   if (subFaltamNf(s) > 0) { alert("Falta NF-e: o DACTE da contratante tem " + s.qtdDocs + " nota(s) e só " + (s.qtdDocs - subFaltamNf(s)) + " foi(ram) lida(s). Cole a chave que falta no quadro vermelho antes de emitir."); return; }
   var c = subCorpo(s, md);
   if (!homolog && !confirm("Emitir AGORA na SEFAZ (produção, com valor fiscal) o CT-e de subcontratação de " + fmtR(c.valorFrete) + " para " + (s.previa.toma4 ? s.previa.toma4.xNome : "a contratante") + "?\n\nDepois de autorizado só dá para cancelar em até 7 dias.")) return;
   md.ctesSub = md.ctesSub || [];
   var seq = md.ctesSub.filter(function (x) { return x.status === "autorizado" || x.status === "cancelado"; }).length;
-  var idem = (homolog ? "sub-hml-" : "sub-") + md.id + "-" + seq + (homolog ? "-" + Date.now() : "");
+  var idem = (homolog ? "sub-hml-" : "sub-") + (subEhVg(md) ? "vg-" + md.id : md.id) + "-" + seq + (homolog ? "-" + Date.now() : "");
   s.msg = "⏳ enviando para a SEFAZ" + (homolog ? " (TESTE — homologação)" : "") + "..."; render();
   rfSefazChamar({ acao: "cte_subcontratacao", sub: c, idem: idem, homologacao: !!homolog, averbar: false }).then(function (j) {
-    var md2 = mdAcha(s.id); if (!md2) return;
+    var md2 = subAcha(s.id); if (!md2) return;
     md2.ctesSub = md2.ctesSub || [];
     if (j && j.ok) {
       md2.ctesSub.push({ status: "autorizado", amb: j.ambiente, chave: j.chave, numero: String(j.nCT || j.numero || ""), serie: String(j.serie || ""), nProt: j.nProt || "",
         xmlPath: j.xmlPath || "", pdfPath: j.pdfPath || "", valor: c.valorFrete, chaveAnt: c.chaveAnt, cfop: c.cfop, tomador: (s.previa.toma4 || {}).xNome || "",
         em: new Date().toISOString(), por: ccQuem() });
-      md2.atualizadoEm = Date.now(); state._sub = null; salvar(); render();
-      alert((j.ambiente === "producao" ? "CT-e " : "TESTE (homologação, sem valor fiscal): CT-e ") + (j.nCT || "") + " autorizado.\nChave " + j.chave);
+      md2.atualizadoEm = Date.now(); if (subEhVg(md2)) subVgBaixa(md2);   // v562: baixa na viagem
+      state._sub = null; salvar(); render();
+      alert((j.ambiente === "producao" ? "CT-e " : "TESTE (homologação, sem valor fiscal): CT-e ") + (j.nCT || "") + " autorizado.\nChave " + j.chave
+        + (subEhVg(md2) && j.ambiente === "producao" ? "\n\nViagem " + (md2.placa || "") + " baixada como FATURADA" + (md2.pago ? " e CONSOLIDADA (o pagamento já está no extrato)." : " — fica consolidada quando o pagamento aparecer no extrato.") : ""));
       return;
     }
     if (j && j.pendente) {
@@ -20537,7 +20592,7 @@ function subEmitir(homolog) {
 // preparados ANTES (subPreparar) e o toque em Enviar so abre o compartilhar.
 window.__subPrep = window.__subPrep || {};
 function subPreparar(medId, k, silencioso) {
-  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.pdfPath) return;
+  var md = subAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.pdfPath) return;
   var P = window.__subPrep[x.chave]; if (P && (P.ok || P.lendo)) return;
   window.__subPrep[x.chave] = { lendo: true };
   var base = "CTe-" + x.numero + "-serie" + x.serie + "-RF-Logistica";
@@ -20553,7 +20608,7 @@ function subTextoEnvio(x, P) {
     + "\nChave: " + x.chave + "\nDACTE em anexo." + (P && P.xmlUrl ? "\nXML: " + P.xmlUrl : "");
 }
 function subEnviar(medId, k) {
-  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x) return;
+  var md = subAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x) return;
   var P = window.__subPrep[x.chave];
   if (!P || !P.ok) { subPreparar(medId, k); alert("Preparando o DACTE e o XML… toque em Enviar de novo em alguns segundos."); return; }
   var texto = subTextoEnvio(x, P);
@@ -20570,32 +20625,33 @@ function subEnviar(medId, k) {
   semShare();
 }
 function subBaixarXml(medId, k) {
-  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.xmlPath) return;
+  var md = subAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.xmlPath) return;
   rfBaixarDoBucket(x.xmlPath).then(function (b) { if (b) rfBaixarBlob(b, "CTe-" + x.numero + "-serie" + x.serie + "-RF-Logistica.xml"); else alert("Não consegui baixar o XML."); });
 }
 function subConsultar(medId, k) {
-  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.chave) return;
+  var md = subAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || !x.chave) return;
   rfSefazChamar({ acao: "recuperar", modelo: "cte", chave: x.chave, averbar: false }).then(function (j) {
-    if (j && j.ok) { x.status = "autorizado"; x.nProt = j.nProt || ""; x.xmlPath = j.xmlPath || ""; x.pdfPath = j.pdfPath || ""; md.atualizadoEm = Date.now(); salvar(); render(); alert("Autorizado."); }
+    if (j && j.ok) { x.status = "autorizado"; x.nProt = j.nProt || ""; x.xmlPath = j.xmlPath || ""; x.pdfPath = j.pdfPath || ""; md.atualizadoEm = Date.now(); if (subEhVg(md)) subVgBaixa(md); salvar(); render(); alert("Autorizado."); }
     else alert("Situação: " + ((j && (j.erro || j.xMotivo)) || "sem resposta"));
   }).catch(function (e) { alert("Falha: " + (e.message || e)); });
 }
 function subCancelar(medId, k) {
   if (!ehAdmin()) return;
-  var md = mdAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || x.status !== "autorizado") return;
+  var md = subAcha(medId), x = md && (md.ctesSub || [])[k]; if (!x || x.status !== "autorizado") return;
   var j0 = prompt("Cancelar o CT-e " + x.numero + " na SEFAZ (só até 7 dias da emissão).\n\nJustificativa (mínimo 15 letras):", "");
   if (j0 === null) return;
   if (String(j0).trim().length < 15) { alert("A justificativa precisa de pelo menos 15 letras."); return; }
   rfSefazChamar({ acao: "cancelar", modelo: "cte", chave: x.chave, nProt: x.nProt, xJust: String(j0).trim() }).then(function (j) {
-    if (j && j.ok) { x.status = "cancelado"; x.canceladoEm = new Date().toISOString(); x.cancelJust = String(j0).trim(); md.atualizadoEm = Date.now(); salvar(); render(); alert("CT-e cancelado."); }
+    if (j && j.ok) { x.status = "cancelado"; x.canceladoEm = new Date().toISOString(); x.cancelJust = String(j0).trim(); md.atualizadoEm = Date.now(); if (subEhVg(md)) subVgBaixa(md); salvar(); render(); alert("CT-e cancelado."); }
     else alert("Não cancelou: " + rfSefazMsgErro(j));
   }).catch(function (e) { alert("Falha: " + (e.message || e)); });
 }
 function subBlocoHTML(md) {
-  var lista = md.ctesSub || [], s = state._sub && state._sub.id === md.id ? state._sub : null;
+  var sid = subIdDe(md), ehVg = subEhVg(md);   // v562: medição (JDL) ou viagem (JT/Mateus)
+  var lista = md.ctesSub || [], s = state._sub && String(state._sub.id) === String(sid) ? state._sub : null;
   var h = '<div style="margin-top:10px;padding:10px 12px;border:1px solid #1f4d6b;border-radius:8px;background:rgba(79,195,247,0.04);">'
-    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;"><b style="font-size:12px;color:#4FC3F7;">📄 CT-e DE SUBCONTRATAÇÃO DA MEDIÇÃO</b>'
-    + (!s ? '<button class="btn-outline" style="font-size:11.5px;padding:3px 12px;border-color:#4FC3F7;color:#4FC3F7;font-weight:800;" onclick="subAbrir(\'' + esc(md.id) + '\')">+ emitir CT-e de subcontratação</button>' : "") + '</div>';
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;"><b style="font-size:12px;color:#4FC3F7;">📄 CT-e DE SUBCONTRATAÇÃO ' + (ehVg ? "DA VIAGEM" : "DA MEDIÇÃO") + '</b>'
+    + (!s && !(ehVg && subVgCteOk(md)) ? '<button class="btn-outline" style="font-size:11.5px;padding:3px 12px;border-color:#4FC3F7;color:#4FC3F7;font-weight:800;" onclick="subAbrir(\'' + esc(sid) + '\')">+ emitir CT-e de subcontratação</button>' : "") + '</div>';
   // v477: os de TESTE (homologação) ficam escondidos -- só aparecem se pedir
   var nTeste = lista.filter(function (x) { return x.amb !== "producao"; }).length;
   if (nTeste) h += '<div style="margin-top:4px;"><a href="javascript:void(0)" style="font-size:10.5px;color:#777;" onclick="state._subVerTestes=!state._subVerTestes;render()">' + (state._subVerTestes ? "esconder" : "ver") + ' ' + nTeste + ' teste(s) de homologação (sem valor fiscal)</a></div>';
@@ -20606,14 +20662,14 @@ function subBlocoHTML(md) {
       + '<span>' + fmtR(x.valor) + ' · ' + exDataBr(String(x.em || "").slice(0, 10)) + ' · ref. CT-e ' + esc(String(x.chaveAnt || "").slice(25, 34).replace(/^0+/, "")) + ' da contratante</span>'
       + (x.pdfPath ? (function () {
           var P = window.__subPrep[x.chave];
-          if (!P) setTimeout(function () { subPreparar(md.id, k, true); }, 0);   // já deixa pronto para o toque
+          if (!P) setTimeout(function () { subPreparar(sid, k, true); }, 0);   // já deixa pronto para o toque
           var pronto = P && P.ok;
-          return '<button class="btn-outline" style="font-size:11px;padding:3px 12px;border-color:#25D366;color:#25D366;font-weight:800;' + (pronto ? "" : "opacity:.6;") + '" onclick="subEnviar(\'' + esc(md.id) + '\',' + k + ')">' + (pronto ? "📤 Enviar DACTE + XML" : P && P.erro ? "📤 tentar preparar de novo" : "⏳ preparando envio…") + '</button>';
+          return '<button class="btn-outline" style="font-size:11px;padding:3px 12px;border-color:#25D366;color:#25D366;font-weight:800;' + (pronto ? "" : "opacity:.6;") + '" onclick="subEnviar(\'' + esc(sid) + '\',' + k + ')">' + (pronto ? "📤 Enviar DACTE + XML" : P && P.erro ? "📤 tentar preparar de novo" : "⏳ preparando envio…") + '</button>';
         })() : "")
       + (x.pdfPath ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="ccVer(\'' + esc(x.pdfPath) + '\')">DACTE</button>' : "")
-      + (x.xmlPath ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="subBaixarXml(\'' + esc(md.id) + '\',' + k + ')">⬇ XML</button>' : "")
-      + (x.status === "pendente" ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#FFB74D;border-color:#FFB74D;" onclick="subConsultar(\'' + esc(md.id) + '\',' + k + ')">consultar</button>' : "")
-      + (x.status === "autorizado" && x.amb === "producao" ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#E57373;border-color:#E57373;" onclick="subCancelar(\'' + esc(md.id) + '\',' + k + ')">cancelar</button>' : "")
+      + (x.xmlPath ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;" onclick="subBaixarXml(\'' + esc(sid) + '\',' + k + ')">⬇ XML</button>' : "")
+      + (x.status === "pendente" ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#FFB74D;border-color:#FFB74D;" onclick="subConsultar(\'' + esc(sid) + '\',' + k + ')">consultar</button>' : "")
+      + (x.status === "autorizado" && x.amb === "producao" ? '<button class="btn-outline" style="font-size:10.5px;padding:2px 9px;color:#E57373;border-color:#E57373;" onclick="subCancelar(\'' + esc(sid) + '\',' + k + ')">cancelar</button>' : "")
       + '<span style="color:#666;font-size:10px;">' + esc(x.chave || "") + '</span></div>';
   });
   if (s) {
@@ -20630,8 +20686,8 @@ function subBlocoHTML(md) {
     if (tentou) {
       // 2) só o que ele preenche: valor e cliente (tomador)
       h += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;">'
-        + '<div>' + lab("Valor do CT-e") + '<label style="font-size:12px;color:#ddd;margin-right:12px;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "bruto" ? "checked" : "") + ' onchange="subSet(\'base\',\'bruto\',true)"> frete bruto ' + fmtR(md.totalFrete) + '</label>'
-        + '<label style="font-size:12px;color:#ddd;margin-right:12px;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "liquido" ? "checked" : "") + ' onchange="subSet(\'base\',\'liquido\',true)"> líquido ' + fmtR(md.totalAPagar) + '</label>'
+        + '<div>' + lab("Valor do CT-e") + '<label style="font-size:12px;color:#ddd;margin-right:12px;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "bruto" ? "checked" : "") + ' onchange="subSet(\'base\',\'bruto\',true)"> ' + (ehVg ? "valor da viagem " : "frete bruto ") + fmtR(subBruto(md)) + '</label>'
+        + (ehVg ? "" : '<label style="font-size:12px;color:#ddd;margin-right:12px;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "liquido" ? "checked" : "") + ' onchange="subSet(\'base\',\'liquido\',true)"> líquido ' + fmtR(subLiq(md)) + '</label>')
         + '<label style="font-size:12px;color:#ddd;display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="subBase" style="width:auto;margin:0;" ' + (s.base === "outro" ? "checked" : "") + ' onchange="subSet(\'base\',\'outro\',true)"> outro</label>'
         + (s.base === "outro" ? ' <input ' + inp + 'width:120px;" value="' + esc(s.valorOutro || "") + '" placeholder="R$" oninput="subSet(\'valorOutro\',this.value)">' : "") + '</div>'
         + '<div style="flex:1;min-width:240px;">' + lab("Cliente (tomador do serviço) — CNPJ") + '<input ' + inp + 'width:100%;" value="' + esc(s.tomCnpj || "") + '" placeholder="vazio = a transportadora que emitiu o CT-e de referência" oninput="subSet(\'tomCnpj\',this.value)"></div></div>';
@@ -20668,6 +20724,35 @@ function subBlocoHTML(md) {
       + '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="state._sub=null;render()">fechar</button>'
       + (s.msg ? '<span style="font-size:12px;color:#ddd;">' + esc(s.msg) + '</span>' : "") + '</div></div>';
   }
+  return h + '</div>';
+}
+// v562: quadro na caixa JT/Mateus da aba Viagens -- uma linha por viagem, com a situação do CT-e de subcontratação
+function subViagensHTML(lista) {
+  if (!ehAdmin()) return "";
+  lista = (lista || []).filter(function (v) { return v.cliente && !(v.origemMotorista && !v.cliente); });
+  if (!lista.length) return "";
+  var cont = { ok: 0, fat: 0, sem: 0 }, valSem = 0;
+  lista.forEach(function (v) { var st = subVgSituacao(v); cont[st.cod]++; if (st.cod === "sem") valSem += Number(v.valorViagem) || 0; });
+  var h = '<div style="margin:0 0 14px;padding:10px 12px;border:1px solid #1f4d6b;border-radius:8px;background:rgba(79,195,247,0.04);">'
+    + '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;"><b style="font-size:12.5px;color:#4FC3F7;">📄 CT-e DE SUBCONTRATAÇÃO — POR VIAGEM</b>'
+    + '<span style="font-size:11.5px;color:#66BB6A;">' + cont.ok + ' consolidada(s)</span>'
+    + '<span style="font-size:11.5px;color:#FFB74D;">' + cont.fat + ' com CT-e, aguardando pagamento</span>'
+    + '<span style="font-size:11.5px;color:#E57373;">' + cont.sem + ' sem CT-e (' + fmtR(valSem) + ')</span></div>'
+    + '<div style="font-size:10.5px;color:#888;margin:3px 0 6px;">Anexe o CT-e que a ' + esc(lista[0].cliente) + ' emitiu da viagem; o sistema lê, você confere e emite. Autorizado na SEFAZ, a viagem fica FATURADA e, com o pagamento no extrato, CONSOLIDADA.</div>';
+  lista.forEach(function (v) {
+    var st = subVgSituacao(v), sid = "v:" + v.id;
+    var aberto = (state._sub && String(state._sub.id) === sid) || String(state._subVgVer || "") === sid;
+    var dt = String(v.data || "").slice(0, 10).split("-").reverse().join("/");
+    h += '<div style="border-top:1px solid #1a2a35;padding:5px 0;font-size:11.5px;color:#ddd;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+      + '<span style="min-width:72px;">' + esc(dt) + '</span><b style="min-width:70px;">' + esc(v.placa || "") + '</b>'
+      + '<span style="min-width:170px;color:#bbb;">' + esc(v.rota || "") + (v.cargaMateus ? ' · carga ' + esc(v.cargaMateus) : "") + (Number(v.km) > 0 ? ' · ' + esc(v.km) + ' km' : "") + '</span>'
+      + '<b style="min-width:90px;">' + fmtR(Number(v.valorViagem) || 0) + '</b>'
+      + '<span style="color:' + st.cor + ';font-weight:700;">' + esc(st.txt) + '</span>'
+      + (st.cod === "sem" && !aberto ? '<button class="btn-outline" style="font-size:11px;padding:2px 10px;border-color:#4FC3F7;color:#4FC3F7;font-weight:800;" onclick="state._subVgVer=\'' + esc(sid) + '\';subAbrir(\'' + esc(sid) + '\')">+ emitir CT-e</button>' : "")
+      + (st.cod !== "sem" || (v.ctesSub || []).length ? '<a href="javascript:void(0)" style="font-size:10.5px;color:#4FC3F7;" onclick="state._subVgVer=' + (aberto ? "null" : "\'" + esc(sid) + "\'") + ';if(' + (aberto ? "true" : "false") + '&&state._sub&&state._sub.id===\'' + esc(sid) + '\')state._sub=null;render()">' + (aberto ? "fechar" : "ver CT-e") + '</a>' : "")
+      + '</div>';
+    if (aberto) h += subBlocoHTML(v);
+  });
   return h + '</div>';
 }
 /* ============ fim v470 ============================================================ */
@@ -31899,7 +31984,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir. Na aba Aplicacoes (v556) ha o quadro 'Por instituicao' (saldo, % do total e rendimento de cada banco) e a lista vem agrupada por banco com subtotal. Previsao (v557): o sistema projeta sozinho, pela taxa de cada aplicacao, o saldo no ultimo dia do mes e o rendimento do mes ('Previsto em <data>'); nao precisa de print novo, o print so serve para corrigir a base com 'saldo real'. Transferencia (v558): botao 'Transferir entre bancos' na aba Aplicacoes tira o valor de uma aplicacao e soma em outra na data escolhida, mostrando antes quanto passa a render a mais por mes; a coluna 'Rende % a.m.' com estrela mostra o banco mais lucrativo. Resumo (v559): o quadro 'Emprestimos em <mes>' mostra recebido x a receber e a lista do que vence no mes com o botao 'recebi'. Aplicar mais/retirar (v560): em cada aplicacao, botoes '+ aplicar' (colocou dinheiro novo) e '- retirar' (tirou parte); o saldo e a previsao se ajustam sozinhos." : "";
+  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir. Na aba Aplicacoes (v556) ha o quadro 'Por instituicao' (saldo, % do total e rendimento de cada banco) e a lista vem agrupada por banco com subtotal. Previsao (v557): o sistema projeta sozinho, pela taxa de cada aplicacao, o saldo no ultimo dia do mes e o rendimento do mes ('Previsto em <data>'); nao precisa de print novo, o print so serve para corrigir a base com 'saldo real'. Transferencia (v558): botao 'Transferir entre bancos' na aba Aplicacoes tira o valor de uma aplicacao e soma em outra na data escolhida, mostrando antes quanto passa a render a mais por mes; a coluna 'Rende % a.m.' com estrela mostra o banco mais lucrativo. Resumo (v559): o quadro 'Emprestimos em <mes>' mostra recebido x a receber e a lista do que vence no mes com o botao 'recebi'. Aplicar mais/retirar (v560): em cada aplicacao, botoes '+ aplicar' (colocou dinheiro novo) e '- retirar' (tirou parte); o saldo e a previsao se ajustam sozinhos. Contas (v561): aba 'Contas' no Pessoal para agua, luz, internet, compra mensal, caseiro etc. (atalhos, repete todo mes, 'pago' por mes, vencidas em vermelho) e 'Ler boleto' por foto ou PDF." : "";
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
@@ -33807,7 +33892,7 @@ function pfLogHTML() {
    saídas do extrato marcadas "Retirada do sócio" aparecem como sugestão de ganho. */
 var PF_CHAVE = "pessoal_cripto";
 var PF_CAT_GANHO = ["Retirada / pró-labore RF", "Cargo público", "Salário", "Aluguel recebido", "Outra empresa", "Rendimentos", "Outros"];
-var PF_CAT_DESP = ["Moradia", "Alimentação", "Saúde", "Educação", "Transporte / combustível", "Cartão de crédito", "Lazer", "Família", "Contas (luz, água, internet)", "Impostos", "Empréstimos", "Outros"];
+var PF_CAT_DESP = ["Moradia", "Alimentação", "Saúde", "Educação", "Transporte / combustível", "Cartão de crédito", "Lazer", "Família", "Contas (luz, água, internet)", "Impostos", "Empréstimos", "Funcionários (caseiro)", "Outros"];
 var __pf = { aberto: false, chave: null, salt: null, itens: [], versao: 0, msg: "", carregado: false, existe: null, editando: null };
 function pfB64(buf) { var b = new Uint8Array(buf), s = ""; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
 function pfDeB64(s) { var t = atob(s), b = new Uint8Array(t.length); for (var i = 0; i < t.length; i++) b[i] = t.charCodeAt(i); return b; }
@@ -33980,7 +34065,7 @@ function pessoalHTML() {
     return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;"><div style="flex:1;min-width:0;">' + cab + '</div>'
       + '<button class="btn-outline-gray" style="flex:none;" onclick="pfFechar()" title="Trancar a área pessoal neste aparelho">🔒 Trancar</button></div>' + pvAbasHTML()
       + '<div style="font-size:12px;color:#888;margin:-6px 0 12px;">Mês: <b style="color:' + GOLD + ';">' + mesLabel(state.mesAtivo) + '</b> — troque no 📅 do topo.</div>' + msg
-      + (pvTela === "aplicacoes" ? pvAplicacoesHTML() : pvTela === "emprestimos" ? pvEmprestimosHTML() : pvTela === "cargos" ? pcCargosHTML() : pvResumoHTML());
+      + (pvTela === "aplicacoes" ? pvAplicacoesHTML() : pvTela === "emprestimos" ? pvEmprestimosHTML() : pvTela === "cargos" ? pcCargosHTML() : pvTela === "contas" ? ctContasHTML() : pvResumoHTML());
   }
   var mes = state.mesAtivo, T = pfTotais(mes), ant = pfTotais(dbMesAnterior(mes));
   // média mensal de ganhos: últimos 12 meses com algum lançamento
@@ -34623,7 +34708,7 @@ function pvResumoHTML() {
 }
 function pvAbasHTML() {
   var t = state._pfTela || "resumo", av = pvAvisos();
-  var abas = [["resumo", "📊 Resumo"], ["aplicacoes", "🏦 Aplicações"], ["emprestimos", "🤝 Empréstimos" + (av.atrasados.length ? ' <span style="background:#C0392B;color:#fff;border-radius:9px;padding:0 6px;font-size:11px;">' + av.atrasados.length + '</span>' : "")], ["cargos", "🏛 Cargos"], ["lancamentos", "📝 Lançamentos"]];
+  var abas = [["resumo", "📊 Resumo"], ["aplicacoes", "🏦 Aplicações"], ["emprestimos", "🤝 Empréstimos" + (av.atrasados.length ? ' <span style="background:#C0392B;color:#fff;border-radius:9px;padding:0 6px;font-size:11px;">' + av.atrasados.length + '</span>' : "")], ["cargos", "🏛 Cargos"], ["contas", "💸 Contas"], ["lancamentos", "📝 Lançamentos"]];
   return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;">' + abas.map(function (a) {
     var on = a[0] === t;
     return '<button onclick="state._pfTela=\'' + a[0] + '\';__pf.msg=\'\';render()" style="padding:7px 14px;border-radius:18px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ' + (on ? GOLD : "#333") + ';background:' + (on ? GOLD : "#111") + ';color:' + (on ? "#000" : "#ccc") + ';">' + a[1] + '</button>';
@@ -34677,6 +34762,177 @@ function pcCargosHTML() {
   return kpis + form + lista + '<div style="font-size:11.5px;color:#777;margin-top:10px;">O valor de cada cargo entra sozinho todo mês no Resumo ("Você ganha por mês" e "Entrou no mês"). Não lance de novo em Lançamentos.</div>';
 }
 /* =================== fim v554 =================== */
+/* ===================== v561: PESSOAL — CONTAS DO MÊS + LEITURA DE BOLETO =====================
+   Cada conta é um item de __pf.itens tipo "despesa" (o mesmo da aba Lançamentos, então entra no
+   Resumo). Extras: venc (dia do vencimento vem da data), pagos {"AAAA-MM": "AAAA-MM-DD"}, codigo
+   (linha digitável) e benef (quem recebe). Boleto em PDF com texto é lido pela LINHA DIGITÁVEL, sem IA:
+   valor e vencimento saem do próprio código (bancário 47 dígitos: fator de vencimento + valor;
+   arrecadação/concessionária 48 dígitos começando com 8: valor). */
+var CT_ATALHOS = [["💧 Água", "Água", "Contas (luz, água, internet)"], ["💡 Luz", "Luz", "Contas (luz, água, internet)"], ["🌐 Internet", "Internet", "Contas (luz, água, internet)"],
+  ["🛒 Compra mensal", "Compra mensal", "Alimentação"], ["🧑‍🌾 Caseiro", "Pagamento do caseiro", "Funcionários (caseiro)"], ["🔥 Gás", "Gás", "Moradia"],
+  ["🏢 Condomínio", "Condomínio", "Moradia"], ["🎓 Escola", "Escola", "Educação"], ["🩺 Plano de saúde", "Plano de saúde", "Saúde"]];
+function ctVenc(x, mes) {   // data de vencimento da conta dentro do mês
+  if (!x.recorrente) return String(x.data);
+  var dia = +String(x.data).slice(8, 10) || 1, fim = +pvFimMes(mes).slice(8, 10);
+  return mes + "-" + String(Math.min(dia, fim)).padStart(2, "0");
+}
+function ctDoMes(mes) { return pfDoMes(mes).filter(function (x) { return x.tipo === "despesa"; }); }
+function ctPago(x, mes) { return !!(x.pagos && x.pagos[mes]); }
+function ctMarcar(id, pago) {
+  var x = __pf.itens.filter(function (i) { return i.id === id; })[0]; if (!x) return;
+  var mes = state.mesAtivo; x.pagos = Object.assign({}, x.pagos || {}); if (pago) x.pagos[mes] = pvHoje(); else delete x.pagos[mes];
+  x.em = Date.now(); pfSalvar();
+}
+function ctNovo(desc, cat) { state._ctForm = { descricao: desc || "", categoria: cat || "Contas (luz, água, internet)", recorrente: true, data: dataPadraoMes() }; state._ctEd = null; render(); try { setTimeout(function () { var e = document.getElementById("ct-valor"); if (e) e.focus(); }, 50); } catch (e) { } }
+function ctEditar(id) { state._ctEd = id; state._ctForm = null; render(); }
+function ctSalvar() {
+  var g = function (id) { var e = document.getElementById(id); return e ? e.value : ""; };
+  var desc = String(g("ct-desc")).trim(), valor = pfNum(g("ct-valor")), venc = g("ct-venc");
+  if (!desc || !(valor > 0) || !venc) { __pf.msg = "✖ Preencha a conta, o valor e o vencimento."; render(); return; }
+  var id = state._ctEd || ("pf" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  var base = __pf.itens.filter(function (x) { return x.id === id; })[0] || {};
+  var item = Object.assign({}, base, { id: id, tipo: "despesa", descricao: desc, categoria: g("ct-cat"), valor: valor, data: venc,
+    recorrente: !!(document.getElementById("ct-rec") || {}).checked, obs: g("ct-obs"), codigo: String(g("ct-codigo")).replace(/\D/g, ""), benef: g("ct-benef"), em: Date.now(), apagado: false });
+  __pf.itens = __pf.itens.filter(function (x) { return x.id !== id; }).concat([item]);
+  state._ctEd = null; state._ctForm = null; __pf.msg = "✓ Conta salva.";
+  pfSalvar();
+}
+/* ---- boleto: linha digitável ---- */
+function ctBoletoDecod(dig) {
+  dig = String(dig || "").replace(/\D/g, "");
+  var hoje = pvHoje(), r = { linha: dig, valor: 0, vencimento: "" };
+  var addDias = function (iso, n) { var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  if (dig.length === 47) {
+    r.valor = (+dig.slice(37, 47)) / 100;
+    var fator = +dig.slice(33, 37);
+    if (fator >= 1000) {   // fator recomeçou em 1000 no dia 22/02/2025
+      var a = addDias("1997-10-07", fator), b = addDias("2025-02-22", fator - 1000);
+      r.vencimento = Math.abs(pvDias(hoje, b)) < Math.abs(pvDias(hoje, a)) ? b : a;
+    }
+    r.tipo = "bancario";
+  } else if (dig.length === 48 && dig[0] === "8") {
+    var cod = dig.slice(0, 11) + dig.slice(12, 23) + dig.slice(24, 35) + dig.slice(36, 47);
+    if (cod[2] === "6" || cod[2] === "7") r.valor = (+cod.slice(4, 15)) / 100;
+    var m = cod.slice(19).match(/(20[2-3]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);   // muitas concessionárias põem AAAAMMDD no campo livre
+    if (m) { var iso = m[1] + "-" + m[2] + "-" + m[3]; if (Math.abs(pvDias(hoje, iso)) < 400) r.vencimento = iso; }
+    r.tipo = "arrecadacao";
+  } else return null;
+  return r;
+}
+function ctAdivinhar(txt) {   // nome curto e categoria pela concessionária
+  var t = String(txt || "").toLowerCase();
+  var regras = [[/embasa|saneamento|[aá]gua|sabesp|compesa|casan|cagece/, "Água", "Contas (luz, água, internet)"], [/coelba|neoenergia|energia|enel|cemig|equatorial|light|celpe|cosern/, "Luz", "Contas (luz, água, internet)"],
+    [/internet|fibra|vivo|claro|tim |oi |net |brisanet|desktop|telecom/, "Internet", "Contas (luz, água, internet)"], [/condom[ií]nio/, "Condomínio", "Moradia"], [/escola|col[eé]gio|faculdade|mensalidade/, "Escola", "Educação"],
+    [/unimed|hapvida|sa[uú]de|amil|bradesco sa/, "Plano de saúde", "Saúde"], [/g[aá]s|ultragaz|liquig[aá]s|supergasbras/, "Gás", "Moradia"], [/fatura|cart[aã]o/, "Cartão", "Cartão de crédito"]];
+  for (var i = 0; i < regras.length; i++) if (regras[i][0].test(t)) return { descricao: regras[i][1], categoria: regras[i][2] };
+  return null;
+}
+function ctAplicarLeitura(r, origem) {
+  var palp = ctAdivinhar((r.beneficiario || "") + " " + (r.descricao || "") + " " + (r.texto || ""));
+  var cats = PF_CAT_DESP, cat = r.categoria && cats.indexOf(r.categoria) >= 0 ? r.categoria : (palp ? palp.categoria : "Contas (luz, água, internet)");
+  if (r.categoria && cats.indexOf(r.categoria) < 0) { var achou = cats.filter(function (c) { return c.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "") === String(r.categoria).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); })[0]; if (achou) cat = achou; }
+  var desc = r.descricao || (palp ? palp.descricao : "") || r.beneficiario || "Boleto";
+  var jaExiste = __pf.itens.filter(function (x) { return !x.apagado && x.tipo === "despesa" && x.recorrente && String(x.descricao).toLowerCase() === String(desc).toLowerCase(); })[0];
+  state._ctEd = null;
+  state._ctForm = { descricao: desc, categoria: cat, valor: r.valor || "", data: r.vencimento || dataPadraoMes(), recorrente: !!jaExiste || /água|luz|internet|condom|escola|plano|gás/i.test(desc), codigo: r.linha || "", benef: r.beneficiario || "", obs: "" };
+  if (jaExiste) state._ctForm.jaExiste = jaExiste.id;
+  __pf.msg = "✓ Boleto lido (" + origem + "). Confira e salve." + (r.valor ? "" : " O valor não apareceu — digite.") + (r.vencimento ? "" : " O vencimento não apareceu — escolha a data.")
+    + (jaExiste ? " Você já tem \"" + jaExiste.descricao + "\" fixa todo mês — se for a conta deste mês, use \"editar\" nela e só troque o valor." : "");
+  render();
+}
+function ctLerBoletoIA(blob) {
+  return new Promise(function (ok, erro) { var r = new FileReader(); r.onload = function () { ok(String(r.result || "").split(",")[1] || ""); }; r.onerror = function () { erro(new Error("não consegui abrir a imagem")); }; r.readAsDataURL(blob); })
+    .then(function (b64) {
+      return rfGetClient().then(function (sb) {
+        if (!sb) throw new Error("sem conexão com o servidor");
+        return sb.auth.getSession().then(function (res) {
+          var token = res.data && res.data.session && res.data.session.access_token;
+          if (!token) throw new Error("o seu login venceu neste aparelho — saia e entre de novo");
+          return fetch(RF_SB_URL + "/functions/v1/ler-print-banco", { method: "POST", headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ imagemBase64: b64, mimeType: blob.type || "image/jpeg", tipo: "boleto" }) })
+            .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && (j.error || j.erro)) || ("servidor respondeu " + r.status)); return j; }); });
+        });
+      });
+    }).then(function (j) {
+      if (!j || j.erro) throw new Error("não consegui ler esse boleto" + (j && j.erro === "nao_legivel" ? " (não parece boleto/conta)" : "") + ". Tente uma foto mais nítida ou digite.");
+      var dec = j.linha ? ctBoletoDecod(j.linha) : null;   // a linha digitável manda: se a IA leu, o valor/vencimento do código vencem
+      if (dec) { if (dec.valor > 0) j.valor = dec.valor; if (dec.vencimento) j.vencimento = dec.vencimento; }
+      return j;
+    });
+}
+function ctLerBoleto(inp) {
+  var f = inp && inp.files && inp.files[0]; if (!f) return;
+  __pf.msg = "lendo o boleto..."; render();
+  var fim = function () { try { inp.value = ""; } catch (e) { } };
+  if (exEhPdf(f)) {
+    exPdfItens(f).then(function (pags) {
+      var txt = pags.map(function (p) { return p.map(function (o) { return o.s; }).join(" "); }).join(" \n ");
+      var cands = (txt.match(/\d[\d .\-]{44,75}\d/g) || []).map(function (c) { return c.replace(/\D/g, ""); }).filter(function (c) { return c.length === 47 || (c.length === 48 && c[0] === "8"); });
+      var dec = cands.length ? ctBoletoDecod(cands[0]) : null;
+      if (dec) {
+        var vt = txt.match(/vencimento[^0-9]{0,30}(\d{2}\/\d{2}\/\d{4})/i);
+        if (!dec.vencimento && vt) { var q = vt[1].split("/"); dec.vencimento = q[2] + "-" + q[1] + "-" + q[0]; }
+        var bf = txt.match(/(benefici[aá]rio|cedente)\s*:?\s*([A-Za-zÀ-ú0-9 .&\/-]{3,60})/i);
+        dec.beneficiario = bf ? bf[2].trim() : ""; dec.texto = txt.slice(0, 3000);
+        ctAplicarLeitura(dec, "PDF, pela linha digitável");
+        return;
+      }
+      return exPdfParaImagens(f, 1).then(function (imgs) { if (!imgs.length) throw new Error("PDF vazio"); return ctLerBoletoIA(imgs[0]); }).then(function (j) { ctAplicarLeitura(j, "PDF escaneado, por IA"); });
+    }).catch(function (e) { __pf.msg = "✖ " + ((e && e.message) || e); render(); }).then(fim);
+  } else {
+    rfComprimirImagem(f, 1800).then(ctLerBoletoIA).then(function (j) { ctAplicarLeitura(j, "foto, por IA"); })
+      .catch(function (e) { __pf.msg = "✖ " + ((e && e.message) || e); render(); }).then(fim);
+  }
+}
+function ctCopiar(cod) { try { navigator.clipboard.writeText(cod); __pf.msg = "✓ Linha digitável copiada — cole no app do banco para pagar."; } catch (e) { __pf.msg = "Linha: " + cod; } render(); }
+function ctContasHTML() {
+  var mes = state.mesAtivo, hoje = pvHoje(), L = ctDoMes(mes).map(function (x) { return { x: x, venc: ctVenc(x, mes), pago: ctPago(x, mes) }; })
+    .sort(function (a, b) { return (a.pago - b.pago) || String(a.venc).localeCompare(String(b.venc)); });
+  var tot = 0, pago = 0, venc = 0, nVenc = 0;
+  L.forEach(function (o) { tot += o.x.valor; if (o.pago) pago += o.x.valor; else if (o.venc < hoje) { venc += o.x.valor; nVenc++; } });
+  var kpis = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr));gap:10px;margin-bottom:14px;">'
+    + dbKpi("Contas de " + mesLabel(mes), fmtR(tot), "", "#C0392B", L.length + " conta(s)")
+    + dbKpi("Já pago", fmtR(pago), "", "#2E7D32", L.filter(function (o) { return o.pago; }).length + " paga(s)")
+    + dbKpi("Falta pagar", fmtR(tot - pago), "", GOLD, nVenc ? nVenc + " vencida(s) · " + fmtR(venc) : "nenhuma vencida")
+    + '</div>';
+  var ed = state._ctEd ? __pf.itens.filter(function (i) { return i.id === state._ctEd; })[0] : null, pre = ed || state._ctForm;
+  var btnLer = '<label class="btn-outline" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">📷 Ler boleto (foto ou PDF)<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="ctLerBoleto(this)"></label>';
+  var atalhos = '<div style="font-size:11.5px;color:#999;margin:0 0 6px;">Adicionar conta fixa (repete todo mês):</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">'
+    + CT_ATALHOS.map(function (a) { return '<button class="btn-outline-gray" style="font-size:12px;padding:4px 10px;" onclick="ctNovo(\'' + a[1] + '\',\'' + a[2] + '\')">' + a[0] + '</button>'; }).join("")
+    + '<button class="btn-outline-gray" style="font-size:12px;padding:4px 10px;" onclick="ctNovo(\'\',\'Outros\')">+ outra</button></div>';
+  var form = !pre ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">' + btnLer + '</div>' + atalhos
+    : '<div style="background:#0E0E0E;border:1px solid ' + GOLD + ';border-radius:10px;padding:14px;margin-bottom:16px;">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><div style="font-size:12px;font-weight:800;color:' + GOLD + ';">' + (ed ? "EDITAR CONTA" : "NOVA CONTA") + '</div><span style="margin-left:auto;">' + btnLer + '</span></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr));gap:8px;align-items:end;">'
+    + '<label style="font-size:11px;color:#999;">Conta<input id="ct-desc" value="' + esc(pre.descricao || "") + '" placeholder="ex.: Água, Luz, Caseiro" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Valor (R$)<input id="ct-valor" inputmode="decimal" value="' + (pre.valor ? String(pre.valor).replace(".", ",") : "") + '" placeholder="0,00" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Vencimento<input id="ct-venc" type="date" value="' + esc(pre.data || dataPadraoMes()) + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Categoria<select id="ct-cat" style="width:100%;">' + PF_CAT_DESP.map(function (c) { return '<option' + (pre.categoria === c ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select></label>'
+    + '<label style="font-size:11px;color:#999;">Quem recebe<input id="ct-benef" value="' + esc(pre.benef || "") + '" placeholder="ex.: Embasa" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Observação<input id="ct-obs" value="' + esc(pre.obs || "") + '" style="width:100%;"></label>'
+    + '</div><input id="ct-codigo" type="hidden" value="' + esc(pre.codigo || "") + '">'
+    + (pre.codigo ? '<div style="font-size:11.5px;color:#aaa;margin-top:8px;word-break:break-all;">Linha digitável: <b>' + esc(pre.codigo) + '</b></div>' : "")
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;"><label style="font-size:12.5px;color:#ddd;display:inline-flex;align-items:center;gap:6px;"><input id="ct-rec" type="checkbox" style="width:auto;margin:0;"' + (pre.recorrente ? " checked" : "") + '> Repete todo mês</label>'
+    + '<button class="btn-outline" style="margin-left:auto;" onclick="ctSalvar()">' + (ed ? "Salvar alteração" : "Salvar conta") + '</button><button class="btn-outline-gray" onclick="state._ctEd=null;state._ctForm=null;__pf.msg=\'\';render()">cancelar</button></div></div>';
+  var lista = !L.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhuma conta em ' + mesLabel(mes) + '. Use os atalhos acima ou "📷 Ler boleto".</div>'
+    : L.map(function (o) {
+      var x = o.x, atr = !o.pago && o.venc < hoje, hojeV = !o.pago && o.venc === hoje;
+      var cor = o.pago ? "#2E7D32" : atr ? "#C0392B" : hojeV ? GOLD : "#444";
+      return '<div style="border:1px solid #2A2A2A;border-left:4px solid ' + cor + ';border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#0E0E0E;' + (o.pago ? "opacity:.75;" : "") + '">'
+        + '<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;"><b style="font-size:14.5px;color:#fff;">' + esc(x.descricao) + '</b>'
+        + '<span style="font-size:11.5px;color:#999;">' + esc(x.categoria || "") + (x.benef ? " · " + esc(x.benef) : "") + (x.recorrente ? " · 🔁 todo mês" : "") + '</span>'
+        + '<b style="margin-left:auto;font-size:15px;color:' + (o.pago ? "#81C784" : "#fff") + ';">' + fmtR(x.valor) + '</b></div>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px;">'
+        + '<span style="color:' + (o.pago ? "#81C784" : atr ? "#E57373" : hojeV ? GOLD : "#aaa") + ';font-weight:700;">' + (o.pago ? "✓ pago em " + exDataBr(x.pagos[mes]) : atr ? "⚠ venceu em " + exDataBr(o.venc) : hojeV ? "vence HOJE" : "vence " + exDataBr(o.venc)) + '</span>'
+        + '<span style="margin-left:auto;"></span>'
+        + (x.codigo ? '<button class="btn-outline-gray" style="font-size:11px;padding:2px 8px;" onclick="ctCopiar(\'' + x.codigo + '\')">copiar código</button>' : "")
+        + (o.pago ? '<button class="btn-outline-gray" style="font-size:11px;padding:2px 8px;" onclick="ctMarcar(\'' + x.id + '\',false)">desfazer</button>' : '<button class="btn-outline" style="font-size:11px;padding:2px 9px;" onclick="ctMarcar(\'' + x.id + '\',true)">✓ pago</button>')
+        + '<button class="btn-outline-gray" style="font-size:11px;padding:2px 8px;" onclick="ctEditar(\'' + x.id + '\')">editar</button>'
+        + (x.recorrente ? '<button class="btn-outline-gray" style="font-size:11px;padding:2px 8px;" onclick="pfEncerrar(\'' + x.id + '\')">encerrar</button>' : "")
+        + '<button class="btn-outline-gray" style="font-size:11px;padding:2px 8px;color:#C0392B;border-color:#C0392B;" onclick="pfApagar(\'' + x.id + '\')">apagar</button></div></div>';
+    }).join("");
+  return kpis + form + lista + '<div style="font-size:11.5px;color:#777;margin-top:10px;">As contas daqui são as despesas do Pessoal: entram em "Despesas do mês" no Resumo. Conta fixa (🔁) aparece sozinha todo mês — quando o valor mudar, use "editar" e troque só o valor. Boleto em PDF é lido pelo código de barras (sem erro de número); foto passa por leitura de IA — confira antes de salvar.</div>';
+}
+/* =================== fim v561 =================== */
 
 
 
@@ -35414,6 +35670,7 @@ function renderTabela() {
       </div>`;
       })()}
       ${rfViagemCaixasHTML(viagensFiltro)}
+      ${caixaAberta && caixaAberta !== "__todas__" && (caixaAberta === "JT/Mateus" || viagensDaCaixa.some((v) => (v.ctesSub || []).length)) ? subViagensHTML(viagensDaCaixa) : ""}
 
       ${!caixaAberta ? "" : `<table style="min-width:2000px;"><thead><tr>
         <th>Placa</th><th>Motorista</th><th>Cliente</th><th>Data saída</th><th>Data fim</th><th>Valor Viagem</th><th>💰 Pago?</th><th>KM Saída</th><th>KM Chegada</th><th>KM</th><th>m³</th><th>Dias</th><th>Combustível (abastecimentos)</th>
@@ -35529,6 +35786,7 @@ function renderTabela() {
                 <span style="font-size:11px; font-weight:700; color:${v.pago ? "#2E7D32" : "#C0392B"};">${v.pago ? "Paga" : "Pendente"}</span>
               </label>
               <input type="date" value="${v.dataPagamento || ""}" onchange="setViagemDataPagamento('${v.id}', this.value)" title="Data do pagamento" style="width:110px; margin-top:4px; font-size:11px;">
+              ${(v.ctesSub || []).length ? (() => { const st = subVgSituacao(v); return st.cod === "sem" ? "" : `<div style="font-size:9px;font-weight:700;color:${st.cor};margin-top:3px;white-space:normal;">${esc(st.txt)}</div>`; })() : ""}
             </td>
             <td style="min-width:130px;">
               <input type="number" value="${v.kmSaida || 0}" placeholder="km saída" onchange="setViagemKmSaida('${v.id}',this.value)" style="width:80px;">
