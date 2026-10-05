@@ -2,12 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v555)</title>
+<title>RF Logística — Painel da Frota (v556)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v555">
+<meta name="rf-versao" content="v556">
 <meta name="rf-data" content="2026-10-05">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v556 (05/10/2026): PESSOAL > APLICAÇÕES -- POR INSTITUIÇÃO (Renato: "era bom colocar cada
+     instituição, para saber o valor de cada"). Quadro no topo da aba com uma linha por banco: quantos
+     produtos, saldo, % do total e quanto rende por mês, com linha TOTAL. A lista de aplicações passou a
+     vir agrupada por banco (banco de maior saldo primeiro) com o subtotal de cada um. -->
 <!-- v555 (05/10/2026): PESSOAL > APLICAÇÕES -- o sistema já sabe os produtos e como rendem.
      (1) Escolher o produto preenche "Como rende", a taxa sugerida e o isento de IR (CDB/conta remunerada/
      Tesouro Selic 100% do CDI, LCI/LCA 90% do CDI isento, poupança 0,5% a.m. isento, etc.) -- sugestão
@@ -790,7 +794,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v555" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v556" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -31875,7 +31879,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir." : "";
+  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir. Na aba Aplicacoes (v556) ha o quadro 'Por instituicao' (saldo, % do total e rendimento de cada banco) e a lista vem agrupada por banco com subtotal." : "";
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
@@ -34205,12 +34209,26 @@ function pvAplicacoesHTML() {
     + '<label style="font-size:12.5px;color:#ddd;display:inline-flex;align-items:center;gap:6px;"><input id="pv-a-isento" type="checkbox"' + (pv && pv.isento ? " checked" : "") + '> Isento de IR (LCI, LCA, poupança)</label>'
     + '<button class="btn-outline" style="margin-left:auto;" onclick="pvSalvarApl()">' + (ed ? "Salvar alteração" : "+ Salvar aplicação") + '</button>'
     + '<button class="btn-outline-gray" onclick="state._pvEdApl=null;state._pvFormApl=false;state._pvPreApl=null;render()">cancelar</button></div></div>';
-  var ord = L.slice().sort(function (a, b) { return (pvAtiva(b, hoje) - pvAtiva(a, hoje)) || pvSaldoHoje(b) - pvSaldoHoje(a); });
+  /* v556: agrupado por instituição */
+  var inst = {}; ativas.forEach(function (a) { var k = String(a.banco || "Sem banco").trim(); var g = inst[k] || (inst[k] = { banco: k, n: 0, saldo: 0, rend: 0 }); g.n++; g.saldo += pvSaldoHoje(a); g.rend += pvRendMensalAtual(a).liquido; });
+  var instL = Object.keys(inst).map(function (k) { return inst[k]; }).sort(function (a, b) { return b.saldo - a.saldo; });
+  var instPos = {}; instL.forEach(function (g, i) { instPos[g.banco] = i; });
+  var instHTML = !instL.length ? "" : '<div style="overflow-x:auto;"><table style="width:100%;min-width:520px;"><thead><tr><th>Instituição</th><th style="text-align:center;">Produtos</th><th style="text-align:right;">Saldo est. hoje</th><th style="text-align:right;">% do total</th><th style="text-align:right;">Rende/mês (líq.)</th></tr></thead><tbody>'
+    + instL.map(function (g) { return '<tr><td style="font-weight:800;">🏦 ' + esc(g.banco) + '</td><td style="text-align:center;">' + g.n + '</td><td style="text-align:right;font-weight:800;white-space:nowrap;">' + fmtR(g.saldo) + '</td><td style="text-align:right;color:#aaa;">' + (saldo ? (g.saldo / saldo * 100).toFixed(1).replace(".", ",") + "%" : "—") + '</td><td style="text-align:right;font-weight:800;color:#81C784;white-space:nowrap;">' + fmtR(g.rend) + '</td></tr>'; }).join("")
+    + '<tr style="border-top:2px solid ' + GOLD + ';"><td style="font-weight:900;color:' + GOLD + ';">TOTAL</td><td style="text-align:center;font-weight:800;">' + ativas.length + '</td><td style="text-align:right;font-weight:900;color:' + GOLD + ';white-space:nowrap;">' + fmtR(saldo) + '</td><td style="text-align:right;">100%</td><td style="text-align:right;font-weight:900;color:#81C784;white-space:nowrap;">' + fmtR(rendM) + '</td></tr></tbody></table></div>';
+  var ord = L.slice().sort(function (a, b) {
+    var pa = instPos[String(a.banco || "Sem banco").trim()], pb = instPos[String(b.banco || "Sem banco").trim()];
+    pa = pa == null ? 999 : pa; pb = pb == null ? 999 : pb;
+    return (pvAtiva(b, hoje) - pvAtiva(a, hoje)) || (pa - pb) || pvSaldoHoje(b) - pvSaldoHoje(a);
+  });
   var tabela = !L.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhuma aplicação lançada. Cadastre cada valor que você tem em banco, com a taxa de cada um.</div>'
     : '<div style="overflow-x:auto;"><table style="width:100%;min-width:720px;"><thead><tr><th>Banco / produto</th><th>Taxa</th><th style="text-align:right;">Aplicado</th><th style="text-align:right;">Saldo est. hoje</th><th style="text-align:right;">Rende/mês (líq.)</th><th></th></tr></thead><tbody>'
-    + ord.map(function (a) {
+    + ord.map(function (a, i) {
       var at = pvAtiva(a, hoje), r = pvRendMensalAtual(a), vencendo = a.vencimento && at && pvDias(hoje, a.vencimento) <= 30;
-      return '<tr style="' + (at ? "" : "opacity:.5;") + '"><td><b>' + esc(a.banco) + '</b> · ' + esc(a.produto || "") + '<div style="font-size:11px;color:#888;">desde ' + exDataBr(a.inicio)
+      var bk = String(a.banco || "Sem banco").trim(), g = inst[bk], cab = "";   // v556: cabeçalho do banco com subtotal
+      if (at && g && (i === 0 || String(ord[i - 1].banco || "Sem banco").trim() !== bk || !pvAtiva(ord[i - 1], hoje)))
+        cab = '<tr style="background:#1a1408;"><td colspan="3" style="font-weight:900;color:' + GOLD + ';">🏦 ' + esc(bk) + ' <span style="font-weight:400;color:#999;font-size:11.5px;">· ' + g.n + ' produto(s)</span></td><td style="text-align:right;font-weight:900;color:' + GOLD + ';white-space:nowrap;">' + fmtR(g.saldo) + '</td><td style="text-align:right;font-weight:900;color:#81C784;white-space:nowrap;">' + fmtR(g.rend) + '</td><td></td></tr>';
+      return cab + '<tr style="' + (at ? "" : "opacity:.5;") + '"><td><b>' + esc(a.banco) + '</b> · ' + esc(a.produto || "") + '<div style="font-size:11px;color:#888;">desde ' + exDataBr(a.inicio)
         + (a.vencimento ? ' · vence ' + exDataBr(a.vencimento) : "") + (a.isento ? " · isento IR" : "") + (a.saldoInf ? ' · saldo real ' + fmtR(a.saldoInf.valor) + ' em ' + exDataBr(a.saldoInf.data) : "")
         + (a.resgate ? ' · <b style="color:#E57373;">resgatada ' + exDataBr(a.resgate) + '</b>' : "") + (vencendo ? ' · <b style="color:' + GOLD + ';">⚠ vence em ' + pvDias(hoje, a.vencimento) + ' dia(s)</b>' : "") + (a.obs ? '<br>' + esc(a.obs) : "") + '</div></td>'
         + '<td style="white-space:nowrap;">' + pvTaxaTxt(a) + '<div style="font-size:11px;color:#888;">≈ ' + (pvTaxaMes(a) * 100).toFixed(2).replace(".", ",") + '% a.m.</div></td>'
@@ -34224,7 +34242,7 @@ function pvAplicacoesHTML() {
     }).join("") + '</tbody></table></div>';
   var porBanco = {}; ativas.forEach(function (a) { porBanco[a.banco] = (porBanco[a.banco] || 0) + pvSaldoHoje(a); });
   var bancos = Object.keys(porBanco).map(function (k) { return { rot: k, v: porBanco[k] }; }).sort(function (a, b) { return b.v - a.v; });
-  return kpis + cdiBox + form + dbCaixa("Suas aplicações", tabela)
+  return kpis + (instHTML ? '<div style="margin-bottom:16px;">' + dbCaixa("Por instituição", instHTML) + '</div>' : "") + cdiBox + form + dbCaixa("Suas aplicações (agrupadas por banco)", tabela)
     + (bancos.length > 1 ? '<div style="margin-top:16px;">' + dbCaixa("Onde está o dinheiro", dbBarrasH(bancos, function () { return GOLD; }, function (x) { return fmtR(x.v); })) + '</div>' : "")
     + '<div style="font-size:11.5px;color:#777;margin-top:10px;">Saldo e rendimento são <b>estimativas</b> (juros compostos pela taxa cadastrada; IR pela tabela regressiva conforme o tempo aplicado). Para ficar exato, use "saldo real" de vez em quando com o valor do app do banco.</div>';
 }
