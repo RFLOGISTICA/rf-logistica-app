@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v549)</title>
+<title>RF Logística — Painel da Frota (v550)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v549">
+<meta name="rf-versao" content="v550">
 <meta name="rf-data" content="2026-10-04">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v550 (04/10/2026): PESSOAL ganha APLICAÇÕES e EMPRÉSTIMOS. Sub-telas Resumo / Aplicações /
+     Empréstimos / Lançamentos. Aplicações por banco em % do CDI, taxa fixa a.m. ou a.a. (saldo e
+     rendimento estimados, IR regressivo, CDI editável, "saldo real"). Empréstimos a pessoas: só juros
+     todo mês, parcelas ou tudo no final (juros simples % a.m.), recebimentos, ATRASOS com dias e
+     cobrança no WhatsApp. Resumo: "Você ganha por mês". Tudo no mesmo pacote criptografado da v549. -->
 <!-- v549 (04/10/2026): ABA 🔒 PESSOAL -- ganhos e despesas pessoais do Renato. Só o login master vê
      (podeVerAba) e ela não aparece para liberar em Usuários. Os dados NÃO entram no state nem na
      sincronização: ficam na linha "pessoal_cripto" da painel_dados, criptografados no aparelho
@@ -759,7 +764,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v549" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v550" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -31843,7 +31848,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal." : "";
+  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal." : "";
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
@@ -33853,7 +33858,7 @@ function pfEncerrar(id) {   // recorrente: para de contar a partir do mês ativo
 }
 function pfDoMes(mes) {
   return __pf.itens.filter(function (x) {
-    if (x.apagado) return false;
+    if (x.apagado || x.reg) return false;   // v550: aplicações/empréstimos/config não são lançamentos
     var ini = String(x.data).slice(0, 7);
     if (!x.recorrente) return ini === mes;
     return ini <= mes && (!x.fimMes || mes < x.fimMes);
@@ -33892,6 +33897,13 @@ function pessoalHTML() {
       + (nova ? '<input id="pf-senha2" type="password" placeholder="repita a senha" style="width:100%;margin-bottom:8px;">'
         + '<div style="font-size:11.5px;color:#E57373;margin-bottom:10px;">⚠ Anote essa senha. Ela não é a senha do sistema e não tem como recuperar: se esquecer, os dados pessoais ficam inacessíveis.</div>' : "")
       + '<button class="btn-outline" style="width:100%;" onclick="pfAbrir()">' + (nova ? "Criar e abrir" : "Abrir") + '</button>' + msg + '</div>';
+  }
+  var pvTela = state._pfTela || "resumo";   // v550: sub-telas
+  if (pvTela !== "lancamentos") {
+    return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;"><div style="flex:1;min-width:0;">' + cab + '</div>'
+      + '<button class="btn-outline-gray" style="flex:none;" onclick="pfFechar()" title="Trancar a área pessoal neste aparelho">🔒 Trancar</button></div>' + pvAbasHTML()
+      + '<div style="font-size:12px;color:#888;margin:-6px 0 12px;">Mês: <b style="color:' + GOLD + ';">' + mesLabel(state.mesAtivo) + '</b> — troque no 📅 do topo.</div>' + msg
+      + (pvTela === "aplicacoes" ? pvAplicacoesHTML() : pvTela === "emprestimos" ? pvEmprestimosHTML() : pvResumoHTML());
   }
   var mes = state.mesAtivo, T = pfTotais(mes), ant = pfTotais(dbMesAnterior(mes));
   // média mensal de ganhos: últimos 12 meses com algum lançamento
@@ -33942,7 +33954,7 @@ function pessoalHTML() {
   if (iniSerie > 0) serie = serie.slice(iniSerie);
   var evol = comDados.length >= 2 ? dbSvgEvolucao(serie).replace(/Faturamento/g, "Ganhos").replace(/Custo total/g, "Despesas").replace(/>Resultado</g, ">Sobra<").replace(/Resultado /g, "Sobra ") : '<div style="color:#777;padding:20px;text-align:center;">O gráfico aparece quando houver pelo menos 2 meses lançados.</div>';
   return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;"><div style="flex:1;min-width:0;">' + cab + '</div>'
-    + '<button class="btn-outline-gray" style="flex:none;" onclick="pfFechar()" title="Trancar a área pessoal neste aparelho">🔒 Trancar</button></div>'
+    + '<button class="btn-outline-gray" style="flex:none;" onclick="pfFechar()" title="Trancar a área pessoal neste aparelho">🔒 Trancar</button></div>' + pvAbasHTML()
     + '<div style="font-size:12px;color:#888;margin:-6px 0 12px;">Mês: <b style="color:' + GOLD + ';">' + mesLabel(mes) + '</b> — troque no 📅 do topo.</div>'
     + kpis + retHTML + form
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:start;">'
@@ -33951,6 +33963,427 @@ function pessoalHTML() {
     + '</div><div style="margin-top:16px;">' + dbCaixa("Ganhos x despesas — últimos 12 meses", evol) + '</div>';
 }
 /* =================== fim v549 =================== */
+/* ===================== v550: PESSOAL — APLICAÇÕES E EMPRÉSTIMOS =====================
+   Renato (04/10/2026): "tenho vários valores a juros em vários bancos com juros
+   diferentes, como também muitos valores emprestados a pessoas físicas".
+   Respostas dele: bancos rendem em % do CDI, taxa fixa ao mês ou taxa fixa ao ano;
+   empréstimos pagam "só os juros todo mês" mas "varia por pessoa"; juros = % ao mês
+   sobre o valor emprestado (simples); quer aviso de atraso.
+   Tudo fica DENTRO do mesmo pacote criptografado da v549 (__pf.itens), marcado com
+   "reg": "aplicacao" | "emprestimo" | "config". Nada vai para o state nem para o assistente.
+   - Aplicação: saldo estimado com juros compostos desde a aplicação (ou desde o último
+     saldo real informado); rendimento do mês bruto e líquido (IR regressivo 22,5/20/17,5/15%,
+     isento p/ LCI, LCA, poupança). CDI anual editável (padrão 13,65% a.a., set/2026).
+   - Empréstimo: 3 formas — "só juros todo mês" (juros = saldo devedor x % a.m.),
+     "parcelas" (parcela = valor/n + valor x % a.m.) e "tudo no final" (valor x (1 + % x meses)).
+     Recebimentos lançados por pessoa; o que venceu e não foi pago vira ATRASO, com dias
+     e botão de cobrança no WhatsApp. */
+var PV_PRODUTOS = ["CDB", "LCI", "LCA", "Tesouro Direto", "Poupança", "Conta remunerada", "Fundo", "Debênture / CRI / CRA", "Outro"];
+var PV_ISENTOS = ["LCI", "LCA", "Poupança", "Debênture / CRI / CRA"];
+function pvHoje() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function pvDias(a, b) { return Math.round((Date.parse(b + "T12:00:00") - Date.parse(a + "T12:00:00")) / 864e5); }
+function pvAddMes(iso, n, dia) {
+  var y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1 + n;
+  y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+  var ult = new Date(y, m + 1, 0).getDate(), d = Math.min(dia || +iso.slice(8, 10), ult);
+  return y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+}
+function pvMesesEntre(a, b) { return (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)) + (+b.slice(8, 10) - +a.slice(8, 10)) / 30; }
+function pvFimMes(mes) { var y = +mes.slice(0, 4), m = +mes.slice(5, 7); return mes + "-" + String(new Date(y, m, 0).getDate()).padStart(2, "0"); }
+function pvReg(t) { return __pf.itens.filter(function (x) { return !x.apagado && x.reg === t; }); }
+function pvCfg() { return pvReg("config")[0] || { id: "cfg", reg: "config", cdi: 13.65 }; }
+function pvId() { return "pv" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function pvGravar(obj) {   // grava (cria ou substitui) um registro e salva criptografado
+  obj.em = Date.now();
+  __pf.itens = __pf.itens.filter(function (x) { return x.id !== obj.id; }).concat([obj]);
+  return pfSalvar();
+}
+function pvAchar(id) { return __pf.itens.filter(function (x) { return x.id === id; })[0]; }
+function pvG(id) { var e = document.getElementById(id); return e ? e.value : ""; }
+function pvTaxaTxt(a) { return a.modalidade === "cdi" ? String(a.taxa).replace(".", ",") + "% do CDI" : a.modalidade === "aa" ? String(a.taxa).replace(".", ",") + "% a.a." : String(a.taxa).replace(".", ",") + "% a.m."; }
+
+/* ---------- APLICAÇÕES ---------- */
+function pvTaxaMes(a) {
+  if (a.modalidade === "cdi") { var cdi = (Number(pvCfg().cdi) || 0) / 100, d = (Math.pow(1 + cdi, 1 / 252) - 1) * (Number(a.taxa) || 0) / 100; return Math.pow(1 + d, 21) - 1; }
+  if (a.modalidade === "aa") return Math.pow(1 + (Number(a.taxa) || 0) / 100, 1 / 12) - 1;
+  return (Number(a.taxa) || 0) / 100;
+}
+function pvAliqIR(dias) { return dias <= 180 ? 0.225 : dias <= 360 ? 0.2 : dias <= 720 ? 0.175 : 0.15; }
+function pvBase(a, iso) { return a.saldoInf && a.saldoInf.data <= iso ? a.saldoInf : { valor: a.valor, data: a.inicio }; }
+function pvSaldoBruto(a, iso, base) {   // saldo estimado na data (sem olhar resgate)
+  if (!iso || iso < a.inicio) return 0;
+  base = base || pvBase(a, iso);
+  return base.valor * Math.pow(1 + pvTaxaMes(a), Math.max(0, pvDias(base.data, iso)) / 30.4375);
+}
+function pvAtiva(a, iso) { return a.inicio <= iso && (!a.resgate || a.resgate > iso); }
+function pvSaldoHoje(a) { var h = pvHoje(); return pvAtiva(a, h) ? pvSaldoBruto(a, h) : 0; }
+function pvRendMes(a, mes) {   // rendimento estimado dentro do mês (até hoje / resgate)
+  var hoje = pvHoje(), s0 = pvFimMes(dbMesAnterior(mes)), s1 = pvFimMes(mes);
+  if (s0 < a.inicio) s0 = a.inicio;
+  if (s1 > hoje) s1 = hoje;
+  if (a.resgate && s1 > a.resgate) s1 = a.resgate;
+  if (s1 <= s0) return { bruto: 0, liquido: 0 };
+  var base = pvBase(a, s1); if (base.data > s0) s0 = base.data;
+  var bruto = Math.max(0, pvSaldoBruto(a, s1, base) - pvSaldoBruto(a, s0, base));
+  var liq = a.isento ? bruto : bruto * (1 - pvAliqIR(pvDias(a.inicio, s1)));
+  return { bruto: bruto, liquido: liq };
+}
+function pvRendMensalAtual(a) {   // quanto rende por mês a partir de hoje (líquido)
+  var h = pvHoje(); if (!pvAtiva(a, h)) return { bruto: 0, liquido: 0 };
+  var b = pvSaldoBruto(a, h) * pvTaxaMes(a);
+  return { bruto: b, liquido: a.isento ? b : b * (1 - pvAliqIR(pvDias(a.inicio, h) + 30)) };
+}
+function pvSalvarApl() {
+  var id = state._pvEdApl || pvId(), base = pvAchar(id) || {};
+  var a = Object.assign({}, base, {
+    id: id, reg: "aplicacao", banco: String(pvG("pv-a-banco")).trim(), produto: pvG("pv-a-prod"), valor: pfNum(pvG("pv-a-valor")),
+    inicio: pvG("pv-a-ini"), vencimento: pvG("pv-a-venc"), modalidade: pvG("pv-a-mod"), taxa: pfNum(pvG("pv-a-taxa")),
+    isento: !!(document.getElementById("pv-a-isento") || {}).checked, obs: pvG("pv-a-obs"), apagado: false
+  });
+  if (!a.banco || !(a.valor > 0) || !a.inicio || !(a.taxa > 0)) { __pf.msg = "Preencha banco, valor, data da aplicação e taxa."; render(); return; }
+  state._pvEdApl = null; state._pvFormApl = false;
+  pvGravar(a);
+}
+function pvSaldoReal(id) {
+  var a = pvAchar(id); if (!a) return;
+  var v = prompt("Saldo de hoje no app do " + a.banco + " (" + a.produto + "):\n\nA partir dele o sistema volta a estimar o rendimento.", fmtR(pvSaldoHoje(a)).replace(/[^\d,.]/g, ""));
+  if (v == null) return; var n = pfNum(v); if (!(n > 0)) return;
+  a.saldoInf = { valor: n, data: pvHoje() }; pvGravar(a);
+}
+function pvResgatar(id) {
+  var a = pvAchar(id); if (!a) return;
+  var d = prompt("Data do resgate (dd/mm/aaaa) — o saldo sai do total a partir dela:", exDataBr(pvHoje()));
+  if (!d) return; var m = String(d).match(/(\d{2})\/(\d{2})\/(\d{4})/); if (!m) { alert("Data inválida."); return; }
+  a.resgate = m[3] + "-" + m[2] + "-" + m[1]; pvGravar(a);
+}
+function pvReativar(id) { var a = pvAchar(id); if (!a) return; a.resgate = null; pvGravar(a); }
+function pvApagarReg(id) {
+  var x = pvAchar(id); if (!x) return;
+  if (!confirm("Apagar " + (x.reg === "aplicacao" ? "a aplicação " + x.banco + " " + x.produto : "o empréstimo de " + x.pessoa) + "?\n\nSome do histórico. Se só terminou, use \"resgatar\" / \"quitar\".")) return;
+  x.apagado = true; pvGravar(x);
+}
+function pvSalvarCdi() {
+  var c = Object.assign({}, pvCfg()), n = pfNum(pvG("pv-cdi"));
+  if (!(n > 0 && n < 100)) { __pf.msg = "CDI inválido."; render(); return; }
+  c.cdi = n; c.cdiData = pvHoje(); pvGravar(c);
+}
+function pvAplicacoesHTML() {
+  var L = pvReg("aplicacao"), hoje = pvHoje(), mes = state.mesAtivo, cfg = pvCfg();
+  var ativas = L.filter(function (a) { return pvAtiva(a, hoje); });
+  var saldo = 0, rendM = 0, rendMesAtivo = 0, aplicado = 0;
+  ativas.forEach(function (a) { saldo += pvSaldoHoje(a); rendM += pvRendMensalAtual(a).liquido; aplicado += a.valor; });
+  L.forEach(function (a) { rendMesAtivo += pvRendMes(a, mes).liquido; });
+  var kpis = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:10px;margin-bottom:14px;">'
+    + dbKpi("Saldo estimado hoje", fmtR(saldo), "", GOLD, ativas.length + " aplicação(ões) · aplicado " + fmtR(aplicado))
+    + dbKpi("Rende por mês (líquido)", fmtR(rendM), "", "#2E7D32", "já descontado o IR estimado")
+    + dbKpi("Rendeu em " + mesLabel(mes), fmtR(rendMesAtivo), "", "#2E7D32", "líquido estimado no mês")
+    + '</div>';
+  var cdiBox = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:#bbb;margin-bottom:12px;">CDI usado no cálculo:'
+    + '<input id="pv-cdi" inputmode="decimal" value="' + String(cfg.cdi).replace(".", ",") + '" style="width:80px;"> % ao ano'
+    + '<button class="btn-outline-gray" style="font-size:11px;padding:3px 9px;" onclick="pvSalvarCdi()">atualizar</button>'
+    + '<span style="color:#777;font-size:11.5px;">' + (cfg.cdiData ? "atualizado em " + exDataBr(cfg.cdiData) : "padrão set/2026 (Selic 13,75%) — confira e ajuste quando o Copom mudar") + '</span></div>';
+  var ed = state._pvEdApl ? pvAchar(state._pvEdApl) : null, abre = state._pvFormApl || ed;
+  var mod = ed ? ed.modalidade : "cdi";
+  var form = !abre ? '<button class="btn-outline" style="margin-bottom:14px;" onclick="state._pvFormApl=true;render()">+ Nova aplicação</button>'
+    : '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:16px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:10px;">' + (ed ? "EDITAR APLICAÇÃO" : "NOVA APLICAÇÃO") + '</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));gap:8px;align-items:end;">'
+    + '<label style="font-size:11px;color:#999;">Banco<input id="pv-a-banco" value="' + esc(ed ? ed.banco : "") + '" placeholder="ex.: Nubank, Inter, BB" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Produto<select id="pv-a-prod" style="width:100%;" onchange="var i=document.getElementById(\'pv-a-isento\');if(i)i.checked=' + JSON.stringify(PV_ISENTOS).replace(/"/g, "&quot;") + '.indexOf(this.value)>=0">' + PV_PRODUTOS.map(function (p) { return '<option' + (ed && ed.produto === p ? " selected" : "") + '>' + esc(p) + '</option>'; }).join("") + '</select></label>'
+    + '<label style="font-size:11px;color:#999;">Valor aplicado (R$)<input id="pv-a-valor" inputmode="decimal" value="' + (ed ? String(ed.valor).replace(".", ",") : "") + '" placeholder="0,00" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Data da aplicação<input id="pv-a-ini" type="date" value="' + esc(ed ? ed.inicio : pvHoje()) + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Como rende<select id="pv-a-mod" style="width:100%;"><option value="cdi"' + (mod === "cdi" ? " selected" : "") + '>% do CDI</option><option value="am"' + (mod === "am" ? " selected" : "") + '>Taxa fixa ao mês</option><option value="aa"' + (mod === "aa" ? " selected" : "") + '>Taxa fixa ao ano</option></select></label>'
+    + '<label style="font-size:11px;color:#999;">Taxa (%)<input id="pv-a-taxa" inputmode="decimal" value="' + (ed ? String(ed.taxa).replace(".", ",") : "") + '" placeholder="ex.: 110 (CDI) ou 1,2" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Vencimento (opcional)<input id="pv-a-venc" type="date" value="' + esc(ed ? ed.vencimento || "" : "") + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Observação<input id="pv-a-obs" value="' + esc(ed ? ed.obs || "" : "") + '" style="width:100%;"></label>'
+    + '</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">'
+    + '<label style="font-size:12.5px;color:#ddd;display:inline-flex;align-items:center;gap:6px;"><input id="pv-a-isento" type="checkbox"' + (ed && ed.isento ? " checked" : "") + '> Isento de IR (LCI, LCA, poupança)</label>'
+    + '<button class="btn-outline" style="margin-left:auto;" onclick="pvSalvarApl()">' + (ed ? "Salvar alteração" : "+ Salvar aplicação") + '</button>'
+    + '<button class="btn-outline-gray" onclick="state._pvEdApl=null;state._pvFormApl=false;render()">cancelar</button></div></div>';
+  var ord = L.slice().sort(function (a, b) { return (pvAtiva(b, hoje) - pvAtiva(a, hoje)) || pvSaldoHoje(b) - pvSaldoHoje(a); });
+  var tabela = !L.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhuma aplicação lançada. Cadastre cada valor que você tem em banco, com a taxa de cada um.</div>'
+    : '<div style="overflow-x:auto;"><table style="width:100%;min-width:720px;"><thead><tr><th>Banco / produto</th><th>Taxa</th><th style="text-align:right;">Aplicado</th><th style="text-align:right;">Saldo est. hoje</th><th style="text-align:right;">Rende/mês (líq.)</th><th></th></tr></thead><tbody>'
+    + ord.map(function (a) {
+      var at = pvAtiva(a, hoje), r = pvRendMensalAtual(a), vencendo = a.vencimento && at && pvDias(hoje, a.vencimento) <= 30;
+      return '<tr style="' + (at ? "" : "opacity:.5;") + '"><td><b>' + esc(a.banco) + '</b> · ' + esc(a.produto || "") + '<div style="font-size:11px;color:#888;">desde ' + exDataBr(a.inicio)
+        + (a.vencimento ? ' · vence ' + exDataBr(a.vencimento) : "") + (a.isento ? " · isento IR" : "") + (a.saldoInf ? ' · saldo real ' + fmtR(a.saldoInf.valor) + ' em ' + exDataBr(a.saldoInf.data) : "")
+        + (a.resgate ? ' · <b style="color:#E57373;">resgatada ' + exDataBr(a.resgate) + '</b>' : "") + (vencendo ? ' · <b style="color:' + GOLD + ';">⚠ vence em ' + pvDias(hoje, a.vencimento) + ' dia(s)</b>' : "") + (a.obs ? '<br>' + esc(a.obs) : "") + '</div></td>'
+        + '<td style="white-space:nowrap;">' + pvTaxaTxt(a) + '<div style="font-size:11px;color:#888;">≈ ' + (pvTaxaMes(a) * 100).toFixed(2).replace(".", ",") + '% a.m.</div></td>'
+        + '<td style="text-align:right;white-space:nowrap;">' + fmtR(a.valor) + '</td>'
+        + '<td style="text-align:right;white-space:nowrap;font-weight:800;">' + (at ? fmtR(pvSaldoHoje(a)) : "—") + '</td>'
+        + '<td style="text-align:right;white-space:nowrap;font-weight:800;color:#81C784;">' + (at ? fmtR(r.liquido) : "—") + '</td>'
+        + '<td style="white-space:nowrap;text-align:right;">'
+        + (at ? '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvSaldoReal(\'' + a.id + '\')" title="Informar o saldo que aparece no app do banco">saldo real</button> <button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvResgatar(\'' + a.id + '\')">resgatar</button> '
+          : '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="pvReativar(\'' + a.id + '\')">reativar</button> ')
+        + '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 7px;" onclick="state._pvEdApl=\'' + a.id + '\';render()">editar</button> <button class="btn-del" onclick="pvApagarReg(\'' + a.id + '\')">✕</button></td></tr>';
+    }).join("") + '</tbody></table></div>';
+  var porBanco = {}; ativas.forEach(function (a) { porBanco[a.banco] = (porBanco[a.banco] || 0) + pvSaldoHoje(a); });
+  var bancos = Object.keys(porBanco).map(function (k) { return { rot: k, v: porBanco[k] }; }).sort(function (a, b) { return b.v - a.v; });
+  return kpis + cdiBox + form + dbCaixa("Suas aplicações", tabela)
+    + (bancos.length > 1 ? '<div style="margin-top:16px;">' + dbCaixa("Onde está o dinheiro", dbBarrasH(bancos, function () { return GOLD; }, function (x) { return fmtR(x.v); })) + '</div>' : "")
+    + '<div style="font-size:11.5px;color:#777;margin-top:10px;">Saldo e rendimento são <b>estimativas</b> (juros compostos pela taxa cadastrada; IR pela tabela regressiva conforme o tempo aplicado). Para ficar exato, use "saldo real" de vez em quando com o valor do app do banco.</div>';
+}
+
+/* ---------- EMPRÉSTIMOS ---------- */
+function pvPrincipalAberto(e, antesDe) {
+  var p = Number(e.valor) || 0;
+  (e.recebimentos || []).forEach(function (r) { if (r.tipo === "principal" && (!antesDe || r.data < antesDe)) p -= r.valor; });
+  return Math.max(0, p);
+}
+function pvParcela(e) { var n = e.nParcelas || 1; return e.parcelaValor || (e.valor / n + e.valor * e.taxa / 100); }
+function pvVencFinal(e) { return e.vencFinal || pvAddMes(e.inicio, 12, e.diaVenc); }
+function pvTotalFinal(e) { return e.valor * (1 + e.taxa / 100 * Math.max(0, Math.round(pvMesesEntre(e.inicio, pvVencFinal(e)) * 10) / 10)); }
+function pvAgenda(e) {   // o que a pessoa deveria pagar, com data
+  var hoje = pvHoje(), L = [], dia = e.diaVenc || +String(e.inicio).slice(8, 10);
+  if (e.modalidade === "parcelas") {
+    for (var i = 1; i <= (e.nParcelas || 1); i++) L.push({ data: pvAddMes(e.inicio, i, dia), valor: pvParcela(e), tipo: "parcela", rot: "parcela " + i + "/" + (e.nParcelas || 1) });
+  } else if (e.modalidade === "final") {
+    L.push({ data: pvVencFinal(e), valor: pvTotalFinal(e), tipo: "final", rot: "pagamento total" });
+  } else {
+    for (var j = 1; j < 600; j++) {
+      var d = pvAddMes(e.inicio, j, dia), p = pvPrincipalAberto(e, d);
+      if (p <= 0.009 || (e.quitado && d > e.quitado)) break;
+      L.push({ data: d, valor: p * e.taxa / 100, tipo: "juros", rot: "juros " + mesLabel(d.slice(0, 7)) });
+      if (d > hoje) break;
+    }
+  }
+  return L;
+}
+function pvSituacao(e) {
+  var hoje = pvHoje(), ag = pvAgenda(e);
+  var conta = e.modalidade === "juros" ? ["juros"] : e.modalidade === "parcelas" ? ["parcela", "juros"] : ["final", "juros", "parcela", "principal"];
+  var rec = (e.recebimentos || []), pago = 0, total = 0;
+  rec.forEach(function (r) { total += r.valor; if (conta.indexOf(r.tipo) >= 0) pago += r.valor; });
+  var atraso = 0, maisAntigo = null, proximo = null;
+  ag.forEach(function (it) {
+    var c = Math.min(pago, it.valor); it.pago = c; pago -= c;
+    var falta = it.valor - c;
+    if (falta <= 0.01) it.st = "pago";
+    else if (it.data < hoje) { it.st = "atrasado"; atraso += falta; if (!maisAntigo) maisAntigo = it; }
+    else { it.st = it.data === hoje ? "hoje" : "futuro"; if (!proximo) proximo = it; }
+  });
+  var aReceber = Math.max(0, ag.reduce(function (s, it) { return s + it.valor - it.pago; }, 0)), totAg = ag.reduce(function (s, it) { return s + it.valor; }, 0);
+  var aberto = e.modalidade === "juros" ? pvPrincipalAberto(e) : (totAg > 0 ? e.valor * aReceber / totAg : 0);   // capital ainda na rua
+  var quitado = !!e.quitado || (e.modalidade === "juros" ? pvPrincipalAberto(e) <= 0.009 : ag.every(function (it) { return it.st === "pago"; }));
+  var jurosMes = quitado ? 0 : e.modalidade === "juros" ? pvPrincipalAberto(e) * e.taxa / 100 : e.valor * e.taxa / 100;
+  return { ag: ag, atraso: atraso, diasAtraso: maisAntigo ? pvDias(maisAntigo.data, hoje) : 0, maisAntigo: maisAntigo, proximo: proximo, quitado: quitado, aberto: quitado ? 0 : aberto, aReceber: quitado ? 0 : (e.modalidade === "juros" ? aberto : aReceber), jurosMes: jurosMes, recebidoTotal: total, sobra: Math.max(0, pago) };
+}
+function pvJurosDoRecebimento(e, r) {   // quanto de um recebimento é ganho (juros), não devolução do capital
+  if (r.tipo === "juros") return r.valor;
+  if (r.tipo === "principal") return 0;
+  if (r.tipo === "parcela") { var p = pvParcela(e); return p > 0 ? r.valor * Math.max(0, p - e.valor / (e.nParcelas || 1)) / p : 0; }
+  var t = pvTotalFinal(e); return t > 0 ? r.valor * Math.max(0, t - e.valor) / t : 0;
+}
+function pvRecebidoMes(mes) {
+  var tot = 0, juros = 0, lista = [];
+  pvReg("emprestimo").forEach(function (e) {
+    (e.recebimentos || []).forEach(function (r) {
+      if (String(r.data).slice(0, 7) !== mes) return;
+      tot += r.valor; var j = pvJurosDoRecebimento(e, r); juros += j; lista.push({ e: e, r: r, juros: j });
+    });
+  });
+  return { total: tot, juros: juros, lista: lista };
+}
+function pvSalvarEmp() {
+  var id = state._pvEdEmp || pvId(), base = pvAchar(id) || {};
+  var e = Object.assign({}, base, {
+    id: id, reg: "emprestimo", pessoa: String(pvG("pv-e-pessoa")).trim(), telefone: pvG("pv-e-tel"), valor: pfNum(pvG("pv-e-valor")),
+    inicio: pvG("pv-e-ini"), taxa: pfNum(pvG("pv-e-taxa")), modalidade: pvG("pv-e-mod"), diaVenc: parseInt(pvG("pv-e-dia"), 10) || 0,
+    nParcelas: parseInt(pvG("pv-e-n"), 10) || 0, parcelaValor: pfNum(pvG("pv-e-parc")) || 0, vencFinal: pvG("pv-e-final"), obs: pvG("pv-e-obs"),
+    recebimentos: base.recebimentos || [], apagado: false
+  });
+  if (!e.pessoa || !(e.valor > 0) || !e.inicio) { __pf.msg = "Preencha pessoa, valor e data do empréstimo."; render(); return; }
+  if (!(e.taxa >= 0)) e.taxa = 0;
+  if (!e.diaVenc) e.diaVenc = +e.inicio.slice(8, 10);
+  if (e.modalidade === "parcelas" && !(e.nParcelas > 0)) { __pf.msg = "Informe em quantas parcelas."; render(); return; }
+  if (e.modalidade === "final" && !e.vencFinal) { __pf.msg = "Informe a data em que ele paga tudo."; render(); return; }
+  state._pvEdEmp = null; state._pvFormEmp = false;
+  pvGravar(e);
+}
+function pvTipoPadrao(e) { return e.modalidade === "parcelas" ? "parcela" : e.modalidade === "final" ? "final" : "juros"; }
+function pvRecebiRapido(id) {   // registra hoje o que está mais atrasado / o próximo
+  var e = pvAchar(id); if (!e) return;
+  var s = pvSituacao(e), it = s.maisAntigo || s.proximo; if (!it) return;
+  var v = it.valor - (it.pago || 0);
+  if (!confirm("Registrar recebimento de " + fmtR(v) + " de " + e.pessoa + " hoje?\n(" + it.rot + ", venc. " + exDataBr(it.data) + ")")) return;
+  e.recebimentos = (e.recebimentos || []).concat([{ id: pvId(), data: pvHoje(), valor: Math.round(v * 100) / 100, tipo: it.tipo }]);
+  pvGravar(e);
+}
+function pvSalvarRecebimento(id) {
+  var e = pvAchar(id); if (!e) return;
+  var v = pfNum(pvG("pv-r-valor")), d = pvG("pv-r-data"), t = pvG("pv-r-tipo");
+  if (!(v > 0) || !d) { __pf.msg = "Informe data e valor recebido."; render(); return; }
+  e.recebimentos = (e.recebimentos || []).concat([{ id: pvId(), data: d, valor: v, tipo: t, obs: pvG("pv-r-obs") }]);
+  state._pvReceber = null; pvGravar(e);
+}
+function pvApagarRecebimento(id, rid) {
+  var e = pvAchar(id); if (!e) return;
+  if (!confirm("Apagar este recebimento?")) return;
+  e.recebimentos = (e.recebimentos || []).filter(function (r) { return r.id !== rid; }); pvGravar(e);
+}
+function pvQuitar(id) {
+  var e = pvAchar(id); if (!e) return;
+  if (e.quitado) { e.quitado = null; pvGravar(e); return; }
+  var s = pvSituacao(e);
+  if (!confirm("Marcar o empréstimo de " + e.pessoa + " como QUITADO?" + (s.aberto > 0.01 ? "\n\nAinda consta " + fmtR(s.aberto) + " em aberto. Se ele devolveu o capital, lance o recebimento como \"devolução do capital\" antes." : ""))) return;
+  e.quitado = pvHoje(); pvGravar(e);
+}
+function pvWhats(e, s) {
+  var tel = String(e.telefone || "").replace(/\D/g, ""); if (!tel) return "";
+  if (tel.length <= 11) tel = "55" + tel;
+  var txt = "Olá " + e.pessoa.split(" ")[0] + ", tudo bem? Passando para lembrar do pagamento de " + fmtR(s.atraso) + " (" + s.maisAntigo.rot + ", vencido em " + exDataBr(s.maisAntigo.data) + "). Obrigado!";
+  return '<a class="btn-outline-gray" style="font-size:10.5px;padding:2px 8px;text-decoration:none;" target="_blank" rel="noopener" href="https://wa.me/' + tel + '?text=' + encodeURIComponent(txt) + '">💬 cobrar no WhatsApp</a>';
+}
+function pvModTxt(e) { return e.modalidade === "parcelas" ? (e.nParcelas || 1) + "x de " + fmtR(pvParcela(e)) : e.modalidade === "final" ? "tudo no final (" + exDataBr(pvVencFinal(e)) + ": " + fmtR(pvTotalFinal(e)) + ")" : "só juros todo dia " + e.diaVenc; }
+function pvCartaoEmp(e) {
+  var s = pvSituacao(e), hoje = pvHoje();
+  var cor = s.quitado ? "#555" : s.atraso > 0.01 ? "#C0392B" : "#2E7D32";
+  var stTxt = s.quitado ? "✓ quitado" : s.atraso > 0.01 ? "⚠ " + fmtR(s.atraso) + " em atraso há " + s.diasAtraso + " dia(s)" : s.proximo ? "em dia · próximo " + fmtR(s.proximo.valor - (s.proximo.pago || 0)) + " em " + exDataBr(s.proximo.data) : "em dia";
+  var h = '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-left:4px solid ' + cor + ';border-radius:10px;padding:12px 14px;margin-bottom:10px;' + (s.quitado ? "opacity:.6;" : "") + '">'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;"><b style="font-size:15px;color:#fff;">' + esc(e.pessoa) + '</b>'
+    + '<span style="font-size:12px;color:#999;">' + fmtR(e.valor) + ' em ' + exDataBr(e.inicio) + ' · ' + String(e.taxa).replace(".", ",") + '% a.m. · ' + pvModTxt(e) + '</span>'
+    + '<span style="margin-left:auto;font-size:12.5px;font-weight:800;color:' + (s.atraso > 0.01 && !s.quitado ? "#E57373" : s.quitado ? "#999" : "#81C784") + ';">' + stTxt + '</span></div>'
+    + '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#bbb;margin:6px 0;">'
+    + '<span>Rende: <b style="color:#81C784;">' + fmtR(s.jurosMes) + '/mês</b></span>'
+    + '<span>Capital na rua: <b>' + fmtR(s.aberto) + '</b></span>'
+    + (e.modalidade !== "juros" && !s.quitado ? '<span>Falta receber (com juros): <b>' + fmtR(s.aReceber) + '</b></span>' : "")
+    + '<span>Já recebeu: <b>' + fmtR(s.recebidoTotal) + '</b></span>'
+    + (e.obs ? '<span style="color:#888;">' + esc(e.obs) + '</span>' : "") + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+    + (!s.quitado && (s.maisAntigo || s.proximo) ? '<button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="pvRecebiRapido(\'' + e.id + '\')">✓ recebi ' + fmtR((s.maisAntigo || s.proximo).valor - ((s.maisAntigo || s.proximo).pago || 0)) + '</button>' : "")
+    + '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 8px;" onclick="state._pvReceber=\'' + e.id + '\';render()">outro valor</button>'
+    + (s.atraso > 0.01 && !s.quitado ? pvWhats(e, s) : "")
+    + '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 8px;" onclick="pvQuitar(\'' + e.id + '\')">' + (e.quitado ? "reabrir" : "quitar") + '</button>'
+    + '<button class="btn-outline-gray" style="font-size:10.5px;padding:2px 8px;" onclick="state._pvEdEmp=\'' + e.id + '\';render()">editar</button>'
+    + '<button class="btn-del" onclick="pvApagarReg(\'' + e.id + '\')">✕</button></div>';
+  if (state._pvReceber === e.id) {
+    var it = s.maisAntigo || s.proximo, tp = pvTipoPadrao(e);
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr));gap:8px;align-items:end;margin-top:10px;padding-top:10px;border-top:1px solid #222;">'
+      + '<label style="font-size:11px;color:#999;">Data<input id="pv-r-data" type="date" value="' + hoje + '" style="width:100%;"></label>'
+      + '<label style="font-size:11px;color:#999;">Valor (R$)<input id="pv-r-valor" inputmode="decimal" value="' + (it ? String(Math.round((it.valor - (it.pago || 0)) * 100) / 100).replace(".", ",") : "") + '" style="width:100%;"></label>'
+      + '<label style="font-size:11px;color:#999;">O que é<select id="pv-r-tipo" style="width:100%;">'
+      + [[tp, tp === "juros" ? "Juros" : tp === "parcela" ? "Parcela" : "Pagamento final"], ["principal", "Devolução do capital"]].concat(tp !== "juros" ? [["juros", "Só juros"]] : []).map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join("") + '</select></label>'
+      + '<label style="font-size:11px;color:#999;">Obs.<input id="pv-r-obs" style="width:100%;"></label>'
+      + '<div style="display:flex;gap:6px;"><button class="btn-outline" onclick="pvSalvarRecebimento(\'' + e.id + '\')">Salvar</button><button class="btn-outline-gray" onclick="state._pvReceber=null;render()">✕</button></div></div>';
+  }
+  var rec = (e.recebimentos || []).slice().sort(function (a, b) { return String(b.data).localeCompare(String(a.data)); });
+  var pend = s.ag.filter(function (it) { return it.st !== "pago"; });
+  if (rec.length || pend.length) {
+    h += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:11.5px;color:#999;">histórico (' + rec.length + ' recebimento(s)' + (pend.length ? ' · ' + pend.length + ' pendente(s)' : "") + ')</summary><div style="font-size:12px;color:#ccc;margin-top:6px;">'
+      + pend.slice(0, 6).map(function (it) { return '<div style="padding:2px 0;color:' + (it.st === "atrasado" ? "#E57373" : "#999") + ';">' + exDataBr(it.data) + ' · ' + esc(it.rot) + ' · ' + fmtR(it.valor - (it.pago || 0)) + (it.st === "atrasado" ? " · ATRASADO" : " · a vencer") + '</div>'; }).join("")
+      + rec.map(function (r) { return '<div style="padding:2px 0;">✓ ' + exDataBr(r.data) + ' · ' + (r.tipo === "principal" ? "devolução do capital" : r.tipo) + ' · <b>' + fmtR(r.valor) + '</b>' + (r.obs ? ' · ' + esc(r.obs) : "") + ' <button class="btn-del" style="font-size:10px;" onclick="pvApagarRecebimento(\'' + e.id + '\',\'' + r.id + '\')">✕</button></div>'; }).join("")
+      + '</div></details>';
+  }
+  return h + '</div>';
+}
+function pvEmprestimosHTML() {
+  var L = pvReg("emprestimo"), mes = state.mesAtivo;
+  var sits = L.map(function (e) { return { e: e, s: pvSituacao(e) }; });
+  var ativos = sits.filter(function (x) { return !x.s.quitado; });
+  var aberto = 0, jurosMes = 0, atraso = 0, nAtraso = 0;
+  ativos.forEach(function (x) { aberto += x.s.aberto; jurosMes += x.s.jurosMes; if (x.s.atraso > 0.01) { atraso += x.s.atraso; nAtraso++; } });
+  var rm = pvRecebidoMes(mes);
+  var kpis = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:10px;margin-bottom:14px;">'
+    + dbKpi("Capital emprestado na rua", fmtR(aberto), "", GOLD, ativos.length + " empréstimo(s) ativo(s)")
+    + dbKpi("Juros por mês", fmtR(jurosMes), "", "#2E7D32", "o que os empréstimos rendem")
+    + dbKpi("Recebido em " + mesLabel(mes), fmtR(rm.total), "", "#2E7D32", "juros " + fmtR(rm.juros) + (rm.total - rm.juros > 0.01 ? " · capital devolvido " + fmtR(rm.total - rm.juros) : ""))
+    + dbKpi("Em atraso", fmtR(atraso), "", atraso > 0.01 ? "#C0392B" : "#2E7D32", nAtraso ? nAtraso + " pessoa(s) atrasada(s)" : "ninguém atrasado")
+    + '</div>';
+  var ed = state._pvEdEmp ? pvAchar(state._pvEdEmp) : null, abre = state._pvFormEmp || ed, mod = ed ? ed.modalidade : "juros";
+  var vis = function (m) { return mod === m ? "" : "display:none;"; };
+  var tog = "var m=this.value;document.querySelectorAll('.pv-so').forEach(function(x){x.style.display=x.getAttribute('data-m')===m?'':'none'})";
+  var form = !abre ? '<button class="btn-outline" style="margin-bottom:14px;" onclick="state._pvFormEmp=true;render()">+ Novo empréstimo</button>'
+    : '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:16px;">'
+    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:10px;">' + (ed ? "EDITAR EMPRÉSTIMO" : "NOVO EMPRÉSTIMO") + '</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));gap:8px;align-items:end;">'
+    + '<label style="font-size:11px;color:#999;">Pessoa<input id="pv-e-pessoa" value="' + esc(ed ? ed.pessoa : "") + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">WhatsApp (opcional)<input id="pv-e-tel" inputmode="tel" value="' + esc(ed ? ed.telefone || "" : "") + '" placeholder="(99) 99999-9999" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Valor emprestado (R$)<input id="pv-e-valor" inputmode="decimal" value="' + (ed ? String(ed.valor).replace(".", ",") : "") + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Data do empréstimo<input id="pv-e-ini" type="date" value="' + esc(ed ? ed.inicio : pvHoje()) + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Juros (% ao mês)<input id="pv-e-taxa" inputmode="decimal" value="' + (ed ? String(ed.taxa).replace(".", ",") : "") + '" placeholder="ex.: 3" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Como paga<select id="pv-e-mod" style="width:100%;" onchange="' + tog + '"><option value="juros"' + (mod === "juros" ? " selected" : "") + '>Só os juros todo mês</option><option value="parcelas"' + (mod === "parcelas" ? " selected" : "") + '>Parcelas (capital + juros)</option><option value="final"' + (mod === "final" ? " selected" : "") + '>Tudo no final</option></select></label>'
+    + '<label style="font-size:11px;color:#999;">Dia do pagamento<input id="pv-e-dia" type="number" min="1" max="31" value="' + (ed ? ed.diaVenc || "" : "") + '" placeholder="mesmo dia do empréstimo" style="width:100%;"></label>'
+    + '<label class="pv-so" data-m="parcelas" style="font-size:11px;color:#999;' + vis("parcelas") + '">Nº de parcelas<input id="pv-e-n" type="number" min="1" value="' + (ed ? ed.nParcelas || "" : "") + '" style="width:100%;"></label>'
+    + '<label class="pv-so" data-m="parcelas" style="font-size:11px;color:#999;' + vis("parcelas") + '">Valor da parcela (se combinou outro)<input id="pv-e-parc" inputmode="decimal" value="' + (ed && ed.parcelaValor ? String(ed.parcelaValor).replace(".", ",") : "") + '" placeholder="automático" style="width:100%;"></label>'
+    + '<label class="pv-so" data-m="final" style="font-size:11px;color:#999;' + vis("final") + '">Paga tudo em<input id="pv-e-final" type="date" value="' + esc(ed ? ed.vencFinal || "" : "") + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Observação<input id="pv-e-obs" value="' + esc(ed ? ed.obs || "" : "") + '" style="width:100%;"></label>'
+    + '</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">'
+    + '<span style="font-size:11.5px;color:#777;">Juros simples: % ao mês sobre o valor emprestado. Recebimentos antigos você lança depois em "outro valor".</span>'
+    + '<button class="btn-outline" style="margin-left:auto;" onclick="pvSalvarEmp()">' + (ed ? "Salvar alteração" : "+ Salvar empréstimo") + '</button>'
+    + '<button class="btn-outline-gray" onclick="state._pvEdEmp=null;state._pvFormEmp=false;render()">cancelar</button></div></div>';
+  var ord = sits.slice().sort(function (a, b) { return (a.s.quitado - b.s.quitado) || (b.s.atraso - a.s.atraso) || String((a.s.proximo || {}).data || "9").localeCompare(String((b.s.proximo || {}).data || "9")); });
+  var cartoes = !L.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhum empréstimo lançado. Cadastre cada pessoa com o valor, os juros e como ela paga.</div>' : ord.map(function (x) { return pvCartaoEmp(x.e); }).join("");
+  return kpis + form + cartoes;
+}
+
+/* ---------- AVISOS E RESUMO ---------- */
+function pvAvisos() {
+  var hoje = pvHoje(), atr = [], prox = [];
+  pvReg("emprestimo").forEach(function (e) {
+    var s = pvSituacao(e); if (s.quitado) return;
+    if (s.atraso > 0.01) atr.push({ e: e, s: s });
+    else if (s.proximo && pvDias(hoje, s.proximo.data) <= 7) prox.push({ e: e, s: s });
+  });
+  pvReg("aplicacao").forEach(function (a) { if (pvAtiva(a, hoje) && a.vencimento && pvDias(hoje, a.vencimento) <= 30) prox.push({ a: a }); });
+  atr.sort(function (a, b) { return b.s.diasAtraso - a.s.diasAtraso; });
+  return { atrasados: atr, proximos: prox };
+}
+function pvResumoHTML() {
+  var mes = state.mesAtivo, hoje = pvHoje();
+  var apl = pvReg("aplicacao").filter(function (a) { return pvAtiva(a, hoje); });
+  var emp = pvReg("emprestimo").map(function (e) { return { e: e, s: pvSituacao(e) }; }).filter(function (x) { return !x.s.quitado; });
+  var fixos = pfDoMes(mes).filter(function (x) { return x.tipo === "ganho" && x.recorrente; });
+  var fontes = [];
+  apl.forEach(function (a) { fontes.push({ rot: "🏦 " + a.banco + " " + (a.produto || ""), v: pvRendMensalAtual(a).liquido, tipo: "apl" }); });
+  emp.forEach(function (x) { fontes.push({ rot: "🤝 " + x.e.pessoa, v: x.s.jurosMes, tipo: "emp" }); });
+  fixos.forEach(function (x) { fontes.push({ rot: "💰 " + x.descricao, v: x.valor, tipo: "fixo" }); });
+  fontes = fontes.filter(function (f) { return f.v > 0.004; }).sort(function (a, b) { return b.v - a.v; });
+  var soma = function (t) { return fontes.filter(function (f) { return !t || f.tipo === t; }).reduce(function (s, f) { return s + f.v; }, 0); };
+  var porMes = soma(), sApl = soma("apl"), sEmp = soma("emp"), sFix = soma("fixo");
+  var T = pfTotais(mes), rm = pvRecebidoMes(mes), rendM = 0;
+  pvReg("aplicacao").forEach(function (a) { rendM += pvRendMes(a, mes).liquido; });
+  var entrou = T.ganhos + rm.juros, capVolta = rm.total - rm.juros;   // capital devolvido não é ganho
+  var patr = apl.reduce(function (s, a) { return s + pvSaldoHoje(a); }, 0) + emp.reduce(function (s, x) { return s + x.s.aberto; }, 0);
+  var av = pvAvisos(), atrasoTot = av.atrasados.reduce(function (s, x) { return s + x.s.atraso; }, 0);
+  var kpis = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:10px;margin-bottom:16px;">'
+    + dbKpi("Você ganha por mês", fmtR(porMes), "", GOLD, "aplicações " + fmtR(sApl) + " · empréstimos " + fmtR(sEmp) + " · fixos " + fmtR(sFix))
+    + dbKpi("Entrou em " + mesLabel(mes), fmtR(entrou), "", "#2E7D32", "lançamentos " + fmtR(T.ganhos) + " · juros recebidos " + fmtR(rm.juros) + (capVolta > 0.01 ? " · + " + fmtR(capVolta) + " de capital devolvido (não é ganho)" : ""))
+    + dbKpi("Aplicações renderam em " + mesLabel(mes), fmtR(rendM), "", "#2E7D32", "líquido estimado (fica no banco)")
+    + dbKpi("Despesas em " + mesLabel(mes), fmtR(T.despesas), "", "#C0392B", "sobra " + fmtR(entrou + rendM - T.despesas) + " contando o rendimento")
+    + dbKpi("Patrimônio rendendo", fmtR(patr), "", GOLD, "bancos + emprestado em aberto")
+    + dbKpi("Em atraso", fmtR(atrasoTot), "", atrasoTot > 0.01 ? "#C0392B" : "#2E7D32", av.atrasados.length ? av.atrasados.length + " pessoa(s)" : "ninguém atrasado")
+    + '</div>';
+  var avHTML = "";
+  if (av.atrasados.length || av.proximos.length) {
+    avHTML = '<div style="background:' + (av.atrasados.length ? "#1a0d0d" : "#1a1408") + ';border:1px solid ' + (av.atrasados.length ? "#C0392B" : GOLD) + ';border-radius:10px;padding:12px 14px;margin-bottom:16px;">'
+      + (av.atrasados.length ? '<div style="font-size:12px;font-weight:800;color:#E57373;margin-bottom:6px;">⚠ ATRASADOS (' + av.atrasados.length + ')</div>'
+        + av.atrasados.map(function (x) { return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:4px 0;font-size:12.5px;color:#ddd;"><b>' + esc(x.e.pessoa) + '</b><span>' + esc(x.s.maisAntigo.rot) + ' · venceu ' + exDataBr(x.s.maisAntigo.data) + ' · <b style="color:#E57373;">' + x.s.diasAtraso + ' dia(s)</b></span><b style="margin-left:auto;color:#E57373;">' + fmtR(x.s.atraso) + '</b>' + pvWhats(x.e, x.s) + '<button class="btn-outline" style="font-size:11px;padding:2px 9px;" onclick="pvRecebiRapido(\'' + x.e.id + '\')">✓ recebi</button></div>'; }).join("") : "")
+      + (av.proximos.length ? '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin:' + (av.atrasados.length ? "10px" : "0") + ' 0 6px;">PRÓXIMOS DIAS</div>'
+        + av.proximos.map(function (x) {
+          if (x.a) return '<div style="font-size:12.5px;color:#ddd;padding:3px 0;">🏦 ' + esc(x.a.banco) + ' · ' + esc(x.a.produto || "") + ' vence em ' + exDataBr(x.a.vencimento) + ' — decidir se renova</div>';
+          return '<div style="font-size:12.5px;color:#ddd;padding:3px 0;">🤝 ' + esc(x.e.pessoa) + ' · ' + esc(x.s.proximo.rot) + ' · ' + fmtR(x.s.proximo.valor - (x.s.proximo.pago || 0)) + ' em ' + exDataBr(x.s.proximo.data) + '</div>';
+        }).join("") : "") + '</div>';
+  }
+  var fontesHTML = fontes.length ? dbBarrasH(fontes.slice(0, 15), function (f) { return f.tipo === "apl" ? GOLD : f.tipo === "emp" ? "#2E7D32" : "#5C8DD6"; }, function (f) { return fmtR(f.v); })
+    + (fontes.length > 15 ? '<div style="font-size:11px;color:#777;">+ ' + (fontes.length - 15) + ' fonte(s) menores</div>' : "")
+    : '<div style="color:#777;padding:20px;text-align:center;">Cadastre suas aplicações e empréstimos nas abas acima para ver quanto você ganha.</div>';
+  var recHTML = !rm.lista.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhum recebimento de empréstimo em ' + mesLabel(mes) + '.</div>'
+    : rm.lista.sort(function (a, b) { return String(a.r.data).localeCompare(String(b.r.data)); }).map(function (x) { return '<div style="display:flex;gap:10px;font-size:12.5px;color:#ddd;padding:3px 0;"><span>' + exDataBr(x.r.data) + ' · ' + esc(x.e.pessoa) + ' · ' + (x.r.tipo === "principal" ? "capital" : x.r.tipo) + '</span><b style="margin-left:auto;">' + fmtR(x.r.valor) + '</b></div>'; }).join("");
+  return kpis + avHTML
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:start;">'
+    + dbCaixa("De onde vem o seu ganho mensal", fontesHTML)
+    + dbCaixa("Recebido de empréstimos em " + mesLabel(mes), recHTML) + '</div>'
+    + '<div style="font-size:11.5px;color:#777;margin-top:10px;">"Você ganha por mês" = rendimento líquido das aplicações (estimado) + juros dos empréstimos ativos + ganhos fixos lançados como "repete todo mês". Não lance os juros dos empréstimos nem o rendimento dos bancos em Lançamentos — eles já entram aqui sozinhos.</div>';
+}
+function pvAbasHTML() {
+  var t = state._pfTela || "resumo", av = pvAvisos();
+  var abas = [["resumo", "📊 Resumo"], ["aplicacoes", "🏦 Aplicações"], ["emprestimos", "🤝 Empréstimos" + (av.atrasados.length ? ' <span style="background:#C0392B;color:#fff;border-radius:9px;padding:0 6px;font-size:11px;">' + av.atrasados.length + '</span>' : "")], ["lancamentos", "📝 Lançamentos"]];
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;">' + abas.map(function (a) {
+    var on = a[0] === t;
+    return '<button onclick="state._pfTela=\'' + a[0] + '\';__pf.msg=\'\';render()" style="padding:7px 14px;border-radius:18px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ' + (on ? GOLD : "#333") + ';background:' + (on ? GOLD : "#111") + ';color:' + (on ? "#000" : "#ccc") + ';">' + a[1] + '</button>';
+  }).join("") + '</div>';
+}
+/* =================== fim v550 =================== */
 
 
 
