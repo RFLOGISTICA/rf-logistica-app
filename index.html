@@ -2,12 +2,20 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v554)</title>
+<title>RF Logística — Painel da Frota (v555)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v554">
+<meta name="rf-versao" content="v555">
 <meta name="rf-data" content="2026-10-05">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v555 (05/10/2026): PESSOAL > APLICAÇÕES -- o sistema já sabe os produtos e como rendem.
+     (1) Escolher o produto preenche "Como rende", a taxa sugerida e o isento de IR (CDB/conta remunerada/
+     Tesouro Selic 100% do CDI, LCI/LCA 90% do CDI isento, poupança 0,5% a.m. isento, etc.) -- sugestão
+     editável, só troca a taxa se ela estiver vazia ou ainda for a sugestão anterior. (2) Lista de bancos
+     para escolher no campo Banco. (3) "📷 Ler print do banco": anexa o print da tela do app do banco e a
+     Edge Function NOVA ler-print-banco (só o login master usa; a ler-foto-abastecimento não foi tocada)
+     devolve banco, produto, saldo, como rende, taxa, frase da taxa e rendimentos -- o formulário abre
+     preenchido para conferir e salvar. A imagem vai à OpenAI só para a leitura; nada fica gravado lá. -->
 <!-- v554 (05/10/2026): PESSOAL ganha a aba própria 🏛 CARGOS (Renato: "não apareceu esta opção de cargo" --
      na v553 ela ficava escondida na categoria de Lançamentos). Formulário direto: cargo/órgão, valor do
      cargo por mês, desde quando recebe e observação. Cada cargo vira um ganho fixo "repete todo mês" na
@@ -782,7 +790,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v554" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v555" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -31867,7 +31875,7 @@ COMO ESSA OPERAÇÃO FUNCIONA (regra fixa, não é estimativa):
   })();
 
   const blocoConciliacao = !(podeVerAba("conciliacao") || podeVerAba("compras")) ? "" : (function () { try { return ccContextoAssistente() + (ehAdmin() ? "\n" + exContextoAssistente() : ""); } catch (e) { return ""; } })();   // v446/v448
-  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe)." : "";
+  const blocoPessoal = ehMaster() ? "AREA PESSOAL (v549, aba Pessoal, so o login master ve): ganhos e despesas pessoais do Renato, aplicacoes em bancos e emprestimos a pessoas (v550), criptografados com uma senha so dele. O assistente NAO tem acesso a esses numeros -- se ele perguntar, oriente a abrir a aba Pessoal. A senha do Pessoal e SEPARADA da senha de login; o campo tem um olho (v551) para ver o que esta digitando. Se aparecer 'nao salvou: o seu login venceu', e preciso tocar em Sair e entrar de novo. Para trocar a senha de LOGIN dele: aba Usuarios > linha MASTER > 'Trocar minha senha' (v551). Emprestimo com juros 0% (v552): o sistema pede confirmacao ao salvar; se os juros nao aparecem, e porque a taxa ficou 0 -- abra 'editar' no emprestimo e digite a taxa ao mes (ex.: 10). Cargo publico (v553): em Pessoal > Lancamentos, tipo Ganho, categoria 'Cargo publico', informando o cargo/orgao e o valor do cargo por mes (ja marca 'repete todo mes'); aparece com o icone do predio no Resumo. Desde a v554 o caminho principal e a aba propria 'Cargos' dentro do Pessoal (botao '+ Novo cargo publico': cargo/orgao, valor do cargo por mes, desde quando recebe). Aplicacoes (v555): ao escolher o produto o sistema sugere como rende e a taxa (CDB/conta remunerada 100% do CDI, LCI/LCA 90% isento, poupanca 0,5% a.m.); o botao 'Ler print do banco' le o print da tela do app do banco e abre o formulario preenchido para conferir." : "";
   const bloco542 = "TELA INICIAL POR SETOR (v542): a tela inicial mostra primeiro os setores -- Frota (Frota, Operação), Manutenção (Vencimentos, Manutenção, Óleo & Filtros, Almoxarifado), Viagens (Viagens, Abastecimento, Status do Dia, Documentos da Viagem, Motoristas), Carregamento (Suzano, Goiás, Carga Mateus, Conferência de Carga), Financeiro (Dashboard, Pente-fino, Financeiro, Análise de Custos, Gráficos, Custo Real, Saldo por Caminhão, Dívidas Fixas, Compras, Conciliação, Medições, Tributário), Cadastros (Documentos, Cadastro de Motorista) e Administração (Usuários, só admin). Todas as áreas aparecem de uma vez, separadas pelo título do setor (nada fica escondido); um toque abre a área. Cada login só vê os setores das áreas que tem permissão.";
   const blocoDashboard = !podeVerAba("dashboard") ? "" : dbContextoAssistente();   // v541
   const blocoPenteFino = !podeVerAba("pentefino") ? "" : pfContextoAssistente();   // v545
@@ -34026,6 +34034,54 @@ function pessoalHTML() {
      e botão de cobrança no WhatsApp. */
 var PV_PRODUTOS = ["CDB", "LCI", "LCA", "Tesouro Direto", "Poupança", "Conta remunerada", "Fundo", "Debênture / CRI / CRA", "Outro"];
 var PV_ISENTOS = ["LCI", "LCA", "Poupança", "Debênture / CRI / CRA"];
+/* v555: como cada produto costuma render -- SUGESTÃO para preencher o formulário (confira no app do banco) */
+var PV_PRESET = {
+  "CDB": { mod: "cdi", taxa: 100, dica: "CDB de liquidez diária costuma pagar 100% do CDI; prazos maiores pagam mais" },
+  "LCI": { mod: "cdi", taxa: 90, dica: "LCI é isenta de IR e costuma pagar 85% a 95% do CDI" },
+  "LCA": { mod: "cdi", taxa: 90, dica: "LCA é isenta de IR e costuma pagar 85% a 95% do CDI" },
+  "Tesouro Direto": { mod: "cdi", taxa: 100, dica: "Tesouro Selic rende 100% da Selic; prefixado e IPCA+ use taxa ao ano" },
+  "Poupança": { mod: "am", taxa: 0.5, dica: "poupança rende 0,5% ao mês + TR enquanto a Selic está acima de 8,5%" },
+  "Conta remunerada": { mod: "cdi", taxa: 100, dica: "conta que rende sozinha (caixinha, cofrinho) costuma pagar 100% do CDI" },
+  "Fundo": { mod: "cdi", taxa: 100, dica: "fundo DI rende perto de 100% do CDI menos a taxa de administração" },
+  "Debênture / CRI / CRA": { mod: "aa", taxa: 0, dica: "taxa costuma ser ao ano (prefixada ou IPCA +); copie do papel" },
+  "Outro": { mod: "", taxa: 0, dica: "" }
+};
+var PV_BANCOS = ["Nubank", "Inter", "Itaú", "Bradesco", "Banco do Brasil", "Caixa", "Santander", "C6 Bank", "BTG Pactual", "XP", "Rico", "Clear", "Mercado Pago", "PicPay", "PagBank", "Neon", "Sicoob", "Sicredi", "Banco do Nordeste", "Original", "Safra", "Sofisa", "Daycoval", "Banco Pan", "Will Bank", "Nomad"];
+function pvProdMudou(prod) {
+  var pr = PV_PRESET[prod] || {}, i = document.getElementById("pv-a-isento"), m = document.getElementById("pv-a-mod"), t = document.getElementById("pv-a-taxa"), d = document.getElementById("pv-a-dica");
+  if (i) i.checked = PV_ISENTOS.indexOf(prod) >= 0;
+  if (m && pr.mod) m.value = pr.mod;
+  if (t && pr.taxa && (!t.value || t.getAttribute("data-auto") === "1")) { t.value = String(pr.taxa).replace(".", ","); t.setAttribute("data-auto", "1"); }
+  if (d) d.textContent = pr.dica ? "💡 " + pr.dica + " — confira a taxa no app do banco." : "";
+}
+function pvLerPrint(inp) {   // v555: lê o print do app do banco e abre o formulário preenchido
+  var f = inp && inp.files && inp.files[0]; if (!f) return;
+  __pf.msg = "lendo o print do banco..."; render();
+  rfComprimirImagem(f, 1600).then(function (blob) {
+    return new Promise(function (ok, erro) { var r = new FileReader(); r.onload = function () { ok(String(r.result || "").split(",")[1] || ""); }; r.onerror = function () { erro(new Error("não consegui abrir a imagem")); }; r.readAsDataURL(blob); })
+      .then(function (b64) { return { b64: b64, tipo: blob.type || "image/jpeg" }; });
+  }).then(function (img) {
+    return rfGetClient().then(function (sb) {
+      if (!sb) throw new Error("sem conexão com o servidor");
+      return sb.auth.getSession().then(function (res) {
+        var token = res.data && res.data.session && res.data.session.access_token;
+        if (!token) throw new Error("o seu login venceu neste aparelho — saia e entre de novo");
+        return fetch(RF_SB_URL + "/functions/v1/ler-print-banco", { method: "POST", headers: { "Authorization": "Bearer " + token, "apikey": RF_SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ imagemBase64: img.b64, mimeType: img.tipo }) })
+          .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && (j.error || j.erro)) || ("servidor respondeu " + r.status)); return j; }); });
+      });
+    });
+  }).then(function (j) {
+    if (!j || j.erro) { __pf.msg = "✖ Não consegui ler esse print" + (j && j.erro === "nao_legivel" ? " (não parece tela de banco/aplicação)" : "") + ". Tente um print mais nítido ou preencha à mão."; render(); return; }
+    var pr = PV_PRESET[j.produto] || {};
+    var obs = [j.taxaTexto, j.rendimentoMes ? "lucro do mês " + fmtR(j.rendimentoMes) : "", j.rendimentoTotal ? "lucros acumulados " + fmtR(j.rendimentoTotal) : ""].filter(Boolean).join(" · ");
+    state._pvPreApl = { banco: j.banco || "", produto: j.produto || "Conta remunerada", valor: j.valorAplicado || j.saldo || 0, inicio: j.dataAplicacao || pvHoje(), modalidade: j.modalidade || pr.mod || "cdi", taxa: j.taxa || pr.taxa || "", vencimento: j.vencimento || "", isento: !!j.isento, obs: obs };
+    state._pvEdApl = null; state._pvFormApl = true;
+    var aviso = /at[eé]|\+/i.test(j.taxaTexto || "") ? " A taxa da tela tem condição (\"" + j.taxaTexto + "\"): coloquei a taxa base " + String(j.taxa || "").replace(".", ",") + "% — ajuste se você ganha o adicional." : "";
+    __pf.msg = "✓ Print lido. Confira os campos" + (j.banco ? "" : " (o banco não aparece no print — escolha na lista)") + " e salve." + aviso;
+    render();
+  }).catch(function (e) { __pf.msg = "✖ " + ((e && e.message) || e); render(); })
+    .then(function () { try { inp.value = ""; } catch (e) { } });
+}
 function pvHoje() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function pvDias(a, b) { return Math.round((Date.parse(b + "T12:00:00") - Date.parse(a + "T12:00:00")) / 864e5); }
 function pvAddMes(iso, n, dia) {
@@ -34087,7 +34143,7 @@ function pvSalvarApl() {
     isento: !!(document.getElementById("pv-a-isento") || {}).checked, obs: pvG("pv-a-obs"), apagado: false
   });
   if (!a.banco || !(a.valor > 0) || !a.inicio || !(a.taxa > 0)) { __pf.msg = "Preencha banco, valor, data da aplicação e taxa."; render(); return; }
-  state._pvEdApl = null; state._pvFormApl = false;
+  state._pvEdApl = null; state._pvFormApl = false; state._pvPreApl = null;   // v555
   pvGravar(a);
 }
 function pvSaldoReal(id) {
@@ -34129,23 +34185,26 @@ function pvAplicacoesHTML() {
     + '<button class="btn-outline-gray" style="font-size:11px;padding:3px 9px;" onclick="pvSalvarCdi()">atualizar</button>'
     + '<span style="color:#777;font-size:11.5px;">' + (cfg.cdiData ? "atualizado em " + exDataBr(cfg.cdiData) : "padrão set/2026 (Selic 13,75%) — confira e ajuste quando o Copom mudar") + '</span></div>';
   var ed = state._pvEdApl ? pvAchar(state._pvEdApl) : null, abre = state._pvFormApl || ed;
-  var mod = ed ? ed.modalidade : "cdi";
-  var form = !abre ? '<button class="btn-outline" style="margin-bottom:14px;" onclick="state._pvFormApl=true;render()">+ Nova aplicação</button>'
+  var pv = ed || state._pvPreApl || null;   // v555: dados de edição OU lidos do print
+  var mod = pv ? pv.modalidade : "cdi";
+  var btnPrint = '<label class="btn-outline" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">📷 Ler print do banco<input type="file" accept="image/*" style="display:none;" onchange="pvLerPrint(this)"></label>';
+  var form = !abre ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;"><button class="btn-outline" onclick="state._pvPreApl=null;state._pvFormApl=true;render()">+ Nova aplicação</button>' + btnPrint + '</div>'
     : '<div style="background:#0E0E0E;border:1px solid #2A2A2A;border-radius:10px;padding:14px;margin-bottom:16px;">'
-    + '<div style="font-size:12px;font-weight:800;color:' + GOLD + ';margin-bottom:10px;">' + (ed ? "EDITAR APLICAÇÃO" : "NOVA APLICAÇÃO") + '</div>'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><div style="font-size:12px;font-weight:800;color:' + GOLD + ';">' + (ed ? "EDITAR APLICAÇÃO" : state._pvPreApl ? "NOVA APLICAÇÃO — LIDA DO PRINT, CONFIRA" : "NOVA APLICAÇÃO") + '</div>' + (ed ? "" : '<span style="margin-left:auto;">' + btnPrint + '</span>') + '</div>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));gap:8px;align-items:end;">'
-    + '<label style="font-size:11px;color:#999;">Banco<input id="pv-a-banco" value="' + esc(ed ? ed.banco : "") + '" placeholder="ex.: Nubank, Inter, BB" style="width:100%;"></label>'
-    + '<label style="font-size:11px;color:#999;">Produto<select id="pv-a-prod" style="width:100%;" onchange="var i=document.getElementById(\'pv-a-isento\');if(i)i.checked=' + JSON.stringify(PV_ISENTOS).replace(/"/g, "&quot;") + '.indexOf(this.value)>=0">' + PV_PRODUTOS.map(function (p) { return '<option' + (ed && ed.produto === p ? " selected" : "") + '>' + esc(p) + '</option>'; }).join("") + '</select></label>'
-    + '<label style="font-size:11px;color:#999;">Valor aplicado (R$)<input id="pv-a-valor" inputmode="decimal" value="' + (ed ? String(ed.valor).replace(".", ",") : "") + '" placeholder="0,00" style="width:100%;"></label>'
-    + '<label style="font-size:11px;color:#999;">Data da aplicação<input id="pv-a-ini" type="date" value="' + esc(ed ? ed.inicio : pvHoje()) + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Banco<input id="pv-a-banco" list="pv-bancos" value="' + esc(pv ? pv.banco : "") + '" placeholder="escolha ou digite" style="width:100%;"><datalist id="pv-bancos">' + PV_BANCOS.map(function (b) { return '<option value="' + esc(b) + '">'; }).join("") + '</datalist></label>'
+    + '<label style="font-size:11px;color:#999;">Produto<select id="pv-a-prod" style="width:100%;" onchange="pvProdMudou(this.value)">' + (pv ? "" : '<option value="" selected disabled>escolha o produto</option>') + PV_PRODUTOS.map(function (p) { return '<option' + (pv && pv.produto === p ? " selected" : "") + '>' + esc(p) + '</option>'; }).join("") + '</select></label>'
+    + '<label style="font-size:11px;color:#999;">Valor aplicado (R$)<input id="pv-a-valor" inputmode="decimal" value="' + (pv && pv.valor ? String(pv.valor).replace(".", ",") : "") + '" placeholder="0,00" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Data da aplicação<input id="pv-a-ini" type="date" value="' + esc(pv && pv.inicio ? pv.inicio : pvHoje()) + '" style="width:100%;"></label>'
     + '<label style="font-size:11px;color:#999;">Como rende<select id="pv-a-mod" style="width:100%;"><option value="cdi"' + (mod === "cdi" ? " selected" : "") + '>% do CDI</option><option value="am"' + (mod === "am" ? " selected" : "") + '>Taxa fixa ao mês</option><option value="aa"' + (mod === "aa" ? " selected" : "") + '>Taxa fixa ao ano</option></select></label>'
-    + '<label style="font-size:11px;color:#999;">Taxa (%)<input id="pv-a-taxa" inputmode="decimal" value="' + (ed ? String(ed.taxa).replace(".", ",") : "") + '" placeholder="ex.: 110 (CDI) ou 1,2" style="width:100%;"></label>'
-    + '<label style="font-size:11px;color:#999;">Vencimento (opcional)<input id="pv-a-venc" type="date" value="' + esc(ed ? ed.vencimento || "" : "") + '" style="width:100%;"></label>'
-    + '<label style="font-size:11px;color:#999;">Observação<input id="pv-a-obs" value="' + esc(ed ? ed.obs || "" : "") + '" style="width:100%;"></label>'
-    + '</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">'
-    + '<label style="font-size:12.5px;color:#ddd;display:inline-flex;align-items:center;gap:6px;"><input id="pv-a-isento" type="checkbox"' + (ed && ed.isento ? " checked" : "") + '> Isento de IR (LCI, LCA, poupança)</label>'
+    + '<label style="font-size:11px;color:#999;">Taxa (%)<input id="pv-a-taxa" inputmode="decimal" value="' + (pv && pv.taxa ? String(pv.taxa).replace(".", ",") : "") + '" placeholder="ex.: 110 (CDI) ou 1,2" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Vencimento (opcional)<input id="pv-a-venc" type="date" value="' + esc(pv ? pv.vencimento || "" : "") + '" style="width:100%;"></label>'
+    + '<label style="font-size:11px;color:#999;">Observação<input id="pv-a-obs" value="' + esc(pv ? pv.obs || "" : "") + '" style="width:100%;"></label>'
+    + '</div><div id="pv-a-dica" style="font-size:11.5px;color:#aaa;margin-top:8px;">' + (pv && PV_PRESET[pv.produto] && PV_PRESET[pv.produto].dica ? "💡 " + PV_PRESET[pv.produto].dica + " — confira a taxa no app do banco." : "") + '</div>'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">'
+    + '<label style="font-size:12.5px;color:#ddd;display:inline-flex;align-items:center;gap:6px;"><input id="pv-a-isento" type="checkbox"' + (pv && pv.isento ? " checked" : "") + '> Isento de IR (LCI, LCA, poupança)</label>'
     + '<button class="btn-outline" style="margin-left:auto;" onclick="pvSalvarApl()">' + (ed ? "Salvar alteração" : "+ Salvar aplicação") + '</button>'
-    + '<button class="btn-outline-gray" onclick="state._pvEdApl=null;state._pvFormApl=false;render()">cancelar</button></div></div>';
+    + '<button class="btn-outline-gray" onclick="state._pvEdApl=null;state._pvFormApl=false;state._pvPreApl=null;render()">cancelar</button></div></div>';
   var ord = L.slice().sort(function (a, b) { return (pvAtiva(b, hoje) - pvAtiva(a, hoje)) || pvSaldoHoje(b) - pvSaldoHoje(a); });
   var tabela = !L.length ? '<div style="color:#777;padding:20px;text-align:center;">Nenhuma aplicação lançada. Cadastre cada valor que você tem em banco, com a taxa de cada um.</div>'
     : '<div style="overflow-x:auto;"><table style="width:100%;min-width:720px;"><thead><tr><th>Banco / produto</th><th>Taxa</th><th style="text-align:right;">Aplicado</th><th style="text-align:right;">Saldo est. hoje</th><th style="text-align:right;">Rende/mês (líq.)</th><th></th></tr></thead><tbody>'
