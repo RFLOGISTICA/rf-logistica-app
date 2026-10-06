@@ -2,12 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v568)</title>
+<title>RF Logística — Painel da Frota (v569)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v568">
+<meta name="rf-versao" content="v569">
 <meta name="rf-data" content="2026-10-06">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v569 (06/10/2026): Rota JDL -- placa, motorista e data escolhidos em LISTA antes de importar (nada de digitar),
+     e trocáveis em lista em cada rota; logo da Mercante/JDL na aba e no card da tela inicial; trocar o caminhão de uma
+     rota JDL mantém o KM da rota e recalcula o frete por KM (antes caía na regra da Suzano). -->
 <!-- v568 (06/10/2026): aba propria "🧭 Rota JDL" no grupo CARREGAMENTO (Renato: "a Mateus e a Suzano tem o local, e a JDL onde é?"):
      importar o PDF da rota JDL, lista das rotas importadas com KM estimado, frete, cidades, liberar para o motorista e excluir. -->
 <!-- v567 (06/10/2026): ROTA JDL PELO PDF DA RF. Renato: "vamos fazer com a JDL igual com a Mateus: eles passam as cidades,
@@ -853,7 +856,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v568" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v569" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1398,7 +1401,7 @@ function rfLogoClienteHTML(nome, altura, apagada) {
 }
 /* v425: as caixas das AREAS da operacao de cada cliente (tela inicial e
    seletor de areas) tambem levam a logo -- pedido do Renato: destaca. */
-var RF_LOGO_DA_ABA = { carregasuzano: "Suzano", cargamateus: "Mateus", goiascarga: "Goiás" };
+var RF_LOGO_DA_ABA = { carregasuzano: "Suzano", cargamateus: "Mateus", goiascarga: "Goiás", rotajdl: "Mercante/JDL" };   // v569: rotajdl
 function rfLogoDaAbaHTML(id) {
   var n = RF_LOGO_DA_ABA[id];
   if (!n) return "";
@@ -19954,7 +19957,7 @@ function mdContextoAssistente() {
     return "MEDIÇÕES DO CLIENTE (aba 📑 Medições, v467): o cliente (ex.: JDL) manda uma medição com um recibo por viagem (frete, adiantamento, abastecimento, vale, impostos e valor a pagar). Anexada, as viagens ficam A RECEBER; divergência entre o valor da viagem e o da medição exige tratamento (aceitar o valor da medição, cobrar a diferença ou contestar) e justificativa. O abastecimento descontado pelo cliente entra como combustível da viagem. A baixa é feita com o crédito do extrato que bate com o valor a pagar, ou com comprovante anexado. v469: o casamento recibo→viagem aceita placa com um caractere diferente (a leitura confunde I e J), usa também a data em que a viagem foi cadastrada e, se o primeiro nome do motorista bate, aceita até 10 dias de diferença; recibo que ficou \"sem viagem no sistema\" tem, no card da medição, um seletor para escolher a viagem e o botão vincular (pede tratamento e justificativa se o valor divergir).\n"
       + (linhas.length ? linhas.join("\n") : "(nenhuma medição lançada)")
       + scContextoAssistente() + (typeof ciotContextoAssistente === "function" ? ciotContextoAssistente() : "")
-      + "\nROTA JDL PELO PDF DA RF (v567/v568, aba própria 🧭 Rota JDL no grupo Carregamento): a JDL passa as cidades, o Claude gera um PDF no padrão da roteirização da Suzano (ordem otimizada saindo e voltando a Feira de Santana, KM de cada trecho, rodagem urbana de 15 km por cidade, frete = KM x tarifa: Toco R$ 4,80/km, 3/4 R$ 4,30/km) com o bloco #RFROT1 (cliente=Mercante/JDL;km=). Importa na aba 🧭 Rota JDL (lista as rotas importadas, com liberar para o motorista e excluir), na aba Viagens, caixa Mercante/JDL ('🧭 Rota JDL pelo PDF da RF'), ou no mesmo botão da roteirização Suzano: vira a viagem prevista com KM estimado, frete por KM, dias = KM/650 arredondado para cima, sem ajudante, e uma entrega por cidade. O KM real do hodômetro substitui a estimativa. A malha de cidades do cálculo agora tem todos os municípios da Bahia e do Nordeste (fora da BA, no formato 'Cidade - UF')."
+      + "\nROTA JDL PELO PDF DA RF (v567/v568, aba própria 🧭 Rota JDL no grupo Carregamento): a JDL passa as cidades, o Claude gera um PDF no padrão da roteirização da Suzano (ordem otimizada saindo e voltando a Feira de Santana, KM de cada trecho, rodagem urbana de 15 km por cidade, frete = R$ 4,80 por KM RODADO (Toco e 3/4; estimado na criação, recalculado sozinho pelo KM real do hodômetro). v569: placa, motorista e data escolhidos em lista na aba antes de anexar o PDF, e trocáveis em lista em cada rota) com o bloco #RFROT1 (cliente=Mercante/JDL;km=). Importa na aba 🧭 Rota JDL (lista as rotas importadas, com liberar para o motorista e excluir), na aba Viagens, caixa Mercante/JDL ('🧭 Rota JDL pelo PDF da RF'), ou no mesmo botão da roteirização Suzano: vira a viagem prevista com KM estimado, frete por KM, dias = KM/650 arredondado para cima, sem ajudante, e uma entrega por cidade. O KM real do hodômetro substitui a estimativa. A malha de cidades do cálculo agora tem todos os municípios da Bahia e do Nordeste (fora da BA, no formato 'Cidade - UF')."
       + "\nTRAVA DE EXCLUSAO EM MASSA (v563, 05/10/2026): incidente -- em 03/10 um aparelho marcou 653 itens como apagados de uma vez e em 05/10 sumiram 178 viagens, 30 compras, 337 manutencoes e 5 clientes; tudo foi restaurado do backup horario do banco. As compras lancadas em 05/10 foram renumeradas de 33 a 48 (continuando as antigas, que vao ate a 32). Agora o sistema nao deixa um salvar ou uma sincronizacao apagar mais de 10 itens e mais de 30% de uma lista de uma vez; se acontecer, ignora e registra no log."
       + "\nCT-e DE SUBCONTRATAÇÃO POR VIAGEM (v562, JT/Mateus): na aba Viagens, caixa JT/Mateus, o quadro '📄 CT-e de subcontratação — por viagem' lista cada viagem do mês com a situação: sem CT-e (vermelho), CT-e emitido aguardando o pagamento no extrato (laranja) ou CONSOLIDADA (verde, CT-e + pagamento). '+ emitir CT-e' abre o mesmo fluxo da JDL, mas para UMA viagem: anexar o CT-e que a JT emitiu daquela viagem (PDF, foto ou XML) → Conferir → testar (homologação) → ⚡ Emitir na SEFAZ, sempre com confirmação do Renato. O valor padrão é o valor da viagem (ou 'outro'); tomador vazio = a transportadora que emitiu o CT-e de referência (a JT). Autorizado, o sistema dá baixa sozinho: a viagem fica FATURADA com o nº do CT-e (selo na coluna Pago?) e vira CONSOLIDADA quando o pagamento estiver no extrato. Cancelar o CT-e desfaz a baixa. Viagens JT sem CT-e agora: " + (function () { try { return (state.viagens || []).filter(function (v) { return v.cliente === "JT/Mateus" && String(v.data || "") >= "2026-09-21" && !subVgCteOk(v); }).map(function (v) { return String(v.data).slice(0, 10) + " " + v.placa + " " + fmtR(v.valorViagem); }).join("; ") || "nenhuma"; } catch (e) { return "?"; } })() + "."
       + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
@@ -29353,12 +29356,16 @@ function rfRotTrocarPlaca(viagemId, placaAtual, placaNova) {
   v.placa = placaNova;
   var veic = state.veiculos.find(function (x) { return x.placa === placaNova; }) || {};
   if (veic.motorista) v.motoristaNaEpoca = veic.motorista;
+  if (v.kmEstimadoRota != null || modoCliente(v.cliente || "") === "km") {   // v569: rota por KM (JDL) -- o KM e da rota, nao do caminhao
+    aplicarFreteKm(v, "km");
+  } else {
   try {
     var val = freteRotaDe(v.cliente || "Suzano", v.rota, veic.tipo || "", Number(v.pesoKg) || 0);
     if (val) v.valorViagem = val;
   } catch (e) { /* sem tabela: mantém */ }
   var km = rfRotKmEstimado(placaNova, v.rota);
   if (km) v.km = km;
+  }
   var uidMot = rfUidDoMotoristaDaPlaca(placaNova);
   lista.forEach(function (e) {
     e.placa = placaNova;
@@ -29394,6 +29401,26 @@ function rfRotTrocarMotorista(viagemId, placa, nome) {
 // Entrega que JÁ TEM CANHOTO nunca é apagada em silêncio: o app avisa e pede
 // confirmação, porque é prova de entrega feita.
 /* v568: aba Rota JDL */
+function rjOpcoesMotorista(atual) {   // v569
+  var nomes = (typeof loginsMotoristas === "function" ? loginsMotoristas() : []).slice();
+  (state.veiculos || []).forEach(function (x) { if (x.motorista && nomes.indexOf(x.motorista) < 0) nomes.push(x.motorista); });
+  if (atual && nomes.indexOf(atual) < 0) nomes.unshift(atual);
+  return '<option value="">— motorista —</option>' + nomes.map(function (n) { return '<option value="' + esc(n) + '"' + (n === atual ? " selected" : "") + '>' + esc(n) + '</option>'; }).join("");
+}
+function rjSel(campo, valor) {   // v569
+  state._jdlSel = state._jdlSel || {};
+  state._jdlSel[campo] = valor;
+  if (campo === "placa" && !state._jdlSel.motoristaManual) { var vc = (state.veiculos || []).find(function (x) { return x.placa === valor; }); if (vc && vc.motorista) state._jdlSel.motorista = vc.motorista; }
+  if (campo === "motorista") state._jdlSel.motoristaManual = true;
+  render();
+}
+function rjSeletoresHTML() {   // v569: escolher em lista, nao digitar
+  var sl = state._jdlSel || (state._jdlSel = { data: (function () { var d = new Date(); d.setDate(d.getDate() + 1); return rfDataLocalISO(d); })() });
+  return '<label style="font-size:12px;color:#bbb;">Placa <select style="font-size:12px;width:140px;" onchange="rjSel(&#39;placa&#39;,this.value)"><option value="">— escolha —</option>'
+    + (state.veiculos || []).map(function (x) { return '<option value="' + esc(x.placa) + '"' + (x.placa === sl.placa ? " selected" : "") + '>' + esc(x.placa) + (x.tipo ? " · " + esc(x.tipo) : "") + '</option>'; }).join("") + '</select></label>'
+    + '<label style="font-size:12px;color:#bbb;">Motorista <select style="font-size:12px;width:170px;" onchange="rjSel(&#39;motorista&#39;,this.value)">' + rjOpcoesMotorista(sl.motorista || "") + '</select></label>'
+    + '<label style="font-size:12px;color:#bbb;">Data <input type="date" value="' + esc(sl.data || "") + '" style="font-size:12px;width:140px;" onchange="rjSel(&#39;data&#39;,this.value)"></label>';
+}
 function rotaJdlHTML() {
   var vs = (state.viagens || []).filter(function (v) { return /JDL|Mercante/i.test(v.cliente || "") && v.previstaRoteirizacao; })
     .sort(function (a, b) { return String(b.data || "").localeCompare(String(a.data || "")); }).slice(0, 40);
@@ -29401,7 +29428,9 @@ function rotaJdlHTML() {
     var ents = entregasDaViagem(v.id), lib = ents.filter(function (e) { return e.liberada; }).length;
     var cid = ents.slice().sort(function (a, b) { return (a.ordem || 0) - (b.ordem || 0); }).map(function (e) { return e.cidade; }).join(" → ");
     return '<tr>'
-      + '<td>' + esc(exDataBr(v.data || "")) + '</td><td><b>' + esc(v.placa) + '</b></td><td>' + esc(v.motoristaNaEpoca || "") + '</td>'
+      + '<td>' + esc(exDataBr(v.data || "")) + '</td>'
+      + '<td><select style="font-size:12px;font-weight:700;width:135px;color:#fff;" onchange="rfRotTrocarPlaca(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">' + (state.veiculos || []).map(function (x) { return '<option value="' + esc(x.placa) + '"' + (x.placa === v.placa ? " selected" : "") + '>' + esc(x.placa) + (x.tipo ? " · " + esc(x.tipo) : "") + '</option>'; }).join("") + '</select></td>'
+      + '<td><select style="font-size:12px;width:170px;color:#ccc;" onchange="rfRotTrocarMotorista(&#39;' + v.id + '&#39;,&#39;' + v.placa + '&#39;,this.value)">' + rjOpcoesMotorista(v.motoristaNaEpoca || "") + '</select></td>'
       + '<td style="max-width:420px;font-size:12px;color:#bbb;">' + esc(cid || v.rota || "") + '</td>'
       + '<td style="text-align:right;">' + (Number(v.km) || 0).toLocaleString("pt-BR") + ' km' + (v.kmEstimadoRota && Number(v.km) !== Number(v.kmEstimadoRota) ? '<div style="font-size:10px;color:#888;">estimado ' + v.kmEstimadoRota + '</div>' : '') + '</td>'
       + '<td style="text-align:right;">' + fmtR(Number(v.valorViagem) || 0) + '</td>'
@@ -29410,10 +29439,11 @@ function rotaJdlHTML() {
       + '</tr>';
   }).join("");
   return '<div style="max-width:1200px;margin:0 auto;padding:12px;">'
-    + '<h2 style="margin:0 0 6px;color:' + GOLD + ';">🧭 Rota JDL</h2>'
-    + '<div style="color:#999;font-size:12.5px;margin-bottom:12px;">A JDL passa as cidades → o Claude gera o PDF da rota (igual ao da Suzano), com a ordem, o KM estimado (saindo e voltando a Feira de Santana) e o frete por KM → anexe aqui e a viagem é criada. O KM real do hodômetro substitui a estimativa no fechamento.</div>'
+    + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">' + rfLogoClienteHTML("Mercante/JDL", 38) + '<h2 style="margin:0;color:' + GOLD + ';">🧭 Rota JDL</h2></div>'
+    + '<div style="color:#999;font-size:12.5px;margin-bottom:12px;">A JDL passa as cidades → o Claude gera o PDF da rota (igual ao da Suzano), com a ordem e o KM estimado (saindo e voltando a Feira de Santana) → escolha a placa, o motorista e a data na lista e anexe o PDF: a viagem é criada. A JDL paga por KM RODADO: o frete começa pelo KM estimado e é recalculado sozinho pelo KM real do hodômetro (saída e chegada).</div>'
     + '<div style="background:#0E0E0E;border:1px solid ' + GOLD + ';border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
     + '<b style="color:' + GOLD + ';font-size:13px;">⬆ Importar PDF da rota</b>'
+    + rjSeletoresHTML()
     + '<input type="file" accept="*/*" style="font-size:12px;max-width:260px;color:#ccc;" onchange="rfRotImportar(this)">'
     + (state._rotMsg ? '<span style="font-size:12px;color:#81C784;">' + esc(state._rotMsg) + '</span>' : '')
     + '</div>'
@@ -30162,7 +30192,11 @@ function rfRotImportarPDF(input, file) {
       state._rotMsg = ""; input.value = ""; render(); return;
     }
     var h = b.head;
-    if (!h.placa) { h.placa = String(prompt("Qual a placa do caminhão desta rota?", "") || "").trim().toUpperCase(); if (!h.placa) { state._rotMsg = ""; input.value = ""; render(); return; } }   // v567
+    var sel = state._jdlSel || {};   // v569: placa/motorista/data escolhidos na lista da aba Rota JDL
+    if (!h.placa) h.placa = sel.placa || "";
+    if (!h.motorista && sel.motorista) h.motorista = sel.motorista;
+    if (!h.data && sel.data) h.data = sel.data;
+    if (!h.placa) { alert("Escolha o caminhão na lista (Placa) antes de anexar o PDF."); state._rotMsg = ""; input.value = ""; render(); return; }
     var dataPrev = h.data || prompt("Data da viagem (AAAA-MM-DD):", hojeISO());
     if (!dataPrev) { state._rotMsg = ""; input.value = ""; render(); return; }
     var linhas = [["Veículo", "Regional", "Ordem", "Cidade", "Recebedor", "Endereço", "Bairro", "Peso (kg)", "Volumes", "Remessa(s)"]];
