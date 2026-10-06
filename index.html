@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v572)</title>
+<title>RF Logística — Painel da Frota (v573)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v572">
+<meta name="rf-versao" content="v573">
 <meta name="rf-data" content="2026-10-06">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v573 (06/10/2026): SISTEMA PISCANDO + ANEXO "NAO FICA". Causa: o banco (jsonb) devolve as chaves dos objetos em outra ordem; o tempo real comparava por JSON.stringify, entao todo item editado no aparelho parecia "diferente" do eco da nuvem e era reenviado a cada 1,5-2 s sem fim (15 mil gravacoes em 06/10 de um PC da recepcao), redesenhando a tela e apagando o formulario de anexo. Correcao: comparacao pelo conteudo (rfJsonCanon), eco igual e ignorado, empate de carimbo com vencedor igual em todo aparelho, lapides em ordem fixa, disjuntor (6 reenvios/min pausa 2 min + rf_logs loop_sync). Indice de documentos consulta o storage 4 placas por vez (antes ~100 de uma vez -> timeout 544). -->
 <!-- v572 (06/10/2026): Campanhas -- "Publicar no Instagram agora" sai NA HORA pela API oficial do Instagram (Edge Function rf-instagram; token guardado so no servidor, tabela rf_instagram_cfg, renovacao automatica). Painel "Instagram do sistema" para o master colar o token. Agendar continua pelo robo/Metricool. -->
 <!-- v571 (06/10/2026): Campanhas -- publicar no Instagram @rflogisticatransportes PELO SISTEMA: botoes "Publicar no Instagram agora" e "Agendar" (so o master), pedido gravado em c.pub; robo agendado do Claude (de hora em hora) manda pelo Metricool e grava o resultado na chave separada painel_dados.campanhas_pub (o app so le). -->
 <!-- v570 (06/10/2026): aba Viagens -- removido o botao "Anexar foto" do KM de saida/chegada (as fotos vem do app do motorista; "ver" continua quando existir). -->
@@ -859,7 +860,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v572" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v573" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1095,6 +1096,18 @@ function rfPreservarSync(ganha, perde) {
     }
   } catch (e) { }
 }
+/* v573 -- SISTEMA PISCANDO / ANEXO "SUMINDO" (06/10/2026). O banco (jsonb) devolve as chaves
+   de cada objeto em OUTRA ORDEM (mais curta primeiro). A comparacao abaixo usava JSON.stringify,
+   entao um item editado neste aparelho NUNCA batia com o eco da nuvem: o aparelho achava que a
+   nuvem estava sem a versao dele e reenviava -- a cada 1,5-2 s, pra sempre (15 mil gravacoes
+   num dia so de um PC da recepcao). Cada volta redesenhava a tela (pisca) e apagava o formulario
+   de anexo aberto. Agora compara pelo CONTEUDO (chaves ordenadas). */
+function rfJsonCanon(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v === undefined ? null : v);
+  if (Array.isArray(v)) return "[" + v.map(function (x) { return x === undefined ? "null" : rfJsonCanon(x); }).join(",") + "]";
+  var ks = Object.keys(v).filter(function (k) { return v[k] !== undefined && typeof v[k] !== "function"; }).sort();
+  return "{" + ks.map(function (k) { return JSON.stringify(k) + ":" + rfJsonCanon(v[k]); }).join(",") + "}";
+}
 /* v527: a nuvem (remoto) deixou de fora algo que este aparelho tem? */
 function rfLocalTemMaisNovo(unida, remotoJsonPorId, remotoIds) {
   if (!Array.isArray(unida)) return false;
@@ -1103,7 +1116,7 @@ function rfLocalTemMaisNovo(unida, remotoJsonPorId, remotoIds) {
     var x = unida[i]; if (!x || x.id == null) continue;
     var k = String(x.id); ids[k] = 1;
     if (!(k in remotoJsonPorId)) return true;
-    var j; try { j = JSON.stringify(x); } catch (e) { continue; }
+    var j; try { j = rfJsonCanon(x); } catch (e) { continue; }   // v573: pelo conteudo, nao pela ordem das chaves
     if (j !== remotoJsonPorId[k]) return true;
   }
   return remotoIds.some(function (k) { return !ids[k]; });   // item apagado aqui (lápide) que a nuvem ainda tem
@@ -1132,7 +1145,14 @@ function rfUnirLista(local, nuvem, lapides) {
   local.forEach(function (x) {
     var k = String(x.id), n = por[k];
     if (!n) { por[k] = x; return; }
-    if (Number(x.atualizadoEm || 0) >= Number(n.atualizadoEm || 0)) { por[k] = x; rfPreservarFiscal(x, n); rfPreservarSync(x, n); }
+    var tx = Number(x.atualizadoEm || 0), tn = Number(n.atualizadoEm || 0);
+    var localGanha = tx > tn;
+    if (tx === tn) {   // v573: empate -- todo aparelho escolhe o MESMO vencedor (antes cada um ficava com o seu e reenviava sem fim)
+      var cx = "", cn = "";
+      try { cx = rfJsonCanon(x); cn = rfJsonCanon(n); } catch (eC) { }
+      localGanha = cx === cn || cx.length > cn.length || (cx.length === cn.length && cx > cn);
+    }
+    if (localGanha) { por[k] = x; rfPreservarFiscal(x, n); rfPreservarSync(x, n); }
     else { rfPreservarFiscal(n, x); rfPreservarSync(n, x); }   // v527
   });
   var lap = {};
@@ -1164,6 +1184,7 @@ function rfUnirLapides(a, b, agora) {
   });
   var corte = (agora || Date.now()) - 30 * 24 * 3600 * 1000;
   return Object.keys(lap).filter(function (k) { return lap[k] >= corte; })
+    .sort()   // v573: mesma ordem em todo aparelho (senao um ve "diferente" e reenvia)
     .map(function (k) { return { id: k, removidoEm: lap[k] }; });
 }
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
@@ -34521,7 +34542,7 @@ function cpContextoAssistente() {
   try {
     var L = cpLista();
     var linhas = L.slice(0, 30).map(function (c) { var st = CP_STATUS[c.status] || {}; return "- " + ((c.textos && c.textos.titulo) || c.ideia || "(sem título)") + " · " + (st.t || c.status) + " · por " + (c.autor || "?") + " · " + cpDataBr(c.atualizadoEm) + (c.obsAprovacao && c.status === "ajuste" ? " · ajuste pedido: " + c.obsAprovacao : ""); });
-    return "\nCAMPANHAS DE PUBLICIDADE (aba 📣 Campanhas, v564): a equipe (ex.: Sandra) cria um post mandando a FOTO (opcional) e o que quer comunicar; a IA (Edge Function rf-campanha-ia: gpt-image-2 para a foto, gpt-5.6-terra para o texto) devolve a foto melhorada com a LOGO RF pintada no baú do caminhão e os textos (chamada, título, subtítulo, selo dourado, legenda e hashtags); o próprio sistema monta a arte 1080x1350 no padrão RF (layouts Diagonal fundo claro, Faixa escura ou Card). Dá para editar os textos à mão (depois tocar em 'Atualizar arte') ou escrever no quadro '🤖 Pedir à IA' e tocar em 'Refazer a foto' ou 'Reescrever os textos' (a foto sempre é refeita a partir da original; '↶ Foto anterior' volta a versão). Status: Em revisão -> 'Enviar para aprovação' -> Aguardando aprovação -> SÓ o login master (Renato) aprova ou pede ajuste -> Aprovado -> 'Baixar arte' + 'Copiar legenda' -> postar -> 'Marcar como publicado'. Regra: nada vai para as redes sem a aprovação do Renato. v566: quando a imagem já é a arte final (ex.: data comemorativa feita fora), usar o botão '📎 Usar como está (sem IA)' na nova campanha -- a imagem vai como foi enviada e a IA só escreve a legenda; no editor, '📎 Usar a imagem enviada (sem IA)' troca uma arte montada pela original, e '🎨 Montar no padrão RF' volta para a montagem. Marca: frota própria de 25 veículos (Toco e 3/4), Bahia e Nordeste, WhatsApp (75) 99971-7578, nunca citar nome de cliente. Cada geração da IA tem custo pequeno de API (centavos de dólar por foto). A aba aparece para quem tiver o módulo 'campanhas' marcado na aba Usuários. v571: PUBLICAR PELO SISTEMA -- o Instagram oficial agora é @rflogisticatransportes (conta comercial criada em 06/10/2026, conectada ao Metricool; o antigo @rflogisticaoficial fica com a Horizonte até 31/10). Na campanha APROVADA, só o Renato vê '📤 Publicar no Instagram agora' e '📅 Agendar' (data e hora); o pedido entra na fila e um robô confere de hora em hora e manda para o Instagram pelo Metricool (por isso 'agora' pode levar até 1 hora); a campanha mostra '⏳ Na fila', '📅 Agendado no Instagram para ...' e depois '✅ Publicado no Instagram' (vira status Publicado sozinha). Dá para cancelar enquanto está na fila; depois de entregue ao Instagram, cancelar só pedindo ao Claude. '✔ Já postei à mão' marca como publicado sem robô. v572: com o Instagram conectado no painel '📸 Instagram do sistema' (o Renato cola uma vez o token gerado no app de desenvolvedor do Meta 'RF Sistema Instagram'; fica guardado só no servidor e se renova sozinho), '📤 Publicar no Instagram agora' sai NA HORA pela API oficial do Instagram (gratuita) e mostra o link 'ver no Instagram'; sem token conectado, cai na fila do robô. '📅 Agendar' continua pela fila do robô/Metricool. Facebook e Google Meu Negócio ainda não saem por esse botão (o Instagram só pode ser ligado à página do Facebook a partir de ~13/10).\n"
+    return "\nCAMPANHAS DE PUBLICIDADE (aba 📣 Campanhas, v564): a equipe (ex.: Sandra) cria um post mandando a FOTO (opcional) e o que quer comunicar; a IA (Edge Function rf-campanha-ia: gpt-image-2 para a foto, gpt-5.6-terra para o texto) devolve a foto melhorada com a LOGO RF pintada no baú do caminhão e os textos (chamada, título, subtítulo, selo dourado, legenda e hashtags); o próprio sistema monta a arte 1080x1350 no padrão RF (layouts Diagonal fundo claro, Faixa escura ou Card). Dá para editar os textos à mão (depois tocar em 'Atualizar arte') ou escrever no quadro '🤖 Pedir à IA' e tocar em 'Refazer a foto' ou 'Reescrever os textos' (a foto sempre é refeita a partir da original; '↶ Foto anterior' volta a versão). Status: Em revisão -> 'Enviar para aprovação' -> Aguardando aprovação -> SÓ o login master (Renato) aprova ou pede ajuste -> Aprovado -> 'Baixar arte' + 'Copiar legenda' -> postar -> 'Marcar como publicado'. Regra: nada vai para as redes sem a aprovação do Renato. v566: quando a imagem já é a arte final (ex.: data comemorativa feita fora), usar o botão '📎 Usar como está (sem IA)' na nova campanha -- a imagem vai como foi enviada e a IA só escreve a legenda; no editor, '📎 Usar a imagem enviada (sem IA)' troca uma arte montada pela original, e '🎨 Montar no padrão RF' volta para a montagem. Marca: frota própria de 25 veículos (Toco e 3/4), Bahia e Nordeste, WhatsApp (75) 99971-7578, nunca citar nome de cliente. Cada geração da IA tem custo pequeno de API (centavos de dólar por foto). A aba aparece para quem tiver o módulo 'campanhas' marcado na aba Usuários. v571: PUBLICAR PELO SISTEMA -- o Instagram oficial agora é @rflogisticatransportes (conta comercial criada em 06/10/2026, conectada ao Metricool; o antigo @rflogisticaoficial fica com a Horizonte até 31/10). Na campanha APROVADA, só o Renato vê '📤 Publicar no Instagram agora' e '📅 Agendar' (data e hora); o pedido entra na fila e um robô confere de hora em hora e manda para o Instagram pelo Metricool (por isso 'agora' pode levar até 1 hora); a campanha mostra '⏳ Na fila', '📅 Agendado no Instagram para ...' e depois '✅ Publicado no Instagram' (vira status Publicado sozinha). Dá para cancelar enquanto está na fila; depois de entregue ao Instagram, cancelar só pedindo ao Claude. '✔ Já postei à mão' marca como publicado sem robô. v573: corrigido o 'sistema piscando' e anexos que pareciam nao ficar — era um looping de sincronizacao (o aparelho regravava a lista de compras a cada 2 segundos e a tela redesenhava, apagando o formulario aberto). Se alguem ainda notar a tela piscando, pedir para fechar as abas repetidas do sistema e apertar Ctrl+F5 para carregar a v573. Os arquivos em si sempre subiram; comprovante que espera o extrato fica em 'comprovantes aguardando extrato' da compra. v572: com o Instagram conectado no painel '📸 Instagram do sistema' (o Renato cola uma vez o token gerado no app de desenvolvedor do Meta 'RF Sistema Instagram'; fica guardado só no servidor e se renova sozinho), '📤 Publicar no Instagram agora' sai NA HORA pela API oficial do Instagram (gratuita) e mostra o link 'ver no Instagram'; sem token conectado, cai na fila do robô. '📅 Agendar' continua pela fila do robô/Metricool. Facebook e Google Meu Negócio ainda não saem por esse botão (o Instagram só pode ser ligado à página do Facebook a partir de ~13/10).\n"
       + (linhas.length ? "Campanhas (" + L.length + "): " + linhas.join("\n") : "(nenhuma campanha criada ainda)") + "\n";
   } catch (e) { return ""; }
 }
@@ -38660,6 +38681,8 @@ revalidarSessaoAoAbrir();
           if (!nova || CHAVES.indexOf(nova.chave) === -1) return;
           var txt = JSON.stringify(nova.valor);
           if (txt === ultimoEnviado[nova.chave]) return;
+          // v573: o eco da minha propria gravacao volta com as chaves em outra ordem -- mesmo conteudo, ignora (nao redesenha a tela)
+          if (nova.chave !== "lapides") { try { if (rfJsonCanon(nova.valor) === rfJsonCanon(state[nova.chave])) return; } catch (eC) { } }
           // v145: se editei algo há pouco (ainda pode estar subindo), NÃO aplica
           // essa atualização recebida agora — ela pode ser mais antiga que a minha
           // edição em andamento. Assim que meu envio terminar e ultimoEnviado
@@ -38673,16 +38696,30 @@ revalidarSessaoAoAbrir();
             state.lapides = rfUnirLapides(state.lapides, nova.valor, Date.now());
             ultimoEnviado.lapides = JSON.stringify(nova.valor);
             try { localStorage.setItem(MAPA_LS.lapides, JSON.stringify(state.lapides)); } catch (e) {}
-            if (JSON.stringify(state.lapides) !== ultimoEnviado.lapides && dadosCarregados) agendarSubida();
+            if (rfJsonCanon(state.lapides) !== rfJsonCanon(rfUnirLapides(nova.valor, [], Date.now())) && dadosCarregados) agendarSubida();   // v573: pelo conteudo
             return;
           }
           if (ehListaRT) {
             if (!dadosCarregados) return;
             try { rfCarimbarTudo(); } catch (e) {}   // carimba antes o que foi editado aqui e ainda nao subiu
+            // v573: eco do que este aparelho ja tem (so a ordem das chaves mudou no banco) -> nada a fazer, nem redesenhar
+            try { if (rfJsonCanon(nova.valor) === rfJsonCanon(state[nova.chave])) return; } catch (eE) { }
             var remJ = {}, remIds = [];
-            nova.valor.forEach(function (x) { if (x && x.id != null) { var kx = String(x.id); remIds.push(kx); try { remJ[kx] = JSON.stringify(x); } catch (e) {} } });
+            nova.valor.forEach(function (x) { if (x && x.id != null) { var kx = String(x.id); remIds.push(kx); try { remJ[kx] = rfJsonCanon(x); } catch (e) {} } });
             var unidaRT = rfUnirLista(state[nova.chave], nova.valor, state.lapides);
             var reenviar = rfLocalTemMaisNovo(unidaRT, remJ, remIds);
+            /* v573: disjuntor -- se mesmo assim a mesma lista for reenviada 6+ vezes em 1 minuto,
+               para de reenviar por 2 minutos e registra no rf_logs (nunca mais fica em looping) */
+            if (reenviar) {
+              var dj = (window.__rfDisj = window.__rfDisj || {}), dk = dj[nova.chave] = dj[nova.chave] || { t: [], ate: 0, log: 0 };
+              var agoraDj = Date.now();
+              dk.t = dk.t.filter(function (t) { return agoraDj - t < 60000; }); dk.t.push(agoraDj);
+              if (agoraDj < dk.ate) reenviar = false;
+              else if (dk.t.length >= 6) {
+                dk.ate = agoraDj + 120000; reenviar = false;
+                if (agoraDj - dk.log > 600000) { dk.log = agoraDj; try { window.rfLogErro && window.rfLogErro("loop_sync", nova.chave + ": 6 reenvios em 1 min -- pausado 2 min", ""); } catch (eL) { } }
+              }
+            }
             state[nova.chave] = unidaRT;
             ultimoEnviado[nova.chave] = txt;   // o que a nuvem tem agora
             try { localStorage.setItem(MAPA_LS[nova.chave], JSON.stringify(unidaRT)); } catch (e) {}
@@ -39478,7 +39515,15 @@ function rfDocsIndexarTudo() {
     // invisível pro assistente e ele dizia que o caminhão estava sem CRLV,
     // mesmo com o arquivo aparecendo na tela. Foi o que aconteceu com o
     // PKK1G22, o PLE6A32 e o PLY0A97.
-    return Promise.all(placas.map(function (pl) {
+    /* v573: antes disparava ~100 consultas ao storage AO MESMO TEMPO a cada abertura do sistema
+       (2 por placa) e o servidor dava timeout (erro 544) -- inclusive pra quem estava anexando.
+       Agora vai de 4 placas por vez, em segundo plano. */
+    var fila = placas.slice(), feitos = [];
+    var rodar = function (fn) {
+      var um = function () { if (!fila.length) return Promise.resolve(); var p = fila.shift(); return fn(p).then(function (r) { feitos.push(r); return um(); }); };
+      return Promise.all([um(), um(), um(), um()]).then(function () { return feitos; });
+    };
+    return rodar(function (pl) {
       var opts = { limit: 100 };
       return Promise.all([
         sb.storage.from(RF_BUCKET).list("documentos/" + pl, opts).catch(function () { return { data: [] }; }),
@@ -39499,7 +39544,7 @@ function rfDocsIndexarTudo() {
         });
         return { placa: pl, arquivos: arquivos };
       }).catch(function () { return { placa: pl, arquivos: [] }; });
-    })).then(function (lista) {
+    }).then(function (lista) {
       var idx = {};
       lista.forEach(function (x) { if (x.arquivos.length) idx[x.placa] = x.arquivos; });
       state._docsIndex = idx;
