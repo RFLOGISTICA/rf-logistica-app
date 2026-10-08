@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v597)</title>
+<title>RF Logística — Painel da Frota (v598)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v597">
+<meta name="rf-versao" content="v598">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v598 (08/10/2026): São Roque -- caminhão 3D REALISTA em WebGL (three.js r128 do cdnjs, carregado só na aba): cabine, vidros, cromados, rodas com aro e rodado duplo, baú de alumínio, faixa RF, paletes de madeira, caixas na cor do cliente, sombra e reflexo; desenho próprio continua como reserva sem internet; mapa A4 usa a foto do 3D. -->
 <!-- v597 (08/10/2026): São Roque -- cores dos clientes no baú e na legenda FECHADAS e fortes (azul, laranja, verde, roxo, petróleo, magenta, marrom, índigo, oliva, grafite) com texto branco; vermelho só para o que não cabe. -->
 <!-- v596 (08/10/2026): São Roque -- CARGA BATIDA SOBRE PALETES: paletes no chão e colunas de caixas de 0,50x0,50 (4 por palete, empilhadas até o teto), cada cliente com as colunas dele a partir da cabine; quem compra pouco divide o palete; 3D com camadas de caixa, vista de cima com os clientes de cada palete, etiqueta com palete/vaga, divisão por colunas. -->
 <!-- v595 (08/10/2026): São Roque -- DIVISÃO DO BAÚ por CLIENTE ou por CIDADE (carga batida também dividida por cliente; no sintético a praça vira uma faixa por entrega com peso estimado), rótulos P2.1 / P2–P5 no 3D, grade, mapa e etiqueta. -->
@@ -884,7 +885,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v597" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v598" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12900,7 +12901,7 @@ function srImprimirMapa(cargaId) {
     + '<br>' + t.clientes + ' paradas · ' + srFmt(t.peso, 0) + ' kg (' + Math.round(m.ocupKg * 100) + '% da capacidade) · ' + t.vols + ' volumes · '
     + (pal ? m.palTot + ' paletes em ' + m.vagas + ' vagas (' + Math.round(m.ocupVol * 100) + '%)' : m.bat.cols + ' de ' + m.bat.totCols + ' colunas de caixas sobre ' + m.bat.paletesChao + ' paletes no chão (' + Math.round(m.ocupVol * 100) + '%)') + (m.estimado ? ' · cubagem estimada pelo peso' : '')
     + (function () { try { var ir = srImpactoRota(c); return '<br>Rota (ordem desta folha): <b>' + srFmt(ir.atual.km, 0) + ' km</b> · ' + srFmtR(ir.atual.km * ir.ck.porKm) + ' — sugerida pelo sistema ' + srFmt(ir.sug.km, 0) + ' km' + (ir.difKm > 1 ? ' (<b>+' + srFmt(ir.difKm, 0) + ' km, +' + srFmtR(ir.difR) + '</b>)' : ' (ordem ótima)') + ' · ' + srBaseCoord().nome + ' → ' + ir.atual.cidades.map(function (x) { return esc(x.nome); }).join(' → ') + ' → volta'; } catch (e) { return ''; } })()
-    + '</div></div><div class="d3">' + srBau3DSvg(c, 1000, true) + '</div>'
+    + '</div></div><div class="d3">' + (function () { var cv3 = document.querySelector('canvas[data-sr3d="' + c.id + '"]'); if (cv3 && cv3._three) { try { srGlDesenhar(cv3); return '<img src="' + cv3.toDataURL("image/png") + '" style="width:100%;display:block;">'; } catch (e) {} } return srBau3DSvg(c, 1000, true); })() + '</div>'   // v598: foto do 3D realista
     + srGradeHTML(c, true)
     + '<div class="pg2"></div><p><b>Carregue na ordem da 1ª coluna: o 1º cliente vai no FUNDO, encostado na cabine; o último fica na PORTA e é a 1ª entrega.</b> '
     + (pal ? 'Cada cliente nos paletes dele, nas vagas indicadas (F = fila contada da cabine; esq./dir. olhando da porta para a cabine).' : 'Um cliente por bloco, sem misturar. Pesado embaixo, fracionado (etiqueta amarela) em cima, virado para a porta.') + '</p>'
@@ -13310,6 +13311,7 @@ function sr3dCena(c) {
 
 /* desenho ---------------------------------------------------------------- */
 function sr3dDesenhar(cv) {
+  if (cv._three) { try { srGlDesenhar(cv); } catch (e) {} return; }   // v598: 3D realista
   var cena = cv._srCena; if (!cena) return;
   var dpr = window.devicePixelRatio || 1, Wc = cv.clientWidth || 600, Hc = Math.round(Math.max(260, Math.min(520, Wc * 0.52)));
   if (cv.width !== Math.round(Wc * dpr) || cv.height !== Math.round(Hc * dpr)) { cv.width = Math.round(Wc * dpr); cv.height = Math.round(Hc * dpr); cv.style.height = Hc + "px"; }
@@ -13395,11 +13397,20 @@ function sr3dDesenhar(cv) {
   g.fillText("arraste para girar · dois dedos ou roda do mouse para zoom · toque duplo volta ao início", 10, Hc - 10);
 }
 function sr3dTodos() { var l = document.querySelectorAll("canvas[data-sr3d]"); for (var i = 0; i < l.length; i++) sr3dDesenhar(l[i]); }
+/* v598: carrega o three.js e troca o desenho próprio pelo realista (o canvas 2D é
+   substituído por um novo, porque um canvas que já desenhou em 2D não aceita WebGL) */
+function sr3dTrocarParaGl() {
+  var l = document.querySelectorAll("canvas[data-sr3d]");
+  for (var i = 0; i < l.length; i++) { var cv = l[i]; if (cv._three) continue; var n = cv.cloneNode(false); cv.parentNode.replaceChild(n, cv); }
+  sr3dIniciar();
+}
 function sr3dIniciar() {
+  if (!window.THREE && SR3DGL.estado !== "falhou" && SR3DGL.estado !== "semgl" && srGlSuportado()) srThreeCarregar(function (ok) { if (ok) sr3dTrocarParaGl(); });
   var l = document.querySelectorAll("canvas[data-sr3d]");
   for (var i = 0; i < l.length; i++) (function (cv) {
     var c = srCarga(cv.getAttribute("data-sr3d")); if (!c) return;
-    try { cv._srCena = sr3dCena(c); } catch (e) { return; }
+    if (!cv._srCena && !cv._three && window.THREE && SR3DGL.estado !== "semgl" && srGlSuportado()) { try { srGlIniciar(cv, c); } catch (e) { console.warn("3D realista indisponível:", e); SR3DGL.estado = "semgl"; } }   // v598
+    if (!cv._three) { try { cv._srCena = sr3dCena(c); } catch (e) { return; } }
     sr3dDesenhar(cv);
     if (cv._srPronto) return; cv._srPronto = true;
     var dedos = {}, ult = null, dist0 = 0, zoom0 = 1, toque = 0;
@@ -13858,6 +13869,353 @@ function srDivExportar(cargaId) {
   var ws3 = XLSX.utils.aoa_to_sheet(carteira); ws3["!cols"] = [{ wch: 16 }, { wch: 22 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 24 }];
   XLSX.utils.book_append_sheet(wb, ws3, "Carteira por Cidade");
   XLSX.writeFile(wb, "RF_SaoRoque_Divisao_" + c.numcar + "_" + String(c.data || hojeISO()).replace(/-/g, "") + ".xlsx");
+}
+
+
+/* ---- v598: CAMINHÃO 3D REALISTA (WebGL / three.js) ---------------------------
+   Renato (08/10 09:25): a imagem do caminhão tem que ser mais real, mais
+   profissional. O desenho passa a ser feito com three.js (WebGL): luz de
+   estúdio, sombra no chão, reflexo de ambiente e materiais (pintura, vidro,
+   cromado, borracha, alumínio, madeira do palete, papelão das caixas).
+   Tudo é modelado no próprio código (sem arquivo de modelo externo): cabine
+   com perfil arredondado e caixa de roda, para-brisa e janelas, grade, faróis,
+   para-choque, retrovisores, estribos, tanque, longarinas, rodas com aro e
+   porcas, rodado duplo atrás, para-lamas, baú com quadro de alumínio, paredes
+   translúcidas, portas traseiras abertas, lanternas e para-choque traseiro.
+   A biblioteca (three.js r128, cdnjs) só é carregada quando a aba São Roque
+   abre; sem internet, o app continua com o desenho próprio (v590).
+   Os controles são os mesmos: arrastar gira, pinça/roda dá zoom, toque duplo
+   volta, botões de vista e girar sozinho. O mapa A4 usa a foto desta cena. */
+var SR_THREE_URL = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
+var SR3DGL = { estado: "", espera: [], renderers: [] };
+function srThreeCarregar(cb) {
+  if (window.THREE && THREE.WebGLRenderer) { cb(true); return; }
+  if (SR3DGL.estado === "falhou") { cb(false); return; }
+  SR3DGL.espera.push(cb);
+  if (SR3DGL.estado === "carregando") return;
+  SR3DGL.estado = "carregando";
+  var sc = document.createElement("script");
+  sc.src = SR_THREE_URL; sc.async = true;
+  sc.onload = function () { SR3DGL.estado = window.THREE ? "ok" : "falhou"; var l = SR3DGL.espera; SR3DGL.espera = []; l.forEach(function (f) { try { f(!!window.THREE); } catch (e) {} }); };
+  sc.onerror = function () { SR3DGL.estado = "falhou"; var l = SR3DGL.espera; SR3DGL.espera = []; l.forEach(function (f) { try { f(false); } catch (e) {} }); };
+  document.head.appendChild(sc);
+}
+function srGlSuportado() {
+  try { var c = document.createElement("canvas"); return !!(window.WebGLRenderingContext && (c.getContext("webgl") || c.getContext("experimental-webgl"))); } catch (e) { return false; }
+}
+/* texturas desenhadas em canvas (sem arquivo) */
+function srTexCanvas(w, h, desenha) {
+  var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  desenha(cv.getContext("2d"), w, h);
+  var t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+  if (THREE.sRGBEncoding) t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+function srTexturas() {
+  if (SR3DGL.tex) return SR3DGL.tex;
+  var T = {};
+  T.caixa = srTexCanvas(128, 128, function (g, w, h) {   // caixa de papelão (multiplica a cor do cliente)
+    g.fillStyle = "#f2f2f2"; g.fillRect(0, 0, w, h);
+    var gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "rgba(255,255,255,.25)"); gr.addColorStop(1, "rgba(0,0,0,.12)"); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.fillStyle = "rgba(255,255,255,.55)"; g.fillRect(w * 0.44, 0, w * 0.12, h);          // fita
+    g.strokeStyle = "rgba(0,0,0,.55)"; g.lineWidth = 5; g.strokeRect(2, 2, w - 4, h - 4);   // aresta da caixa
+    g.strokeStyle = "rgba(0,0,0,.18)"; g.lineWidth = 2; g.beginPath(); g.moveTo(0, h * 0.5); g.lineTo(w, h * 0.5); g.stroke();
+  });
+  T.filme = srTexCanvas(128, 128, function (g, w, h) {   // palete fechado com filme stretch
+    g.fillStyle = "#efefef"; g.fillRect(0, 0, w, h);
+    g.strokeStyle = "rgba(0,0,0,.45)"; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 2); g.lineTo(w, 2); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
+    for (var i = 0; i < 6; i++) { g.strokeStyle = "rgba(255,255,255," + (0.15 + 0.1 * (i % 2)) + ")"; g.lineWidth = 6; g.beginPath(); g.moveTo(0, i * 22 + 8); g.lineTo(w, i * 22 + 18); g.stroke(); }
+  });
+  T.madeira = srTexCanvas(256, 64, function (g, w, h) {
+    g.fillStyle = "#b07a42"; g.fillRect(0, 0, w, h);
+    for (var i = 0; i < 40; i++) { g.strokeStyle = "rgba(90,55,20," + (0.08 + Math.random() * 0.15) + ")"; g.lineWidth = 1 + Math.random() * 2; var y = Math.random() * h; g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(w * 0.3, y + 3, w * 0.6, y - 3, w, y + 1); g.stroke(); }
+  });
+  T.assoalho = srTexCanvas(256, 256, function (g, w, h) {
+    g.fillStyle = "#6e4b2a"; g.fillRect(0, 0, w, h);
+    for (var r = 0; r < 8; r++) { g.fillStyle = r % 2 ? "#74502d" : "#684626"; g.fillRect(0, r * 32, w, 30); g.fillStyle = "rgba(0,0,0,.35)"; g.fillRect(0, r * 32 + 30, w, 2); }
+    for (var i = 0; i < 60; i++) { g.strokeStyle = "rgba(40,25,10,.18)"; g.beginPath(); var y = Math.random() * h; g.moveTo(0, y); g.lineTo(w, y + 2); g.stroke(); }
+  });
+  T.alumParede = srTexCanvas(256, 64, function (g, w, h) {   // painel do baú com nervuras
+    g.fillStyle = "#e9edf1"; g.fillRect(0, 0, w, h);
+    for (var x = 0; x < w; x += 16) { var gr = g.createLinearGradient(x, 0, x + 16, 0); gr.addColorStop(0, "rgba(0,0,0,.10)"); gr.addColorStop(0.5, "rgba(255,255,255,.35)"); gr.addColorStop(1, "rgba(0,0,0,.10)"); g.fillStyle = gr; g.fillRect(x, 0, 16, h); }
+  });
+  T.logo = srTexCanvas(1024, 256, function (g, w, h) {   // faixa da RF na frente e nas portas
+    g.fillStyle = "#0b0b0b"; g.fillRect(0, 0, w, h);
+    var gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, "#8a5a06"); gr.addColorStop(0.5, "#E8C46A"); gr.addColorStop(1, "#8a5a06");
+    g.fillStyle = gr; g.fillRect(0, h - 18, w, 18); g.fillRect(0, 0, w, 10);
+    g.font = "900 120px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#E8C46A"; g.fillText("RF LOGÍSTICA", w / 2, h * 0.46);
+    g.font = "700 34px Arial"; g.fillStyle = "#ddd"; g.fillText("TRANSPORTE E DISTRIBUIÇÃO", w / 2, h * 0.8);
+  });
+  T.porta = srTexCanvas(256, 512, function (g, w, h) {   // folha da porta traseira por fora
+    g.fillStyle = "#e3e7eb"; g.fillRect(0, 0, w, h);
+    for (var x = 0; x < w; x += 14) { g.fillStyle = "rgba(0,0,0,.05)"; g.fillRect(x, 0, 2, h); }
+    g.fillStyle = "#9aa1a8"; [0.12, 0.88].forEach(function (f) { g.fillRect(w * f - 5, 0, 10, h); });   // barras de travamento
+    g.fillStyle = "#555"; [0.2, 0.5, 0.8].forEach(function (f) { g.fillRect(w * 0.06, h * f, w * 0.14, 14); });
+    g.fillStyle = "#0b0b0b"; g.fillRect(0, h * 0.36, w, h * 0.16);
+    g.font = "900 40px Arial"; g.textAlign = "center"; g.fillStyle = "#E8C46A"; g.fillText("RF", w / 2, h * 0.455);
+  });
+  SR3DGL.tex = T;
+  return T;
+}
+function srMats() {
+  if (SR3DGL.mats) return SR3DGL.mats;
+  var T = srTexturas(), M = {};
+  M.pintura = new THREE.MeshStandardMaterial({ color: 0xf3f5f7, metalness: 0.25, roughness: 0.3 });
+  M.preto = new THREE.MeshStandardMaterial({ color: 0x1b1d20, metalness: 0.2, roughness: 0.65 });
+  M.plastico = new THREE.MeshStandardMaterial({ color: 0x2b2f34, metalness: 0.1, roughness: 0.55 });
+  M.cromo = new THREE.MeshStandardMaterial({ color: 0xe2e6ea, metalness: 1, roughness: 0.16 });
+  M.vidro = new THREE.MeshStandardMaterial({ color: 0x0c1824, metalness: 0.9, roughness: 0.05, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  M.borracha = new THREE.MeshStandardMaterial({ color: 0x151515, metalness: 0, roughness: 0.92 });
+  M.aro = new THREE.MeshStandardMaterial({ color: 0xc7ccd2, metalness: 0.95, roughness: 0.25 });
+  M.aluminio = new THREE.MeshStandardMaterial({ color: 0xcfd4da, metalness: 0.85, roughness: 0.32 });
+  M.chassi = new THREE.MeshStandardMaterial({ color: 0x23262a, metalness: 0.5, roughness: 0.5 });
+  M.farol = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff1c0, emissiveIntensity: 0.55, metalness: 0.4, roughness: 0.15 });
+  M.seta = new THREE.MeshStandardMaterial({ color: 0xff9a1f, emissive: 0xff8000, emissiveIntensity: 0.35, roughness: 0.3 });
+  M.lanterna = new THREE.MeshStandardMaterial({ color: 0xc61818, emissive: 0xa00000, emissiveIntensity: 0.5, roughness: 0.3 });
+  M.parede = new THREE.MeshStandardMaterial({ color: 0xffffff, map: T.alumParede, metalness: 0.3, roughness: 0.4, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  M.teto = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.3, roughness: 0.4, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide });
+  M.frente = new THREE.MeshStandardMaterial({ color: 0xe8ecf0, map: T.alumParede, metalness: 0.3, roughness: 0.45 });
+  M.logo = new THREE.MeshStandardMaterial({ map: T.logo, metalness: 0.2, roughness: 0.4 });
+  M.porta = new THREE.MeshStandardMaterial({ map: T.porta, metalness: 0.3, roughness: 0.4, side: THREE.DoubleSide });
+  M.assoalho = new THREE.MeshStandardMaterial({ map: T.assoalho, roughness: 0.85 });
+  M.madeira = new THREE.MeshStandardMaterial({ map: T.madeira, roughness: 0.8 });
+  M.madeiraEsc = new THREE.MeshStandardMaterial({ map: T.madeira, color: 0x9a7a5a, roughness: 0.85 });
+  M.sombra = new THREE.ShadowMaterial({ opacity: 0.45 });
+  M.fora = new THREE.MeshStandardMaterial({ color: 0xE53935, map: T.caixa, roughness: 0.55 });
+  SR3DGL.mats = M; SR3DGL.matCor = {};
+  return M;
+}
+function srMatCor(cor, tipo) {
+  var k = tipo + cor; if (SR3DGL.matCor[k]) return SR3DGL.matCor[k];
+  var T = srTexturas();
+  var col = new THREE.Color(cor); if (col.convertSRGBToLinear) col.convertSRGBToLinear();   // v598: cor forte de verdade (a saída é sRGB)
+  var m = new THREE.MeshStandardMaterial({ color: col, map: tipo === "filme" ? T.filme : T.caixa, roughness: tipo === "filme" ? 0.35 : 0.62, metalness: tipo === "filme" ? 0.08 : 0 });
+  SR3DGL.matCor[k] = m; return m;
+}
+/* box com UV repetido na vertical (camadas de caixa) */
+function srBoxGeo(dx, dy, dz, repV, repH) {
+  var g = new THREE.BoxGeometry(dx, dy, dz);
+  if (repV > 1 || repH > 1) {
+    var uv = g.attributes.uv;
+    for (var i = 0; i < uv.count; i++) {
+      var face = Math.floor(i / 4);   // 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z
+      if (face !== 2 && face !== 3) uv.setXY(i, uv.getX(i) * (repH || 1), uv.getY(i) * (repV || 1));
+    }
+    uv.needsUpdate = true;
+  }
+  return g;
+}
+function srSprite(texto, corFundo, corTexto, escala) {
+  var cv = document.createElement("canvas"), g = cv.getContext("2d");
+  g.font = "900 64px Arial";
+  var w = Math.ceil(g.measureText(texto).width) + 48, h = 92;
+  cv.width = w; cv.height = h;
+  g.font = "900 64px Arial"; g.textAlign = "center"; g.textBaseline = "middle";
+  if (corFundo) {
+    g.fillStyle = corFundo; var r = 22;
+    g.beginPath(); g.moveTo(r, 2); g.lineTo(w - r, 2); g.quadraticCurveTo(w - 2, 2, w - 2, r); g.lineTo(w - 2, h - r); g.quadraticCurveTo(w - 2, h - 2, w - r, h - 2); g.lineTo(r, h - 2); g.quadraticCurveTo(2, h - 2, 2, h - r); g.lineTo(2, r); g.quadraticCurveTo(2, 2, r, 2); g.closePath(); g.fill();
+    g.lineWidth = 4; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke();
+  } else { g.lineWidth = 10; g.strokeStyle = "rgba(0,0,0,.85)"; g.strokeText(texto, w / 2, h / 2 + 2); }
+  g.fillStyle = corTexto || "#fff"; g.fillText(texto, w / 2, h / 2 + 2);
+  var t = new THREE.CanvasTexture(cv); if (THREE.sRGBEncoding) t.encoding = THREE.sRGBEncoding;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
+  var e = escala || 0.36; sp.scale.set(e * w / h, e, 1); sp.renderOrder = 10;
+  return sp;
+}
+
+/* monta a cena; coordenadas do app (x comprimento cabine->porta, y largura, z altura com o
+   assoalho do baú em 0) viram three (X = x, Y = z + 0.92 com o chão em 0, Z = -y) */
+function srGlCena(c) {
+  var m = srMontagem(c), B = m.B, L = B.c, W = B.l, H = B.a, M = srMats();
+  var cena = new THREE.Scene(), raiz = new THREE.Group(); cena.add(raiz);
+  var S = function (x, y, z) { return new THREE.Vector3(x, z + 0.92, -y); };
+  var add = function (geo, mat, x, y, z, sombra) { var me = new THREE.Mesh(geo, mat); me.position.copy(S(x, y, z)); me.castShadow = sombra !== false; me.receiveShadow = true; raiz.add(me); return me; };
+  var caixa = function (x0, y0, z0, x1, y1, z1, mat, sombra) { return add(new THREE.BoxGeometry(Math.abs(x1 - x0), Math.abs(z1 - z0), Math.abs(y1 - y0)), mat, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, sombra); };
+  var cabC = Math.max(1.5, Math.min(2.1, L * 0.28)), c0 = -cabC, c1 = -0.12, ch = Math.min(H, 2.3);
+  var tipo = srBauDaCarga(c), rFront = c0 + cabC * 0.42;
+  var eixosTras = tipo === "Truck" ? [L * 0.66, L * 0.66 + 1.3] : [L * (tipo === "VAN" ? 0.72 : 0.7)];
+  var duplo = tipo !== "VAN", R = tipo === "VAN" ? 0.36 : 0.47, zEixo = -0.92 + R;
+
+  // chão que recebe a sombra
+  var chao = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), M.sombra); chao.rotation.x = -Math.PI / 2; chao.position.y = 0.001; chao.receiveShadow = true; raiz.add(chao);
+  // longarinas e travessas
+  [0.32, W - 0.32].forEach(function (yy) { caixa(c0 + 0.25, yy - 0.06, -0.66, L + 0.12, yy + 0.06, -0.38, M.chassi); });
+  for (var tx = c1 + 0.4; tx < L; tx += 1.1) caixa(tx - 0.05, 0.3, -0.6, tx + 0.05, W - 0.3, -0.45, M.chassi);
+  // tanque de combustível e caixa de bateria
+  var tq = add(new THREE.CylinderGeometry(0.25, 0.25, 0.95, 28), M.aluminio, c1 + 0.75, 0.2, -0.58); tq.rotation.z = Math.PI / 2;
+  caixa(c1 + 0.35, W - 0.55, -0.82, c1 + 0.95, W - 0.2, -0.42, M.preto);
+
+  // ---- cabine: perfil lateral extrudado com quinas arredondadas e caixa de roda
+  var sh = new THREE.Shape(), zb = -0.38, ang = Math.asin(Math.min(0.99, (zb - zEixo) / (R + 0.07)));
+  sh.moveTo(c0 + 0.02, zb);
+  sh.lineTo(rFront - (R + 0.07) * Math.cos(ang), zb);
+  sh.absarc(rFront, zEixo, R + 0.07, Math.PI - ang, ang, true);
+  sh.lineTo(c1, zb); sh.lineTo(c1, ch - 0.05); sh.quadraticCurveTo(c1, ch, c1 - 0.08, ch);
+  sh.lineTo(c0 + 0.55, ch); sh.quadraticCurveTo(c0 + 0.42, ch, c0 + 0.36, ch - 0.1);
+  sh.lineTo(c0 + 0.06, ch * 0.56); sh.quadraticCurveTo(c0, ch * 0.5, c0, ch * 0.42);
+  sh.lineTo(c0, zb + 0.05); sh.quadraticCurveTo(c0, zb, c0 + 0.02, zb);
+  var cabGeo = new THREE.ExtrudeGeometry(sh, { depth: W - 0.12, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 4, curveSegments: 18 });
+  var cab = new THREE.Mesh(cabGeo, M.pintura); cab.position.set(0, 0.92, -(W - 0.06)); cab.castShadow = true; cab.receiveShadow = true; raiz.add(cab);
+  // para-brisa (no plano inclinado da frente)
+  var A = new THREE.Vector2(c0 + 0.07, ch * 0.59), Bp = new THREE.Vector2(c0 + 0.37, ch - 0.07), d = Bp.clone().sub(A), dl = d.length(); d.normalize();
+  var nrm = new THREE.Vector3(-d.y, d.x, 0);
+  var pb = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.32, dl), M.vidro);
+  pb.matrixAutoUpdate = true;
+  var bas = new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(d.x, d.y, 0), nrm);
+  pb.quaternion.setFromRotationMatrix(bas);
+  pb.position.set((A.x + Bp.x) / 2 + nrm.x * 0.056, (A.y + Bp.y) / 2 + 0.92 + nrm.y * 0.056, -W / 2); raiz.add(pb);
+  // janelas laterais e portas
+  [0.0, W].forEach(function (yy, lado) {
+    var zz = lado ? -(W + 0.002) : 0.002;
+    var js = new THREE.Shape(); js.moveTo(c0 + 0.52, ch * 0.56); js.lineTo(c1 - 0.18, ch * 0.56); js.lineTo(c1 - 0.18, ch * 0.93); js.lineTo(c0 + 0.62, ch * 0.93); js.lineTo(c0 + 0.52, ch * 0.62);
+    var jm = new THREE.Mesh(new THREE.ShapeGeometry(js), M.vidro); jm.position.set(0, 0.92, zz); raiz.add(jm);
+    // vincos da porta e maçaneta
+    var vz = lado ? -(W + 0.004) : 0.004;
+    [[c0 + 0.48, c0 + 0.5], [c1 - 0.16, c1 - 0.14]].forEach(function (xx) { var v = new THREE.Mesh(new THREE.BoxGeometry(xx[1] - xx[0], ch * 0.92, 0.005), M.preto); v.position.set((xx[0] + xx[1]) / 2, 0.92 + (-0.3 + ch * 0.62) / 2 + 0.02, vz); raiz.add(v); });
+    var mc = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.035, 0.03), M.cromo); mc.position.set(c1 - 0.32, 0.92 + ch * 0.48, vz + (lado ? -0.01 : 0.01)); raiz.add(mc);
+    // estribos
+    caixa(c0 + 0.62, yy - (lado ? 0 : 0.06), -0.6, c1 - 0.25, yy + (lado ? 0.06 : 0), -0.52, M.preto);
+    // retrovisor: haste + espelho
+    var sgn = lado ? 1 : -1;
+    caixa(c0 + 0.42, yy, ch * 0.78, c0 + 0.46, yy + sgn * 0.32, ch * 0.8, M.preto);
+    caixa(c0 + 0.38, yy + sgn * 0.28, ch * 0.5, c0 + 0.48, yy + sgn * 0.38, ch * 0.88, M.preto);
+    var esp = caixa(c0 + 0.37, yy + sgn * 0.29, ch * 0.53, c0 + 0.375, yy + sgn * 0.37, ch * 0.85, M.vidro, false);
+  });
+  // frente: grade, faróis, setas, para-choque, faróis de milha, luzes de teto
+  var xf = c0 - 0.055;
+  caixa(xf - 0.02, 0.45, -0.08, xf + 0.02, W - 0.45, ch * 0.36, M.plastico);
+  for (var gz = 0; gz < 5; gz++) { var zz2 = -0.02 + gz * (ch * 0.36 + 0.02) / 5; caixa(xf - 0.035, 0.48, zz2, xf - 0.015, W - 0.48, zz2 + 0.035, M.cromo); }
+  [[0.12, 0.42], [W - 0.42, W - 0.12]].forEach(function (yy) {
+    caixa(xf - 0.03, yy[0], 0.02, xf + 0.02, yy[1], 0.24, M.farol, false);
+    caixa(xf - 0.025, yy[0], 0.26, xf + 0.02, yy[1], 0.32, M.seta, false);
+  });
+  caixa(c0 - 0.16, -0.05, -0.48, c0 + 0.08, W + 0.05, -0.2, M.plastico);
+  [0.3, W - 0.3].forEach(function (yy) { var fm = add(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 18), M.farol, c0 - 0.17, yy, -0.34, false); fm.rotation.z = Math.PI / 2; });
+  [0.35, W / 2 - 0.15, W / 2 + 0.15, W - 0.35].forEach(function (yy) { caixa(c0 + 0.6, yy - 0.06, ch + 0.04, c0 + 0.66, yy + 0.06, ch + 0.08, M.seta, false); });
+  // ---- rodas
+  var perfil = [[0.6, -0.5], [0.94, -0.5], [1, -0.4], [1.01, 0], [1, 0.4], [0.94, 0.5], [0.6, 0.5]].map(function (p) { return new THREE.Vector2(p[0] * R, p[1] * 0.27); });
+  var pneuGeo = new THREE.LatheGeometry(perfil, 40);
+  var aroGeo = new THREE.CylinderGeometry(R * 0.62, R * 0.62, 0.2, 32), cuboGeo = new THREE.CylinderGeometry(R * 0.22, R * 0.26, 0.24, 20), porcaGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.26, 6);
+  var roda = function (x, yc) {
+    var g = new THREE.Group();
+    var p = new THREE.Mesh(pneuGeo, M.borracha); p.castShadow = true; g.add(p);
+    g.add(new THREE.Mesh(aroGeo, M.aro));
+    g.add(new THREE.Mesh(cuboGeo, M.cromo));
+    for (var i = 0; i < 8; i++) { var pc = new THREE.Mesh(porcaGeo, M.cromo); var a = i / 8 * Math.PI * 2; pc.position.set(Math.cos(a) * R * 0.38, 0, Math.sin(a) * R * 0.38); g.add(pc); }
+    g.rotation.x = Math.PI / 2; g.position.copy(S(x, yc, zEixo)); raiz.add(g);
+  };
+  [0.14, W - 0.14].forEach(function (yy) { roda(rFront, yy); });
+  eixosTras.forEach(function (ex) {
+    [0.14, W - 0.14].forEach(function (yy) { roda(ex, yy); if (duplo) roda(ex, yy < W / 2 ? yy + 0.29 : yy - 0.29); });
+    // para-lamas
+    [0, W].forEach(function (yy) {
+      var pl = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.08, R + 0.08, duplo ? 0.62 : 0.34, 28, 1, true, -Math.PI / 2, Math.PI), M.preto);
+      pl.material.side = THREE.DoubleSide; pl.rotation.x = -Math.PI / 2;
+      pl.position.copy(S(ex, yy < W / 2 ? (duplo ? 0.29 : 0.15) : W - (duplo ? 0.29 : 0.15), zEixo)); raiz.add(pl);
+    });
+  });
+  if (tipo === "Truck") { /* nada a mais */ }
+
+  // ---- baú
+  caixa(0, 0, -0.16, L, W, 0, M.assoalho);
+  M.assoalho.map.repeat.set(L / 1.2, 1);
+  var pf = 0.06;   // perfil de alumínio
+  [[0, 0], [0, W], [L, 0], [L, W]].forEach(function (p) { caixa(p[0] - pf / 2, p[1] - pf / 2, 0, p[0] + pf / 2, p[1] + pf / 2, H, M.aluminio); });
+  [0, W].forEach(function (yy) { caixa(0, yy - pf / 2, H - pf, L, yy + pf / 2, H, M.aluminio); caixa(0, yy - pf / 2, -0.16, L, yy + pf / 2, 0.02, M.aluminio); });
+  [0, L].forEach(function (xx) { caixa(xx - pf / 2, 0, H - pf, xx + pf / 2, W, H, M.aluminio); });
+  for (var pp = 1; pp < L; pp += 1.0) [0, W].forEach(function (yy) { caixa(pp - 0.015, yy - 0.015, 0, pp + 0.015, yy + 0.015, H, M.aluminio, false); });
+  // paredes translúcidas (laterais e teto) e frente opaca com a faixa da RF
+  var parL = function (yy) { var pm = new THREE.Mesh(new THREE.PlaneGeometry(L, H), M.parede); pm.position.copy(S(L / 2, yy, H / 2)); pm.renderOrder = 2; raiz.add(pm); };
+  parL(0); parL(W); M.parede.map.repeat.set(L / 1.5, 1);
+  var tt = new THREE.Mesh(new THREE.PlaneGeometry(L, W), M.teto); tt.rotation.x = -Math.PI / 2; tt.position.copy(S(L / 2, W / 2, H)); tt.renderOrder = 2; raiz.add(tt);
+  caixa(-0.05, 0, 0, 0.0, W, H, M.frente);
+  var lg = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.1, (W - 0.1) / 4), M.logo); lg.rotation.y = -Math.PI / 2; lg.position.copy(S(-0.056, W / 2, H - (W - 0.1) / 8 - 0.08)); raiz.add(lg);
+  // portas traseiras abertas (~105°), com a faixa RF por fora
+  var dw = W / 2;
+  [[0, 1], [W, -1]].forEach(function (pd) {
+    var g = new THREE.Group(); g.position.copy(S(L, pd[0], 0));
+    var folha = new THREE.Mesh(new THREE.BoxGeometry(0.04, H, dw), M.porta); folha.position.set(0, H / 2, -pd[1] * dw / 2); folha.castShadow = true; g.add(folha);
+    g.rotation.y = -pd[1] * (Math.PI - 0.26); raiz.add(g);
+  });
+  // para-choque traseiro, lanternas, degrau
+  caixa(L - 0.05, 0.1, -0.78, L + 0.12, W - 0.1, -0.64, M.chassi);
+  [[0.12, 0.42], [W - 0.42, W - 0.12]].forEach(function (yy) { caixa(L + 0.08, yy[0], -0.62, L + 0.14, yy[1], -0.46, M.lanterna, false); });
+  caixa(L - 0.02, W / 2 - 0.35, -0.5, L + 0.18, W / 2 + 0.35, -0.46, M.aluminio);
+
+  // ---- carga
+  var etiquetas = [];
+  m.caixas.forEach(function (bx) {
+    var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy;
+    if (bx.palete || bx.soBase) {   // palete PBR: tábuas de cima + 3 longarinas
+      caixa(x0, y0, 0.11, x1, y1, 0.14, M.madeira);
+      [0.04, 0.5, 0.96].forEach(function (f) { var yy = y0 + (y1 - y0) * f; caixa(x0, yy - 0.05, 0.0, x1, yy + 0.05, 0.11, M.madeiraEsc); });
+      if (bx.soBase) return;
+    }
+    var base = bx.coluna ? bx.z : (bx.palete ? 0.14 : 0), topo = bx.coluna ? bx.z + bx.dz : base + Math.max(0.12, bx.dz - (bx.palete ? 0.14 : 0));
+    var mat = bx.fora ? M.fora : srMatCor(bx.cor, bx.coluna ? "caixa" : "filme");
+    var camadas = bx.coluna ? (bx.nFaixas || 1) : Math.max(1, Math.round((topo - base) / 0.3));
+    var me = new THREE.Mesh(srBoxGeo(x1 - x0 - 0.01, topo - base, y1 - y0 - 0.01, camadas, bx.coluna ? 1 : 2), mat);
+    me.position.copy(S((x0 + x1) / 2, (y0 + y1) / 2, (base + topo) / 2)); me.castShadow = true; me.receiveShadow = true; raiz.add(me);
+    if (bx.rot) etiquetas.push({ t: bx.rot, cor: bx.fora ? "#E53935" : bx.cor, p: S((x0 + x1) / 2, (y0 + y1) / 2, topo + 0.22) });
+  });
+  // rótulo por praça quando o cliente virou faixas (sintético)
+  var grupos = [];
+  m.blocos.forEach(function (b) { if (!b.sub) return; var g = grupos.length ? grupos[grupos.length - 1] : null; if (g && g.seq === b.seq) { g.fim = b.fim; } else grupos.push({ seq: b.seq, ini: b.ini, fim: b.fim, n: b.subTot, cor: b.cor }); });
+  grupos.forEach(function (g) { etiquetas.push({ t: "P" + g.seq + " · " + g.n + " cli.", cor: g.cor, p: S((g.ini + g.fim) / 2, W / 2, H * 0.9) }); });
+  etiquetas.forEach(function (e) { var sp = srSprite(e.t, e.cor, "#fff", 0.3); sp.position.copy(e.p); raiz.add(sp); });
+  var f1 = srSprite("FUNDO", null, "#cfd3d8", 0.26); f1.position.copy(S(0.35, W / 2, H + 0.35)); raiz.add(f1);
+  var f2 = srSprite("PORTA ▶", null, "#E8C46A", 0.3); f2.position.copy(S(L + 0.7, W / 2, H + 0.25)); raiz.add(f2);
+
+  // ---- luz de estúdio + reflexo de ambiente
+  cena.add(new THREE.HemisphereLight(0xdfe8f2, 0x2a2622, 0.55));
+  var sol = new THREE.DirectionalLight(0xffffff, 1.05); sol.position.set(-4, 9, 6); sol.castShadow = true;
+  sol.shadow.mapSize.set(2048, 2048); sol.shadow.camera.left = -8; sol.shadow.camera.right = 8; sol.shadow.camera.top = 8; sol.shadow.camera.bottom = -8; sol.shadow.bias = -0.0005; sol.shadow.radius = 4;
+  sol.target.position.set(L / 2 - 1, 0, -W / 2); cena.add(sol); cena.add(sol.target);
+  var luz2 = new THREE.DirectionalLight(0xbcd2ff, 0.35); luz2.position.set(8, 4, -6); cena.add(luz2);
+  var centro = new THREE.Vector3((c0 + L) / 2, 1.25, -W / 2);
+  return { cena: cena, centro: centro, raio: (L + cabC) * 0.62 };
+}
+function srGlAmbiente(renderer) {
+  if (SR3DGL.env) return SR3DGL.env;
+  try {
+    var es = new THREE.Scene();
+    var sala = new THREE.Mesh(new THREE.BoxGeometry(30, 14, 30), new THREE.MeshBasicMaterial({ color: 0x3a3d42, side: THREE.BackSide })); es.add(sala);
+    var luzPainel = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    [[0, 6.9, 0, 14, 0.1, 6], [-14.9, 4, 0, 0.1, 5, 12], [14.9, 4, -4, 0.1, 4, 8], [0, 4, 14.9, 10, 4, 0.1]].forEach(function (p) { var b = new THREE.Mesh(new THREE.BoxGeometry(p[3], p[4], p[5]), luzPainel); b.position.set(p[0], p[1], p[2]); es.add(b); });
+    var pm = new THREE.PMREMGenerator(renderer);
+    SR3DGL.env = pm.fromScene(es, 0.04).texture;
+    pm.dispose();
+  } catch (e) { SR3DGL.env = null; }
+  return SR3DGL.env;
+}
+function srGlIniciar(cv, c) {
+  // libera renderizadores de telas que já saíram da página
+  SR3DGL.renderers = SR3DGL.renderers.filter(function (r) { if (document.body.contains(r.domElement)) return true; try { r.dispose(); r.forceContextLoss(); } catch (e) {} return false; });
+  var rd = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  rd.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  rd.shadowMap.enabled = true; rd.shadowMap.type = THREE.PCFSoftShadowMap;
+  if (THREE.sRGBEncoding) rd.outputEncoding = THREE.sRGBEncoding;
+  rd.toneMapping = THREE.NoToneMapping;   // sem tone mapping: não lava as cores dos clientes
+  rd.physicallyCorrectLights = false;
+  SR3DGL.renderers.push(rd);
+  var info = srGlCena(c);
+  var env = srGlAmbiente(rd); if (env) info.cena.environment = env;
+  var cam = new THREE.PerspectiveCamera(30, 2, 0.1, 200);
+  cv._three = { rd: rd, info: info, cam: cam };
+  cv.parentNode.style.background = "radial-gradient(ellipse at 50% 38%, #3a3d42 0%, #17181b 55%, #050505 100%)";
+}
+function srGlDesenhar(cv) {
+  var t = cv._three; if (!t) return;
+  var Wc = cv.clientWidth || cv.parentNode.clientWidth || 600, Hc = Math.round(Math.max(280, Math.min(560, Wc * 0.55)));
+  cv.style.height = Hc + "px";
+  t.rd.setSize(Wc, Hc, false);
+  t.cam.aspect = Wc / Hc; t.cam.updateProjectionMatrix();
+  var D = t.info.raio * 3.3 / SR3D.zoom, el = Math.max(0.03, Math.min(1.52, SR3D.pitch)), az = SR3D.yaw;
+  var C = t.info.centro;
+  t.cam.position.set(C.x + D * Math.cos(el) * Math.sin(az), C.y + D * Math.sin(el), C.z + D * Math.cos(el) * Math.cos(az));
+  t.cam.lookAt(C);
+  t.rd.render(t.info.cena, t.cam);
 }
 
 /* ---- v586: carga de EXEMPLO para a demonstração ---------------------------
@@ -34523,7 +34881,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
