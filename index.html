@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v595)</title>
+<title>RF Logística — Painel da Frota (v596)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v595">
+<meta name="rf-versao" content="v596">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v596 (08/10/2026): São Roque -- CARGA BATIDA SOBRE PALETES: paletes no chão e colunas de caixas de 0,50x0,50 (4 por palete, empilhadas até o teto), cada cliente com as colunas dele a partir da cabine; quem compra pouco divide o palete; 3D com camadas de caixa, vista de cima com os clientes de cada palete, etiqueta com palete/vaga, divisão por colunas. -->
 <!-- v595 (08/10/2026): São Roque -- DIVISÃO DO BAÚ por CLIENTE ou por CIDADE (carga batida também dividida por cliente; no sintético a praça vira uma faixa por entrega com peso estimado), rótulos P2.1 / P2–P5 no 3D, grade, mapa e etiqueta. -->
 <!-- v594 (08/10/2026): São Roque -- botão ROTEIRIZAR / DIVIDIR CARGA: divide entre veículos pelo menor custo (leque por direção + programação dinâmica, sem partir cliente, menor tipo que cabe), tabela de aprovação, Google Maps por veículo, planilha no modelo RF, aplicar (uma carga por veículo, bipagem recusa volume de outro caminhão) e juntar de novo. -->
 <!-- v593 (08/10/2026): São Roque -- capacidade do Toco na montagem do baú passa de 6.500 para 8.000 kg (Renato). -->
@@ -882,7 +883,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v595" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v596" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12178,7 +12179,7 @@ function srImprimirEtiquetas(cargaId, k, grupo) {
       + '<div class="cli">' + esc(String(cl.fant || cl.nome).slice(0, 34)) + '</div>'
       + '<div class="cid">' + esc(cl.cidade) + (alto && cl.bairro ? ' · ' + esc(cl.bairro) : '') + '</div>'
       + (blocos[cl.k] ? (function () {
-          var bz = blocos[cl.k], ps = mont && mont.modo === "palete" ? srPaleteDoVolume(bz, v) : null;
+          var bz = blocos[cl.k], ps = mont && bz.slots && bz.slots.length ? srPaleteDoVolume(bz, v) : null;   // v596: batida também tem palete no chão
           return ps ? '<div class="zona">PALETE <b>' + ps.n + '/' + bz.pals + '</b> · VAGA <b>F' + ps.fila + ' ' + srLadoTxt(mont, ps) + '</b> · BAÚ ' + bz.zona + ' · carregar ' + bz.passo + 'º</div>'
                     : '<div class="zona">BAÚ <b>' + bz.zona + '</b> · ' + srFmtM(bz.ini) + '–' + srFmtM(bz.fim) + ' m da cabine · carregar ' + bz.passo + 'º</div>';
         })() : '')
@@ -12514,6 +12515,25 @@ function srPaletesCliente(c, cl, B) {
      palete por entrega inventaria paletes que não existem).
    Cada bloco ("unidade") guarda os clientes que contém (membros) para etiqueta,
    romaneio e bipagem continuarem achando o lugar certo de cada volume. */
+/* v596: CARGA BATIDA DA SÃO ROQUE (Renato, 08/10 09:16): alimento em caixas de
+   ~0,50 × 0,50 m; cliente que compra muito e cliente que compra pouco; e mesmo
+   na batida a São Roque põe os clientes EM CIMA DE PALETES no chão do baú. Então
+   a batida virou: paletes PBR no assoalho (mesmas vagas da paletizada) e, em
+   cima deles, COLUNAS de caixas de 0,50 × 0,50 (4 colunas por palete), com as
+   caixas empilhadas até perto do teto. Cada cliente ocupa as colunas dele, em
+   sequência a partir da cabine; quem compra pouco ocupa 1 ou 2 colunas e divide
+   o palete com o vizinho, sem misturar caixa de um com a do outro na mesma
+   coluna. Nº de caixas: o volume real do arquivo quando há (1 etiqueta = 1
+   volume); no sintético, a cubagem ÷ volume da caixa média (estimado). */
+var SR_CAIXA = { c: 0.5, l: 0.5, a: 0.35 };   // caixa média de alimento (m)
+function srBatidaGeo(B) {
+  var G = srGrade(B), hUtil = B.a - 0.14 - 0.10;
+  var nCx = Math.max(1, Math.floor(hUtil / SR_CAIXA.a));
+  var cxL = Math.max(1, Math.floor((G.ao + 0.001) / SR_CAIXA.c)), cyL = Math.max(1, Math.floor((G.atr + 0.001) / SR_CAIXA.l));
+  var colsPorFila = cxL * cyL * G.porFila;
+  return { G: G, nCx: nCx, cxL: cxL, cyL: cyL, offX: (G.ao - cxL * SR_CAIXA.c) / 2, offY: (G.atr - cyL * SR_CAIXA.l) / 2,
+    colsPorFila: colsPorFila, totCols: colsPorFila * G.filas, colVol: nCx * SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a, porPalete: cxL * cyL };
+}
 function srDivisaoBau(c) { return c.divBau === "cidade" ? "cidade" : "cliente"; }
 function srClarear(hex, f) {
   var n = parseInt(String(hex).slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
@@ -12581,17 +12601,36 @@ function srMontagem(c) {
       blocos.push(b);
     });
   } else {
-    var secao = B.l * B.a * SR_APROVEITAMENTO, pos = 0;
+    /* v596: batida em colunas de caixas sobre paletes no chão */
+    var BG = srBatidaGeo(B), colIdx = 0, slotsUsados = {};
+    var colPos = function (i) {
+      var fila = Math.floor(i / BG.colsPorFila), r = i % BG.colsPorFila;
+      var xs = Math.floor(r / (BG.cyL * G.porFila)), r2 = r % (BG.cyL * G.porFila), lado = Math.floor(r2 / BG.cyL), ys = r2 % BG.cyL;
+      return { fila: fila, lado: lado, x: fila * G.ao + BG.offX + xs * SR_CAIXA.c, y: lado * G.atr + BG.offY + ys * SR_CAIXA.l, fora: fila >= G.filas };
+    };
+    var vCx = SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a;
     ordem.forEach(function (u, i) {
       var q = srM3Cliente(c, u); fontes[q.fonte] = 1;
-      var comp = q.m3 / secao;
-      var b = { k: u.k, kCli: u.kCli, membros: u.membros, seq: u.seq, rot: u.rot, fant: u.fant, cidade: u.cidade, peso: u.peso, m3: q.m3, ini: pos, fim: pos + comp, cor: u.cor, passo: i + 1,
-        entregas: u.entregas, estimado: u.estimado, sub: u.sub, subTot: u.subTot, slots: [] };
-      b.vols = volsDe(u).length;
-      caixas.push({ x: pos + 0.01, y: 0.04, z: 0, dx: Math.max(0.03, comp - 0.02), dy: B.l - 0.08, dz: B.a * 0.88, cor: b.cor, rot: u.rot, palete: false, fora: pos + comp > B.c });
-      pos += comp; m3t += q.m3; kgt += b.peso;
+      var vv = volsDe(u);
+      var nCxCli = vv.length ? vv.length : Math.max(1, Math.ceil(q.m3 / vCx - 0.05));
+      var ncol = Math.ceil(nCxCli / BG.nCx), resto = nCxCli;
+      var b = { k: u.k, kCli: u.kCli, membros: u.membros, seq: u.seq, rot: u.rot, fant: u.fant, cidade: u.cidade, peso: u.peso, m3: q.m3, cor: u.cor, passo: i + 1,
+        entregas: u.entregas, estimado: u.estimado, sub: u.sub, subTot: u.subTot, caixasN: nCxCli, estCx: !vv.length, cols: ncol, slots: [] };
+      var meio = Math.floor((ncol - 1) / 2), xs = [];
+      for (var j = 0; j < ncol; j++) {
+        var p = colPos(colIdx++), n = Math.min(BG.nCx, resto); resto -= n;
+        var key = p.fila + "|" + p.lado;
+        if (!slotsUsados[key]) { slotsUsados[key] = 1; caixas.push({ soBase: true, palete: true, x: p.fila * G.ao + 0.04, y: p.lado * G.atr + 0.04, z: 0, dx: G.ao - 0.08, dy: G.atr - 0.08, dz: 0.14, cor: "#a8743c", fora: p.fora }); }
+        if (!b.slots.some(function (s0) { return s0.fila === p.fila + 1 && s0.lado === p.lado; })) b.slots.push({ fila: p.fila + 1, lado: p.lado, n: b.slots.length + 1, fora: p.fora, x: p.fila * G.ao, y: p.lado * G.atr, dx: G.ao, dy: G.atr, fill: 1 });
+        caixas.push({ coluna: true, x: p.x + 0.015, y: p.y + 0.015, z: 0.14, dx: SR_CAIXA.c - 0.03, dy: SR_CAIXA.l - 0.03, dz: n * SR_CAIXA.a, nFaixas: n, cor: b.cor, rot: (j === meio && !u.sub) ? u.rot : "", palete: false, fora: p.fora });   // faixa de praça (sintético) usa o rótulo do grupo
+        xs.push(p.x);
+      }
+      b.ini = Math.min.apply(null, xs); b.fim = Math.max.apply(null, xs) + SR_CAIXA.c; b.pals = b.slots.length;
+      b.vols = vv.length; b.volIdx = {}; vv.forEach(function (v, n2) { b.volIdx[v.c] = n2; });
+      m3t += q.m3; kgt += b.peso;
       blocos.push(b);
     });
+    var bat = { cols: colIdx, totCols: BG.totCols, nCx: BG.nCx, porPalete: BG.porPalete, paletesChao: Object.keys(slotsUsados).length };
   }
   var usado = blocos.length ? Math.max.apply(null, blocos.map(function (b) { return b.fim; })) : 0;
   blocos.forEach(function (b) {
@@ -12604,14 +12643,14 @@ function srMontagem(c) {
     var len = b.fim - b.ini; if (len <= 0) return;
     kgPorta += b.peso * (Math.max(0, b.fim - Math.max(b.ini, meioBau)) / len);
   });
-  var palTot = blocos.reduce(function (s, b) { return s + (b.pals || 0); }, 0);
+  var palTot = modo === "palete" ? blocos.reduce(function (s, b) { return s + (b.pals || 0); }, 0) : (bat ? bat.paletesChao : 0);
   return {
     bau: nome, B: B, modo: modo, G: G, hPal: hPal, blocos: blocos, caixas: caixas, usado: usado, m3: m3t, kg: kgt,
-    palTot: palTot, vagas: G.vagas, divisao: srDivisaoBau(c), temEstimado: blocos.some(function (b) { return b.estimado; }),
-    ocupVol: modo === "palete" ? (G.vagas ? palTot / G.vagas : 0) : (B.c ? usado / B.c : 0),
+    palTot: palTot, vagas: G.vagas, divisao: srDivisaoBau(c), bat: modo === "palete" ? null : bat, temEstimado: blocos.some(function (b) { return b.estimado; }),
+    ocupVol: modo === "palete" ? (G.vagas ? palTot / G.vagas : 0) : (bat.totCols ? bat.cols / bat.totCols : 0),
     ocupKg: B.kg ? kgt / B.kg : 0,
     kgPortaPct: kgt ? kgPorta / kgt : 0, estimado: !!fontes.peso,
-    naoCabe: (modo === "palete" ? palTot > G.vagas : usado > B.c + 0.001) || kgt > B.kg,
+    naoCabe: (modo === "palete" ? palTot > G.vagas : bat.cols > bat.totCols) || kgt > B.kg,
   };
 }
 function srBlocoDoCliente(c, k) {
@@ -12704,18 +12743,21 @@ function srBau3DSvg(c, largura, claro) {
       // vãos do garfo
       [0.18, 0.62].forEach(function (fr) { s += poly([[x0 + bx.dx * fr, y0, z0 + 0.02], [x0 + bx.dx * (fr + 0.2), y0, z0 + 0.02], [x0 + bx.dx * (fr + 0.2), y0, z0 + base - 0.03], [x0 + bx.dx * fr, y0, z0 + base - 0.03]], "#3A2A18", 'stroke="none"'); });
     }
+    if (bx.soBase) return;   // v596: só o palete do chão
     var za = z0 + base, zb = z0 + base + Math.max(0.12, bx.dz - base);
     var cor = bx.fora ? "#E74C3C" : bx.cor;
     s += poly([[x0, y0, za], [x1, y0, za], [x1, y0, zb], [x0, y0, zb]], tom(cor, -0.05));         // frente
     s += poly([[x1, y0, za], [x1, y1, za], [x1, y1, zb], [x1, y0, zb]], tom(cor, -0.28));         // lado (porta)
     s += poly([[x0, y0, zb], [x1, y0, zb], [x1, y1, zb], [x0, y1, zb]], tom(cor, 0.25));          // topo
+    if (bx.coluna) for (var lc = 1; lc < bx.nFaixas; lc++) { var zc = za + (zb - za) * lc / bx.nFaixas; s += '<line x1="' + P(x0, y0, zc)[0].toFixed(1) + '" y1="' + P(x0, y0, zc)[1].toFixed(1) + '" x2="' + P(x1, y0, zc)[0].toFixed(1) + '" y2="' + P(x1, y0, zc)[1].toFixed(1) + '" stroke="' + tom(cor, -0.4) + '" stroke-width="0.7"/>'; }   // v596
     if (bx.palete) {   // filme stretch e linhas das caixas
       var nl = Math.max(1, Math.floor((zb - za) / 0.3));
       for (var li = 1; li < nl; li++) { var zl = za + (zb - za) * li / nl; s += '<line x1="' + P(x0, y0, zl)[0].toFixed(1) + '" y1="' + P(x0, y0, zl)[1].toFixed(1) + '" x2="' + P(x1, y0, zl)[0].toFixed(1) + '" y2="' + P(x1, y0, zl)[1].toFixed(1) + '" stroke="' + tom(cor, -0.35) + '" stroke-width="0.8"/>'; }
       s += '<line x1="' + P((x0 + x1) / 2, y0, za)[0].toFixed(1) + '" y1="' + P((x0 + x1) / 2, y0, za)[1].toFixed(1) + '" x2="' + P((x0 + x1) / 2, y0, zb)[0].toFixed(1) + '" y2="' + P((x0 + x1) / 2, y0, zb)[1].toFixed(1) + '" stroke="' + tom(cor, -0.35) + '" stroke-width="0.8"/>';
       s += poly([[x0, y0, za], [x0 + bx.dx * 0.35, y0, za], [x0, y0, za + (zb - za) * 0.55]], "rgba(255,255,255,0.18)", 'stroke="none"');
     }
-    var tp = P((x0 + x1) / 2, (y0 + y1) / 2, zb), fsz = Math.max(10, Math.min(20, bx.dx * k * 0.33));
+    if (!bx.rot) return;
+    var tp = P((x0 + x1) / 2, (y0 + y1) / 2, zb), fsz = Math.max(bx.coluna ? 8 : 10, Math.min(20, bx.dx * k * (bx.coluna ? 0.45 : 0.33)));
     s += '<text x="' + tp[0].toFixed(1) + '" y="' + (tp[1] + fsz * 0.35).toFixed(1) + '" font-size="' + fsz.toFixed(0) + '" font-weight="900" fill="#111" text-anchor="middle">' + bx.rot + '</text>';
   });
   // ---- aramado do baú (teto e parede cortada do lado de cá)
@@ -12751,9 +12793,8 @@ function srBau3DSvg(c, largura, claro) {
 /* vista de cima: grade das vagas (o que o conferente da doca usa) */
 function srGradeHTML(c, claro) {
   var m = srMontagem(c);
-  if (m.modo !== "palete") return "";
-  var G = m.G, porVaga = {};
-  m.blocos.forEach(function (b) { b.slots.forEach(function (s) { porVaga[(s.fila) + "|" + s.lado] = { b: b, s: s }; }); });
+  var G = m.G, porVaga = {}, bat = m.modo !== "palete";
+  m.blocos.forEach(function (b) { b.slots.forEach(function (s) { var k = (s.fila) + "|" + s.lado; if (!porVaga[k]) porVaga[k] = { b: b, s: s, todos: [] }; porVaga[k].todos.push(b); }); });
   var filasMostrar = Math.max(G.filas, m.blocos.reduce(function (mx, b) { return Math.max(mx, b.slots.length ? b.slots[b.slots.length - 1].fila : 0); }, 0));
   var bd = claro ? "#444" : "#555";
   var h = '<div style="display:flex;align-items:stretch;gap:0;overflow-x:auto;margin-top:8px;">'
@@ -12763,13 +12804,14 @@ function srGradeHTML(c, claro) {
     for (var l = 0; l < G.porFila; l++) {
       var v = porVaga[f + "|" + l], fora = f > G.filas;
       h += '<div style="border:1px solid ' + bd + ';margin:1px;border-radius:4px;padding:3px 2px;text-align:center;font-size:11px;min-height:34px;'
-        + (v ? 'background:' + (fora ? "#E74C3C" : v.b.cor) + ';color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;' : 'background:' + (claro ? "#fafafa" : "#111") + ';color:#666;') + '">'
-        + (v ? '<b style="font-size:' + (v.b.rot.length > 4 ? 11 : 14) + 'px;">' + v.b.rot + '</b><br><span style="font-size:9px;">pal ' + v.s.n + '/' + v.b.pals + (v.s.fill < 1 ? ' · ' + Math.round(v.s.fill * 100) + '%' : '') + '</span>' : 'livre') + '</div>';
+        + (v ? 'background:' + (fora ? "#E74C3C" : (bat && v.todos.length > 1 ? 'linear-gradient(90deg,' + v.todos.map(function (x, i2) { return x.cor + ' ' + Math.round(i2 * 100 / v.todos.length) + '%,' + x.cor + ' ' + Math.round((i2 + 1) * 100 / v.todos.length) + '%'; }).join(',') + ')' : v.b.cor)) + ';color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;' : 'background:' + (claro ? "#fafafa" : "#111") + ';color:#666;') + '">'
+        + (v ? (bat ? '<b style="font-size:' + (v.todos.length > 2 ? 9 : 11) + 'px;">' + v.todos.slice(0, 4).map(function (x) { return x.rot; }).join(' · ') + (v.todos.length > 4 ? ' +' + (v.todos.length - 4) : '') + '</b><br><span style="font-size:9px;">' + v.todos.length + ' cliente' + (v.todos.length > 1 ? 's' : '') + '</span>'
+                : '<b style="font-size:' + (v.b.rot.length > 4 ? 11 : 14) + 'px;">' + v.b.rot + '</b><br><span style="font-size:9px;">pal ' + v.s.n + '/' + v.b.pals + (v.s.fill < 1 ? ' · ' + Math.round(v.s.fill * 100) + '%' : '') + '</span>') : 'livre') + '</div>';
     }
     h += '<div style="text-align:center;font-size:10px;color:' + (claro ? "#333" : "#999") + ';">fila ' + f + '</div></div>';
   }
   h += '<div style="writing-mode:vertical-rl;font-size:10px;color:' + (claro ? "#000" : "#E8C46A") + ';font-weight:700;padding:2px 4px;border:1px solid ' + bd + ';border-radius:0 6px 6px 0;text-align:center;">PORTA</div></div>'
-    + '<div style="font-size:10px;color:' + (claro ? "#333" : "#999") + ';margin-top:2px;">Vista de cima. ' + (G.porFila === 2 ? 'Em cima = lado esquerdo (motorista), embaixo = lado direito, olhando da porta para a cabine. ' : '') + 'Palete PBR 1,00×1,20 m, ' + G.porFila + ' por fila, ' + G.filas + ' filas = ' + G.vagas + ' vagas.</div>';
+    + '<div style="font-size:10px;color:' + (claro ? "#333" : "#999") + ';margin-top:2px;">Vista de cima. ' + (G.porFila === 2 ? 'Em cima = lado esquerdo (motorista), embaixo = lado direito, olhando da porta para a cabine. ' : '') + (bat ? 'Carga batida sobre paletes no chão: cada palete leva ' + m.bat.porPalete + ' colunas de caixas de 0,50×0,50 m, até ' + m.bat.nCx + ' caixas de altura. ' : '') + 'Palete PBR 1,00×1,20 m, ' + G.porFila + ' por fila, ' + G.filas + ' filas = ' + G.vagas + ' vagas.</div>';
   return h;
 }
 
@@ -12801,7 +12843,7 @@ function srMontagemHTML(c) {
     + srGradeHTML(c)
     + '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:8px;">'
     + (pal ? '<span>Paletes <b style="color:' + corO(pctV) + ';">' + m.palTot + ' de ' + m.vagas + ' vagas (' + pctV + '%)</b></span>'
-           : '<span>Comprimento usado <b style="color:' + corO(pctV) + ';">' + srFmtM(m.usado) + ' de ' + srFmtM(B.c) + ' m (' + pctV + '%)</b></span>')
+           : '<span>Colunas de caixas <b style="color:' + corO(pctV) + ';">' + m.bat.cols + ' de ' + m.bat.totCols + ' (' + pctV + '%)</b></span><span>Paletes no chão <b>' + m.bat.paletesChao + ' de ' + m.vagas + '</b></span><span>~' + srFmt(m.blocos.reduce(function (s0, b) { return s0 + (b.caixasN || 0); }, 0)) + ' caixas</span>')
     + '<span>Peso <b style="color:' + corO(pctK) + ';">' + srFmt(m.kg, 0) + ' de ' + srFmt(B.kg) + ' kg (' + pctK + '%)</b></span>'
     + '<span>Cubagem ' + srFmtM(m.m3) + ' m³' + (m.estimado ? ' <i style="color:#999;">(estimada pelo peso)</i>' : '') + '</span>'
     + '<span>Peso na metade da porta <b style="color:' + (pctP > 65 ? "#E67E22" : "#ccc") + ';">' + pctP + '%</b></span></div>'
@@ -12811,7 +12853,7 @@ function srMontagemHTML(c) {
     + (pctP > 65 && !m.naoCabe ? '<div style="margin-top:6px;color:#E67E22;font-size:12px;">⚠ Peso concentrado perto da porta: segure os paletes pesados no chão e encostados na fila da frente.</div>' : '')
     + '<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
     + '<tr style="color:' + GOLD + ';text-align:left;"><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>'
-    + (pal ? '<th style="text-align:center;">Paletes</th><th>Vagas</th>' : '<th style="text-align:right;">Posição (m da cabine)</th>')
+    + (pal ? '<th style="text-align:center;">Paletes</th><th>Vagas</th>' : '<th style="text-align:right;">Caixas</th><th>Paletes (vagas)</th>')
     + '<th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th>Parada / ordem</th></tr>';
   m.blocos.forEach(function (b) {
     var tv = c.sintetico ? ((b.entregas || 0) + ' ent.') : b.vols;   // v592; v595: por unidade
@@ -12820,13 +12862,13 @@ function srMontagemHTML(c) {
       + (pal ? '<td style="text-align:center;white-space:nowrap;"><input type="number" min="1" value="' + b.pals + '" title="calculado: ' + srFmtM(b.palCalc) + ' palete(s)" onchange="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',this.value)" style="width:48px;font-weight:700;' + (b.palManual ? 'border:2px solid #E8C46A;' : '') + '">'
           + (b.palManual ? ' <a href="javascript:void(0)" onclick="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',0)" title="voltar ao cálculo" style="font-size:10px;color:#999;">auto</a>' : '') + '</td>'
           + '<td style="font-size:11px;">' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>'
-        : '<td style="text-align:right;">' + srFmtM(b.ini) + ' – ' + srFmtM(b.fim) + '</td>')
+        : '<td style="text-align:right;white-space:nowrap;">' + (b.estCx ? '≈' : '') + b.caixasN + ' cx<br><small style="color:#999;">' + b.cols + ' coluna' + (b.cols > 1 ? 's' : '') + '</small></td><td style="font-size:11px;">' + b.slots.map(function (s0) { return 'F' + s0.fila + ' ' + srLadoTxt(m, s0); }).join(", ") + '</td>')
       + '<td style="text-align:right;">' + srFmt(b.peso, 0) + '</td><td style="text-align:right;">' + tv + '</td>'
       + (b.kCli ? '<td style="white-space:nowrap;"><input type="number" min="1" max="' + c.clientes.length + '" value="' + b.seq + '" title="digite a parada desejada" onchange="srPosicao(\'' + c.id + '\',\'' + b.kCli + '\',this.value)" style="width:44px;font-weight:800;"> <button title="entrega mais cedo" onclick="srMover(\'' + c.id + '\',\'' + b.kCli + '\',-1)">▲</button><button title="entrega mais tarde" onclick="srMover(\'' + c.id + '\',\'' + b.kCli + '\',1)">▼</button></td></tr>' : '<td style="color:#777;font-size:11px;">' + (b.sub ? 'junto da praça' : 'por cidade') + '</td></tr>');
   });
   h += '</table></div><div style="font-size:11px;color:#999;margin-top:6px;line-height:1.5;">'
     + (pal ? 'Regras da doca: carregar na ordem da coluna <b>Carregar</b>, preenchendo as vagas da fila 1 (encostada na cabine) até a porta. Cada cliente tem os paletes dele — o número sai da cubagem e do peso (palete até ' + srFmt(SR_PALETE.kgMax) + ' kg e ' + srFmtM(m.hPal) + ' m de altura) e pode ser corrigido na coluna Paletes. A etiqueta de cada volume diz em que palete e vaga ele vai. '
-           : 'Carga batida: cada ' + (m.divisao === "cidade" ? 'cidade' : 'cliente') + ' ocupa um bloco na largura toda, com o comprimento proporcional à cubagem. Pesado embaixo, fracionado por cima e virado para a porta. ')
+           : 'Carga batida sobre paletes: os paletes ficam no chão e as caixas (média 0,50×0,50 m) são empilhadas soltas em cima, em colunas de até ' + m.bat.nCx + ' caixas. Cada ' + (m.divisao === "cidade" ? 'cidade' : 'cliente') + ' tem as colunas dele, a partir da cabine; quem compra pouco divide o palete com o vizinho, sem misturar caixa na mesma coluna. ' + (m.blocos.some(function (b) { return b.estCx; }) ? 'Nº de caixas estimado pela cubagem (≈) até chegar o arquivo com os volumes. ' : '') + 'Pesado embaixo, fracionado por cima. ')
     + 'Para mudar a ordem de entrega, digite a parada desejada ou use ▲▼: o impacto em KM, R$ e tempo aparece na hora no quadro de cima, e o mapa e as etiquetas acompanham (reimprima se já tiver impresso).</div>';
   return h;
 }
@@ -12837,7 +12879,7 @@ function srImprimirMapa(cargaId) {
   if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
   var linhas = m.blocos.map(function (b) {
     return '<tr><td class="c">' + b.passo + 'º</td><td class="c"><span style="background:' + b.cor + ';padding:1px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;"><b>' + b.rot + '</b></span></td><td><b>' + esc(b.fant) + '</b></td><td>' + esc(b.cidade) + '</td><td class="c"><b>' + b.zona + '</b></td>'
-      + (pal ? '<td class="c"><b>' + b.pals + '</b></td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>' : '<td class="n">' + srFmtM(b.ini) + ' – ' + srFmtM(b.fim) + '</td>')
+      + (pal ? '<td class="c"><b>' + b.pals + '</b></td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>' : '<td class="n">' + (b.estCx ? '≈' : '') + b.caixasN + ' cx · ' + b.cols + ' col.</td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>')
       + '<td class="n">' + srFmt(b.peso, 0) + '</td><td class="n">' + (c.sintetico ? (b.entregas || 0) + ' ent.' : b.vols) + '</td><td></td></tr>';
   }).join("");
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Mapa de montagem ' + esc(srNomeCarga(c)) + '</title><style>'
@@ -12848,13 +12890,13 @@ function srImprimirMapa(cargaId) {
     + '</style></head><body><div class="hd"><img src="' + srLogo() + '"><div><h1>MAPA DE MONTAGEM DO BAÚ — CARGA ' + esc(srNomeCarga(c)) + '</h1>'
     + 'RF Logística · ' + esc(c.data.split("-").reverse().join("/")) + ' · placa ' + esc(c.placa || "—") + ' · motorista ' + esc(c.motorista || "—") + ' · baú ' + m.bau + ' (' + srFmtM(m.B.c) + ' m) · carga ' + (pal ? 'paletizada' : 'batida')
     + '<br>' + t.clientes + ' paradas · ' + srFmt(t.peso, 0) + ' kg (' + Math.round(m.ocupKg * 100) + '% da capacidade) · ' + t.vols + ' volumes · '
-    + (pal ? m.palTot + ' paletes em ' + m.vagas + ' vagas (' + Math.round(m.ocupVol * 100) + '%)' : 'comprimento usado ' + srFmtM(m.usado) + ' m (' + Math.round(m.ocupVol * 100) + '%)') + (m.estimado ? ' · cubagem estimada pelo peso' : '')
+    + (pal ? m.palTot + ' paletes em ' + m.vagas + ' vagas (' + Math.round(m.ocupVol * 100) + '%)' : m.bat.cols + ' de ' + m.bat.totCols + ' colunas de caixas sobre ' + m.bat.paletesChao + ' paletes no chão (' + Math.round(m.ocupVol * 100) + '%)') + (m.estimado ? ' · cubagem estimada pelo peso' : '')
     + (function () { try { var ir = srImpactoRota(c); return '<br>Rota (ordem desta folha): <b>' + srFmt(ir.atual.km, 0) + ' km</b> · ' + srFmtR(ir.atual.km * ir.ck.porKm) + ' — sugerida pelo sistema ' + srFmt(ir.sug.km, 0) + ' km' + (ir.difKm > 1 ? ' (<b>+' + srFmt(ir.difKm, 0) + ' km, +' + srFmtR(ir.difR) + '</b>)' : ' (ordem ótima)') + ' · ' + srBaseCoord().nome + ' → ' + ir.atual.cidades.map(function (x) { return esc(x.nome); }).join(' → ') + ' → volta'; } catch (e) { return ''; } })()
     + '</div></div><div class="d3">' + srBau3DSvg(c, 1000, true) + '</div>'
     + srGradeHTML(c, true)
     + '<div class="pg2"></div><p><b>Carregue na ordem da 1ª coluna: o 1º cliente vai no FUNDO, encostado na cabine; o último fica na PORTA e é a 1ª entrega.</b> '
     + (pal ? 'Cada cliente nos paletes dele, nas vagas indicadas (F = fila contada da cabine; esq./dir. olhando da porta para a cabine).' : 'Um cliente por bloco, sem misturar. Pesado embaixo, fracionado (etiqueta amarela) em cima, virado para a porta.') + '</p>'
-    + '<table><tr><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>' + (pal ? '<th>Paletes</th><th>Vagas</th>' : '<th>Posição (m da cabine)</th>') + '<th>kg</th><th>Vol</th><th>✓</th></tr>' + linhas + '</table></body></html>');
+    + '<table><tr><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>' + (pal ? '<th>Paletes</th><th>Vagas</th>' : '<th>Caixas</th><th>Paletes (vagas)</th>') + '<th>kg</th><th>Vol</th><th>✓</th></tr>' + linhas + '</table></body></html>');
   w.document.close();
   setTimeout(function () { try { w.print(); } catch (err) {} }, 500);
 }
@@ -13168,7 +13210,7 @@ function sr3dCaixa(x0, y0, z0, x1, y1, z1, cor, op) {
     { p: [P(x1, y0, z0), P(x1, y1, z0), P(x1, y1, z1), P(x1, y0, z1)], n: [1, 0, 0], k: "frente" },
   ];
   return { faces: f.map(function (x) { return { p: x.p, n: x.n, cor: (op.cores && op.cores[x.k]) || cor, k: x.k }; }),
-    c: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], alpha: op.alpha || 1, linhas: op.linhas, rot: op.rot, faixas: op.faixas, ordem: op.ordem || 0 };
+    c: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], alpha: op.alpha || 1, linhas: op.linhas, rot: op.rot, faixas: op.faixas, nFaixas: op.nFaixas, ordem: op.ordem || 0 };
 }
 /* prisma: perfil no plano x-z (lista de [x,z], sentido anti-horário), extrudado em y */
 function sr3dPrisma(perfil, y0, y1, cor, coresArestas) {
@@ -13214,6 +13256,8 @@ function sr3dCena(c) {
   // carga
   m.caixas.forEach(function (bx) {
     var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy, base = 0;
+    if (bx.soBase) { obj.push(sr3dCaixa(x0, y0, 0, x1, y1, 0.14, "#a8743c", { cores: { topo: "#c08a4e", lado: "#8a5e2e", frente: "#7a5228" }, linhas: "#4a3218" })); return; }   // v596
+    if (bx.coluna) { obj.push(sr3dCaixa(x0, y0, bx.z, x1, y1, bx.z + bx.dz, bx.fora ? "#E74C3C" : bx.cor, { rot: bx.rot, linhas: "rgba(0,0,0,.5)", faixas: true, nFaixas: bx.nFaixas })); return; }
     if (bx.palete) {
       base = 0.14;
       obj.push(sr3dCaixa(x0, y0, 0, x1, y1, base, "#a8743c", { cores: { topo: "#c08a4e", lado: "#8a5e2e", frente: "#7a5228" }, linhas: "#4a3218" }));
@@ -13297,9 +13341,15 @@ function sr3dDesenhar(cv) {
       // faixas: linhas das caixas no palete / tábuas no assoalho
       if (o.faixas && vis && (f.k === "lado" || f.k === "frente" || (o.assoalho && f.k === "topo"))) {
         g.strokeStyle = o.assoalho ? "rgba(60,40,20,.55)" : "rgba(0,0,0,.28)"; g.lineWidth = 0.8;
-        var nl = o.assoalho ? 8 : 4;
+        var nl = o.nFaixas || (o.assoalho ? 8 : 4);
         for (var li = 1; li < nl; li++) {
           var t = li / nl;
+          if (o.nFaixas) {   // v596: camadas de caixa (linhas horizontais) em todas as faces laterais
+            var lp = function (A, Bq, tt) { return [A[0] + (Bq[0] - A[0]) * tt, A[1] + (Bq[1] - A[1]) * tt, A[2] + (Bq[2] - A[2]) * tt]; };
+            var zAl = Math.abs(f.p[3][2] - f.p[0][2]) > 1e-6;
+            var h0 = proj(cam(zAl ? lp(f.p[0], f.p[3], t) : lp(f.p[0], f.p[1], t))), h1 = proj(cam(zAl ? lp(f.p[1], f.p[2], t) : lp(f.p[3], f.p[2], t)));
+            g.beginPath(); g.moveTo(h0[0], h0[1]); g.lineTo(h1[0], h1[1]); g.stroke(); continue;
+          }
           var a0 = o.assoalho ? [f.p[0][0], f.p[0][1] + (f.p[2][1] - f.p[0][1]) * t, f.p[0][2]] : [f.p[0][0] + (f.p[3][0] - f.p[0][0]) * t, f.p[0][1] + (f.p[3][1] - f.p[0][1]) * t, f.p[0][2] + (f.p[3][2] - f.p[0][2]) * t];
           var a1 = o.assoalho ? [f.p[1][0], f.p[0][1] + (f.p[2][1] - f.p[0][1]) * t, f.p[1][2]] : [f.p[1][0] + (f.p[2][0] - f.p[1][0]) * t, f.p[1][1] + (f.p[2][1] - f.p[1][1]) * t, f.p[1][2] + (f.p[2][2] - f.p[1][2]) * t];
           var q0 = proj(cam(a0)), q1 = proj(cam(a1));
@@ -13537,7 +13587,9 @@ function srCustoKmTipo(tipo) {
 function srEspaco(c, cl, tipo) {
   var B = SR_BAUS[tipo];
   if (srModo(c) === "palete") return { u: srPaletesCliente(c, cl, B).n, cap: srGrade(B).vagas };
-  return { u: srM3Cliente(c, cl).m3 / (B.l * B.a * SR_APROVEITAMENTO), cap: B.c };
+  var BG = srBatidaGeo(B);   // v596: batida = colunas de caixas sobre paletes
+  var nv = (c.vols || []).filter(function (v) { return v.k === cl.k; }).length;
+  return { u: nv ? Math.ceil(nv / BG.nCx) : srM3Cliente(c, cl).m3 / BG.colVol, cap: BG.totCols };
 }
 function srDividir(c, opt) {
   opt = opt || srDivOpt(c);
@@ -13554,7 +13606,7 @@ function srDividir(c, opt) {
   pts.sort(function (a, b) { return a.ang - b.ang || a.dist - b.dist; });
   var n = pts.length;
   if (!n) return { carros: [], km: 0, custo: 0, semCoord: semCoord };
-  var caps = tipos.map(function (t) { var B = SR_BAUS[t]; return { kg: B.kg, u: srModo(c) === "palete" ? srGrade(B).vagas : B.c }; });
+  var caps = tipos.map(function (t) { var B = SR_BAUS[t]; return { kg: B.kg, u: srModo(c) === "palete" ? srGrade(B).vagas : srBatidaGeo(B).totCols }; });
   var Kmax = opt.n > 0 ? Math.min(opt.n, n) : Math.min(n, 10);
   var starts = [];
   for (var s0 = 0; s0 < n; s0++) if (s0 === 0 || Math.abs(pts[s0].ang - pts[s0 - 1].ang) > 1e-6) starts.push(s0);
@@ -13606,7 +13658,7 @@ function srDividir(c, opt) {
     var r = srKmDaOrdem(c, ks), ck = srCustoKmTipo(tipo);
     var peso = 0, u = 0, ent = 0;
     ks.forEach(function (k) { var cl = srCliente(c, k); peso += Number(cl.peso) || 0; u += srEspaco(c, cl, tipo).u; ent += Number(cl.entregas) || 0; });
-    var cap = srModo(c) === "palete" ? srGrade(SR_BAUS[tipo]).vagas : SR_BAUS[tipo].c;
+    var cap = srModo(c) === "palete" ? srGrade(SR_BAUS[tipo]).vagas : srBatidaGeo(SR_BAUS[tipo]).totCols;
     return { letra: String.fromCharCode(65 + idx), tipo: tipo, ks: ks, km: r.km, custo: r.km * ck, peso: peso, u: u, cap: cap, kgCap: SR_BAUS[tipo].kg,
       cidades: r.cidades.map(function (x) { return x.nome; }), cidadesCo: r.cidades, excede: sg.excede, entregas: ent };
   });
@@ -13674,7 +13726,7 @@ function srDivHTML(c) {
     totFrete += Number(ff[i]) || 0;
     h += '<tr style="border-top:1px solid #333;vertical-align:top;"><td><b style="font-size:16px;color:' + GOLD + ';">' + v.letra + '</b></td><td><b>' + v.tipo + '</b></td>'
       + '<td style="text-align:right;">' + srFmt(v.peso, 0) + ' kg</td>'
-      + '<td style="text-align:right;white-space:nowrap;"><span style="color:' + cor(pk) + ';font-weight:700;">' + pk + '% peso</span><br><span style="color:' + cor(pu) + ';">' + (srModo(c) === "palete" ? v.u + '/' + v.cap + ' pal.' : srFmtM(v.u) + '/' + srFmtM(v.cap) + ' m') + '</span></td>'
+      + '<td style="text-align:right;white-space:nowrap;"><span style="color:' + cor(pk) + ';font-weight:700;">' + pk + '% peso</span><br><span style="color:' + cor(pu) + ';">' + (srModo(c) === "palete" ? v.u + '/' + v.cap + ' pal.' : Math.ceil(v.u) + '/' + v.cap + ' col.') + '</span></td>'
       + '<td style="text-align:right;">' + v.ks.length + (v.entregas ? '<br><small style="color:#999;">' + v.entregas + ' ent.</small>' : '') + '</td>'
       + '<td>' + esc(srBaseCoord().nome) + ' → ' + v.cidades.map(esc).join(' → ') + ' → volta'
       + '<br><a href="' + srGmLink(v.cidadesCo) + '" target="_blank" rel="noopener" style="font-size:11px;color:#7FA7C9;">📍 ver no Google Maps</a>'
@@ -13692,7 +13744,7 @@ function srDivHTML(c) {
     + (plano.carros.length > 1 ? '<button onclick="srDivAplicar(\'' + c.id + '\')" style="background:#4CAF50;color:#000;font-weight:900;padding:9px 14px;border-radius:8px;">✅ Aplicar divisão (' + plano.carros.length + ' cargas)</button>' : '<span style="color:#4CAF50;font-weight:800;align-self:center;">✓ Um veículo só resolve esta carga.</span>')
     + '<button onclick="srDivExportar(\'' + c.id + '\')" style="padding:9px 14px;border-radius:8px;font-weight:800;">📊 Planilha da divisão (modelo RF)</button></div>'
     + '<div style="font-size:10.5px;color:#888;margin-top:8px;line-height:1.5;">Como o sistema divide: agrupa os clientes pela direção a partir de ' + esc(srBaseCoord().nome) + ' (quem está na mesma estrada vai junto), sem partir cliente, e escolhe o corte de menor custo — km × custo por km do tipo'
-    + (plano.auto ? ' + a diária de cada caminhão (R$ ' + srFmt(SR_DIARIA_VEICULO) + ': motorista e ajudante)' : '') + '. Cada grupo vai no menor veículo permitido em que cabe (peso e ' + (srModo(c) === "palete" ? 'paletes' : 'comprimento do baú') + '). Dentro de cada carro a ordem é a menor volta.</div></div>';
+    + (plano.auto ? ' + a diária de cada caminhão (R$ ' + srFmt(SR_DIARIA_VEICULO) + ': motorista e ajudante)' : '') + '. Cada grupo vai no menor veículo permitido em que cabe (peso e ' + (srModo(c) === "palete" ? 'paletes' : 'colunas de caixas') + '). Dentro de cada carro a ordem é a menor volta.</div></div>';
   return h;
 }
 
@@ -13762,7 +13814,7 @@ function srDivExportar(cargaId) {
   resumo.push(["TOTAL", "", "", "", tot.cli, tot.par, Math.round(tot.peso * 10) / 10, tot.vol, "", "", tot.frete ? Math.round(tot.frete * 100) / 100 : ""]);
   resumo.push([]); resumo.push(["PREMISSAS E OBSERVAÇÕES"]);
   [
-    "Frota considerada: " + plano.tipos.map(function (t) { var B = SR_BAUS[t]; return t + " (" + srFmt(B.kg) + " kg, " + (srModo(c) === "palete" ? srGrade(B).vagas + " paletes" : srFmtM(B.c) + " m de baú") + ")"; }).join("; ") + ".",
+    "Frota considerada: " + plano.tipos.map(function (t) { var B = SR_BAUS[t]; return t + " (" + srFmt(B.kg) + " kg, " + (srModo(c) === "palete" ? srGrade(B).vagas + " paletes" : srBatidaGeo(B).totCols + " colunas de caixas sobre paletes") + ")"; }).join("; ") + ".",
     "Agrupamento por recebedor: nenhum cliente foi partido entre veículos — cada pedido sai inteiro.",
     "Paradas agrupadas por eixo rodoviário a partir de " + srBaseCoord().nome + "; dentro de cada veículo a ordem é a menor volta.",
     "KM estimado (distância entre cidades × 1,3): " + plano.carros.map(function (v) { return v.letra + " " + srFmt(v.km, 0) + " km, custo variável " + srFmtR(v.custo); }).join(" · ") + ".",
@@ -34463,7 +34515,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
