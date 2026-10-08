@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v590)</title>
+<title>RF Logística — Painel da Frota (v591)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v590">
+<meta name="rf-versao" content="v591">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v591 (08/10/2026): São Roque -- Google Maps na rota: mapa embutido (rota atual/sugerida) e botões que abrem a rota no Google Maps com KM real; esquema próprio continua como opção offline. -->
 <!-- v590 (08/10/2026): São Roque -- caminhão 3D que GIRA (canvas, motor proprio sem biblioteca): arrastar gira, pinça/roda dá zoom, toque duplo reseta, vistas Lado/Traseira/De cima/Outro lado e girar sozinho; baú translúcido e portas abertas. -->
 <!-- v589 (07/10/2026): São Roque -- IMPACTO DA ORDEM NA ROTA: km/R$/tempo da ordem atual x rota sugerida (coordenadas IBGE do Nordeste embutidas, vizinho mais proximo + 2-opt), aviso na hora a cada mudanca, mapinha das duas rotas, parada digitavel, aplicar sugerida / voltar ao arquivo. -->
 <!-- v588 (07/10/2026): logo oficial do Atacadão São Roque embutida, sem o fundo vermelho do print (colorida na tela/mapa, P&B de alto contraste na etiqueta). -->
@@ -877,7 +878,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v590" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v591" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12984,6 +12985,35 @@ function srMapaRotaSvg(c, imp, W, claro) {
     + '<line x1="8" y1="' + (H - 8) + '" x2="34" y2="' + (H - 8) + '" stroke="' + (claro ? "#888" : "#7FA7C9") + '" stroke-width="2.5" stroke-dasharray="6 5"/><text x="38" y="' + (H - 4) + '">sugerida pelo sistema</text></g>';
   return s + '</svg>';
 }
+
+/* ---- v591: GOOGLE MAPS na rota da São Roque --------------------------------
+   Renato (08/10 00:11): "Google Mapas aqui!". O mapa da rota passa a ser o do
+   Google (mapa embutido, sem chave de API), com a rota ATUAL ou a SUGERIDA, e
+   botões que abrem a rota no app do Google Maps com navegação e o KM real de
+   estrada. O esquema desenhado pelo app continua como opção (funciona sem
+   internet). O link de rota do Google aceita até 9 paradas intermediárias no
+   celular; acima disso o link leva as 9 primeiras e avisa. */
+function srGmLugar(x) { var q = x.co || x; return q.nome + ", " + (q.uf || "BA"); }
+function srGmLink(cidades) {
+  var base = srBaseCoord(), b = srGmLugar(base);
+  var wp = cidades.slice(0, 9).map(srGmLugar);
+  return "https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=" + encodeURIComponent(b) + "&destination=" + encodeURIComponent(b)
+    + (wp.length ? "&waypoints=" + encodeURIComponent(wp.join("|")) : "");
+}
+function srGmEmbed(cidades) {
+  var base = srBaseCoord(), b = srGmLugar(base);
+  var pontos = cidades.map(srGmLugar).concat([b]);
+  return "https://maps.google.com/maps?saddr=" + encodeURIComponent(b) + "&daddr=" + pontos.map(encodeURIComponent).join("+to:") + "&hl=pt-BR&output=embed";
+}
+function srMapaRotaHTML(c, imp) {
+  var modo = state.srMapaModo || "atual";
+  var aba = function (v, t) { return '<button onclick="state.srMapaModo=\'' + v + '\';render();" style="font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid ' + (modo === v ? GOLD : "#444") + ';background:' + (modo === v ? GOLD : "#111") + ';color:' + (modo === v ? "#000" : "#ddd") + ';font-weight:' + (modo === v ? 800 : 400) + ';">' + t + '</button>'; };
+  var h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + aba("atual", "🗺 Google Maps · rota atual") + aba("sugerida", "🗺 Google Maps · sugerida") + aba("esquema", "✏ Esquema (sem internet)") + '</div>';
+  if (modo === "esquema") return h + srMapaRotaSvg(c, imp, 520);
+  var cid = modo === "sugerida" ? imp.sug.cidades : imp.atual.cidades;
+  h += '<iframe src="' + srGmEmbed(cid) + '" style="width:100%;height:330px;border:0;border-radius:8px;background:#ddd;" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>';
+  return h;
+}
 function srImpactoHTML(c) {
   var imp = srImpactoRota(c), a = imp.atual, g = imp.sug, ck = imp.ck;
   var ok = imp.difKm <= Math.max(1, g.km * 0.01);
@@ -13011,12 +13041,17 @@ function srImpactoHTML(c) {
     + (imp.arq ? card("ORDEM DO ARQUIVO SÃO ROQUE", srFmt(imp.arq.km, 0) + " km", (imp.arq.km - g.km > 1 ? "+" + srFmt(imp.arq.km - g.km, 0) + " km sobre a sugerida" : "igual à sugerida"), "#ccc") : '')
     + '</div>'
     + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-top:10px;">'
-    + '<div style="flex:1;min-width:280px;background:#0a0a0a;border:1px solid #333;border-radius:10px;padding:6px;">' + srMapaRotaSvg(c, imp, 520) + '</div>'
+    + '<div style="flex:1.3;min-width:300px;background:#0a0a0a;border:1px solid #333;border-radius:10px;padding:6px;">' + srMapaRotaHTML(c, imp) + '</div>'   // v591: Google Maps
     + '<div style="flex:1;min-width:240px;font-size:12px;line-height:1.6;">'
     + '<div><b style="color:#E8C46A;">Atual:</b> ' + esc(srBaseCoord().nome) + ' → ' + a.cidades.map(function (x) { return esc(x.nome); }).join(" → ") + ' → volta</div>'
     + '<div style="margin-top:4px;"><b style="color:#7FA7C9;">Sugerida:</b> ' + esc(srBaseCoord().nome) + ' → ' + g.cidades.map(function (x) { return esc(x.nome); }).join(" → ") + ' → volta</div>'
     + '<div style="margin-top:8px;">' + (imp.igual ? '<span style="color:#4CAF50;font-weight:700;">A ordem atual já é a sugerida.</span>' : '<button onclick="srAplicarSugerida(\'' + c.id + '\')" style="font-weight:800;padding:7px 10px;background:#7FA7C9;color:#000;">✓ Aplicar a rota sugerida</button>')
     + (c.ordemArquivo ? ' <button onclick="srVoltarArquivo(\'' + c.id + '\')" style="padding:7px 10px;">↺ Ordem do arquivo</button>' : '') + '</div>'
+    + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
+    + '<a href="' + srGmLink(a.cidades) + '" target="_blank" rel="noopener" style="background:#fff;color:#000;font-weight:800;padding:7px 10px;border-radius:6px;text-decoration:none;font-size:12px;">📍 Abrir rota ATUAL no Google Maps</a>'
+    + '<a href="' + srGmLink(g.cidades) + '" target="_blank" rel="noopener" style="background:#1d2a36;color:#cfe3f5;border:1px solid #7FA7C9;padding:7px 10px;border-radius:6px;text-decoration:none;font-size:12px;">📍 Abrir rota sugerida</a></div>'
+    + (a.cidades.length > 9 ? '<div style="font-size:11px;color:#E67E22;margin-top:4px;">⚠ O link do Google Maps leva só as 9 primeiras cidades (limite do Google no celular).</div>' : '')
+    + '<div style="font-size:10.5px;color:#888;margin-top:4px;">No Google Maps aparece o KM real de estrada e o tempo com trânsito; o quadro acima é a estimativa do app para comparar as ordens na hora.</div>'
     + '<div style="font-size:10.5px;color:#888;margin-top:8px;">KM estimado: distância entre cidades × ' + String(typeof RF_FATOR_ESTRADA === "number" ? RF_FATOR_ESTRADA : 1.3).replace(".", ",") + ' (fator estrada do app), saindo e voltando a ' + esc(srBaseCoord().nome) + '. Custo por km ' + srFmtR(ck.porKm) + ' = diesel ' + srFmtR(ck.diesel) + ' ÷ ' + srFmt(ck.kml, 1) + ' km/l + pneus ' + srFmtR(ck.pneu) + '. Tempo a 50 km/h de média. Não conta pedágio nem diária.'
     + (a.semCoord.length ? '<br><b style="color:#E67E22;">⚠ Sem coordenada (fora da conta): ' + a.semCoord.map(esc).join(", ") + '</b>' : '') + '</div>'
     + '</div></div>';
@@ -33954,7 +33989,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/6.500 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/6.500 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
