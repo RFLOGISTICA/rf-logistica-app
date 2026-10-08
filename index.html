@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v585)</title>
+<title>RF Logística — Painel da Frota (v586)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v585">
+<meta name="rf-versao" content="v586">
 <meta name="rf-data" content="2026-10-07">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v586 (07/10/2026): nova aba CARREGAMENTO SÃO ROQUE -- copia do processo Goiás (dados separados) + MONTAGEM DO BAÚ: ordem de carregamento por parada (fundo->porta), zona e metro de cada cliente, mapa A4 da doca, zona impressa na etiqueta, ▲▼ para reordenar paradas, carga de exemplo para a demonstração e logo trocável. -->
 <!-- v585 (07/10/2026): compra 32 (Roque Diesel) itens corrigidos para R$ 150 (IA leu 1.600); botao "corrigir itens" para o admin. -->
 <!-- v584 (07/10/2026): compra 8 (nota 470, R$ 120) volta para o boleto Souza R$ 2.181,04 (Renato confirmou); "Fechar com a diferenca" some quando o que falta e so parcela que ainda nao venceu. -->
 <!-- v583 (07/10/2026): reparo unico do boleto Souza Santos R$ 2.181,04 -- ligado ao comprovante da compra 33 e repartido pela 1a parcela das compras 33 a 40; a compra 8 volta a esperar o pagamento dela. -->
@@ -872,7 +873,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v585" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v586" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1203,7 +1204,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "campanhas"];   // v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "compras", "extratos", "medicoes", "campanhas"];   // v586: saoroque; v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -1423,7 +1424,7 @@ var RF_LOGOS_CLIENTE = {"fmtransp": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
 var RF_LOGOS_FUNDO = { mateus: "#003C72" };   // logo da Mateus e branca sobre azul
 function rfLogoClienteChave(nome) {
   var n = normTxt(String(nome || ""));
-  var chaves = ["suzano", "yamaha", "mateus", "mercante", "goias"];   // v423: goias
+  var chaves = ["suzano", "yamaha", "mateus", "mercante", "goias", "saoroque"];   // v423: goias; v586: saoroque
   if (/\bfm\s*transp/.test(n)) return "fmtransp";   // v480: FM Transporte
   for (var i = 0; i < chaves.length; i++) if (n.indexOf(chaves[i]) > -1) return chaves[i];
   return "";
@@ -1438,7 +1439,7 @@ function rfLogoClienteHTML(nome, altura, apagada) {
 }
 /* v425: as caixas das AREAS da operacao de cada cliente (tela inicial e
    seletor de areas) tambem levam a logo -- pedido do Renato: destaca. */
-var RF_LOGO_DA_ABA = { carregasuzano: "Suzano", cargamateus: "Mateus", goiascarga: "Goiás", rotajdl: "Mercante/JDL" };   // v569: rotajdl
+var RF_LOGO_DA_ABA = { carregasuzano: "Suzano", cargamateus: "Mateus", goiascarga: "Goiás", saoroquecarga: "São Roque", rotajdl: "Mercante/JDL" };   // v586: saoroquecarga   // v569: rotajdl
 function rfLogoDaAbaHTML(id) {
   var n = RF_LOGO_DA_ABA[id];
   if (!n) return "";
@@ -6945,6 +6946,8 @@ function salvar() {
     localStorage.setItem("rf-frota-mateuscargas-v1", JSON.stringify(state.mateusCargas || []));
     localStorage.setItem("rf-frota-goiascargas-v1", JSON.stringify(state.goiasCargas || []));   // v423
     localStorage.setItem("rf-frota-goiasbips-v1", JSON.stringify(state.goiasBips || []));       // v423
+    localStorage.setItem("rf-frota-saoroquecargas-v1", JSON.stringify(state.saoroqueCargas || []));   // v586
+    localStorage.setItem("rf-frota-saoroquebips-v1", JSON.stringify(state.saoroqueBips || []));       // v586
     localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
     localStorage.setItem("rf-frota-motoristascad-v1", JSON.stringify(state.motoristasCad || []));   // v397
@@ -6984,6 +6987,8 @@ let state = {
   mateusCargas: carregar("rf-frota-mateuscargas-v1", () => []),
   goiasCargas: carregar("rf-frota-goiascargas-v1", () => []),   // v423
   goiasBips: carregar("rf-frota-goiasbips-v1", () => []),       // v423
+  saoroqueCargas: carregar("rf-frota-saoroquecargas-v1", () => []),   // v586
+  saoroqueBips: carregar("rf-frota-saoroquebips-v1", () => []),       // v586
   mateusFator: carregar("rf-frota-mateusfator-v1", () => ({})),
   fiscais: carregar("rf-frota-fiscais-v1", () => []),   // v286: CT-e, MDF-e e CIOT lidos dos XML
   motoristasCad: carregar("rf-frota-motoristascad-v1", () => []),   // v397: fichas FO_YL_026
@@ -11797,6 +11802,832 @@ function goCardHTML(c) {
   return h + '</div>';
 }
 /* ===================== fim v423 ===================== */
+
+/* ===================== v586: CARREGAMENTO GRUPO SÃO ROQUE =====================
+   Reunião de 07/10/2026: o Grupo São Roque quer o mesmo processo da Goiás
+   (etiqueta por volume + bipagem + rota do motorista), com as particularidades
+   deles -- que vamos conhecer na visita de 08/10. Este bloco é uma CÓPIA do
+   módulo Goiás (v423), com dados próprios (saoroqueCargas / saoroqueBips) pra
+   uma operação nunca misturar com a outra, e com o que mais chamou a atenção
+   deles: a MONTAGEM DO BAÚ (ordem de carregamento por parada, zona e metro de
+   cada cliente) impressa no mapa da doca e na própria etiqueta.
+   Leitor de arquivo: o mesmo formato Winthor da Goiás. Se o arquivo da São
+   Roque vier diferente, ajustar srMontarCarga depois da visita. */
+
+var SR_CLIENTE = "Grupo São Roque";
+function srCargas() { if (!Array.isArray(state.saoroqueCargas)) state.saoroqueCargas = []; return state.saoroqueCargas; }
+function srBips() { if (!Array.isArray(state.saoroqueBips)) state.saoroqueBips = []; return state.saoroqueBips; }
+function srCarga(id) { return srCargas().find(function (c) { return String(c.id) === String(id); }) || null; }
+function srFmt(n, d) { return Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
+
+/* ---- leitura do arquivo ---------------------------------------------------- */
+function srNum(v) {
+  if (typeof v === "number") return v;
+  var s = String(v == null ? "" : v).trim().replace(/^(VL|P|V)/i, "");   // v426: "P11.11", "VL2523.25", "V.0221"
+  if (!s) return 0;
+  if (s.indexOf(",") >= 0) s = s.replace(/\./g, "").replace(",", ".");
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+function srDataISO(v) {
+  var s = String(v == null ? "" : v).trim();
+  if (/^\d{5}(\.\d+)?$/.test(s)) {            // serial do Excel (46287 = 22/09/2026)
+    var d = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(s)) * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  var m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return m[3] + "-" + m[2] + "-" + m[1];
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return hojeISO();
+}
+function srTextoDeBytes(bytes) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch (e) { return new TextDecoder("windows-1252").decode(bytes); }
+}
+/* O arquivo da São Roque tem extensao .xls mas por dentro e TEXTO separado por
+   tabulacao (export do Winthor). Arquivo Excel de verdade tambem entra. */
+function srLinhasDoArquivo(bytes) {
+  var zip = bytes[0] === 0x50 && bytes[1] === 0x4B;
+  var ole = bytes[0] === 0xD0 && bytes[1] === 0xCF;
+  if ((zip || ole) && window.XLSX) {
+    var wb = XLSX.read(bytes, { type: "array" });
+    var sh = wb.Sheets[wb.SheetNames[0]];
+    /* v426: raw:TRUE. O .xls binario da São Roque guarda o codigo de barras como
+       NUMERO; com raw:false o SheetJS devolve o texto formatado "1.78987E+13"
+       e o EAN se perde. A data vem como serial (46283), que srDataISO ja le. */
+    return XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: "" }).map(function (l) {
+      return l.map(function (x) { return typeof x === "number" ? (Number.isInteger(x) ? x.toFixed(0) : String(x)) : x; });
+    });
+  }
+  var txt = srTextoDeBytes(bytes);
+  if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+  if (/<table/i.test(txt) && window.XLSX) {          // xls salvo como HTML
+    var wb2 = XLSX.read(txt, { type: "string" });
+    return XLSX.utils.sheet_to_json(wb2.Sheets[wb2.SheetNames[0]], { header: 1, raw: false, defval: "" });
+  }
+  /* Tabulacao pura: NAO trata aspas. A descricao da São Roque traz polegada com
+     aspas no meio ('TESOURA ... 7"COLOR'), e um leitor de CSV abriria um campo
+     entre aspas ali e engoliria a linha inteira -- foi o que o teste pegou. */
+  var linhas = txt.replace(/\r/g, "").split("\n").filter(function (l) { return l.trim() !== ""; });
+  if (txt.indexOf("\t") >= 0) return linhas.map(function (l) { return l.split("\t"); });
+  return rfRotSepararTexto(txt);
+}
+function srMontarCarga(linhas, nomeArquivo) {
+  var hi = linhas.findIndex(function (l) {
+    var u = (l || []).map(function (x) { return String(x).trim().toUpperCase(); });
+    return u.indexOf("NUMCAR") >= 0 && u.indexOf("CODCLI") >= 0 && u.indexOf("QTCX") >= 0;
+  });
+  if (hi < 0) throw new Error("não achei o cabeçalho do arquivo da São Roque (colunas NUMCAR, CODCLI, QTCX).");
+  var cab = linhas[hi].map(function (x) { return String(x).trim().toUpperCase(); });
+  var ix = {};
+  cab.forEach(function (n, i) { if (!(n in ix)) ix[n] = i; });
+  var g = function (l, n) { var i = ix[n]; return i == null ? "" : String(l[i] == null ? "" : l[i]).trim(); };
+
+  var numcar = "", data = "", porCli = {}, ordemCli = [];
+  for (var r = hi + 1; r < linhas.length; r++) {
+    var l = linhas[r] || [];
+    var codcli = g(l, "CODCLI");
+    if (!codcli) continue;
+    if (!numcar) numcar = g(l, "NUMCAR");
+    if (!data) data = srDataISO(g(l, "DATA"));
+    var cli = porCli[codcli];
+    if (!cli) {
+      var est = g(l, "ESTADO");                        // "VITORIA DA CONQUISTA - BA"
+      var mm = est.match(/^(.*?)\s*-\s*([A-Z]{2})$/);
+      cli = porCli[codcli] = {
+        k: codcli, nome: g(l, "CLIENTE"), fant: g(l, "FANTASIA") || g(l, "CLIENTE"),
+        end: g(l, "ENDERENT"), bairro: g(l, "BAIRROENT"),
+        cidade: mm ? mm[1] : (g(l, "PRACA") || est), uf: mm ? mm[2] : "BA",
+        cep: g(l, "CEPENT"), seq: srNum(g(l, "NUMSEQENTREGA")) || 999,
+        obs: "", nfs: [], peds: [], peso: 0, itens: [], _miu: {}, _soltas: 0, _cx: [], valor: 0, m3: 0, _vlnf: {},
+      };
+      ordemCli.push(codcli);
+    }
+    var obs = g(l, "OBSENTREGA1");
+    if (obs && !cli.obs) cli.obs = obs;
+    var nf = g(l, "NUMNOTA"), ped = g(l, "NUMPED");
+    if (nf && cli.nfs.indexOf(nf) < 0) cli.nfs.push(nf);
+    if (ped && cli.peds.indexOf(ped) < 0) cli.peds.push(ped);
+    cli.peso += srNum(g(l, "PESOTOTAL"));
+    var qtcxL = srNum(g(l, "QTCX"));
+    /* v426: VOLUME do arquivo e a cubagem de UMA unidade (igual pra 3 ou 5
+       caixas do mesmo item), nao o total da linha -- por isso NAO e somado:
+       somar daria uma cubagem falsa. */
+    var vUn = srNum(g(l, "VOLUME")); if (vUn > 0) cli.m3 += vUn * (qtcxL || 0);   // v586: cubagem pro mapa do baú (validada contra o peso em srM3Cliente)
+    if (nf && g(l, "VLNF") && !(nf in cli._vlnf)) cli._vlnf[nf] = srNum(g(l, "VLNF"));   // valor da NF repete em toda linha
+    var desc = g(l, "DESCRICAO"), qtcx = srNum(g(l, "QTCX")), qtun = srNum(g(l, "QTUN"));
+    var ean = g(l, "CODAUXILIAR"); if (ean === "0") ean = "";
+    var eans = [ean, g(l, "CODAUXILIAR2"), g(l, "CODAUXILIARTRIB")].filter(function (x) { return x && x !== "0"; }).join("|");
+    var miu = /MIUDEZA/i.test(g(l, "MIUDEZA"));
+    cli.itens.push([desc, qtcx, qtun, eans, miu ? g(l, "NUMMIUDEZA") : ""]);
+    if (miu) {
+      var nm = g(l, "NUMMIUDEZA") || ("M" + codcli);
+      cli._miu[nm] = (cli._miu[nm] || 0) + 1;
+      cli._miuOs = cli._miuOs || {};
+      var os = g(l, "NUMOS");
+      if (os) { cli._miuOs[nm] = cli._miuOs[nm] || []; if (cli._miuOs[nm].indexOf(os) < 0) cli._miuOs[nm].push(os); }
+    } else {
+      for (var q = 0; q < qtcx; q++) cli._cx.push({ d: desc, e: ean });
+      if (qtun > 0) cli._soltas += qtun;
+    }
+  }
+  if (!ordemCli.length) throw new Error("o arquivo não tem nenhuma linha de cliente.");
+  numcar = String(numcar || "").replace(/\D/g, "") || String(Date.now()).slice(-7);
+
+  var clientes = ordemCli.map(function (k) { return porCli[k]; })
+    .sort(function (a, b) { return a.seq - b.seq; });
+  var vols = [], seq = 0;
+  var cod = function () { seq++; return numcar + String(seq).padStart(5, "0"); };
+  clientes.forEach(function (c) {
+    var meus = [];
+    c._cx.forEach(function (x) { meus.push({ c: cod(), k: c.k, t: "CX", d: x.d, e: x.e }); });
+    Object.keys(c._miu).forEach(function (nm) {
+      meus.push({ c: cod(), k: c.k, t: "MIU", d: "miudeza · caixa São Roque " + nm + " · " + c._miu[nm] + " produtos", m: nm, os: (c._miuOs || {})[nm] || [] });
+    });
+    if (c._soltas > 0) meus.push({ c: cod(), k: c.k, t: "SOL", d: "soltos · " + srFmt(c._soltas) + " un — juntar num saco" });
+    meus.forEach(function (v, i) { v.n = i + 1; v.tot = meus.length; });
+    c.vols = meus.length;
+    c.peso = Math.round(c.peso * 1000) / 1000;
+    c.valor = Math.round(Object.keys(c._vlnf).reduce(function (s, k) { return s + c._vlnf[k]; }, 0) * 100) / 100;
+    c.m3 = Math.round(c.m3 * 1000) / 1000;
+    delete c._cx; delete c._miu; delete c._soltas; delete c._vlnf; delete c._miuOs;
+    vols = vols.concat(meus);
+  });
+  return {
+    id: "sr-" + numcar, numcar: numcar, data: data || hojeISO(), arquivo: nomeArquivo || "",
+    criadoEm: Date.now(), atualizadoEm: Date.now(), placa: "", motorista: "", viagemId: "",
+    clientes: clientes, vols: vols,
+  };
+}
+function srImportar(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  rfLerArquivoBytes(file).then(function (bytes) {
+    var carga = srMontarCarga(srLinhasDoArquivo(bytes), file.name);
+    input.value = "";
+    var ja = srCarga(carga.id);
+    if (ja) {
+      if (srTotais(ja).carregados > 0) { alert("A carga " + carga.numcar + " já está no app e já tem volumes bipados. Não vou substituir."); return; }
+      if (!confirm("A carga " + carga.numcar + " já foi importada. Substituir pela versão deste arquivo? (as etiquetas mudam de número)")) return;
+      carga.placa = ja.placa; carga.motorista = ja.motorista; carga.viagemId = ja.viagemId;
+      state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== ja.id; });
+    }
+    srCargas().push(carga);
+    state.srCargaAberta = carga.id;
+    salvar(); render();
+    var t = srTotais(carga);
+    alert("✓ Carga " + carga.numcar + " importada\n\n" + t.clientes + " clientes · " + t.cidades + " cidades · " + t.nfs + " notas\n"
+      + srFmt(t.peso, 1) + " kg · " + t.vols + " volumes (" + t.cx + " caixas, " + t.miu + " miudezas, " + t.sol + " sacos de soltos)\n\nPróximo passo: imprimir as etiquetas.");
+  }).catch(function (e) {
+    input.value = "";
+    alert("Não consegui ler o arquivo da São Roque: " + ((e && e.message) || e));
+  });
+}
+
+/* ---- totais e bips --------------------------------------------------------- */
+function srBipsDaCarga(cargaId, tipo) {
+  var out = {};
+  srBips().forEach(function (b) { if (b.carga === cargaId && b.tipo === tipo) out[b.cod] = b; });
+  return out;
+}
+function srTotais(c) {
+  var car = srBipsDaCarga(c.id, "c"), ent = srBipsDaCarga(c.id, "e");
+  var t = { clientes: c.clientes.length, cidades: 0, nfs: 0, peso: 0, valor: 0, m3: 0, vols: c.vols.length, cx: 0, miu: 0, sol: 0, carregados: 0, entregues: 0 };
+  var cid = {};
+  c.clientes.forEach(function (x) { cid[x.cidade] = 1; t.nfs += x.nfs.length; t.peso += x.peso; t.valor += Number(x.valor) || 0; t.m3 += Number(x.m3) || 0; });
+  t.cidades = Object.keys(cid).length;
+  c.vols.forEach(function (v) {
+    if (v.t === "CX") t.cx++; else if (v.t === "MIU") t.miu++; else t.sol++;
+    if (car[v.c]) t.carregados++;
+    if (ent[v.c]) t.entregues++;
+  });
+  return t;
+}
+function srTotaisCliente(c, k) {
+  var car = srBipsDaCarga(c.id, "c"), ent = srBipsDaCarga(c.id, "e");
+  var r = { vols: 0, car: 0, ent: 0 };
+  c.vols.forEach(function (v) { if (v.k !== k) return; r.vols++; if (car[v.c]) r.car++; if (ent[v.c]) r.ent++; });
+  return r;
+}
+function srCliente(c, k) { return c.clientes.find(function (x) { return x.k === k; }) || {}; }
+
+function srBipar(cargaId, tipo, codigo, kEsperado) {
+  var c = srCarga(cargaId);
+  if (!c) return { ok: false, msg: "Carga não encontrada." };
+  var cod = String(codigo || "").trim().replace(/\s/g, "");
+  if (!cod) return { ok: false, msg: "Código vazio." };
+  var vol = c.vols.find(function (v) { return v.c === cod; });
+  // a etiqueta interna da caixa de miudeza (numero da São Roque) tambem vale
+  if (!vol) vol = c.vols.find(function (v) { return v.t === "MIU" && v.m === cod; });
+  if (!vol) {
+    var cliEan = [];
+    c.clientes.forEach(function (x) { if (x.itens.some(function (it) { return it[3] && ("|" + it[3] + "|").indexOf("|" + cod + "|") >= 0; })) cliEan.push(x.fant); });
+    if (cliEan.length) return { ok: false, msg: "Esse é o código do FABRICANTE (vai para " + cliEan.length + " cliente(s): " + cliEan.slice(0, 3).join(", ") + (cliEan.length > 3 ? "…" : "") + "). Bipe a ETIQUETA RF da caixa." };
+    if (/^\d{12}$/.test(cod) && cod.indexOf(c.numcar) !== 0) return { ok: false, msg: "⚠ Etiqueta de OUTRA carga (" + cod.slice(0, cod.length - 5) + "). Esta caixa não é deste caminhão." };
+    return { ok: false, msg: "Código não pertence a esta carga." };
+  }
+  var dono = srCliente(c, vol.k);
+  if (tipo === "e" && kEsperado && vol.k !== kEsperado) {
+    return { ok: false, msg: "⚠ PARE. Este volume é de " + dono.fant + " (" + dono.cidade + ", parada " + dono.seq + "). Não entregue aqui.", vol: vol };
+  }
+  var id = cargaId + "|" + vol.c + "|" + tipo;
+  if (srBips().some(function (b) { return b.id === id; })) return { ok: false, msg: "Este volume já foi bipado" + (tipo === "e" ? " na entrega." : " no carregamento."), vol: vol };
+  if (tipo === "e" && !srBips().some(function (b) { return b.id === cargaId + "|" + vol.c + "|c"; })) {
+    return { ok: false, msg: "Este volume não consta como carregado. Confira antes de entregar.", vol: vol };
+  }
+  srBips().push({ id: id, carga: cargaId, cod: vol.c, tipo: tipo, em: Date.now(), por: (state.sessao && state.sessao.nome) || "", atualizadoEm: Date.now() });
+  salvar();
+  var tc = srTotaisCliente(c, vol.k);
+  return { ok: true, msg: "✓ " + dono.fant + " — volume " + vol.n + "/" + vol.tot + " · cliente " + (tipo === "e" ? tc.ent : tc.car) + "/" + tc.vols, vol: vol };
+}
+function srBiparCampo(cargaId, tipo, inputId) {
+  var el = document.getElementById(inputId);
+  if (!el) return;
+  var k = tipo === "e" ? (state.srEntregaCli || "") : "";
+  if (tipo === "e" && !k) { alert("Escolha primeiro o cliente da parada."); return; }
+  var r = srBipar(cargaId, tipo, el.value, k);
+  el.value = "";
+  state.srMsg = { txt: r.msg, ok: r.ok, tipo: tipo };
+  if (!r.ok && /PARE|OUTRA carga/.test(r.msg)) alert(r.msg);
+  render();
+  var el2 = document.getElementById(inputId);
+  if (el2) el2.focus();
+}
+function srDesfazerBip(cargaId, cod, tipo) {
+  if (!confirm("Desfazer o bip deste volume?")) return;
+  var id = cargaId + "|" + cod + "|" + tipo;
+  state.saoroqueBips = srBips().filter(function (b) { return b.id !== id; });
+  salvar(); render();
+}
+function srLerCamera(cargaId, tipo, inputId) {
+  if (typeof window.BarcodeDetector !== "function") { alert("Este aparelho não tem leitor de código nativo. Use o leitor de mão (bipador) ou digite o código."); return; }
+  if (tipo === "e" && !state.srEntregaCli) { alert("Escolha primeiro o cliente da parada."); return; }
+  var v = document.createElement("video");
+  v.setAttribute("playsinline", "true");
+  var box = document.createElement("div");
+  box.style.cssText = "position:fixed;inset:0;background:#000;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;";
+  var fechar = document.createElement("button");
+  fechar.textContent = "✕ fechar";
+  fechar.style.cssText = "position:absolute;top:14px;right:14px;font-size:16px;padding:8px 14px;z-index:2;";
+  v.style.cssText = "max-width:100%;max-height:80%;";
+  box.appendChild(v); box.appendChild(fechar); document.body.appendChild(box);
+  var parar = function () { try { (v.srcObject || { getTracks: function () { return []; } }).getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} box.remove(); };
+  fechar.onclick = parar;
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (s) {
+    v.srcObject = s; v.play();
+    var det = new window.BarcodeDetector({ formats: ["code_128", "ean_13", "itf", "code_39"] });
+    var laco = function () {
+      if (!document.body.contains(box)) return;
+      det.detect(v).then(function (cods) {
+        if (cods && cods.length) {
+          var el = document.getElementById(inputId);
+          if (el) el.value = cods[0].rawValue;
+          parar();
+          srBiparCampo(cargaId, tipo, inputId);
+          return;
+        }
+        setTimeout(laco, 220);
+      }).catch(function () { setTimeout(laco, 400); });
+    };
+    laco();
+  }).catch(function () { parar(); alert("Não consegui abrir a câmera. Use o bipador ou digite o código."); });
+}
+
+/* ---- campos da carga ------------------------------------------------------- */
+function srSetCampo(cargaId, campo, valor) {
+  var c = srCarga(cargaId); if (!c) return;
+  c[campo] = String(valor || "").trim();
+  c.atualizadoEm = Date.now();
+  if (campo === "placa") delete c.bau;   // v586: o baú segue o tipo do veículo
+  if (campo === "placa" && !c.motorista && typeof szMotoristaDaPlaca === "function") c.motorista = szMotoristaDaPlaca(c.placa) || "";
+  salvar(); render();
+}
+function srAbrir(id) { state.srCargaAberta = (String(state.srCargaAberta) === String(id)) ? "" : id; state.srMsg = null; render(); }
+function srExcluir(cargaId) {
+  var c = srCarga(cargaId); if (!c) return;
+  if (srTotais(c).carregados > 0) { alert("Esta carga já tem volumes bipados e não pode ser excluída."); return; }
+  if (!confirm("Excluir a carga " + c.numcar + "?")) return;
+  state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== cargaId; });
+  salvar(); render();
+}
+
+/* ---- etiquetas ------------------------------------------------------------- */
+/* Impressora da RF: termica direta 203 dpi, largura util 108 mm (USB/Bluetooth,
+   TSPL/ZPL). O navegador imprime pelo driver dela no Windows. Etiqueta padrao
+   100 x 50 mm, uma por pagina. O modulo da barra e 0,5 mm = 4 pontos a
+   203 dpi: barra larga le ate com etiqueta amassada e celular. */
+function srBarcodeSvg(txt, alturaMm) {
+  var bits = szCode128Bits(txt);
+  if (!bits) return "";
+  var m = 0.5, x = 0, r = "";   // 4 pontos a 203 dpi
+  for (var i = 0; i < bits.length; i++) { if (bits[i] === "1") r += '<rect x="' + x.toFixed(3) + '" y="0" width="' + m + '" height="' + alturaMm + '"/>'; x += m; }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + x.toFixed(2) + 'mm" height="' + alturaMm + 'mm" viewBox="0 0 ' + x.toFixed(3) + ' ' + alturaMm + '" shape-rendering="crispEdges">' + r + '</svg>';
+}
+function srEtiquetaFormato() {
+  var f = (state.config && state.config.srEtiqueta) || "100x50";
+  return f === "100x150" ? { w: 100, h: 150 } : f === "100x75" ? { w: 100, h: 75 } : { w: 100, h: 50 };
+}
+function srSetEtiquetaFormato(v) { if (!state.config) state.config = {}; state.config.srEtiqueta = v; salvar(); render(); }
+/* v427: a São Roque pediu etiqueta AMARELA para o fracionado (miudeza e soltos,
+   o que vai em saco ou meia caixa). A impressora da RF e termica DIRETA: so
+   imprime preto, a cor vem do ROLO. Por isso a impressao sai em dois lotes --
+   caixas fechadas no rolo branco e fracionados no rolo amarelo -- e a etiqueta
+   do fracionado leva a faixa "FRACIONADO" em preto pra se destacar mesmo que
+   saia no rolo errado. grupo: "cx" | "fr" | vazio (tudo). */
+function srEhFracionado(v) { return v.t === "MIU" || v.t === "SOL"; }
+function srImprimirEtiquetas(cargaId, k, grupo) {
+  var c = srCarga(cargaId); if (!c) return;
+  var nParadas = c.clientes.length;
+  /* ordem de CARREGAMENTO: a ultima parada sai primeiro da impressora, porque
+     e a primeira a entrar no fundo do bau. Dentro do cliente, na ordem 1..N. */
+  var clis = c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; });
+  if (k) clis = clis.filter(function (x) { return x.k === k; });
+  var lista = [];
+  clis.forEach(function (cl) { c.vols.forEach(function (v) {
+    if (v.k !== cl.k) return;
+    if (grupo === "cx" && srEhFracionado(v)) return;
+    if (grupo === "fr" && !srEhFracionado(v)) return;
+    lista.push({ v: v, cl: cl });
+  }); });
+  if (!lista.length) { alert("Nada para imprimir."); return; }
+  var rolo = grupo === "fr" ? "\n\n🟨 COLOQUE O ROLO AMARELO na impressora (fracionados)." : grupo === "cx" ? "\n\n⬜ Use o rolo BRANCO (caixas fechadas)." : "";
+  if (!confirm("Imprimir " + lista.length + " etiqueta(s) da carga " + c.numcar + (k ? " — só " + (srCliente(c, k).fant || "") : "") + "?\n\nSaem na ordem de CARREGAMENTO: última parada primeiro." + rolo)) return;
+  var F = srEtiquetaFormato(), alto = F.h >= 75;
+  var blocos = {}; try { srMontagem(c).blocos.forEach(function (b) { blocos[b.k] = b; }); } catch (e) {}   // v586
+  c.etqImpressas = Date.now(); salvar();
+  var w = window.open("", "_blank");
+  if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
+  var html = lista.map(function (x) {
+    var v = x.v, cl = x.cl;
+    return '<div class="et">'
+      + '<div class="top"><img src="' + srLogo() + '" style="filter:grayscale(1) contrast(1.4);"><div class="par"><span>PARADA</span><b>' + cl.seq + '</b><span>de ' + nParadas + '</span></div></div>'
+      + '<div class="cli">' + esc(String(cl.fant || cl.nome).slice(0, 34)) + '</div>'
+      + '<div class="cid">' + esc(cl.cidade) + (alto && cl.bairro ? ' · ' + esc(cl.bairro) : '') + '</div>'
+      + (blocos[cl.k] ? '<div class="zona">BAÚ <b>' + blocos[cl.k].zona + '</b> · ' + srFmtM(blocos[cl.k].ini) + '–' + srFmtM(blocos[cl.k].fim) + ' m da cabine · carregar ' + blocos[cl.k].passo + 'º</div>' : '')
+      + (alto ? '<div class="end">' + esc(String(cl.end || "").slice(0, 60)) + '</div>' : '')
+      + '<div class="vol"><b>VOL ' + v.n + '/' + v.tot + '</b> <span class="t t' + v.t + '">' + (v.t === "CX" ? "CAIXA" : "FRACIONADO") + '</span> ' + esc(String(v.d || "").slice(0, alto ? 70 : 44)) + '</div>'
+      + '<div class="bc">' + srBarcodeSvg(v.c, alto ? 20 : 14) + '</div>'
+      + '<div class="rod"><span class="cod">' + esc(v.c) + '</span><span>Carga ' + esc(c.numcar) + (c.placa ? ' · ' + esc(c.placa) : '') + ' · NF ' + esc(cl.nfs.slice(0, 3).join("/")) + '</span></div>'
+      + '</div>';
+  }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas São Roque ' + esc(c.numcar) + '</title><style>'
+    + '@page{size:' + F.w + 'mm ' + F.h + 'mm;margin:0;}'
+    + 'html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#000;}'
+    + '.et{width:' + (F.w - 6) + 'mm;height:' + (F.h - 5) + 'mm;padding:2.5mm 3mm;overflow:hidden;page-break-after:always;box-sizing:content-box;display:flex;flex-direction:column;}'
+    + '.top{display:flex;justify-content:space-between;align-items:center;height:' + (alto ? 13 : 9) + 'mm;}'
+    + '.top img{height:100%;}'
+    + '.par{display:flex;align-items:baseline;gap:1.5mm;border:0.6mm solid #000;border-radius:1.5mm;padding:0 2mm;}'
+    + '.par span{font-size:' + (alto ? 11 : 8) + 'px;font-weight:700;} .par b{font-size:' + (alto ? 34 : 24) + 'px;line-height:1;}'
+    + '.cli{font-size:' + (alto ? 22 : 15) + 'px;font-weight:900;line-height:1.1;margin-top:1mm;white-space:nowrap;overflow:hidden;}'
+    + '.cid{font-size:' + (alto ? 17 : 12) + 'px;font-weight:700;}'
+    + '.end{font-size:12px;}'
+    + '.zona{font-size:' + (alto ? 12 : 9) + 'px;border-top:0.4mm solid #000;border-bottom:0.4mm solid #000;margin-top:0.6mm;padding:0.3mm 0;white-space:nowrap;overflow:hidden;} .zona b{font-size:1.25em;}'
+    + '.vol{font-size:' + (alto ? 13 : 9.5) + 'px;white-space:nowrap;overflow:hidden;margin-top:0.5mm;}'
+    + '.vol b{font-size:' + (alto ? 18 : 12) + 'px;} .t{border:0.4mm solid #000;padding:0 1mm;font-weight:700;font-size:0.85em;} .tMIU,.tSOL{background:#000;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+    + '.bc{margin-top:auto;} .bc svg{display:block;}'
+    + '.rod{display:flex;justify-content:space-between;font-size:' + (alto ? 11 : 8.5) + 'px;} .cod{font-family:monospace;font-weight:700;letter-spacing:0.5px;}'
+    + '</style></head><body>' + html + '</body></html>');
+  w.document.close();
+  setTimeout(function () { try { w.print(); } catch (err) {} }, 500);
+}
+/* Romaneio de carregamento em papel A4: parada, cliente, NF, volumes e a caixa
+   pra ticar. Serve de conferencia de reserva e de ordem de carregamento. */
+function srImprimirRomaneio(cargaId) {
+  var c = srCarga(cargaId); if (!c) return;
+  var t = srTotais(c);
+  var w = window.open("", "_blank");
+  if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
+  var linhas = c.clientes.map(function (cl) {
+    var tc = srTotaisCliente(c, cl.k);
+    var cx = c.vols.filter(function (v) { return v.k === cl.k && v.t === "CX"; }).length;
+    var mi = c.vols.filter(function (v) { return v.k === cl.k && v.t === "MIU"; }).length;
+    var so = c.vols.filter(function (v) { return v.k === cl.k && v.t === "SOL"; }).length;
+    var bz = srBlocoDoCliente(c, cl.k);
+    return '<tr><td class="c">' + cl.seq + (bz ? '<br><small>' + bz.zona + '</small>' : '') + '</td><td><b>' + esc(cl.fant) + '</b><br><small>' + esc(cl.nome) + '</small></td><td>' + esc(cl.cidade)
+      + '<br><small>' + esc(cl.end) + (cl.bairro ? ' · ' + esc(cl.bairro) : '') + '</small>' + (cl.obs ? '<br><small><b>⚠ ' + esc(cl.obs) + '</b></small>' : '') + '</td>'
+      + '<td>' + esc(cl.nfs.join(", ")) + '</td><td class="n">' + srFmt(cl.peso, 1) + '</td><td class="n">' + cx + '</td><td class="n">' + mi + '</td><td class="n">' + so
+      + '</td><td class="n"><b>' + tc.vols + '</b></td><td class="n">' + tc.car + '</td><td></td></tr>';
+  }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Romaneio São Roque ' + esc(c.numcar) + '</title><style>'
+    + '@page{size:A4 landscape;margin:8mm;} body{font-family:Arial,sans-serif;font-size:11px;}'
+    + 'h1{font-size:16px;margin:0;} table{border-collapse:collapse;width:100%;margin-top:6px;} th,td{border:1px solid #444;padding:3px 4px;vertical-align:top;}'
+    + 'th{background:#000;color:#fff;font-size:10px;} td.n{text-align:right;} td.c{text-align:center;font-weight:900;font-size:14px;} small{color:#333;}'
+    + '.hd{display:flex;align-items:center;gap:14px;} .hd img{height:38px;}'
+    + '</style></head><body><div class="hd"><img src="' + srLogo() + '"><div><h1>ROMANEIO DE CARREGAMENTO — CARGA ' + esc(c.numcar) + '</h1>'
+    + 'RF Logística · data ' + esc(c.data.split("-").reverse().join("/")) + ' · placa ' + esc(c.placa || "—") + ' · motorista ' + esc(c.motorista || "—")
+    + '<br>' + t.clientes + ' clientes · ' + t.cidades + ' cidades · ' + t.nfs + ' NF · ' + srFmt(t.peso, 1) + ' kg · <b>' + t.vols + ' volumes</b> (' + t.cx + ' cx, ' + t.miu + ' miudeza, ' + t.sol + ' soltos)'
+    + '<br><b>Carregar de baixo para cima: a ÚLTIMA parada entra primeiro no fundo do baú.</b></div></div>'
+    + '<table><tr><th>Parada</th><th>Cliente</th><th>Cidade / endereço</th><th>NF</th><th>Peso kg</th><th>CX</th><th>MIU</th><th>SOL</th><th>Vol</th><th>Bipados</th><th>✓</th></tr>'
+    + linhas + '</table></body></html>');
+  w.document.close();
+  setTimeout(function () { try { w.print(); } catch (err) {} }, 400);
+}
+
+/* ---- rota do motorista ----------------------------------------------------- */
+/* Mesmo formato das entregas da roteirizacao da Suzano (v267/v270): uma entrega
+   por cliente, um canhoto por NF, nascendo NAO liberada. */
+function srCriarRota(cargaId) {
+  var c = srCarga(cargaId); if (!c) return;
+  if (!c.placa) { alert("Escolha a placa antes de criar a rota."); return; }
+  var dataPrev = prompt("Data da saída do caminhão (AAAA-MM-DD):", hojeISO());
+  if (!dataPrev) return;
+  var viagem = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
+  if (viagem) {
+    var comCanhoto = entregasDaViagem(viagem.id).filter(function (e) { return (e.notas || []).some(function (n) { return n.foto; }); });
+    if (comCanhoto.length) { alert("Essa rota já tem canhoto anexado. Não vou recriar."); return; }
+    entregasDaViagem(viagem.id).forEach(function (e) {
+      state.entregas = (state.entregas || []).filter(function (x) { return x.id !== e.id; });
+      rfEntregaDeletar(e.id);
+    });
+    viagem.placa = c.placa; viagem.data = dataPrev; viagem.motoristaNaEpoca = c.motorista || viagem.motoristaNaEpoca;
+  } else {
+    var t = srTotais(c);
+    viagem = {
+      id: uid(), placa: c.placa, cliente: SR_CLIENTE, rota: "", data: dataPrev, criadoEm: Date.now(),
+      dataCriacao: rfDataLocalISO(new Date()),
+      valorViagem: 0, km: 0, dias: 1,
+      kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "",
+      combustivelItens: [], outrosItens: [],
+      vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: true,
+      motoristaNaEpoca: c.motorista || "",
+      pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "",
+      pesoKg: Math.round(t.peso * 10) / 10,
+      obs: "Carga São Roque " + c.numcar + " — " + t.clientes + " clientes, " + t.vols + " volumes.", previstaRoteirizacao: true,
+    };
+    state.viagens.push(viagem);
+    c.viagemId = viagem.id;
+  }
+  c.clientes.forEach(function (cl, i) {
+    var nova = {
+      id: "ent-" + Date.now() + "-" + c.placa + "-go" + i,
+      viagemId: viagem.id, romaneioId: "", placa: c.placa, clienteContrato: SR_CLIENTE,
+      recebedor: cl.fant || cl.nome, cidade: cl.cidade, endereco: [cl.end, cl.bairro].filter(Boolean).join(" · "),
+      ordem: i + 1, notas: (cl.nfs.length ? cl.nfs : [""]).map(function (nf) {
+        return { nf: nf, pedido: cl.peds.join(","), remessa: "", foto: "", recebedor: "", data: "", ressalva: "" };
+      }),
+      status: "pendente", obs: [cl.obs, srTotaisCliente(c, cl.k).vols + " volume(s)"].filter(Boolean).join(" · "),
+      motoristaUid: null, motoristaNome: viagem.motoristaNaEpoca || "",
+      liberada: false, origem: "roteirizacao", dataPrevista: dataPrev,
+      criadoEm: Date.now(), concluidaEm: 0,
+    };
+    state.entregas = (state.entregas || []).concat([nova]);
+    rfEntregaSalvar(nova);
+  });
+  c.atualizadoEm = Date.now();
+  salvar(); render();
+  alert("✓ Rota criada: viagem " + c.placa + " em " + dataPrev + " com " + c.clientes.length + " entregas.\n\nAinda NÃO aparece para o motorista. Use \"Liberar para o motorista\" quando o caminhão estiver carregado.");
+}
+
+/* ---- tela ------------------------------------------------------------------ */
+function srBlocoHTML() {
+  var cargas = srCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
+  var F = (state.config && state.config.srEtiqueta) || "100x50";
+  var h = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">'
+    + '<img src="' + srLogo() + '" style="height:46px;background:#fff;border-radius:8px;padding:4px 8px;">'
+    + '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';">Carregamento Grupo São Roque</div>'
+    + '<label style="font-size:11px;color:#bbb;cursor:pointer;text-decoration:underline;">trocar logo<input type="file" accept="image/*" style="display:none;" onchange="srTrocarLogo(this)"></label>'
+    + (state.config && state.config.srLogo ? '<a href="javascript:void(0)" onclick="srLogoPadrao()" style="font-size:11px;color:#888;">voltar ao selo</a>' : '')
+    + '<button onclick="srCargaExemplo()" style="font-size:12px;padding:7px 10px;">🧪 Carga de exemplo (demonstração)</button>'
+    + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (arquivo da São Roque)'
+    + '<input type="file" style="display:none;" onchange="srImportar(this)"></label></div>'
+    + '<div style="font-size:12px;color:#aaa;margin-bottom:12px;line-height:1.5;">Fluxo: <b>1</b> importar o arquivo da carga → <b>2</b> conferir a ordem das paradas e a montagem do baú → <b>3</b> imprimir as etiquetas (1 por volume, com a zona do baú) e colar → <b>4</b> bipar cada volume que sobe no caminhão → <b>5</b> criar e liberar a rota do motorista → <b>6</b> bipar na entrega. '
+    + 'Etiqueta: <select onchange="srSetEtiquetaFormato(this.value)" style="font-size:12px;">'
+    + ['100x50', '100x75', '100x150'].map(function (f) { return '<option' + (f === F ? ' selected' : '') + '>' + f + '</option>'; }).join("") + '</select> mm</div>';
+  if (!cargas.length) return h + '<div style="padding:24px;border:1px dashed #555;border-radius:10px;color:#999;text-align:center;">Nenhuma carga importada. Use o botão acima com o arquivo da carga que a São Roque envia — ou a carga de exemplo para demonstrar.</div>';
+  cargas.forEach(function (c) { h += srCardHTML(c); });
+  return h;
+}
+function srCardHTML(c) {
+  var t = srTotais(c), aberta = String(state.srCargaAberta) === String(c.id);
+  var pc = t.vols ? Math.round(t.carregados * 100 / t.vols) : 0;
+  var pe = t.vols ? Math.round(t.entregues * 100 / t.vols) : 0;
+  var cor = t.carregados === t.vols ? "#2E7D32" : GOLD;
+  var h = '<div style="border:2px solid ' + cor + ';border-radius:12px;background:#12100A;margin-bottom:12px;overflow:hidden;">'
+    + '<div onclick="srAbrir(\'' + c.id + '\')" style="cursor:pointer;padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">'
+    + '<span style="color:' + GOLD + ';font-weight:800;font-size:16px;">' + (aberta ? "−" : "+") + ' Carga ' + esc(c.numcar) + '</span>' + (c.exemplo ? '<span style="background:#7B3FA0;color:#fff;font-size:11px;font-weight:800;padding:2px 7px;border-radius:5px;">EXEMPLO</span>' : '')
+    + '<span style="font-size:12px;color:#ccc;">' + esc(c.data.split("-").reverse().join("/")) + ' · ' + t.clientes + ' clientes · ' + t.cidades + ' cidades · ' + srFmt(t.peso, 0) + ' kg · <b>' + t.vols + ' vol</b>' + (c.placa ? ' · 🚚 ' + esc(c.placa) : '') + '</span>'
+    + '<span style="margin-left:auto;font-size:12px;"><b style="color:' + cor + ';">carregado ' + t.carregados + '/' + t.vols + ' (' + pc + '%)</b> · entregue ' + t.entregues + ' (' + pe + '%)</span></div>';
+  if (!aberta) return h + '</div>';
+  var box = 'style="background:#0B0B0B;border:1px solid #333;border-radius:10px;padding:12px;margin:0 14px 12px 14px;"';
+  var tit = function (n, s) { return '<div style="font-weight:800;color:' + GOLD + ';margin-bottom:8px;">' + n + ' · ' + s + '</div>'; };
+  var msg = function (tipo) {
+    var m = state.srMsg;
+    return (m && m.tipo === tipo) ? '<div style="margin-top:6px;font-weight:800;color:' + (m.ok ? "#4CAF50" : "#E74C3C") + ';">' + esc(m.txt) + '</div>' : "";
+  };
+  // cabecalho: placa e motorista
+  var placas = szPlacasFrota(), mots = szMotoristasDisponiveis();
+  h += '<div ' + box + '>' + tit("1", "Veículo e resumo")
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;">Placa <select onchange="srSetCampo(\'' + c.id + '\',\'placa\',this.value)" style="font-weight:700;"><option value="">— escolha —</option>'
+    + placas.map(function (p) { return '<option' + (p === c.placa ? ' selected' : '') + '>' + esc(p) + '</option>'; }).join("") + '</select>'
+    + ' Motorista <select onchange="srSetCampo(\'' + c.id + '\',\'motorista\',this.value)" style="font-weight:700;"><option value="">— escolha —</option>'
+    + mots.map(function (n) { return '<option' + (n === c.motorista ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join("") + '</select>'
+    + '<button onclick="srExcluir(\'' + c.id + '\')" style="margin-left:auto;font-size:11px;">🗑 excluir carga</button></div>'
+    + '<div style="font-size:12px;color:#ccc;margin-top:8px;">' + (t.valor && typeof podeVerValoresFrete === "function" && podeVerValoresFrete() ? 'mercadoria R$ ' + srFmt(t.valor, 2) + ' (valor p/ averbação) · ' : '') + t.nfs + ' NF · ' + t.cx + ' caixas fechadas · ' + t.miu + ' caixas de miudeza · ' + t.sol + ' sacos de soltos · arquivo ' + esc(c.arquivo || "") + '</div></div>';
+  // v586: montagem do baú
+  h += '<div ' + box + '>' + tit("2", "Ordem das paradas e montagem do baú") + srMontagemHTML(c) + '</div>';
+  // etiquetas
+  h += '<div ' + box + '>' + tit("3", "Etiquetas")
+    + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'cx\')" style="background:#fff;color:#000;font-weight:800;padding:8px 12px;">⬜ Caixas fechadas (' + t.cx + ') — rolo branco</button> '
+    + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'fr\')" style="background:#F2E600;color:#000;font-weight:800;padding:8px 12px;">🟨 Fracionados (' + (t.miu + t.sol) + ') — rolo amarelo</button> '
+    + '<button onclick="srImprimirRomaneio(\'' + c.id + '\')" style="padding:8px 12px;">📄 Romaneio de carregamento</button>'
+    + '<div style="font-size:11px;color:#999;margin-top:6px;">Impressora térmica: a cor vem do ROLO. Imprima as caixas no rolo branco e troque para o rolo amarelo nos fracionados (miudeza e soltos, que vão em saco ou meia caixa). Saem na ordem de carregamento (última parada primeiro) e cada etiqueta diz a ZONA do baú e o metro onde o volume vai. Na bipagem vale a etiqueta RF e o número da caixa de miudeza.</div></div>';
+  // carregamento
+  h += '<div ' + box + '>' + tit("4", "Bipar o carregamento")
+    + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pc + '%;background:' + cor + ';"></div></div>'
+    + '<input id="sr-bip-c" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')" style="font-size:16px;padding:8px;width:230px;"> '
+    + '<button onclick="srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')">✔ bipar</button> '
+    + '<button onclick="srLerCamera(\'' + c.id + '\',\'c\',\'sr-bip-c\')">📷 câmera</button>' + msg("c") + '</div>';
+  // rota
+  var viagem = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
+  var ents = viagem ? entregasDaViagem(viagem.id) : [];
+  var lib = ents.length && ents.every(function (e) { return e.liberada; });
+  h += '<div ' + box + '>' + tit("5", "Rota do motorista")
+    + (viagem
+      ? '<div style="font-size:13px;margin-bottom:6px;">Viagem ' + esc(viagem.placa) + ' · ' + esc(String(viagem.data).split("-").reverse().join("/")) + ' · ' + ents.length + ' entregas · '
+        + (lib ? '<b style="color:#4CAF50;">liberada para ' + esc(viagem.motoristaNaEpoca || "o motorista") + '</b>' : '<b style="color:' + GOLD + ';">ainda não liberada</b>') + '</div>'
+        + '<button onclick="rfRotLiberar(\'' + viagem.id + '\',' + (lib ? 'false' : 'true') + ')">' + (lib ? '↩ recolher rota' : '📲 Liberar para o motorista') + '</button> '
+        + '<button onclick="srCriarRota(\'' + c.id + '\')" style="font-size:11px;">↻ recriar</button>'
+        + (t.carregados < t.vols && !lib ? '<div style="font-size:11px;color:#E67E22;margin-top:6px;">⚠ Faltam ' + (t.vols - t.carregados) + ' volume(s) para bipar no carregamento.</div>' : '')
+      : '<button onclick="srCriarRota(\'' + c.id + '\')">🗺 Criar viagem e entregas no app</button>'
+        + '<div style="font-size:11px;color:#999;margin-top:6px;">Cria 1 viagem na placa escolhida e 1 entrega por cliente, com 1 canhoto por NF — igual à rota da Suzano.</div>')
+    + '</div>';
+  // entrega
+  var sel = state.srEntregaCli || "";
+  h += '<div ' + box + '>' + tit("6", "Bipar na entrega")
+    + '<select onchange="state.srEntregaCli=this.value;state.srMsg=null;render();" style="font-weight:700;max-width:100%;"><option value="">— cliente da parada —</option>'
+    + c.clientes.map(function (cl) { var tc = srTotaisCliente(c, cl.k); return '<option value="' + esc(cl.k) + '"' + (cl.k === sel ? ' selected' : '') + '>' + cl.seq + ' · ' + esc(cl.fant) + ' — ' + esc(cl.cidade) + ' (' + tc.ent + '/' + tc.vols + ')</option>'; }).join("")
+    + '</select><div style="margin-top:8px;"><input id="sr-bip-e" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'e\',\'sr-bip-e\')" style="font-size:16px;padding:8px;width:230px;"> '
+    + '<button onclick="srBiparCampo(\'' + c.id + '\',\'e\',\'sr-bip-e\')">✔ bipar</button> '
+    + '<button onclick="srLerCamera(\'' + c.id + '\',\'e\',\'sr-bip-e\')">📷 câmera</button></div>' + msg("e") + '</div>';
+  // clientes
+  var car = srBipsDaCarga(c.id, "c");
+  h += '<div ' + box + '>' + tit("7", "Paradas") + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+    + '<tr style="color:' + GOLD + ';text-align:left;"><th>#</th><th>Cliente</th><th>Cidade</th><th>NF</th><th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th style="text-align:right;">Carreg.</th><th style="text-align:right;">Entr.</th><th></th></tr>';
+  c.clientes.forEach(function (cl) {
+    var tc = srTotaisCliente(c, cl.k), ok = tc.car === tc.vols;
+    var aberto = state.srCliAberto === c.id + "|" + cl.k;
+    h += '<tr style="border-top:1px solid #333;"><td><b>' + cl.seq + '</b></td><td>' + esc(cl.fant) + (cl.obs ? '<div style="font-size:10px;color:#E67E22;">⚠ ' + esc(cl.obs) + '</div>' : '') + '</td><td>' + esc(cl.cidade) + '</td><td>' + esc(cl.nfs.join(", ")) + '</td>'
+      + '<td style="text-align:right;">' + srFmt(cl.peso, 1) + '</td><td style="text-align:right;">' + tc.vols + '</td>'
+      + '<td style="text-align:right;color:' + (ok ? "#4CAF50" : "#ccc") + ';font-weight:700;">' + tc.car + '</td><td style="text-align:right;">' + tc.ent + '</td>'
+      + '<td style="white-space:nowrap;"><button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'' + cl.k + '\',\'cx\')" title="reimprimir as caixas deste cliente (rolo branco)">⬜</button>'
+      + (c.vols.some(function (v) { return v.k === cl.k && srEhFracionado(v); }) ? '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'' + cl.k + '\',\'fr\')" title="reimprimir os fracionados deste cliente (rolo amarelo)" style="background:#F2E600;">🟨</button>' : '') + ' '
+      + '<button onclick="state.srCliAberto=' + (aberto ? "''" : "'" + c.id + '|' + cl.k + "'") + ';render();">' + (aberto ? "▾" : "▸") + '</button></td></tr>';
+    if (aberto) {
+      var faltam = c.vols.filter(function (v) { return v.k === cl.k && !car[v.c]; });
+      h += '<tr><td></td><td colspan="8" style="font-size:11px;color:#bbb;padding:6px 0;">'
+        + '<div><b>' + esc(cl.nome) + '</b> · ' + esc(cl.end) + ' · ' + esc(cl.bairro) + ' · CEP ' + esc(cl.cep) + ' · pedidos ' + esc(cl.peds.join(", ")) + '</div>'
+        + (faltam.length ? '<div style="color:#E67E22;margin-top:4px;">Faltam carregar: ' + faltam.map(function (v) { return v.n + " (" + esc(v.c.slice(-5)) + " " + esc(String(v.d).slice(0, 22)) + ")"; }).join(" · ") + '</div>' : '<div style="color:#4CAF50;margin-top:4px;">✓ todos os volumes carregados</div>')
+        + '<div style="margin-top:4px;">' + cl.itens.map(function (it) { return esc(it[0]) + " — " + (it[1] ? it[1] + " cx" : "") + (it[2] ? (it[1] ? " + " : "") + it[2] + " un" : "") + (it[4] ? " [miudeza " + esc(it[4]) + "]" : ""); }).join("<br>") + '</div></td></tr>';
+    }
+  });
+  h += '</table></div></div>';
+  return h + '</div>';
+}
+
+/* ---- v586: logo da São Roque (trocável pela tela) -------------------------
+   A logo oficial ainda não chegou. Até lá vale um selo de texto neutro; o botão
+   "Trocar logo" grava a imagem em config.srLogo (sincroniza entre aparelhos). */
+var SR_LOGO_PADRAO = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="120" viewBox="0 0 360 120">'
+  + '<rect x="3" y="3" width="354" height="114" rx="14" fill="#fff" stroke="#000" stroke-width="6"/>'
+  + '<text x="180" y="40" font-family="Arial,Helvetica,sans-serif" font-size="22" font-weight="700" text-anchor="middle" fill="#000" letter-spacing="6">GRUPO</text>'
+  + '<text x="180" y="92" font-family="Arial,Helvetica,sans-serif" font-size="48" font-weight="900" text-anchor="middle" fill="#000">SÃO ROQUE</text></svg>');
+function srLogo() { return (state.config && state.config.srLogo) || SR_LOGO_PADRAO; }
+function srTrocarLogo(input) {
+  var f = input.files && input.files[0];
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () {
+    var img = new Image();
+    img.onload = function () {
+      var h = Math.min(160, img.height), w = Math.round(img.width * h / img.height);
+      var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+      var cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+      if (!state.config) state.config = {};
+      state.config.srLogo = cv.toDataURL("image/png");
+      input.value = ""; salvar(); render();
+    };
+    img.onerror = function () { input.value = ""; alert("Não consegui abrir essa imagem."); };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+}
+function srLogoPadrao() {
+  if (!confirm("Voltar para o selo de texto (sem a logo enviada)?")) return;
+  if (state.config) delete state.config.srLogo;
+  salvar(); render();
+}
+try { Object.defineProperty(RF_LOGOS_CLIENTE, "saoroque", { get: srLogo, enumerable: true, configurable: true }); } catch (e) {}
+
+/* ---- v586: MONTAGEM DO BAÚ ------------------------------------------------
+   O que mais chamou a atenção da São Roque: como a carga entra no baú pra
+   render a rota. Regra: a ÚLTIMA parada entra primeiro, no FUNDO (encostada na
+   cabine); a PRIMEIRA parada fica na PORTA. Cada cliente ocupa um BLOCO
+   contínuo, sem misturar com o vizinho, e o comprimento do bloco é a cubagem
+   dele dividida pela seção útil do baú (largura × altura × aproveitamento).
+   Cubagem: a do arquivo, quando vier coerente; senão estimada pelo peso
+   (densidade da carga, padrão 250 kg/m³ — alimento seco misturado). Nada aqui
+   é IA: é conta, e serve de mapa para o conferente da doca. */
+var SR_BAUS = {
+  "VAN":   { c: 3.0, l: 1.7, a: 1.6, kg: 1500 },
+  "3/4":   { c: 4.5, l: 2.2, a: 2.2, kg: 4000 },
+  "Toco":  { c: 7.0, l: 2.45, a: 2.5, kg: 6500 },
+  "Truck": { c: 8.5, l: 2.5, a: 2.6, kg: 12000 },
+};
+var SR_APROVEITAMENTO = 0.85;   // folga de arrumação (caixas não encaixam 100%)
+var SR_CORES = ["#E8C46A", "#9AA5B1", "#C9A227", "#6E7B8B", "#F0D78C", "#B8C2CC", "#A67C00", "#8796A5"];
+
+function srBauDaCarga(c) {
+  if (c.bau && SR_BAUS[c.bau]) return c.bau;
+  var v = (state.veiculos || []).find(function (x) { return String(x.placa || "").trim() === String(c.placa || "").trim(); });
+  if (v && /3\s*\/\s*4/.test(v.tipo || "")) return "3/4";
+  if (v && /truck/i.test(v.tipo || "")) return "Truck";
+  return "Toco";
+}
+function srDens(c) { var d = Number(c.dens); return d > 20 ? d : 250; }
+function srM3Cliente(c, cl) {
+  var porPeso = (Number(cl.peso) || 0) / srDens(c);
+  var arq = Number(cl.m3) || 0;
+  // cubagem do arquivo só vale se for coerente com o peso (entre 50 e 1500 kg/m³)
+  if (arq > 0 && cl.peso > 0) { var dd = cl.peso / arq; if (dd >= 50 && dd <= 1500) return { m3: arq, fonte: "arquivo" }; }
+  return { m3: porPeso, fonte: "peso" };
+}
+function srMontagem(c) {
+  var nome = srBauDaCarga(c), B = SR_BAUS[nome];
+  var secao = B.l * B.a * SR_APROVEITAMENTO;
+  var ordem = c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; });   // fundo primeiro
+  var pos = 0, m3t = 0, kgt = 0, blocos = [], fontes = {};
+  ordem.forEach(function (cl, i) {
+    var q = srM3Cliente(c, cl); fontes[q.fonte] = 1;
+    var comp = q.m3 / secao;
+    blocos.push({ k: cl.k, seq: cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: cl.peso, m3: q.m3, ini: pos, fim: pos + comp, cor: SR_CORES[i % SR_CORES.length], passo: i + 1 });
+    pos += comp; m3t += q.m3; kgt += Number(cl.peso) || 0;
+  });
+  var usado = pos;
+  blocos.forEach(function (b) {
+    var meio = usado ? ((b.ini + b.fim) / 2) / usado : 0;
+    b.zona = meio < 1 / 3 ? "FUNDO" : meio < 2 / 3 ? "MEIO" : "PORTA";
+  });
+  // peso na metade da porta (traseira) x metade da cabine
+  var meioBau = B.c / 2, kgPorta = 0;
+  blocos.forEach(function (b) {
+    var len = b.fim - b.ini; if (len <= 0) return;
+    var naPorta = Math.max(0, b.fim - Math.max(b.ini, meioBau));
+    kgPorta += (Number(b.peso) || 0) * (naPorta / len);
+  });
+  return {
+    bau: nome, B: B, secao: secao, blocos: blocos, usado: usado, m3: m3t, kg: kgt,
+    ocupVol: B.c ? usado / B.c : 0, ocupKg: B.kg ? kgt / B.kg : 0,
+    kgPortaPct: kgt ? kgPorta / kgt : 0, estimado: !!fontes.peso,
+    naoCabe: usado > B.c + 0.001 || kgt > B.kg,
+  };
+}
+function srBlocoDoCliente(c, k) {
+  var m = srMontagem(c);
+  return m.blocos.find(function (b) { return b.k === k; }) || null;
+}
+function srFmtM(n) { return Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+
+/* desenho do baú visto de cima: cabine à esquerda, porta à direita */
+function srBauSvg(c, largura) {
+  var m = srMontagem(c), B = m.B, W = largura || 640, esq = 46, dir = 34, alt = 120, top = 26;
+  var escalaC = Math.max(B.c, m.usado);
+  var px = (W - esq - dir) / escalaC;
+  var s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + (top + alt + 40) + '" width="100%" style="max-width:' + W + 'px;font-family:Arial,Helvetica,sans-serif;">';
+  // cabine
+  s += '<rect x="4" y="' + (top + 18) + '" width="' + (esq - 10) + '" height="' + (alt - 36) + '" rx="8" fill="#444" stroke="#888"/>'
+    + '<text x="' + ((esq - 6) / 2 + 2) + '" y="' + (top + alt / 2 + 4) + '" font-size="10" fill="#ddd" text-anchor="middle">CAB</text>';
+  // baú
+  s += '<rect x="' + esq + '" y="' + top + '" width="' + (B.c * px) + '" height="' + alt + '" fill="none" stroke="' + (m.naoCabe ? "#E74C3C" : "#bbb") + '" stroke-width="2"/>';
+  m.blocos.forEach(function (b) {
+    var x = esq + b.ini * px, w = Math.max(1, (b.fim - b.ini) * px);
+    var fora = b.fim > B.c;
+    s += '<rect x="' + x.toFixed(1) + '" y="' + (top + 2) + '" width="' + w.toFixed(1) + '" height="' + (alt - 4) + '" fill="' + (fora ? "#E74C3C" : b.cor) + '" stroke="#111" stroke-width="1"/>';
+    if (w > 16) s += '<text x="' + (x + w / 2).toFixed(1) + '" y="' + (top + alt / 2 - 2) + '" font-size="' + (w > 34 ? 18 : 12) + '" font-weight="900" fill="#000" text-anchor="middle">P' + b.seq + '</text>';
+    if (w > 46) s += '<text x="' + (x + w / 2).toFixed(1) + '" y="' + (top + alt / 2 + 16) + '" font-size="9" fill="#000" text-anchor="middle">' + esc(String(b.fant).slice(0, Math.floor(w / 6))) + '</text>';
+  });
+  // porta
+  s += '<line x1="' + (esq + B.c * px) + '" y1="' + top + '" x2="' + (esq + B.c * px) + '" y2="' + (top + alt) + '" stroke="#E8C46A" stroke-width="5"/>'
+    + '<text x="' + (esq + B.c * px) + '" y="' + (top + alt + 32) + '" font-size="10" font-weight="700" fill="#E8C46A" text-anchor="middle">PORTA</text>';
+  // régua
+  for (var i = 0; i <= Math.floor(B.c); i++) {
+    var xx = esq + i * px;
+    s += '<line x1="' + xx + '" y1="' + (top + alt + 2) + '" x2="' + xx + '" y2="' + (top + alt + 8) + '" stroke="#888"/>'
+      + '<text x="' + xx + '" y="' + (top + alt + 20) + '" font-size="9" fill="#999" text-anchor="middle">' + i + 'm</text>';
+  }
+  s += '<text x="' + esq + '" y="16" font-size="11" fill="#bbb">FUNDO (entra primeiro: última parada)</text>'
+    + '<text x="' + (esq + B.c * px) + '" y="16" font-size="11" fill="#bbb" text-anchor="end">sai primeiro: 1ª parada</text>';
+  return s + '</svg>';
+}
+
+/* troca a ordem das paradas (sobe/desce) e renumera 1..N */
+function srMover(cargaId, k, dir) {
+  var c = srCarga(cargaId); if (!c) return;
+  if (c.etqImpressas && !confirm("As etiquetas desta carga já foram impressas com a parada antiga. Mudar a ordem obriga a REIMPRIMIR. Continuar?")) return;
+  var l = c.clientes.slice().sort(function (a, b) { return a.seq - b.seq; });
+  var i = l.findIndex(function (x) { return x.k === k; }), j = i + dir;
+  if (i < 0 || j < 0 || j >= l.length) return;
+  var tmp = l[i]; l[i] = l[j]; l[j] = tmp;
+  l.forEach(function (x, n) { x.seq = n + 1; });
+  c.clientes = l; c.etqImpressas = 0; c.atualizadoEm = Date.now();
+  salvar(); render();
+}
+function srSetNum(cargaId, campo, valor) {
+  var c = srCarga(cargaId); if (!c) return;
+  c[campo] = campo === "bau" ? String(valor) : (Number(String(valor).replace(",", ".")) || 0);
+  c.atualizadoEm = Date.now(); salvar(); render();
+}
+
+function srMontagemHTML(c) {
+  var m = srMontagem(c), B = m.B;
+  var pctV = Math.round(m.ocupVol * 100), pctK = Math.round(m.ocupKg * 100), pctP = Math.round(m.kgPortaPct * 100);
+  var corO = function (p) { return p > 100 ? "#E74C3C" : p > 90 ? "#E67E22" : "#4CAF50"; };
+  var h = '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:8px;">Baú <select onchange="srSetNum(\'' + c.id + '\',\'bau\',this.value)" style="font-weight:700;">'
+    + Object.keys(SR_BAUS).map(function (n) { var b = SR_BAUS[n]; return '<option value="' + n + '"' + (n === m.bau ? ' selected' : '') + '>' + n + ' — ' + srFmtM(b.c) + '×' + srFmtM(b.l) + '×' + srFmtM(b.a) + ' m · ' + goFmt(b.kg) + ' kg</option>'; }).join("")
+    + '</select> Densidade <input type="number" value="' + srDens(c) + '" onchange="srSetNum(\'' + c.id + '\',\'dens\',this.value)" style="width:70px;"> kg/m³'
+    + '<button onclick="srImprimirMapa(\'' + c.id + '\')" style="margin-left:auto;padding:8px 12px;font-weight:800;">🖨 Mapa de montagem (A4)</button></div>'
+    + '<div style="background:#000;border-radius:8px;padding:8px;">' + srBauSvg(c, 640) + '</div>'
+    + '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:8px;">'
+    + '<span>Comprimento usado <b style="color:' + corO(pctV) + ';">' + srFmtM(m.usado) + ' de ' + srFmtM(B.c) + ' m (' + pctV + '%)</b></span>'
+    + '<span>Peso <b style="color:' + corO(pctK) + ';">' + goFmt(m.kg, 0) + ' de ' + goFmt(B.kg) + ' kg (' + pctK + '%)</b></span>'
+    + '<span>Cubagem ' + srFmtM(m.m3) + ' m³' + (m.estimado ? ' <i style="color:#999;">(estimada pelo peso)</i>' : '') + '</span>'
+    + '<span>Peso na metade da porta <b style="color:' + (pctP > 65 ? "#E67E22" : "#ccc") + ';">' + pctP + '%</b></span></div>'
+    + (m.naoCabe ? '<div style="margin-top:6px;color:#E74C3C;font-weight:800;">⚠ Não cabe neste baú. Troque para um veículo maior ou divida a carga em dois carros.</div>' : '')
+    + (pctP > 65 && !m.naoCabe ? '<div style="margin-top:6px;color:#E67E22;font-size:12px;">⚠ Peso concentrado perto da porta: segure as caixas pesadas no chão e encostadas no bloco da frente.</div>' : '')
+    + '<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+    + '<tr style="color:' + GOLD + ';text-align:left;"><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th><th style="text-align:right;">Posição (m da cabine)</th><th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th>Ordem</th></tr>';
+  m.blocos.forEach(function (b) {
+    var tv = srTotaisCliente(c, b.k).vols;
+    h += '<tr style="border-top:1px solid #333;"><td><b>' + b.passo + 'º</b></td><td><span style="background:' + b.cor + ';color:#000;font-weight:900;padding:1px 6px;border-radius:4px;">P' + b.seq + '</span></td>'
+      + '<td>' + esc(b.fant) + '</td><td>' + esc(b.cidade) + '</td><td><b>' + b.zona + '</b></td>'
+      + '<td style="text-align:right;">' + srFmtM(b.ini) + ' – ' + srFmtM(b.fim) + '</td><td style="text-align:right;">' + goFmt(b.peso, 0) + '</td><td style="text-align:right;">' + tv + '</td>'
+      + '<td style="white-space:nowrap;"><button title="entrega mais cedo" onclick="srMover(\'' + c.id + '\',\'' + b.k + '\',-1)">▲</button><button title="entrega mais tarde" onclick="srMover(\'' + c.id + '\',\'' + b.k + '\',1)">▼</button></td></tr>';
+  });
+  h += '</table></div><div style="font-size:11px;color:#999;margin-top:6px;line-height:1.5;">Regras da doca: carregar na ordem da coluna <b>Carregar</b> (1º = fundo, encostado na cabine). Cada cliente num bloco só, sem misturar. Caixa pesada embaixo, fracionado (etiqueta amarela) por cima e virado para a porta. ▲▼ muda a ordem de entrega — o mapa e as etiquetas acompanham (reimprima se já tiver impresso).</div>';
+  return h;
+}
+function srImprimirMapa(cargaId) {
+  var c = srCarga(cargaId); if (!c) return;
+  var m = srMontagem(c), t = srTotais(c);
+  var w = window.open("", "_blank");
+  if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
+  var svg = srBauSvg(c, 1000).replace(/fill="#bbb"/g, 'fill="#333"').replace(/fill="#999"/g, 'fill="#333"').replace(/#E8C46A" stroke-width="5"/, '#000" stroke-width="5"').replace(/fill="#E8C46A" text-anchor="middle">PORTA/, 'fill="#000" text-anchor="middle">PORTA');
+  var linhas = m.blocos.map(function (b) {
+    return '<tr><td class="c">' + b.passo + 'º</td><td class="c"><span style="background:' + b.cor + ';padding:1px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;"><b>P' + b.seq + '</b></span></td><td><b>' + esc(b.fant) + '</b></td><td>' + esc(b.cidade) + '</td><td class="c"><b>' + b.zona + '</b></td><td class="n">' + srFmtM(b.ini) + ' – ' + srFmtM(b.fim) + '</td><td class="n">' + goFmt(b.peso, 0) + '</td><td class="n">' + srTotaisCliente(c, b.k).vols + '</td><td></td></tr>';
+  }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Mapa de montagem ' + esc(c.numcar) + '</title><style>'
+    + '@page{size:A4 landscape;margin:8mm;} body{font-family:Arial,sans-serif;font-size:11px;} h1{font-size:16px;margin:0;}'
+    + 'table{border-collapse:collapse;width:100%;margin-top:8px;} th,td{border:1px solid #444;padding:3px 5px;} th{background:#000;color:#fff;font-size:10px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+    + 'td.n{text-align:right;} td.c{text-align:center;} .hd{display:flex;align-items:center;gap:14px;} .hd img{height:40px;} .svg{background:#fff;border:1px solid #999;margin-top:8px;padding:4px;}'
+    + '</style></head><body><div class="hd"><img src="' + srLogo() + '"><div><h1>MAPA DE MONTAGEM DO BAÚ — CARGA ' + esc(c.numcar) + '</h1>'
+    + 'RF Logística · ' + esc(c.data.split("-").reverse().join("/")) + ' · placa ' + esc(c.placa || "—") + ' · motorista ' + esc(c.motorista || "—") + ' · baú ' + m.bau + ' (' + srFmtM(m.B.c) + ' m)'
+    + '<br>' + t.clientes + ' paradas · ' + goFmt(t.peso, 0) + ' kg (' + Math.round(m.ocupKg * 100) + '% da capacidade) · ' + t.vols + ' volumes · comprimento usado ' + srFmtM(m.usado) + ' m (' + Math.round(m.ocupVol * 100) + '%)' + (m.estimado ? ' · cubagem estimada pelo peso' : '')
+    + '</div></div><div class="svg">' + svg + '</div>'
+    + '<p><b>Carregue na ordem da 1ª coluna: o 1º bloco vai no FUNDO, encostado na cabine; o último fica na PORTA e é a 1ª entrega.</b> Um cliente por bloco, sem misturar. Pesado embaixo, fracionado (etiqueta amarela) em cima, virado para a porta.</p>'
+    + '<table><tr><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th><th>Posição (m da cabine)</th><th>kg</th><th>Vol</th><th>✓</th></tr>' + linhas + '</table></body></html>');
+  w.document.close();
+  setTimeout(function () { try { w.print(); } catch (err) {} }, 500);
+}
+
+/* ---- v586: carga de EXEMPLO para a demonstração ---------------------------
+   A São Roque ainda não mandou arquivo. Esta carga fictícia (clientes
+   inventados, no formato Winthor) serve pra mostrar etiqueta, montagem e
+   bipagem na reunião. Fica marcada como EXEMPLO e pode ser excluída. */
+function srCargaExemplo() {
+  if (srCarga("sr-900001") && !confirm("A carga de exemplo já existe. Recriar do zero?")) return;
+  var cab = ["NUMCAR", "DATA", "CODCLI", "CLIENTE", "FANTASIA", "ENDERENT", "BAIRROENT", "ESTADO", "CEPENT", "NUMSEQENTREGA", "NUMNOTA", "NUMPED", "PESOTOTAL", "DESCRICAO", "QTCX", "QTUN", "CODAUXILIAR", "MIUDEZA", "NUMMIUDEZA", "VLNF"];
+  var cli = [
+    ["101", "MERCADINHO EXEMPLO BOM PRECO", "Mercadinho Bom Preço", "RUA A, 10", "CENTRO", "SAO GONCALO DOS CAMPOS - BA"],
+    ["102", "SUPERMERCADO EXEMPLO FAMILIA", "Super Família", "AV. B, 200", "CENTRO", "CACHOEIRA - BA"],
+    ["103", "ARMAZEM EXEMPLO DO POVO", "Armazém do Povo", "RUA C, 33", "CENTRO", "MURITIBA - BA"],
+    ["104", "MERCEARIA EXEMPLO SAO JOSE", "Mercearia São José", "RUA D, 4", "COQUEIROS", "CRUZ DAS ALMAS - BA"],
+    ["105", "ATACAREJO EXEMPLO RECONCAVO", "Atacarejo Recôncavo", "BR-101, KM 5", "INDUSTRIAL", "SANTO ANTONIO DE JESUS - BA"],
+    ["106", "SUPERMERCADO EXEMPLO ECONOMIA", "Super Economia", "PRACA E, 1", "CENTRO", "SANTO ANTONIO DE JESUS - BA"],
+    ["107", "MERCADINHO EXEMPLO SANTA RITA", "Mercadinho Santa Rita", "RUA F, 90", "CENTRO", "NAZARE - BA"],
+  ];
+  var prod = [["ARROZ T1 5KG FD 6", 30, "7890000000011"], ["FEIJAO CARIOCA 1KG FD 10", 10, "7890000000028"], ["OLEO SOJA 900ML CX 20", 18.5, "7890000000035"],
+    ["ACUCAR CRISTAL 1KG FD 10", 10, "7890000000042"], ["CAFE 250G CX 20", 5.4, "7890000000059"], ["MACARRAO 500G FD 20", 10.2, "7890000000066"]];
+  var linhas = [cab], nf = 50100;
+  cli.forEach(function (c, i) {
+    nf++;
+    var n = 3 + (i * 2) % 5;
+    for (var p = 0; p < n; p++) {
+      var pr = prod[(i + p) % prod.length], qt = 6 + ((i + 1) * (p + 3)) % 12;
+      linhas.push(["900001", rfDataLocalISO(new Date()), c[0], c[1], c[2], c[3], c[4], c[5], "", String(i + 1), String(nf), "7" + nf, String(pr[1] * qt), pr[0], String(qt), "0", pr[2], "", "", String(1500 + i * 420)]);
+    }
+    if (i % 2 === 0) linhas.push(["900001", rfDataLocalISO(new Date()), c[0], c[1], c[2], c[3], c[4], c[5], "", String(i + 1), String(nf), "7" + nf, "6", "MIUDEZAS DIVERSAS (TEMPEROS, FERMENTO)", "0", "12", "", "MIUDEZA", "M" + c[0], String(1500 + i * 420)]);
+  });
+  var carga = srMontarCarga(linhas, "EXEMPLO (demonstração)");
+  carga.exemplo = true;
+  state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== carga.id; });
+  state.saoroqueBips = srBips().filter(function (b) { return b.carga !== carga.id; });
+  srCargas().push(carga);
+  state.srCargaAberta = carga.id;
+  salvar(); render();
+}
+
+/* ===================== fim v586 (São Roque) ===================== */
+
 
 try { RF_LOGOS_CLIENTE.goias = GO_LOGO_COR; } catch (e) {}
 
@@ -23343,6 +24174,7 @@ var ABAS_DEF = [
   { id: "motoristas", label: "Motoristas 💰", grupo: "VIAGENS" },
   { id: "carregasuzano", label: "🏭 Carregamento Suzano", grupo: "CARREGAMENTO" },   // v228
   { id: "goiascarga", label: "🟢 Carregamento Goiás", grupo: "CARREGAMENTO" },   // v423
+  { id: "saoroquecarga", label: "🔵 Carregamento São Roque", grupo: "CARREGAMENTO" },   // v586
   { id: "cargamateus", label: "🗺️ Carga Mateus", grupo: "CARREGAMENTO" },   // v372
   { id: "rotajdl", label: "🧭 Rota JDL", grupo: "CARREGAMENTO" },   // v568
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "CARREGAMENTO" },
@@ -23391,6 +24223,7 @@ var TAB_DESCRICOES = {
   carregasuzano: "Operação Suzano: conferência de entrada por contagem cega, etiqueta e bipagem de cada volume que sobe no caminhão, e acompanhamento das entregas em tempo real",
   docsviagem: "Todos os documentos de cada viagem num lugar só: envio de CT-e e MDF-e na saída, pacote completo com canhotos no fim, busca de canhoto por NF e links para a Suzano",
   goiascarga: "Operação Goiás Atacado: importa o arquivo da carga, imprime uma etiqueta por volume, bipa o carregamento e a entrega e cria a rota do motorista",
+  saoroquecarga: "Operação Grupo São Roque: importa a carga, monta o baú por parada (mapa da doca), imprime etiqueta com a zona do baú, bipa carregamento e entrega e cria a rota do motorista",
   statusdia: "Status diário das viagens em andamento: entregas feitas, situação e observações — atualizado pela carteira e pelo motorista",
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
@@ -32416,6 +33249,18 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
     return regra + "\nCARGAS GOIÁS NO SISTEMA:\n" + linhas;
   })();
 
+  // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
+  const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
+    const cargas = (state.saoroqueCargas || []);
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA; cada cliente ocupa um bloco contínuo; o comprimento do bloco = cubagem do cliente ÷ (largura × altura do baú × 0,85 de aproveitamento). A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/6.500 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo da São Roque ainda é um selo de texto até alguém enviar a imagem pelo link "trocar logo".`;
+    if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
+    const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
+      const t = srTotais(c), m = srMontagem(c);
+      return `- Carga ${c.numcar}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}: usa ${srFmtM(m.usado)} de ${srFmtM(m.B.c)} m (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º P${b.seq} ${b.fant} (${b.cidade}, ${b.zona}, ${srFmtM(b.ini)}–${srFmtM(b.fim)} m)`).join("; ");
+    }).join("\n");
+    return regra + "\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+  })();
+
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
   const blocoSuzano = !podeVerAba("carregasuzano") ? "" : (function () {
     const cargas = (state.suzanoCargas || []);
@@ -32873,6 +33718,7 @@ ${blocoRegraKm}
 
 ${blocoSuzano}
 ${blocoGoias}
+${blocoSaoRoque}
 ${blocoMateus}
 
 Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
@@ -37571,6 +38417,10 @@ function renderTabela() {
     wrap.innerHTML = goBlocoHTML();
     return;
   }
+  if (state.aba === "saoroquecarga") {   // v586
+    wrap.innerHTML = srBlocoHTML();
+    return;
+  }
   if (state.aba === "medicoes") {   // v467
     wrap.innerHTML = mdTelaHTML();
     return;
@@ -38813,7 +39663,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "compras", "extratos", "medicoes", "campanhas"];   // v423; v467: medicoes; v564: campanhas
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "compras", "extratos", "medicoes", "campanhas"];   // v586: saoroque; v423; v467: medicoes; v564: campanhas
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -38831,7 +39681,7 @@ revalidarSessaoAoAbrir();
   /* v418: paradasNaoVieram tambem entra por UNIAO. Quem tira a parada pode ser
      o tablet enquanto o PC esta com a caixa antiga aberta; por substituicao o
      PC devolveria a parada removida na proxima subida. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips"];   // v423
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips"];   // v423; v586
   /* v400: ficha de motorista e editada em mais de um aparelho (a recepcao
      preenche, o Renato confere). Uniao simples por id manteria SEMPRE a versao
      local e a edicao do outro aparelho nunca chegaria. Aqui vence a mais
@@ -38877,6 +39727,8 @@ revalidarSessaoAoAbrir();
     mateusFator: "rf-frota-mateusfator-v1",
     motoristasCad: "rf-frota-motoristascad-v1",   /* v397 */
     goiasCargas: "rf-frota-goiascargas-v1",       /* v423 */
+    saoroqueCargas: "rf-frota-saoroquecargas-v1", /* v586 */
+    saoroqueBips: "rf-frota-saoroquebips-v1",     /* v586 */
     goiasBips: "rf-frota-goiasbips-v1",           /* v423 */
     compras: "rf-frota-compras-v1",               /* v446 */
     extratos: "rf-frota-extratos-v1",             /* v448 */
