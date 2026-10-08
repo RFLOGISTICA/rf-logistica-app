@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v591)</title>
+<title>RF Logística — Painel da Frota (v592)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v591">
+<meta name="rf-versao" content="v592">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v592 (08/10/2026): São Roque -- importa o PDF real '910 - Pedido por Carregamento' (sintético por praça): uma parada por praça com peso, entregas e pedidos; baú e rota funcionam; aviso de que etiqueta/bipagem precisam do 910 analítico. -->
 <!-- v591 (08/10/2026): São Roque -- Google Maps na rota: mapa embutido (rota atual/sugerida) e botões que abrem a rota no Google Maps com KM real; esquema próprio continua como opção offline. -->
 <!-- v590 (08/10/2026): São Roque -- caminhão 3D que GIRA (canvas, motor proprio sem biblioteca): arrastar gira, pinça/roda dá zoom, toque duplo reseta, vistas Lado/Traseira/De cima/Outro lado e girar sozinho; baú translúcido e portas abertas. -->
 <!-- v589 (07/10/2026): São Roque -- IMPACTO DA ORDEM NA ROTA: km/R$/tempo da ordem atual x rota sugerida (coordenadas IBGE do Nordeste embutidas, vizinho mais proximo + 2-opt), aviso na hora a cada mudanca, mapinha das duas rotas, parada digitavel, aplicar sugerida / voltar ao arquivo. -->
@@ -878,7 +879,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v591" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v592" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -11969,6 +11970,7 @@ function srImportar(input) {
   var file = input.files && input.files[0];
   if (!file) return;
   rfLerArquivoBytes(file).then(function (bytes) {
+    if (srEhPdf(bytes)) { srImportarPdf(file, input); return; }   // v592: relatório 910 em PDF
     var carga = srMontarCarga(srLinhasDoArquivo(bytes), file.name);
     input.value = "";
     var ja = srCarga(carga.id);
@@ -12298,7 +12300,7 @@ function srBlocoHTML() {
     + '<label style="font-size:11px;color:#bbb;cursor:pointer;text-decoration:underline;">trocar logo<input type="file" accept="image/*" style="display:none;" onchange="srTrocarLogo(this)"></label>'
     + (state.config && state.config.srLogo ? '<a href="javascript:void(0)" onclick="srLogoPadrao()" style="font-size:11px;color:#888;">voltar à logo padrão</a>' : '')
     + '<button onclick="srCargaExemplo()" style="font-size:12px;padding:7px 10px;">🧪 Carga de exemplo (demonstração)</button>'
-    + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (arquivo da São Roque)'
+    + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (PDF 910 ou planilha da São Roque)'
     + '<input type="file" style="display:none;" onchange="srImportar(this)"></label></div>'
     + '<div style="font-size:12px;color:#aaa;margin-bottom:12px;line-height:1.5;">Fluxo: <b>1</b> importar o arquivo da carga → <b>2</b> conferir a ordem das paradas e a montagem do baú → <b>3</b> imprimir as etiquetas (1 por volume, com a zona do baú) e colar → <b>4</b> bipar cada volume que sobe no caminhão → <b>5</b> criar e liberar a rota do motorista → <b>6</b> bipar na entrega. '
     + 'Etiqueta: <select onchange="srSetEtiquetaFormato(this.value)" style="font-size:12px;">'
@@ -12326,6 +12328,9 @@ function srCardHTML(c) {
   };
   // cabecalho: placa e motorista
   var placas = szPlacasFrota(), mots = szMotoristasDisponiveis();
+  if (c.sintetico) h += '<div style="margin:0 14px 12px 14px;padding:10px 12px;border:1px solid #E67E22;background:#24170a;border-radius:10px;font-size:12px;line-height:1.5;">'
+    + '<b style="color:#F0A050;">Relatório 910 SINTÉTICO (por praça)' + (c.regiao ? ' · região ' + esc(c.regiao) : '') + '</b> — ' + c.clientes.length + ' praças, ' + (c.entregasTot || 0) + ' entregas, ' + (c.pedidosTot || 0) + ' pedidos, ' + srFmt(srTotais(c).peso, 2) + ' kg. '
+    + 'Com ele já dá para montar o baú (pelo peso) e a rota (por cidade). Para <b>etiqueta, bipagem e canhoto por cliente</b> precisa do <b>910 ANALÍTICO</b> (por cliente/pedido) ou do mesmo relatório em Excel.</div>';   // v592
   h += '<div ' + box + '>' + tit("1", "Veículo e resumo")
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;">Placa <select onchange="srSetCampo(\'' + c.id + '\',\'placa\',this.value)" style="font-weight:700;"><option value="">— escolha —</option>'
     + placas.map(function (p) { return '<option' + (p === c.placa ? ' selected' : '') + '>' + esc(p) + '</option>'; }).join("") + '</select>'
@@ -12740,7 +12745,7 @@ function srMontagemHTML(c) {
     + (pal ? '<th style="text-align:center;">Paletes</th><th>Vagas</th>' : '<th style="text-align:right;">Posição (m da cabine)</th>')
     + '<th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th>Parada / ordem</th></tr>';
   m.blocos.forEach(function (b) {
-    var tv = srTotaisCliente(c, b.k).vols;
+    var tv = c.sintetico ? ((srCliente(c, b.k).entregas || 0) + ' ent.') : srTotaisCliente(c, b.k).vols;   // v592
     h += '<tr style="border-top:1px solid #333;"><td><b>' + b.passo + 'º</b></td><td><span style="background:' + b.cor + ';color:#000;font-weight:900;padding:1px 6px;border-radius:4px;">P' + b.seq + '</span></td>'
       + '<td>' + esc(b.fant) + '</td><td>' + esc(b.cidade) + '</td><td><b>' + b.zona + '</b></td>'
       + (pal ? '<td style="text-align:center;white-space:nowrap;"><input type="number" min="1" value="' + b.pals + '" title="calculado: ' + srFmtM(b.palCalc) + ' palete(s)" onchange="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',this.value)" style="width:48px;font-weight:700;' + (b.palManual ? 'border:2px solid #E8C46A;' : '') + '">'
@@ -13324,6 +13329,94 @@ function sr3dHTML(c) {
     + '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'
     + bt("lado", "🚚 Lado") + bt("traseira", "🚪 Traseira") + bt("cima", "⬇ De cima") + bt("outro", "↔ Outro lado")
     + '<button id="sr3d-giro" onclick="srGiro3D()" style="font-size:12px;padding:6px 9px;background:rgba(232,196,106,.9);color:#000;font-weight:800;border:0;border-radius:6px;">' + (SR3D.auto ? "⏸ parar" : "⟳ girar sozinho") + '</button></div></div>';
+}
+
+
+/* ---- v592: RELATÓRIO 910 DA SÃO ROQUE (PDF) --------------------------------
+   Renato mandou em 08/10 00:25 o primeiro arquivo REAL da São Roque:
+   "910 - Pedido por Carregamento", tipo "Sintético por praça" (ReportBuilder),
+   romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, 4 praças
+   (Aramari, Alagoinhas, Araçás, Itanagra), 72 pedidos e 32 entregas.
+   O sintético traz, por PRAÇA (cidade): código, número de sequência, qtd. de
+   pedidos, qtd. de entregas e peso. NÃO traz cliente, NF nem volume -- então
+   com ele dá para montar o baú (por peso) e a rota (por cidade), mas etiqueta,
+   bipagem e canhoto por cliente precisam do 910 ANALÍTICO ou do Excel.
+   Leitura: o texto do PDF com posição (pdf.js, mesmo leitor dos extratos); os
+   valores do cabeçalho ficam LOGO ABAIXO do rótulo (Romaneio, Região, Peso,
+   Motorista, Placa) e cada praça é uma linha "cód NOME seq ped entr peso". */
+function srEhPdf(bytes) { return bytes && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; }
+function srLer910(paginas) {
+  var todos = [];
+  (paginas || []).forEach(function (its, pi) { its.forEach(function (o) { todos.push({ x: o.x, y: o.y - pi * 2000, s: String(o.s) }); }); });
+  var txt = todos.map(function (o) { return o.s; }).join(" ");
+  if (!/Pedido por Carregamento/i.test(txt)) throw new Error("este PDF não é o relatório 910 (Pedido por Carregamento) da São Roque.");
+  var abaixo = function (rot) {
+    var r = todos.filter(function (o) { return o.s.trim().toLowerCase().indexOf(rot.toLowerCase()) === 0; })[0];
+    if (!r) return "";
+    var c = todos.filter(function (o) { return o !== r && o.y < r.y - 1 && o.y > r.y - 26 && o.x > r.x - 8 && o.x < r.x + 40; })
+      .sort(function (a, b) { return b.y - a.y; })[0];
+    return c ? c.s.trim() : "";
+  };
+  // linhas: agrupa por altura
+  var lin = [];
+  todos.slice().sort(function (a, b) { return b.y - a.y || a.x - b.x; }).forEach(function (o) {
+    var l = lin.length ? lin[lin.length - 1] : null;
+    if (l && Math.abs(l.y - o.y) < 2.5) l.its.push(o); else lin.push({ y: o.y, its: [o] });
+  });
+  var pracas = [];
+  lin.forEach(function (l) {
+    var t = l.its.sort(function (a, b) { return a.x - b.x; }).map(function (o) { return o.s.trim(); }).join(" ").replace(/\s+/g, " ").trim();
+    var m = t.match(/^(\d+)\s+(.+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+,\d{2})$/);
+    if (m && !/^total/i.test(m[2])) pracas.push({ cod: m[1], nome: m[2].trim(), seq: Number(m[3]), ped: Number(m[4]), ent: Number(m[5]), peso: srNum(m[6]) });
+  });
+  if (!pracas.length) throw new Error("não achei nenhuma praça no relatório.");
+  var data = (txt.match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || "";
+  return {
+    romaneio: String(abaixo("Romaneio")).replace(/\D/g, "") || String((txt.match(/\b(\d{6,})\b/) || [])[1] || Date.now()).slice(-7),
+    regiao: abaixo("Região"), peso: srNum(abaixo("Peso")), motorista: abaixo("Motorista"), placa: abaixo("Placa"),
+    data: data ? srDataISO(data) : hojeISO(), tipo: /sint[eé]tico/i.test(txt) ? "sintetico" : "analitico", pracas: pracas,
+  };
+}
+function srTitulo(s) { return String(s || "").toLowerCase().replace(/(^|\s)(\S)/g, function (a, b, c) { return b + c.toUpperCase(); }).replace(/\b(De|Da|Do|Dos|Das|E)\b/g, function (w) { return w.toLowerCase(); }); }
+function srCarga910(info, nomeArquivo) {
+  var pr = info.pracas.slice().sort(function (a, b) { return a.seq - b.seq; });
+  var clientes = pr.map(function (p, i) {
+    var co = srCoordCidade(p.nome, "BA");
+    return {
+      k: "PR" + p.cod, nome: "Praça " + p.cod + " — " + (co ? co.nome : srTitulo(p.nome)), fant: (co ? co.nome : srTitulo(p.nome)),
+      end: "", bairro: "", cidade: co ? co.nome : srTitulo(p.nome), uf: "BA", cep: "", seq: i + 1, seqArq: p.seq,
+      obs: p.ent + " entrega(s) · " + p.ped + " pedido(s)", nfs: [], peds: [], peso: p.peso, itens: [], valor: 0, m3: 0,
+      entregas: p.ent, pedidos: p.ped, vols: 0,
+    };
+  });
+  return {
+    id: "sr-" + info.romaneio, numcar: info.romaneio, data: info.data, arquivo: nomeArquivo || "", criadoEm: Date.now(), atualizadoEm: Date.now(),
+    placa: "", motorista: "", viagemId: "", clientes: clientes, vols: [], ordemArquivo: clientes.map(function (x) { return x.k; }),
+    sintetico: info.tipo === "sintetico", regiao: info.regiao, pesoRelatorio: info.peso,
+    entregasTot: pr.reduce(function (s, p) { return s + p.ent; }, 0), pedidosTot: pr.reduce(function (s, p) { return s + p.ped; }, 0),
+  };
+}
+function srImportarPdf(file, input) {
+  if (typeof exPdfItens !== "function") { alert("Leitor de PDF indisponível nesta versão."); return; }
+  exPdfItens(file).then(function (paginas) {
+    var info = srLer910(paginas), carga = srCarga910(info, file.name);
+    input.value = "";
+    var ja = srCarga(carga.id);
+    if (ja) {
+      if (!confirm("O romaneio " + carga.numcar + " já foi importado. Substituir?")) return;
+      carga.placa = ja.placa; carga.motorista = ja.motorista; carga.viagemId = ja.viagemId; carga.bau = ja.bau; carga.dens = ja.dens;
+      state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== ja.id; });
+    }
+    srCargas().push(carga);
+    state.srCargaAberta = carga.id;
+    salvar(); render();
+    var soma = carga.clientes.reduce(function (s, x) { return s + x.peso; }, 0);
+    alert("✓ Romaneio " + carga.numcar + (info.regiao ? " · " + info.regiao : "") + " importado\n\n"
+      + carga.clientes.length + " praças (" + carga.clientes.map(function (x) { return x.cidade; }).join(", ") + ")\n"
+      + carga.entregasTot + " entregas · " + carga.pedidosTot + " pedidos · " + srFmt(soma, 2) + " kg"
+      + (info.peso && Math.abs(info.peso - soma) > 0.5 ? "\n⚠ O peso do cabeçalho (" + srFmt(info.peso, 2) + " kg) não bate com a soma das praças." : "")
+      + (carga.sintetico ? "\n\nRelatório SINTÉTICO (por praça): dá para montar o baú e a rota. Para etiqueta e bipagem por cliente, peça o 910 ANALÍTICO." : ""));
+  }).catch(function (e) { input.value = ""; alert("Não consegui ler o PDF: " + ((e && e.message) || e)); });
 }
 
 /* ---- v586: carga de EXEMPLO para a demonstração ---------------------------
@@ -33989,7 +34082,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/6.500 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Atenção: 7,6 t passa da capacidade de um Toco (6,5 t). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/6.500 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
