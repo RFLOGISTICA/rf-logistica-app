@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v599)</title>
+<title>RF Logística — Painel da Frota (v600)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v599">
+<meta name="rf-versao" content="v600">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v600 (08/10/2026): CAMPANHAS -- publicar em TODAS as redes ligadas: Instagram (na hora pela API, como antes), Facebook (página RF Logistica Transportadora) e Google Meu Negócio, escolhendo as redes por caixinha; Facebook e Google saem pelo robô via Metricool (até 1 hora); status por rede na campanha; campanha já publicada pode ir "também" para as redes que faltam. -->
 <!-- v599 (08/10/2026): São Roque -- CATÁLOGO DE EMBALAGENS (321 produtos da internet + cadastro do cliente + medidos na doca), importação de NF-e XML com casamento por EAN/descrição, espaço real de cada cliente, batida solta sobre paletes pela cubagem real (peso limita antes do teto), divisão em m³, densidade padrão 450. -->
 <!-- v598 (08/10/2026): São Roque -- caminhão 3D REALISTA em WebGL (three.js r128 do cdnjs, carregado só na aba): cabine, vidros, cromados, rodas com aro e rodado duplo, baú de alumínio, faixa RF, paletes de madeira, caixas na cor do cliente, sombra e reflexo; desenho próprio continua como reserva sem internet; mapa A4 usa a foto do 3D. -->
 <!-- v597 (08/10/2026): São Roque -- cores dos clientes no baú e na legenda FECHADAS e fortes (azul, laranja, verde, roxo, petróleo, magenta, marrom, índigo, oliva, grafite) com texto branco; vermelho só para o que não cabe. -->
@@ -886,7 +887,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v599" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v600" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -37473,25 +37474,70 @@ function cpPubCarregar(forcar) {
       var v = r && r.data && r.data.valor; if (typeof v === "string") { try { v = JSON.parse(v); } catch (e) { v = null; } }
       __cp.pub = (v && typeof v === "object") ? v : {};
       var mudou = false;
-      cpLista().forEach(function (c) {   // post que o robô já mandou e cuja hora passou -> publicado
-        var e = __cp.pub[c.id];
-        if (e && e.metricoolId && !e.erro && e.quando <= Date.now() && c.status === "aprovado") {
-          c.status = "publicado"; c.publicadoEm = e.quando; cpHist(c, "publicado no Instagram (Metricool #" + e.metricoolId + ")"); c.atualizadoEm = Date.now(); mudou = true;
-        }
+      cpLista().forEach(function (c) {   // post que o robô já mandou e cuja hora passou -> publicado (v600: por rede)
+        var e = cpPubEntrada(c); if (!e || !e.redes || !c.pub || !(e.quando <= Date.now())) return;
+        Object.keys(e.redes).forEach(function (k) {
+          var r = e.redes[k]; if (!r || r.erro || !(r.metricoolId || r.mediaId)) return;
+          if (!c.redesOk) c.redesOk = {};
+          if (c.redesOk[k]) return;
+          c.redesOk[k] = { quando: e.quando, metricoolId: r.metricoolId || "" };
+          cpHist(c, "publicado no " + cpRedeNome(k).replace(/^\S+ /, "") + " (Metricool #" + (r.metricoolId || "") + ")"); mudou = true;
+        });
+        if (mudou && c.status === "aprovado") { c.status = "publicado"; c.publicadoEm = e.quando; }
+        if (mudou) c.atualizadoEm = Date.now();
       });
       if (mudou) salvar();
       if (state.aba === "campanhas") render();
     });
   }).catch(function () { });
 }
-function cpPubInfo(c) {
-  var e = (__cp.pub || {})[c.id];
-  if (e && c.pub && e.pedidoEm && e.pedidoEm !== c.pub.pedidoEm) e = null;   // pedido novo ainda não processado
-  if (e && e.erro) return { t: "✖ O robô não conseguiu publicar: " + e.erro, c: "#E57373", fila: false };
-  if (e && e.mediaId) return { t: "✅ Publicado no Instagram em " + cpDataBr(e.quando), c: "#81C784", fila: false, enviado: true, link: e.permalink || "" };
-  if (e && e.metricoolId) return e.quando > Date.now() ? { t: "📅 Agendado no Instagram para " + cpDataBr(e.quando), c: "#64B5F6", fila: false, enviado: true } : { t: "✅ Publicado no Instagram em " + cpDataBr(e.quando), c: "#81C784", fila: false, enviado: true };
-  if (c.pub) return { t: "⏳ Na fila para o Instagram" + (c.pub.quando > Date.now() + 60000 ? " — vai sair em " + cpDataBr(c.pub.quando) : " — sai na próxima rodada do robô (até 1 hora)"), c: GOLD, fila: true };
-  return null;
+function cpPubInfo(c) {   // v600: resumo por rede
+  var est = cpRedesEstado(c), ks = CP_REDES.map(function (r) { return r.k; }).filter(function (k) { return est[k]; });
+  if (!ks.length) return null;
+  var lab = { feito: "✅ publicado", agendado: "📅 agendado", fila: "⏳ na fila", erro: "✖ erro" };
+  var partes = ks.map(function (k) { var s = est[k]; return cpRedeNome(k) + " " + lab[s.st] + (s.st === "agendado" || s.st === "feito" ? (s.quando ? " " + cpDataBr(s.quando) : "") : "") + (s.st === "erro" ? " (" + s.erro + ")" : ""); });
+  var tem = function (st) { return ks.some(function (k) { return est[k].st === st; }); };
+  var fila = tem("fila");
+  var t = partes.join(" · ") + (fila ? " — o robô manda na próxima rodada (até 1 hora)" : "");
+  return { t: t, c: tem("erro") ? "#E57373" : fila ? GOLD : tem("agendado") ? "#64B5F6" : "#81C784", fila: fila, enviado: tem("agendado") || tem("feito"), link: (est.instagram && est.instagram.link) || "", est: est };
+}
+/* ---------- v600: PUBLICAR EM TODAS AS REDES LIGADAS ----------
+   Renato (08/10 13:26): "faça a versão para sair em todos que já estão ligados".
+   No Metricool da RF estão ligados Instagram (@rflogisticatransportes), Facebook
+   (página RF Logistica Transportadora) e Google Meu Negócio (perfil RF Logística).
+   A campanha aprovada ganha caixinhas por rede. Instagram "agora" continua saindo na
+   hora pela API (v572); Facebook e Google vão para a fila do robô, que agenda no
+   Metricool (um post por rede) e grava o resultado por rede em campanhas_pub:
+   { id: { pedidoEm, quando, enviadoEm, redes: { facebook: {metricoolId} | {erro}, ... } } }.
+   O que já saiu fica gravado na própria campanha em c.redesOk = { rede: {quando, ...} },
+   para não perder quando chegar um pedido novo. LinkedIn entra quando a conta liberar. */
+var CP_REDES = [{ k: "instagram", n: "Instagram", ic: "📸" }, { k: "facebook", n: "Facebook", ic: "📘" }, { k: "gmb", n: "Google", ic: "🗺️" }];
+function cpRedeNome(k) { var r = CP_REDES.filter(function (x) { return x.k === k; })[0]; return r ? r.ic + " " + r.n : k; }
+function cpRedeSel(id) { if (!__cp.redesSel) __cp.redesSel = {}; if (!__cp.redesSel[id]) __cp.redesSel[id] = {}; return __cp.redesSel[id]; }
+function cpRedeToggle(id, k, on) { cpRedeSel(id)[k] = !!on; }
+function cpPubEntrada(c) {   // entrada do robô para o pedido ATUAL da campanha, normalizada { redes: {...} }
+  var e = (__cp.pub || {})[c.id]; if (!e) return null;
+  if (c.pub && e.pedidoEm !== c.pub.pedidoEm) return null;   // pedido novo ainda não processado (inclui o registro do Instagram direto, pedidoEm 0)
+  var r = e.redes;
+  if (!r) { r = {}; if (e.metricoolId || e.erro) r.instagram = e.erro ? { erro: e.erro } : { metricoolId: e.metricoolId }; if (e.mediaId) r.instagram = { mediaId: e.mediaId, permalink: e.permalink }; }
+  return { pedidoEm: e.pedidoEm, quando: e.quando, redes: r };
+}
+function cpRedesEstado(c) {   // { rede: { st: "feito"|"agendado"|"fila"|"erro", quando, link, erro } }
+  var out = {}, ok = c.redesOk || {};
+  Object.keys(ok).forEach(function (k) { out[k] = { st: "feito", quando: ok[k].quando, link: ok[k].permalink || "" }; });
+  if (!out.instagram && c.ig && (c.ig.mediaId || c.ig.permalink)) out.instagram = { st: "feito", quando: c.publicadoEm, link: c.ig.permalink || "" };
+  if (!Object.keys(out).length && c.status === "publicado" && !c.pub) out.instagram = { st: "feito", quando: c.publicadoEm, link: "" };   // antes da v600 tudo saía só no Instagram
+  var e = cpPubEntrada(c);
+  if (e && e.redes && e.redes.instagram && e.redes.instagram.mediaId && !out.instagram) out.instagram = { st: "feito", quando: e.quando, link: e.redes.instagram.permalink || "" };
+  if (c.pub && Array.isArray(c.pub.redes)) c.pub.redes.forEach(function (k) {
+    if (out[k] && out[k].st === "feito") return;
+    var r = e && e.redes ? e.redes[k] : null;
+    if (!e) out[k] = { st: "fila", quando: c.pub.quando };
+    else if (r && r.erro) out[k] = { st: "erro", erro: r.erro };
+    else if (r && (r.metricoolId || r.mediaId)) out[k] = { st: e.quando > Date.now() ? "agendado" : "feito", quando: e.quando, link: r.permalink || "" };
+    else out[k] = { st: "erro", erro: "o robô não enviou" };
+  });
+  return out;
 }
 /* v572: Instagram DIRETO (API oficial, Edge Function rf-instagram) -- publica na hora */
 var CP_IG_FN = "/functions/v1/rf-instagram";
@@ -37544,15 +37590,21 @@ function cpIGPublicarJa(c) {
     if (!__cp.pub) __cp.pub = {};
     __cp.pub[id] = { pedidoEm: 0, quando: j.quando, mediaId: j.mediaId, permalink: j.permalink, via: "api" };
     c.status = "publicado"; c.publicadoEm = j.quando; c.ig = { mediaId: j.mediaId, permalink: j.permalink || "" };
-    delete c.pub; cpHist(c, "publicou no Instagram (na hora, pelo sistema)");
+    if (!c.redesOk) c.redesOk = {}; c.redesOk.instagram = { quando: j.quando, permalink: j.permalink || "", mediaId: j.mediaId };   // v600
+    if (!(c.pub && Array.isArray(c.pub.redes) && c.pub.redes.length && c.pub.redes.indexOf("instagram") < 0)) delete c.pub;   // v600: Facebook/Google seguem na fila
+    cpHist(c, "publicou no Instagram (na hora, pelo sistema)");
     __cp.msg = "✓ Publicado no Instagram!" + (j.permalink ? " " + j.permalink : "");
     cpToca(c);
-  }).catch(function (e) { delete __cp.ocup[id]; __cp.msg = "✖ Instagram: " + ((e && e.message) || e); render(); });
+  }).catch(function (e) { delete __cp.ocup[id]; __cp.msg = "✖ Instagram: " + ((e && e.message) || e) + (c.pub ? " — as outras redes seguem na fila do robô." : ""); if (c.pub) cpToca(c); else render(); });
 }
-function cpPublicar(id, modo) {
-  var c = cpAcha(id); if (!c || c.status !== "aprovado") return;
+function cpPublicar(id, modo) {   // v600: em todas as redes marcadas
+  var c = cpAcha(id); if (!c || (c.status !== "aprovado" && c.status !== "publicado")) return;
   if (!ehMaster()) { alert("Só o Renato manda publicar."); return; }
   if (!c.arte) { alert("Esta campanha não tem arte."); return; }
+  var inf = cpPubInfo(c); if (inf && inf.fila) { alert("Já tem um pedido na fila. Espere o robô ou cancele o pedido."); return; }
+  var est = (inf && inf.est) || {}, sel = cpRedeSel(id);
+  var redes = CP_REDES.map(function (r) { return r.k; }).filter(function (k) { return sel[k] !== false && !(est[k] && (est[k].st === "feito" || est[k].st === "agendado")); });
+  if (!redes.length) { alert("Marque pelo menos uma rede."); return; }
   var quando = Date.now();
   if (modo === "agendar") {
     var el = document.getElementById("cpQuando-" + id); var v = el && el.value;
@@ -37560,27 +37612,38 @@ function cpPublicar(id, modo) {
     quando = new Date(v).getTime();
     if (!(quando > Date.now() + 5 * 60000)) { alert("Escolha um horário pelo menos 5 minutos à frente."); return; }
   }
-  if (!confirm((modo === "agendar" ? "Agendar no Instagram para " + cpDataBr(quando) : "Publicar no Instagram agora") + "?\n\nVai a arte e a legenda que estão nesta campanha.")) return;
-  if (modo !== "agendar" && __cp.ig && __cp.ig.conectado) { cpHist(c, "mandou publicar no Instagram agora"); return cpIGPublicarJa(c); }
-  c.pub = { pedidoEm: Date.now(), pedidoPor: cpQuem(), quando: quando, redes: ["instagram"] };
-  cpHist(c, modo === "agendar" ? "mandou agendar no Instagram para " + cpDataBr(quando) : "mandou publicar no Instagram");
-  __cp.msg = "✓ Pedido registrado. O robô manda para o Instagram na próxima rodada (de hora em hora).";
+  var nomes = redes.map(function (k) { return cpRedeNome(k).replace(/^\S+ /, ""); }).join(", ");
+  if (!confirm((modo === "agendar" ? "Agendar para " + cpDataBr(quando) : "Publicar agora") + " em: " + nomes + "?\n\nVai a arte e a legenda que estão nesta campanha." + (redes.indexOf("gmb") >= 0 ? "\nNo Google vai sem hashtags e sem telefone (regra do Google); o perfil já mostra o telefone." : ""))) return;
+  var direto = modo !== "agendar" && redes.indexOf("instagram") >= 0 && __cp.ig && __cp.ig.conectado;
+  var fila = direto ? redes.filter(function (k) { return k !== "instagram"; }) : redes;
+  if (fila.length) {
+    c.pub = { pedidoEm: Date.now(), pedidoPor: cpQuem(), quando: quando, redes: fila };
+    cpHist(c, (modo === "agendar" ? "mandou agendar para " + cpDataBr(quando) : "mandou publicar") + " em " + fila.map(function (k) { return cpRedeNome(k).replace(/^\S+ /, ""); }).join(", "));
+  }
+  if (direto) { cpHist(c, "mandou publicar no Instagram agora"); if (fila.length) salvar(); return cpIGPublicarJa(c); }
+  __cp.msg = "✓ Pedido registrado (" + nomes + "). O robô manda na próxima rodada (de hora em hora).";
   cpToca(c);
 }
 function cpPubCancelar(id) {
   var c = cpAcha(id); if (!c || !c.pub) return;
   var inf = cpPubInfo(c);
-  if (inf && inf.enviado) { alert("Este post já foi entregue ao Instagram. Para cancelar, peça ao Claude."); return; }
+  if (inf && inf.enviado && !inf.fila) { alert("Este post já foi entregue às redes. Para cancelar, peça ao Claude."); return; }
   if (!confirm("Cancelar o pedido de publicação?")) return;
   delete c.pub; cpHist(c, "cancelou o pedido de publicação"); cpToca(c);
 }
-function cpPubHTML(c, b) {
+function cpPubHTML(c, b) {   // v600: caixinhas por rede
   var id = c.id, inf = cpPubInfo(c), h = '';
   if (inf) h += '<div style="width:100%;font-size:12.5px;color:' + inf.c + ';margin:4px 0;">' + esc(inf.t) + (inf.link ? ' <a href="' + esc(inf.link) + '" target="_blank" rel="noopener" style="color:#64B5F6;margin-left:6px;">ver no Instagram ↗</a>' : '') + (inf.fila ? ' <a href="javascript:void(0)" onclick="cpPubCancelar(\'' + id + '\')" style="color:#888;margin-left:6px;">cancelar</a>' : '') + '</div>';
-  if (c.status === "aprovado" && ehMaster() && (!inf || (!inf.fila && !inf.enviado))) {
+  if ((c.status === "aprovado" || c.status === "publicado") && ehMaster() && (!inf || !inf.fila)) {
+    var est = (inf && inf.est) || {}, sel = cpRedeSel(id);
+    var faltam = CP_REDES.filter(function (r) { return !(est[r.k] && (est[r.k].st === "feito" || est[r.k].st === "agendado")); });
+    if (!faltam.length) return h;
     var d = new Date(Date.now() + 60 * 60000), pad = function (n) { return ("0" + n).slice(-2); };
     var def = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":00";
-    h += b("📤 Publicar no Instagram agora" + (__cp.ig && __cp.ig.conectado ? "" : " (fila)"), "cpPublicar('" + id + "','agora')", GOLD)
+    h += '<div style="width:100%;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px;color:#ccc;margin:2px 0 4px;">' + (c.status === "publicado" ? '<span style="color:#999;">Publicar também em:</span>' : '<span style="color:#999;">Redes:</span>')
+      + faltam.map(function (r) { return '<label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer;"><input type="checkbox" ' + (sel[r.k] === false ? '' : 'checked') + ' onchange="cpRedeToggle(\'' + id + '\',\'' + r.k + '\',this.checked)" style="width:auto;">' + r.ic + ' ' + r.n + (r.k === "instagram" && __cp.ig && __cp.ig.conectado ? '' : r.k === "instagram" ? ' <span style="color:#777;font-size:11px;">(fila)</span>' : ' <span style="color:#777;font-size:11px;">(até 1 h)</span>') + '</label>'; }).join("")
+      + '</div>';
+    h += b("📤 Publicar agora", "cpPublicar('" + id + "','agora')", GOLD)
       + '<span style="display:inline-flex;gap:6px;align-items:center;"><input type="datetime-local" id="cpQuando-' + id + '" value="' + def + '" style="width:auto;font-size:12.5px;padding:5px;">' + b("📅 Agendar", "cpPublicar('" + id + "','agendar')") + '</span>';
   }
   return h;
@@ -37854,7 +37917,7 @@ function cpContextoAssistente() {
   try {
     var L = cpLista();
     var linhas = L.slice(0, 30).map(function (c) { var st = CP_STATUS[c.status] || {}; return "- " + ((c.textos && c.textos.titulo) || c.ideia || "(sem título)") + " · " + (st.t || c.status) + " · por " + (c.autor || "?") + " · " + cpDataBr(c.atualizadoEm) + (c.obsAprovacao && c.status === "ajuste" ? " · ajuste pedido: " + c.obsAprovacao : ""); });
-    return "\nCAMPANHAS DE PUBLICIDADE (aba 📣 Campanhas, v564): a equipe (ex.: Sandra) cria um post mandando a FOTO (opcional) e o que quer comunicar; a IA (Edge Function rf-campanha-ia: gpt-image-2 para a foto, gpt-5.6-terra para o texto) devolve a foto melhorada com a LOGO RF pintada no baú do caminhão e os textos (chamada, título, subtítulo, selo dourado, legenda e hashtags); o próprio sistema monta a arte 1080x1350 no padrão RF (layouts Diagonal fundo claro, Faixa escura ou Card). Dá para editar os textos à mão (depois tocar em 'Atualizar arte') ou escrever no quadro '🤖 Pedir à IA' e tocar em 'Refazer a foto' ou 'Reescrever os textos' (a foto sempre é refeita a partir da original; '↶ Foto anterior' volta a versão). Status: Em revisão -> 'Enviar para aprovação' -> Aguardando aprovação -> SÓ o login master (Renato) aprova ou pede ajuste -> Aprovado -> 'Baixar arte' + 'Copiar legenda' -> postar -> 'Marcar como publicado'. Regra: nada vai para as redes sem a aprovação do Renato. v566: quando a imagem já é a arte final (ex.: data comemorativa feita fora), usar o botão '📎 Usar como está (sem IA)' na nova campanha -- a imagem vai como foi enviada e a IA só escreve a legenda; no editor, '📎 Usar a imagem enviada (sem IA)' troca uma arte montada pela original, e '🎨 Montar no padrão RF' volta para a montagem. Marca: frota própria de 25 veículos (Toco e 3/4), Bahia e Nordeste, WhatsApp (75) 99971-7578, nunca citar nome de cliente. Cada geração da IA tem custo pequeno de API (centavos de dólar por foto). A aba aparece para quem tiver o módulo 'campanhas' marcado na aba Usuários. v571: PUBLICAR PELO SISTEMA -- o Instagram oficial agora é @rflogisticatransportes (conta comercial criada em 06/10/2026, conectada ao Metricool; o antigo @rflogisticaoficial fica com a Horizonte até 31/10). Na campanha APROVADA, só o Renato vê '📤 Publicar no Instagram agora' e '📅 Agendar' (data e hora); o pedido entra na fila e um robô confere de hora em hora e manda para o Instagram pelo Metricool (por isso 'agora' pode levar até 1 hora); a campanha mostra '⏳ Na fila', '📅 Agendado no Instagram para ...' e depois '✅ Publicado no Instagram' (vira status Publicado sozinha). Dá para cancelar enquanto está na fila; depois de entregue ao Instagram, cancelar só pedindo ao Claude. '✔ Já postei à mão' marca como publicado sem robô. v573: corrigido o 'sistema piscando' e anexos que pareciam nao ficar — era um looping de sincronizacao (o aparelho regravava a lista de compras a cada 2 segundos e a tela redesenhava, apagando o formulario aberto). Se alguem ainda notar a tela piscando, pedir para fechar as abas repetidas do sistema e apertar Ctrl+F5 para carregar a v573. Os arquivos em si sempre subiram; comprovante que espera o extrato fica em 'comprovantes aguardando extrato' da compra. v572: com o Instagram conectado no painel '📸 Instagram do sistema' (o Renato cola uma vez o token gerado no app de desenvolvedor do Meta 'RF Sistema Instagram'; fica guardado só no servidor e se renova sozinho), '📤 Publicar no Instagram agora' sai NA HORA pela API oficial do Instagram (gratuita) e mostra o link 'ver no Instagram'; sem token conectado, cai na fila do robô. '📅 Agendar' continua pela fila do robô/Metricool. Facebook e Google Meu Negócio ainda não saem por esse botão (o Instagram só pode ser ligado à página do Facebook a partir de ~13/10).\n"
+    return "\nCAMPANHAS DE PUBLICIDADE (aba 📣 Campanhas, v564): a equipe (ex.: Sandra) cria um post mandando a FOTO (opcional) e o que quer comunicar; a IA (Edge Function rf-campanha-ia: gpt-image-2 para a foto, gpt-5.6-terra para o texto) devolve a foto melhorada com a LOGO RF pintada no baú do caminhão e os textos (chamada, título, subtítulo, selo dourado, legenda e hashtags); o próprio sistema monta a arte 1080x1350 no padrão RF (layouts Diagonal fundo claro, Faixa escura ou Card). Dá para editar os textos à mão (depois tocar em 'Atualizar arte') ou escrever no quadro '🤖 Pedir à IA' e tocar em 'Refazer a foto' ou 'Reescrever os textos' (a foto sempre é refeita a partir da original; '↶ Foto anterior' volta a versão). Status: Em revisão -> 'Enviar para aprovação' -> Aguardando aprovação -> SÓ o login master (Renato) aprova ou pede ajuste -> Aprovado -> 'Baixar arte' + 'Copiar legenda' -> postar -> 'Marcar como publicado'. Regra: nada vai para as redes sem a aprovação do Renato. v566: quando a imagem já é a arte final (ex.: data comemorativa feita fora), usar o botão '📎 Usar como está (sem IA)' na nova campanha -- a imagem vai como foi enviada e a IA só escreve a legenda; no editor, '📎 Usar a imagem enviada (sem IA)' troca uma arte montada pela original, e '🎨 Montar no padrão RF' volta para a montagem. Marca: frota própria de 25 veículos (Toco e 3/4), Bahia e Nordeste, WhatsApp (75) 99971-7578, nunca citar nome de cliente. Cada geração da IA tem custo pequeno de API (centavos de dólar por foto). A aba aparece para quem tiver o módulo 'campanhas' marcado na aba Usuários. v571: PUBLICAR PELO SISTEMA -- o Instagram oficial agora é @rflogisticatransportes (conta comercial criada em 06/10/2026, conectada ao Metricool; o antigo @rflogisticaoficial fica com a Horizonte até 31/10). Na campanha APROVADA, só o Renato vê '📤 Publicar no Instagram agora' e '📅 Agendar' (data e hora); o pedido entra na fila e um robô confere de hora em hora e manda para o Instagram pelo Metricool (por isso 'agora' pode levar até 1 hora); a campanha mostra '⏳ Na fila', '📅 Agendado no Instagram para ...' e depois '✅ Publicado no Instagram' (vira status Publicado sozinha). Dá para cancelar enquanto está na fila; depois de entregue ao Instagram, cancelar só pedindo ao Claude. '✔ Já postei à mão' marca como publicado sem robô. v573: corrigido o 'sistema piscando' e anexos que pareciam nao ficar — era um looping de sincronizacao (o aparelho regravava a lista de compras a cada 2 segundos e a tela redesenhava, apagando o formulario aberto). Se alguem ainda notar a tela piscando, pedir para fechar as abas repetidas do sistema e apertar Ctrl+F5 para carregar a v573. Os arquivos em si sempre subiram; comprovante que espera o extrato fica em 'comprovantes aguardando extrato' da compra. v600: PUBLICAR EM TODAS AS REDES LIGADAS -- na campanha aprovada aparecem caixinhas 📸 Instagram, 📘 Facebook (página RF Logistica Transportadora) e 🗺️ Google (Perfil da Empresa RF Logística), todas marcadas; '📤 Publicar agora' manda o Instagram na hora (API) e Facebook/Google para a fila do robô, que agenda no Metricool um post por rede (até 1 hora); '📅 Agendar' manda todas no horário escolhido. No Google o post vai sem hashtags e sem telefone (o Google recusa post com telefone; o perfil já mostra o número). A campanha mostra o status de cada rede (publicado/agendado/na fila/erro) e, depois de publicada, dá para 'Publicar também em' as redes que faltaram. LinkedIn entra quando a conta do Renato for liberada pelo LinkedIn (verificação de identidade enviada em 08/10). v572: com o Instagram conectado no painel '📸 Instagram do sistema' (o Renato cola uma vez o token gerado no app de desenvolvedor do Meta 'RF Sistema Instagram'; fica guardado só no servidor e se renova sozinho), '📤 Publicar no Instagram agora' sai NA HORA pela API oficial do Instagram (gratuita) e mostra o link 'ver no Instagram'; sem token conectado, cai na fila do robô. '📅 Agendar' continua pela fila do robô/Metricool. Facebook e Google Meu Negócio ainda não saem por esse botão (o Instagram só pode ser ligado à página do Facebook a partir de ~13/10).\n"
       + (linhas.length ? "Campanhas (" + L.length + "): " + linhas.join("\n") : "(nenhuma campanha criada ainda)") + "\n";
   } catch (e) { return ""; }
 }
