@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v600)</title>
+<title>RF Logística — Painel da Frota (v601)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v600">
+<meta name="rf-versao" content="v601">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v601 (08/10/2026): São Roque -- DOCUMENTOS DA VIAGEM no fim da montagem (passo 3): CT-e por cliente (um por um, marcados ou todos), CIOT e MDF-e, botão Emitir tudo (CT-e → CIOT → MDF-e, para na rejeição e continua de onde parou, sem duplicar), encerrar MDF-e encerra o CIOT. MODO DEMONSTRAÇÃO: chaves simuladas, sem valor fiscal, nada vai para SEFAZ/ANTT. -->
 <!-- v600 (08/10/2026): CAMPANHAS -- publicar em TODAS as redes ligadas: Instagram (na hora pela API, como antes), Facebook (página RF Logistica Transportadora) e Google Meu Negócio, escolhendo as redes por caixinha; Facebook e Google saem pelo robô via Metricool (até 1 hora); status por rede na campanha; campanha já publicada pode ir "também" para as redes que faltam. -->
 <!-- v599 (08/10/2026): São Roque -- CATÁLOGO DE EMBALAGENS (321 produtos da internet + cadastro do cliente + medidos na doca), importação de NF-e XML com casamento por EAN/descrição, espaço real de cada cliente, batida solta sobre paletes pela cubagem real (peso limita antes do teto), divisão em m³, densidade padrão 450. -->
 <!-- v598 (08/10/2026): São Roque -- caminhão 3D REALISTA em WebGL (three.js r128 do cdnjs, carregado só na aba): cabine, vidros, cromados, rodas com aro e rodado duplo, baú de alumínio, faixa RF, paletes de madeira, caixas na cor do cliente, sombra e reflexo; desenho próprio continua como reserva sem internet; mapa A4 usa a foto do 3D. -->
@@ -887,7 +888,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v600" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v601" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12358,14 +12359,15 @@ function srCardHTML(c) {
   h += srDivHTML(c);   // v594: roteirizar / dividir carga
   // v586: montagem do baú
   h += '<div ' + box + '>' + tit("2", "Ordem das paradas, rota e montagem do baú") + srImpactoHTML(c) + '<div style="height:12px;"></div>' + srMontagemHTML(c) + '</div>';
+  h += '<div ' + box + '>' + tit("3", "Documentos da viagem · CT-e, CIOT e MDF-e") + srFiscHTML(c) + '</div>';   // v601
   // etiquetas
-  h += '<div ' + box + '>' + tit("3", "Etiquetas")
+  h += '<div ' + box + '>' + tit("4", "Etiquetas")
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'cx\')" style="background:#fff;color:#000;font-weight:800;padding:8px 12px;">⬜ Caixas fechadas (' + t.cx + ') — rolo branco</button> '
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'fr\')" style="background:#F2E600;color:#000;font-weight:800;padding:8px 12px;">🟨 Fracionados (' + (t.miu + t.sol) + ') — rolo amarelo</button> '
     + '<button onclick="srImprimirRomaneio(\'' + c.id + '\')" style="padding:8px 12px;">📄 Romaneio de carregamento</button>'
     + '<div style="font-size:11px;color:#999;margin-top:6px;">Impressora térmica: a cor vem do ROLO. Imprima as caixas no rolo branco e troque para o rolo amarelo nos fracionados (miudeza e soltos, que vão em saco ou meia caixa). Saem na ordem de carregamento (última parada primeiro) e cada etiqueta diz a ZONA do baú e o metro onde o volume vai. Na bipagem vale a etiqueta RF e o número da caixa de miudeza.</div></div>';
   // carregamento
-  h += '<div ' + box + '>' + tit("4", "Bipar o carregamento")
+  h += '<div ' + box + '>' + tit("5", "Bipar o carregamento")
     + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pc + '%;background:' + cor + ';"></div></div>'
     + '<input id="sr-bip-c" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')" style="font-size:16px;padding:8px;width:230px;"> '
     + '<button onclick="srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')">✔ bipar</button> '
@@ -12374,7 +12376,7 @@ function srCardHTML(c) {
   var viagem = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
   var ents = viagem ? entregasDaViagem(viagem.id) : [];
   var lib = ents.length && ents.every(function (e) { return e.liberada; });
-  h += '<div ' + box + '>' + tit("5", "Rota do motorista")
+  h += '<div ' + box + '>' + tit("6", "Rota do motorista")
     + (viagem
       ? '<div style="font-size:13px;margin-bottom:6px;">Viagem ' + esc(viagem.placa) + ' · ' + esc(String(viagem.data).split("-").reverse().join("/")) + ' · ' + ents.length + ' entregas · '
         + (lib ? '<b style="color:#4CAF50;">liberada para ' + esc(viagem.motoristaNaEpoca || "o motorista") + '</b>' : '<b style="color:' + GOLD + ';">ainda não liberada</b>') + '</div>'
@@ -12386,7 +12388,7 @@ function srCardHTML(c) {
     + '</div>';
   // entrega
   var sel = state.srEntregaCli || "";
-  h += '<div ' + box + '>' + tit("6", "Bipar na entrega")
+  h += '<div ' + box + '>' + tit("7", "Bipar na entrega")
     + '<select onchange="state.srEntregaCli=this.value;state.srMsg=null;render();" style="font-weight:700;max-width:100%;"><option value="">— cliente da parada —</option>'
     + c.clientes.map(function (cl) { var tc = srTotaisCliente(c, cl.k); return '<option value="' + esc(cl.k) + '"' + (cl.k === sel ? ' selected' : '') + '>' + cl.seq + ' · ' + esc(cl.fant) + ' — ' + esc(cl.cidade) + ' (' + tc.ent + '/' + tc.vols + ')</option>'; }).join("")
     + '</select><div style="margin-top:8px;"><input id="sr-bip-e" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'e\',\'sr-bip-e\')" style="font-size:16px;padding:8px;width:230px;"> '
@@ -12394,7 +12396,7 @@ function srCardHTML(c) {
     + '<button onclick="srLerCamera(\'' + c.id + '\',\'e\',\'sr-bip-e\')">📷 câmera</button></div>' + msg("e") + '</div>';
   // clientes
   var car = srBipsDaCarga(c.id, "c");
-  h += '<div ' + box + '>' + tit("7", "Paradas") + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+  h += '<div ' + box + '>' + tit("8", "Paradas") + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
     + '<tr style="color:' + GOLD + ';text-align:left;"><th>#</th><th>Cliente</th><th>Cidade</th><th>NF</th><th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th style="text-align:right;">Carreg.</th><th style="text-align:right;">Entr.</th><th></th></tr>';
   c.clientes.forEach(function (cl) {
     var tc = srTotaisCliente(c, cl.k), ok = tc.car === tc.vols;
@@ -12417,6 +12419,196 @@ function srCardHTML(c) {
   return h + '</div>';
 }
 
+/* ---- v601: DOCUMENTOS DA VIAGEM no fim da montagem (São Roque) -----------
+   Pedido do cliente na visita de 08/10/2026: no fim de cada montagem, gerar
+   CT-e, CIOT e MDF-e, EM MASSA ou UM POR UM. Emitente: RF Logística (quem emite
+   ainda vai ser discutido com eles). Por enquanto roda em MODO DEMONSTRAÇÃO:
+   nada vai para a SEFAZ nem para a ANTT, as chaves são simuladas e tudo leva a
+   tarja "sem valor fiscal". Regras já valendo, iguais às da RF:
+   - 1 CT-e por cliente da carga; CT-e autorizado fica travado (não duplica);
+   - CIOT só depois de TODOS os CT-e autorizados; MDF-e só depois do CIOT;
+   - "Emitir tudo" faz CT-e → CIOT → MDF-e e, se algum CT-e voltar rejeitado,
+     para antes do CIOT; ao tocar de novo, continua de onde parou;
+   - encerrar o MDF-e encerra o CIOT junto.
+   Na carga EXEMPLO, a 5ª parada volta rejeitada uma vez (CEP), para mostrar
+   a correção e a reemissão. Os dados ficam em c.fisc (sincroniza). */
+var srFiscOcupado = {};
+function srFisc(c) {
+  if (!c.fisc || typeof c.fisc !== "object") c.fisc = {};
+  var f = c.fisc;
+  if (!f.cte) f.cte = {};
+  if (!f.sel) f.sel = {};
+  if (!f.ciot) f.ciot = { st: "pend" };
+  if (!f.mdfe) f.mdfe = { st: "pend" };
+  if (!Array.isArray(f.log)) f.log = [];
+  if (!f.seq) f.seq = 1;
+  c.clientes.forEach(function (cl) { if (!f.cte[cl.k]) f.cte[cl.k] = { st: "pend" }; if (f.sel[cl.k] === undefined) f.sel[cl.k] = true; });
+  return f;
+}
+function srFiscLog(c, txt, tipo) {
+  var f = srFisc(c);
+  f.log.push({ t: Date.now(), txt: txt, tipo: tipo || "" });
+  if (f.log.length > 60) f.log = f.log.slice(-60);
+}
+function srFiscChave(mod, num) {
+  var base = "29" + "2610" + "24916554000100" + mod + "003" + String(num).padStart(9, "0") + "1" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
+  var p = 2, s = 0;
+  for (var k = base.length - 1; k >= 0; k--) { s += Number(base[k]) * p; p = p === 9 ? 2 : p + 1; }
+  var dv = 11 - (s % 11); if (dv > 9) dv = 0;
+  return base + dv;
+}
+function srFiscProt(pref) { return pref + String(Math.floor(Math.random() * 1e14)).padStart(14, "0"); }
+function srFiscEspera(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function srFiscOk(c) { var f = srFisc(c); return c.clientes.filter(function (cl) { return f.cte[cl.k].st === "ok"; }).length; }
+function srFiscSalvar() { try { salvar(); } catch (e) {} render(); }
+function srFiscRodar(cargaId, fn) {
+  var c = srCarga(cargaId); if (!c || srFiscOcupado[cargaId]) return;
+  srFiscOcupado[cargaId] = true; srFiscSalvar();
+  Promise.resolve().then(function () { return fn(c); }).catch(function (e) { srFiscLog(c, "Erro: " + (e && e.message || e), "e"); })
+    .then(function () { srFiscOcupado[cargaId] = false; srFiscSalvar(); });
+}
+async function srFiscCteUm(c, cl, manual) {
+  var f = srFisc(c), d = f.cte[cl.k];
+  if (d.st === "ok") { srFiscLog(c, "CT-e " + cl.fant + ": já autorizado, não emite de novo."); return true; }
+  d.st = "proc"; render();
+  await srFiscEspera(600 + Math.random() * 450);
+  var idx = c.clientes.indexOf(cl);
+  if (c.exemplo && idx === 4 && !manual && !d.jaRejeitou) {
+    d.jaRejeitou = true; d.st = "rej";
+    d.motivo = "Rejeição 712: CEP do destinatário não confere com o município (exemplo). Corrija o cadastro e reemita.";
+    srFiscLog(c, "CT-e " + cl.fant + ": rejeitado (CEP). Os demais seguem.", "e"); srFiscSalvar(); return false;
+  }
+  d.st = "ok"; d.chave = srFiscChave("57", f.seq++); d.prot = srFiscProt("3"); d.motivo = ""; d.em = Date.now();
+  srFiscLog(c, "CT-e " + cl.fant + ": autorizado.", "o"); srFiscSalvar(); return true;
+}
+async function srFiscCiotFaz(c) {
+  var f = srFisc(c);
+  if (f.ciot.st !== "pend") return;
+  if (!c.placa) { srFiscLog(c, "CIOT: escolha a placa no passo 1 antes de emitir.", "e"); return; }
+  f.ciot.st = "proc"; render(); await srFiscEspera(900);
+  f.ciot.st = "ok"; f.ciot.num = String(Math.floor(Math.random() * 1e12)).padStart(12, "0") + "/" + String(Math.floor(Math.random() * 1e4)).padStart(4, "0");
+  srFiscLog(c, "CIOT emitido (ANTT) na placa " + c.placa + ".", "o");
+}
+async function srFiscMdfeFaz(c) {
+  var f = srFisc(c);
+  if (f.mdfe.st !== "pend") return;
+  if (f.ciot.st !== "ok") { srFiscLog(c, "MDF-e: sem CIOT não sai MDF-e.", "e"); return; }
+  if (!c.motorista) { srFiscLog(c, "MDF-e: escolha o motorista no passo 1 antes de emitir.", "e"); return; }
+  f.mdfe.st = "proc"; render(); await srFiscEspera(1000);
+  f.mdfe.st = "ok"; f.mdfe.chave = srFiscChave("58", 1); f.mdfe.prot = srFiscProt("9");
+  srFiscLog(c, "MDF-e autorizado com os " + srFiscOk(c) + " CT-e da carga.", "o");
+}
+function srFiscCte(cargaId, k) {
+  srFiscRodar(cargaId, function (c) { return srFiscCteUm(c, srCliente(c, k), true); });
+}
+function srFiscSel(cargaId, k, v) { var c = srCarga(cargaId); if (!c) return; srFisc(c).sel[k] = !!v; srFiscSalvar(); }
+function srFiscSelTodos(cargaId) {
+  var c = srCarga(cargaId); if (!c) return; var f = srFisc(c);
+  var algum = c.clientes.some(function (cl) { return f.cte[cl.k].st !== "ok" && !f.sel[cl.k]; });
+  c.clientes.forEach(function (cl) { f.sel[cl.k] = algum; }); srFiscSalvar();
+}
+function srFiscLote(cargaId) {
+  srFiscRodar(cargaId, async function (c) {
+    var f = srFisc(c);
+    var alvo = c.clientes.filter(function (cl) { return f.sel[cl.k] && f.cte[cl.k].st !== "ok"; });
+    if (!alvo.length) { srFiscLog(c, "Nenhum CT-e pendente marcado."); return; }
+    srFiscLog(c, "Emitindo " + alvo.length + " CT-e em lote…");
+    for (var i = 0; i < alvo.length; i++) await srFiscCteUm(c, alvo[i], false);
+  });
+}
+function srFiscTudo(cargaId) {
+  srFiscRodar(cargaId, async function (c) {
+    var f = srFisc(c);
+    srFiscLog(c, "Emitir tudo: CT-e → CIOT → MDF-e.");
+    for (var i = 0; i < c.clientes.length; i++) if (f.cte[c.clientes[i].k].st !== "ok") await srFiscCteUm(c, c.clientes[i], false);
+    var pend = c.clientes.length - srFiscOk(c);
+    if (pend) { srFiscLog(c, "Parou antes do CIOT: " + pend + " CT-e com rejeição. Corrija e toque em Emitir tudo de novo — continua de onde parou.", "e"); return; }
+    await srFiscCiotFaz(c); srFiscSalvar();
+    await srFiscMdfeFaz(c);
+  });
+}
+function srFiscCiot(cargaId) { srFiscRodar(cargaId, srFiscCiotFaz); }
+function srFiscMdfe(cargaId) { srFiscRodar(cargaId, srFiscMdfeFaz); }
+function srFiscEncerrar(cargaId) {
+  srFiscRodar(cargaId, async function (c) {
+    var f = srFisc(c); if (f.mdfe.st !== "ok") return;
+    await srFiscEspera(700);
+    f.mdfe.st = "enc"; f.ciot.st = "enc"; f.mdfe.encEm = Date.now();
+    srFiscLog(c, "MDF-e encerrado. CIOT encerrado junto.", "o");
+  });
+}
+function srFiscZerar(cargaId) {
+  var c = srCarga(cargaId); if (!c || srFiscOcupado[cargaId]) return;
+  if (state.srFiscZerar !== cargaId) { state.srFiscZerar = cargaId; render(); return; }
+  state.srFiscZerar = null; c.fisc = {}; srFiscLog(c, "Demonstração reiniciada."); srFiscSalvar();
+}
+function srFiscCopiar(txt) { try { navigator.clipboard.writeText(txt); } catch (e) {} }
+function srFiscPill(st) {
+  var m = { pend: ["#333", "#bbb", "PENDENTE"], proc: ["#1b2c55", "#8fb0ff", "ENVIANDO…"], ok: ["#123826", "#4CAF50", "AUTORIZADO"], rej: ["#3d1719", "#ff7a80", "REJEITADO"], enc: ["#222", "#ddd", "ENCERRADO"] }[st] || ["#333", "#bbb", st];
+  return '<span style="background:' + m[0] + ';color:' + m[1] + ';font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap;">' + m[2] + '</span>';
+}
+function srFiscChaveHTML(ch) {
+  return '<div style="font-family:monospace;font-size:11px;color:#ddd;word-break:break-all;margin-top:3px;">' + esc(ch.replace(/(\d{4})/g, "$1 ").trim())
+    + ' <button onclick="srFiscCopiar(\'' + ch + '\')" style="font-size:10px;padding:1px 6px;">copiar</button></div>';
+}
+function srFiscHTML(c) {
+  var f = srFisc(c), busy = !!srFiscOcupado[c.id], id = c.id;
+  var ok = srFiscOk(c), tot = c.clientes.length, todos = ok === tot;
+  var t = srTotais(c), dis = busy ? " disabled" : "";
+  var cores = srFiscCorCli;
+  var h = '<div style="background:#3a2c10;color:#ffbf55;border:1px dashed #ffbf55;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:800;margin-bottom:8px;">MODO DEMONSTRAÇÃO · documentos simulados, sem valor fiscal · nada vai para a SEFAZ nem para a ANTT</div>'
+    + '<div style="font-size:12px;color:#ccc;margin-bottom:8px;">Emitente <b style="color:#fff;">RF Logística</b> · tomador Atacadão São Roque · ' + (c.placa ? 'placa <b style="color:#fff;">' + esc(c.placa) + '</b>' : '<b style="color:#E67E22;">sem placa</b>') + ' · ' + (c.motorista ? 'motorista <b style="color:#fff;">' + esc(c.motorista) + '</b>' : '<b style="color:#E67E22;">sem motorista</b>') + ' · ' + tot + ' clientes · ' + srFmt(t.peso, 0) + ' kg</div>'
+    + '<button onclick="srFiscTudo(\'' + id + '\')"' + (busy || f.mdfe.st !== "pend" ? " disabled" : "") + ' style="width:100%;background:' + GOLD + ';color:#000;font-weight:800;font-size:15px;padding:12px;border-radius:8px;margin-bottom:10px;">'
+    + (f.mdfe.st === "pend" ? (busy ? "⏳ Emitindo…" : "⚡ Emitir tudo · CT-e → CIOT → MDF-e") : "✓ Viagem com todos os documentos") + '</button>';
+  // CT-e
+  h += '<div style="border:1px solid #333;border-radius:8px;overflow:hidden;margin-bottom:10px;">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:#161616;"><b style="color:' + GOLD + ';">A · CT-e por cliente</b><span style="font-size:12px;color:#ccc;">' + ok + ' de ' + tot + ' autorizados</span>'
+    + '<button onclick="srFiscSelTodos(\'' + id + '\')"' + dis + ' style="margin-left:auto;font-size:11px;">marcar/desmarcar todos</button>'
+    + '<button onclick="srFiscLote(\'' + id + '\')"' + dis + ' style="font-size:12px;font-weight:800;">📄 Emitir marcados</button></div>';
+  c.clientes.forEach(function (cl, i) {
+    var d = f.cte[cl.k], aut = d.st === "ok";
+    var cor = cores ? cores(c, cl.k) : "#888";
+    h += '<div style="display:grid;grid-template-columns:auto 5px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid #2a2a2a;">'
+      + '<input type="checkbox" style="width:18px;height:18px;"' + (f.sel[cl.k] && !aut ? " checked" : "") + (aut || busy ? " disabled" : "") + ' onchange="srFiscSel(\'' + id + '\',\'' + cl.k + '\',this.checked)">'
+      + '<div style="align-self:stretch;border-radius:3px;background:' + cor + ';"></div>'
+      + '<div style="min-width:0;"><div style="font-weight:700;">' + cl.seq + ' · ' + esc(cl.fant) + '</div>'
+      + '<div style="font-size:11px;color:#aaa;">' + esc(cl.cidade) + ' · NF ' + esc(cl.nfs.join(", ")) + ' · ' + srFmt(cl.peso, 1) + ' kg</div>'
+      + (d.chave ? srFiscChaveHTML(d.chave) + '<div style="font-size:11px;color:#999;">protocolo ' + esc(d.prot) + '</div>' : '')
+      + (d.st === "rej" ? '<div style="font-size:11px;color:#ff7a80;margin-top:3px;">' + esc(d.motivo) + '</div>' : '') + '</div>'
+      + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' + srFiscPill(d.st)
+      + (aut ? '' : '<button onclick="srFiscCte(\'' + id + '\',\'' + cl.k + '\')"' + dis + ' style="font-size:12px;">' + (d.st === "rej" ? "Corrigir e reemitir" : "Emitir") + '</button>') + '</div></div>';
+  });
+  h += '</div>';
+  // CIOT
+  var cLib = todos;
+  h += '<div style="border:1px solid #333;border-radius:8px;padding:8px 10px;margin-bottom:10px;' + (cLib ? '' : 'opacity:.6;') + '">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><b style="color:' + GOLD + ';">B · CIOT da viagem</b><span style="font-size:11px;color:#aaa;">frota própria · ANTT · 1 por veículo</span><span style="margin-left:auto;">' + srFiscPill(f.ciot.st) + '</span></div>'
+    + (!cLib ? '<div style="font-size:12px;color:#aaa;margin-top:6px;">🔒 Libera quando os ' + tot + ' CT-e estiverem autorizados (' + ok + '/' + tot + ').</div>'
+      : (f.ciot.num ? '<div style="font-family:monospace;font-size:12px;margin-top:6px;">CIOT ' + esc(f.ciot.num) + '</div>' : '')
+        + (f.ciot.st === "pend" ? '<button onclick="srFiscCiot(\'' + id + '\')"' + dis + ' style="margin-top:6px;font-weight:800;">🛣 Emitir CIOT</button>' : ''))
+    + '</div>';
+  // MDF-e
+  var mLib = f.ciot.st === "ok" || f.ciot.st === "enc";
+  h += '<div style="border:1px solid #333;border-radius:8px;padding:8px 10px;margin-bottom:10px;' + (mLib ? '' : 'opacity:.6;') + '">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><b style="color:' + GOLD + ';">C · MDF-e do veículo</b><span style="font-size:11px;color:#aaa;">junta todos os CT-e da montagem</span><span style="margin-left:auto;">' + srFiscPill(f.mdfe.st) + '</span></div>'
+    + (!mLib ? '<div style="font-size:12px;color:#aaa;margin-top:6px;">🔒 Libera depois do CIOT. Regra RF: sem CIOT não sai MDF-e.</div>'
+      : '<div style="font-size:12px;color:#ccc;margin-top:6px;">' + ok + ' CT-e · ' + srFmt(t.peso, 1) + ' kg · ' + t.cidades + ' município(s) de descarga</div>'
+        + (f.mdfe.chave ? srFiscChaveHTML(f.mdfe.chave) + '<div style="font-size:11px;color:#999;">protocolo ' + esc(f.mdfe.prot) + '</div>' : '')
+        + (f.mdfe.st === "pend" ? '<button onclick="srFiscMdfe(\'' + id + '\')"' + dis + ' style="margin-top:6px;font-weight:800;">🧾 Emitir MDF-e</button>' : '')
+        + (f.mdfe.st === "ok" ? '<button onclick="srFiscEncerrar(\'' + id + '\')"' + dis + ' style="margin-top:6px;">🏁 Encerrar MDF-e + CIOT</button>' : ''))
+    + '</div>';
+  // log
+  var lg = f.log.slice(-8).reverse();
+  h += '<div style="background:#0B0B0B;border:1px solid #2a2a2a;border-radius:8px;padding:6px 10px;font-family:monospace;font-size:11px;max-height:150px;overflow:auto;">'
+    + (lg.length ? lg.map(function (x) { return '<div style="color:' + (x.tipo === "o" ? "#4CAF50" : x.tipo === "e" ? "#ff7a80" : "#aaa") + ';">' + new Date(x.t).toLocaleTimeString("pt-BR") + '  ' + esc(x.txt) + '</div>'; }).join("") : '<div style="color:#888;">Pronto para emitir.</div>')
+    + '</div>'
+    + '<button onclick="srFiscZerar(\'' + id + '\')"' + dis + ' style="margin-top:8px;font-size:11px;">' + (state.srFiscZerar === id ? "Toque de novo para confirmar: zerar os documentos desta carga" : "↺ Reiniciar demonstração") + '</button>';
+  return h;
+}
+
+function srFiscCorCli(c, k) {
+  try { var u = srUnidades(c).find(function (x) { return x.kCli === k || x.k === k; }); return (u && u.cor) || "#888"; } catch (e) { return "#888"; }
+}
 /* ---- v586: logo da São Roque (trocável pela tela) -------------------------
    A logo oficial ainda não chegou. Até lá vale um selo de texto neutro; o botão
    "Trocar logo" grava a imagem em config.srLogo (sincroniza entre aparelhos). */
@@ -35217,7 +35409,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v599 — CATÁLOGO DE EMBALAGENS E NF-e: a São Roque entrega de tudo (alimento, bebida, limpeza, higiene, eletro). O app tem um catálogo com 321 produtos pesquisados na internet em 08/10/2026 (medida C×L×A e peso bruto da caixa master/fardo/produto embalado; 18 com medida de fonte citada, os demais ESTIMADOS pelo tamanho da unidade × arranjo, porque fabricante quase nunca publica a caixa de embarque), mais o que a RF acrescentar: cadastro do cliente importado (vale mais), produto medido na doca (✎) e edições. Densidade típica do catálogo: bebidas ~640 kg/m³, mercearia ~550, limpeza ~510, higiene/papel ~80, eletro ~100. Importação de NF-e (XML, vários de uma vez): cada destinatário vira um cliente, cada item é casado com o catálogo pelo EAN ou pela descrição (marca, produto e tamanho); o espaço do cliente é a soma real dos itens; item sem casamento usa o peso pela densidade da categoria; os volumes para etiqueta saem de 1 por embalagem. A planilha da carga (Winthor) também passa pelo catálogo quando não traz cubagem. Na carga batida, a carga fica solta sobre paletes, espalhada pelo assoalho até a altura que o volume pede (o PESO limita antes do teto: Toco 8 t), e a divisão entre veículos mede o espaço em m³. Densidade padrão (sem itens, ex. 910 sintético) passou a 450 kg/m³. v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v599 — CATÁLOGO DE EMBALAGENS E NF-e: a São Roque entrega de tudo (alimento, bebida, limpeza, higiene, eletro). O app tem um catálogo com 321 produtos pesquisados na internet em 08/10/2026 (medida C×L×A e peso bruto da caixa master/fardo/produto embalado; 18 com medida de fonte citada, os demais ESTIMADOS pelo tamanho da unidade × arranjo, porque fabricante quase nunca publica a caixa de embarque), mais o que a RF acrescentar: cadastro do cliente importado (vale mais), produto medido na doca (✎) e edições. Densidade típica do catálogo: bebidas ~640 kg/m³, mercearia ~550, limpeza ~510, higiene/papel ~80, eletro ~100. Importação de NF-e (XML, vários de uma vez): cada destinatário vira um cliente, cada item é casado com o catálogo pelo EAN ou pela descrição (marca, produto e tamanho); o espaço do cliente é a soma real dos itens; item sem casamento usa o peso pela densidade da categoria; os volumes para etiqueta saem de 1 por embalagem. A planilha da carga (Winthor) também passa pelo catálogo quando não traz cubagem. Na carga batida, a carga fica solta sobre paletes, espalhada pelo assoalho até a altura que o volume pede (o PESO limita antes do teto: Toco 8 t), e a divisão entre veículos mede o espaço em m³. Densidade padrão (sem itens, ex. 910 sintético) passou a 450 kg/m³. v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir. v601 — DOCUMENTOS DA VIAGEM (passo 3 do cartão da carga, logo depois da montagem do baú): pedido da São Roque na visita de 08/10. Gera CT-e (1 por cliente; um por um, só os marcados ou todos), CIOT (1 por veículo, só depois de todos os CT-e autorizados) e MDF-e (só depois do CIOT, junta todos os CT-e). O botão "Emitir tudo" faz CT-e → CIOT → MDF-e; se um CT-e volta rejeitado, para antes do CIOT e, ao tocar de novo, continua de onde parou; CT-e autorizado não é emitido de novo. Encerrar o MDF-e encerra o CIOT junto. Emitente: RF Logística (quem emite ainda será discutido com a São Roque). Por enquanto é MODO DEMONSTRAÇÃO: as chaves são simuladas, sem valor fiscal, nada vai para a SEFAZ nem para a ANTT; na carga EXEMPLO a 5ª parada volta rejeitada uma vez (CEP) para mostrar a correção. "Reiniciar demonstração" zera os documentos da carga.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
