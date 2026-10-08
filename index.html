@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v596)</title>
+<title>RF Logística — Painel da Frota (v597)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v596">
+<meta name="rf-versao" content="v597">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v597 (08/10/2026): São Roque -- cores dos clientes no baú e na legenda FECHADAS e fortes (azul, laranja, verde, roxo, petróleo, magenta, marrom, índigo, oliva, grafite) com texto branco; vermelho só para o que não cabe. -->
 <!-- v596 (08/10/2026): São Roque -- CARGA BATIDA SOBRE PALETES: paletes no chão e colunas de caixas de 0,50x0,50 (4 por palete, empilhadas até o teto), cada cliente com as colunas dele a partir da cabine; quem compra pouco divide o palete; 3D com camadas de caixa, vista de cima com os clientes de cada palete, etiqueta com palete/vaga, divisão por colunas. -->
 <!-- v595 (08/10/2026): São Roque -- DIVISÃO DO BAÚ por CLIENTE ou por CIDADE (carga batida também dividida por cliente; no sintético a praça vira uma faixa por entrega com peso estimado), rótulos P2.1 / P2–P5 no 3D, grade, mapa e etiqueta. -->
 <!-- v594 (08/10/2026): São Roque -- botão ROTEIRIZAR / DIVIDIR CARGA: divide entre veículos pelo menor custo (leque por direção + programação dinâmica, sem partir cliente, menor tipo que cabe), tabela de aprovação, Google Maps por veículo, planilha no modelo RF, aplicar (uma carga por veículo, bipagem recusa volume de outro caminhão) e juntar de novo. -->
@@ -883,7 +884,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v596" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v597" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12468,7 +12469,10 @@ var SR_BAUS = {
 };
 var SR_PALETE = { c: 1.2, l: 1.0, kgMax: 1000 };   // PBR
 var SR_APROVEITAMENTO = 0.85;   // folga de arrumação (caixas não encaixam 100%)
-var SR_CORES = ["#E8C46A", "#7FA7C9", "#C9A227", "#8FB996", "#E59A6B", "#B39DDB", "#D4B483", "#6FB7B7", "#E57373", "#A1887F"];
+/* v597: Renato -- a cor de cada cliente no baú e na legenda tem que chamar a
+   atenção: cores FECHADAS e fortes, vizinhos bem diferentes, texto branco. O
+   vermelho fica reservado para o que "não cabe". */
+var SR_CORES = ["#1565C0", "#E65100", "#2E7D32", "#6A1B9A", "#00838F", "#AD1457", "#5D4037", "#283593", "#558B2F", "#37474F"];
 
 function srBauDaCarga(c) {
   if (c.bau && SR_BAUS[c.bau]) return c.bau;
@@ -12535,6 +12539,10 @@ function srBatidaGeo(B) {
     colsPorFila: colsPorFila, totCols: colsPorFila * G.filas, colVol: nCx * SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a, porPalete: cxL * cyL };
 }
 function srDivisaoBau(c) { return c.divBau === "cidade" ? "cidade" : "cliente"; }
+function srEscurecer(hex, f) {
+  var n = parseInt(String(hex).slice(1), 16);
+  return "#" + [n >> 16, (n >> 8) & 255, n & 255].map(function (v) { return Math.round(v * f).toString(16).padStart(2, "0"); }).join("");
+}
 function srClarear(hex, f) {
   var n = parseInt(String(hex).slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   var t = function (v) { return Math.round(v + (255 - v) * f); };
@@ -12569,7 +12577,7 @@ function srUnidades(c) {
     for (var i = n; i >= 1; i--) {   // fundo primeiro: o último cliente da praça entra antes
       out.push({ k: cl.k + "#" + i, kCli: i === 1 ? cl.k : null, kPai: cl.k, membros: i === 1 ? [cl.k] : [], seq: cl.seq, sub: i, subTot: n, rot: "P" + cl.seq + "." + i,
         fant: cl.cidade + " — cliente " + i + " de " + n, cidade: cl.cidade, peso: (Number(cl.peso) || 0) / n, m3: (Number(cl.m3) || 0) / n, entregas: 1,
-        cor: i % 2 ? base : srClarear(base, 0.35), estimado: true });
+        cor: i % 2 ? base : srEscurecer(base, 0.72), estimado: true });   // v597: alterna sem clarear
     }
   });
   return out;
@@ -12758,7 +12766,7 @@ function srBau3DSvg(c, largura, claro) {
     }
     if (!bx.rot) return;
     var tp = P((x0 + x1) / 2, (y0 + y1) / 2, zb), fsz = Math.max(bx.coluna ? 8 : 10, Math.min(20, bx.dx * k * (bx.coluna ? 0.45 : 0.33)));
-    s += '<text x="' + tp[0].toFixed(1) + '" y="' + (tp[1] + fsz * 0.35).toFixed(1) + '" font-size="' + fsz.toFixed(0) + '" font-weight="900" fill="#111" text-anchor="middle">' + bx.rot + '</text>';
+    s += '<text x="' + tp[0].toFixed(1) + '" y="' + (tp[1] + fsz * 0.35).toFixed(1) + '" font-size="' + fsz.toFixed(0) + '" font-weight="900" fill="#fff" stroke="#000" stroke-width="0.6" paint-order="stroke" text-anchor="middle">' + bx.rot + '</text>';
   });
   // ---- aramado do baú (teto e parede cortada do lado de cá)
   var ar = function (a, b) { var p = P(a[0], a[1], a[2]), q = P(b[0], b[1], b[2]); return '<line x1="' + p[0].toFixed(1) + '" y1="' + p[1].toFixed(1) + '" x2="' + q[0].toFixed(1) + '" y2="' + q[1].toFixed(1) + '" stroke="' + (claro ? "#555" : "#D9DDE2") + '" stroke-width="2"/>'; };
@@ -12804,7 +12812,7 @@ function srGradeHTML(c, claro) {
     for (var l = 0; l < G.porFila; l++) {
       var v = porVaga[f + "|" + l], fora = f > G.filas;
       h += '<div style="border:1px solid ' + bd + ';margin:1px;border-radius:4px;padding:3px 2px;text-align:center;font-size:11px;min-height:34px;'
-        + (v ? 'background:' + (fora ? "#E74C3C" : (bat && v.todos.length > 1 ? 'linear-gradient(90deg,' + v.todos.map(function (x, i2) { return x.cor + ' ' + Math.round(i2 * 100 / v.todos.length) + '%,' + x.cor + ' ' + Math.round((i2 + 1) * 100 / v.todos.length) + '%'; }).join(',') + ')' : v.b.cor)) + ';color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;' : 'background:' + (claro ? "#fafafa" : "#111") + ';color:#666;') + '">'
+        + (v ? 'background:' + (fora ? "#E74C3C" : (bat && v.todos.length > 1 ? 'linear-gradient(90deg,' + v.todos.map(function (x, i2) { return x.cor + ' ' + Math.round(i2 * 100 / v.todos.length) + '%,' + x.cor + ' ' + Math.round((i2 + 1) * 100 / v.todos.length) + '%'; }).join(',') + ')' : v.b.cor)) + ';color:#fff;text-shadow:0 0 2px #000;-webkit-print-color-adjust:exact;print-color-adjust:exact;' : 'background:' + (claro ? "#fafafa" : "#111") + ';color:#666;') + '">'
         + (v ? (bat ? '<b style="font-size:' + (v.todos.length > 2 ? 9 : 11) + 'px;">' + v.todos.slice(0, 4).map(function (x) { return x.rot; }).join(' · ') + (v.todos.length > 4 ? ' +' + (v.todos.length - 4) : '') + '</b><br><span style="font-size:9px;">' + v.todos.length + ' cliente' + (v.todos.length > 1 ? 's' : '') + '</span>'
                 : '<b style="font-size:' + (v.b.rot.length > 4 ? 11 : 14) + 'px;">' + v.b.rot + '</b><br><span style="font-size:9px;">pal ' + v.s.n + '/' + v.b.pals + (v.s.fill < 1 ? ' · ' + Math.round(v.s.fill * 100) + '%' : '') + '</span>') : 'livre') + '</div>';
     }
@@ -12857,7 +12865,7 @@ function srMontagemHTML(c) {
     + '<th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th>Parada / ordem</th></tr>';
   m.blocos.forEach(function (b) {
     var tv = c.sintetico ? ((b.entregas || 0) + ' ent.') : b.vols;   // v592; v595: por unidade
-    h += '<tr style="border-top:1px solid #333;"><td><b>' + b.passo + 'º</b></td><td><span style="background:' + b.cor + ';color:#000;font-weight:900;padding:1px 6px;border-radius:4px;white-space:nowrap;">' + b.rot + '</span></td>'
+    h += '<tr style="border-top:1px solid #333;"><td><b>' + b.passo + 'º</b></td><td><span style="background:' + b.cor + ';color:#fff;font-weight:900;padding:2px 8px;border-radius:4px;white-space:nowrap;">' + b.rot + '</span></td>'
       + '<td>' + esc(b.fant) + (b.estimado ? ' <small style="color:#E67E22;">peso estimado</small>' : '') + '</td><td>' + esc(b.cidade) + '</td><td><b>' + b.zona + '</b></td>'
       + (pal ? '<td style="text-align:center;white-space:nowrap;"><input type="number" min="1" value="' + b.pals + '" title="calculado: ' + srFmtM(b.palCalc) + ' palete(s)" onchange="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',this.value)" style="width:48px;font-weight:700;' + (b.palManual ? 'border:2px solid #E8C46A;' : '') + '">'
           + (b.palManual ? ' <a href="javascript:void(0)" onclick="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',0)" title="voltar ao cálculo" style="font-size:10px;color:#999;">auto</a>' : '') + '</td>'
@@ -12878,7 +12886,7 @@ function srImprimirMapa(cargaId) {
   var w = window.open("", "_blank");
   if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
   var linhas = m.blocos.map(function (b) {
-    return '<tr><td class="c">' + b.passo + 'º</td><td class="c"><span style="background:' + b.cor + ';padding:1px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;"><b>' + b.rot + '</b></span></td><td><b>' + esc(b.fant) + '</b></td><td>' + esc(b.cidade) + '</td><td class="c"><b>' + b.zona + '</b></td>'
+    return '<tr><td class="c">' + b.passo + 'º</td><td class="c"><span style="background:' + b.cor + ';color:#fff;padding:1px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;"><b>' + b.rot + '</b></span></td><td><b>' + esc(b.fant) + '</b></td><td>' + esc(b.cidade) + '</td><td class="c"><b>' + b.zona + '</b></td>'
       + (pal ? '<td class="c"><b>' + b.pals + '</b></td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>' : '<td class="n">' + (b.estCx ? '≈' : '') + b.caixasN + ' cx · ' + b.cols + ' col.</td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>')
       + '<td class="n">' + srFmt(b.peso, 0) + '</td><td class="n">' + (c.sintetico ? (b.entregas || 0) + ' ent.' : b.vols) + '</td><td></td></tr>';
   }).join("");
@@ -13330,7 +13338,7 @@ function sr3dDesenhar(cv) {
       var vis = nc[0] * ks[0][0] + nc[1] * ks[0][1] + nc[2] * (ks[0][2] + D) < 0;
       if (!vis && !f.duasFaces) return;
       var pp = ks.map(proj);
-      var ilum = 0.62 + 0.42 * Math.max(0, f.n[0] * luz[0] + f.n[1] * luz[1] + f.n[2] * luz[2]);
+      var ilum = (o.rot !== undefined || o.nFaixas ? 0.8 : 0.62) + (o.rot !== undefined || o.nFaixas ? 0.32 : 0.42) * Math.max(0, f.n[0] * luz[0] + f.n[1] * luz[1] + f.n[2] * luz[2]);   // v597: carga com cor forte não escurece demais
       if (o.chao) {
         var cx = pp.reduce(function (s, q) { return s + q[0]; }, 0) / pp.length, cyy = pp.reduce(function (s, q) { return s + q[1]; }, 0) / pp.length;
         var gr = g.createRadialGradient(cx, cyy, 4, cx, cyy, Math.max(40, Math.abs(pp[1][0] - pp[0][0]) * 0.6));
@@ -13371,7 +13379,7 @@ function sr3dDesenhar(cv) {
     });
     // rótulo desenhado logo depois do sólido, para ficar coberto pelo que está na frente
     rotulosCarga.filter(function (r) { return r.ord === lista.indexOf(it); }).forEach(function (r) {
-      g.globalAlpha = 1; g.font = "900 " + r.s.toFixed(0) + "px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#111"; g.fillText(r.t, r.x, r.y);
+      g.globalAlpha = 1; g.font = "900 " + r.s.toFixed(0) + "px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.85)"; g.strokeText(r.t, r.x, r.y); g.fillStyle = "#fff"; g.fillText(r.t, r.x, r.y);
     });
   });
   g.globalAlpha = 1;
@@ -13381,7 +13389,7 @@ function sr3dDesenhar(cv) {
   // rótulos fixos
   cena.rotulos.forEach(function (r) {
     var q = proj(cam(r.p)); g.font = (r.cor ? "700 12px" : "10px") + " Arial"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillStyle = r.cor || "rgba(220,220,220,.8)"; g.fillText(r.t, q[0], q[1]);
+    if (r.cor === "#ffffff") { g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.85)"; g.strokeText(r.t, q[0], q[1]); } g.fillStyle = r.cor || "rgba(220,220,220,.8)"; g.fillText(r.t, q[0], q[1]);
   });
   g.font = "11px Arial"; g.textAlign = "left"; g.fillStyle = "rgba(200,200,200,.7)";
   g.fillText("arraste para girar · dois dedos ou roda do mouse para zoom · toque duplo volta ao início", 10, Hc - 10);
