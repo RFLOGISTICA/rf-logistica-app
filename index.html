@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v598)</title>
+<title>RF Logística — Painel da Frota (v599)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v598">
+<meta name="rf-versao" content="v599">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v599 (08/10/2026): São Roque -- CATÁLOGO DE EMBALAGENS (321 produtos da internet + cadastro do cliente + medidos na doca), importação de NF-e XML com casamento por EAN/descrição, espaço real de cada cliente, batida solta sobre paletes pela cubagem real (peso limita antes do teto), divisão em m³, densidade padrão 450. -->
 <!-- v598 (08/10/2026): São Roque -- caminhão 3D REALISTA em WebGL (three.js r128 do cdnjs, carregado só na aba): cabine, vidros, cromados, rodas com aro e rodado duplo, baú de alumínio, faixa RF, paletes de madeira, caixas na cor do cliente, sombra e reflexo; desenho próprio continua como reserva sem internet; mapa A4 usa a foto do 3D. -->
 <!-- v597 (08/10/2026): São Roque -- cores dos clientes no baú e na legenda FECHADAS e fortes (azul, laranja, verde, roxo, petróleo, magenta, marrom, índigo, oliva, grafite) com texto branco; vermelho só para o que não cabe. -->
 <!-- v596 (08/10/2026): São Roque -- CARGA BATIDA SOBRE PALETES: paletes no chão e colunas de caixas de 0,50x0,50 (4 por palete, empilhadas até o teto), cada cliente com as colunas dele a partir da cabine; quem compra pouco divide o palete; 3D com camadas de caixa, vista de cima com os clientes de cada palete, etiqueta com palete/vaga, divisão por colunas. -->
@@ -885,7 +886,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v598" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v599" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1216,7 +1217,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "compras", "extratos", "medicoes", "campanhas"];   // v586: saoroque; v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -6960,6 +6961,7 @@ function salvar() {
     localStorage.setItem("rf-frota-goiasbips-v1", JSON.stringify(state.goiasBips || []));       // v423
     localStorage.setItem("rf-frota-saoroquecargas-v1", JSON.stringify(state.saoroqueCargas || []));   // v586
     localStorage.setItem("rf-frota-saoroquebips-v1", JSON.stringify(state.saoroqueBips || []));       // v586
+    localStorage.setItem("rf-frota-produtoscatalogo-v1", JSON.stringify(state.produtosCatalogo || []));   // v599
     localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
     localStorage.setItem("rf-frota-motoristascad-v1", JSON.stringify(state.motoristasCad || []));   // v397
@@ -7001,6 +7003,7 @@ let state = {
   goiasBips: carregar("rf-frota-goiasbips-v1", () => []),       // v423
   saoroqueCargas: carregar("rf-frota-saoroquecargas-v1", () => []),   // v586
   saoroqueBips: carregar("rf-frota-saoroquebips-v1", () => []),       // v586
+  produtosCatalogo: carregar("rf-frota-produtoscatalogo-v1", () => []),   // v599
   mateusFator: carregar("rf-frota-mateusfator-v1", () => ({})),
   fiscais: carregar("rf-frota-fiscais-v1", () => []),   // v286: CT-e, MDF-e e CIOT lidos dos XML
   motoristasCad: carregar("rf-frota-motoristascad-v1", () => []),   // v397: fichas FO_YL_026
@@ -11965,12 +11968,15 @@ function srMontarCarga(linhas, nomeArquivo) {
     delete c._cx; delete c._miu; delete c._soltas; delete c._vlnf; delete c._miuOs;
     vols = vols.concat(meus);
   });
-  return {
+  clientes.forEach(function (x) { if (x.m3 > 0) x.m3Arquivo = true; });   // v599
+  var cargaNova = {
     ordemArquivo: clientes.map(function (x) { return x.k; }),   // v589: ordem que veio no arquivo (referência)
     id: "sr-" + numcar, numcar: numcar, data: data || hojeISO(), arquivo: nomeArquivo || "",
     criadoEm: Date.now(), atualizadoEm: Date.now(), placa: "", motorista: "", viagemId: "",
     clientes: clientes, vols: vols,
   };
+  srCatAplicar(cargaNova);   // v599: espaço de cada cliente pelo catálogo de embalagens
+  return cargaNova;
 }
 function srImportar(input) {
   var file = input.files && input.files[0];
@@ -12310,10 +12316,11 @@ function srBlocoHTML() {
     + (state.config && state.config.srLogo ? '<a href="javascript:void(0)" onclick="srLogoPadrao()" style="font-size:11px;color:#888;">voltar à logo padrão</a>' : '')
     + '<button onclick="srCargaExemplo()" style="font-size:12px;padding:7px 10px;">🧪 Carga de exemplo (demonstração)</button>'
     + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (PDF 910 ou planilha da São Roque)'
-    + '<input type="file" style="display:none;" onchange="srImportar(this)"></label></div>'
+    + '<input type="file" style="display:none;" onchange="srImportar(this)"></label>' + '<label style="background:#1d2a36;color:#cfe3f5;border:1px solid #7FA7C9;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">🧾 Importar NF-e (XML)<input type="file" accept=".xml,text/xml" multiple style="display:none;" onchange="srImportarXml(this)"></label></div>'
     + '<div style="font-size:12px;color:#aaa;margin-bottom:12px;line-height:1.5;">Fluxo: <b>1</b> importar o arquivo da carga → <b>2</b> conferir a ordem das paradas e a montagem do baú → <b>3</b> imprimir as etiquetas (1 por volume, com a zona do baú) e colar → <b>4</b> bipar cada volume que sobe no caminhão → <b>5</b> criar e liberar a rota do motorista → <b>6</b> bipar na entrega. '
     + 'Etiqueta: <select onchange="srSetEtiquetaFormato(this.value)" style="font-size:12px;">'
     + ['100x50', '100x75', '100x150'].map(function (f) { return '<option' + (f === F ? ' selected' : '') + '>' + f + '</option>'; }).join("") + '</select> mm</div>';
+  h += srCatHTML();   // v599: catálogo de embalagens
   if (!cargas.length) return h + '<div style="padding:24px;border:1px dashed #555;border-radius:10px;color:#999;text-align:center;">Nenhuma carga importada. Use o botão acima com o arquivo da carga que a São Roque envia — ou a carga de exemplo para demonstrar.</div>';
   cargas.forEach(function (c) { h += srCardHTML(c); });
   return h;
@@ -12402,7 +12409,7 @@ function srCardHTML(c) {
       h += '<tr><td></td><td colspan="8" style="font-size:11px;color:#bbb;padding:6px 0;">'
         + '<div><b>' + esc(cl.nome) + '</b> · ' + esc(cl.end) + ' · ' + esc(cl.bairro) + ' · CEP ' + esc(cl.cep) + ' · pedidos ' + esc(cl.peds.join(", ")) + '</div>'
         + (faltam.length ? '<div style="color:#E67E22;margin-top:4px;">Faltam carregar: ' + faltam.map(function (v) { return v.n + " (" + esc(v.c.slice(-5)) + " " + esc(String(v.d).slice(0, 22)) + ")"; }).join(" · ") + '</div>' : '<div style="color:#4CAF50;margin-top:4px;">✓ todos os volumes carregados</div>')
-        + '<div style="margin-top:4px;">' + cl.itens.map(function (it) { return esc(it[0]) + " — " + (it[1] ? it[1] + " cx" : "") + (it[2] ? (it[1] ? " + " : "") + it[2] + " un" : "") + (it[4] ? " [miudeza " + esc(it[4]) + "]" : ""); }).join("<br>") + '</div></td></tr>';
+        + '<div style="margin-top:4px;">' + cl.itens.map(function (it) { return esc(it[0]) + " — " + (it[1] ? it[1] + " cx" : "") + (it[2] ? (it[1] ? " + " : "") + it[2] + " un" : "") + (it[4] ? " [miudeza " + esc(it[4]) + "]" : "") + (cl.m3Fonte === "catalogo" ? (it[5] ? ' <span style="color:#4CAF50;">· ✓ ' + esc(((srCatalogo().find(function (z) { return z.id === it[5]; }) || {}).desc || "catálogo").slice(0, 40)) + '</span>' : ' <span style="color:#E67E22;">· sem medida no catálogo (espaço pelo peso)</span>') : ""); }).join("<br>") + '</div></td></tr>';
     }
   });
   h += '</table></div></div>';
@@ -12482,10 +12489,11 @@ function srBauDaCarga(c) {
   if (v && /truck/i.test(v.tipo || "")) return "Truck";
   return "Toco";
 }
-function srDens(c) { var d = Number(c.dens); return d > 20 ? d : 250; }
+function srDens(c) { var d = Number(c.dens); return d > 20 ? d : 450; }   // v599: alimento/bebida embalado ~450 kg/m³ (era 250)
 function srModo(c) { return c.modo === "batida" ? "batida" : "palete"; }
 function srAltPal(c, B) { var h = Number(c.altPal); if (!(h > 0.3)) h = 1.6; return Math.min(h, B.a - 0.1); }
 function srM3Cliente(c, cl) {
+  if (cl.m3Fonte === "catalogo" && Number(cl.m3) > 0) return { m3: Number(cl.m3), fonte: "catalogo" };   // v599
   var porPeso = (Number(cl.peso) || 0) / srDens(c);
   var arq = Number(cl.m3) || 0;
   // cubagem do arquivo só vale se for coerente com o peso (entre 50 e 1500 kg/m³)
@@ -12531,13 +12539,15 @@ function srPaletesCliente(c, cl, B) {
    coluna. Nº de caixas: o volume real do arquivo quando há (1 etiqueta = 1
    volume); no sintético, a cubagem ÷ volume da caixa média (estimado). */
 var SR_CAIXA = { c: 0.5, l: 0.5, a: 0.35 };   // caixa média de alimento (m)
+var SR_CAMADA = 0.30;   // v599: altura média de uma camada de caixas (só para desenhar)
 function srBatidaGeo(B) {
   var G = srGrade(B), hUtil = B.a - 0.14 - 0.10;
   var nCx = Math.max(1, Math.floor(hUtil / SR_CAIXA.a));
   var cxL = Math.max(1, Math.floor((G.ao + 0.001) / SR_CAIXA.c)), cyL = Math.max(1, Math.floor((G.atr + 0.001) / SR_CAIXA.l));
   var colsPorFila = cxL * cyL * G.porFila;
   return { G: G, nCx: nCx, cxL: cxL, cyL: cyL, offX: (G.ao - cxL * SR_CAIXA.c) / 2, offY: (G.atr - cyL * SR_CAIXA.l) / 2,
-    colsPorFila: colsPorFila, totCols: colsPorFila * G.filas, colVol: nCx * SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a, porPalete: cxL * cyL };
+    colsPorFila: colsPorFila, totCols: colsPorFila * G.filas, colVol: nCx * SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a, porPalete: cxL * cyL,
+    hMax: hUtil, capM3: colsPorFila * G.filas * SR_CAIXA.c * SR_CAIXA.l * hUtil * 0.9 };
 }
 function srDivisaoBau(c) { return c.divBau === "cidade" ? "cidade" : "cliente"; }
 function srEscurecer(hex, f) {
@@ -12561,7 +12571,7 @@ function srUnidades(c) {
         u.seqs.push(cl.seq); u.fant = cl.cidade + " (" + u.membros.length + " clientes)";
         return;
       }
-      out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seqs: [cl.seq], seq: cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0,
+      out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seqs: [cl.seq], seq: cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0, m3Fonte: cl.m3Fonte,
         entregas: Number(cl.entregas) || 0, cor: SR_CORES[(cor++) % SR_CORES.length] });
     });
     out.forEach(function (u) {
@@ -12574,7 +12584,7 @@ function srUnidades(c) {
   ordem.forEach(function (cl) {
     var base = SR_CORES[(cor++) % SR_CORES.length];
     var n = (c.sintetico && modo === "batida") ? Math.max(1, Math.round(Number(cl.entregas) || 1)) : 1;
-    if (n === 1) { out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seq: cl.seq, rot: "P" + cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0, entregas: Number(cl.entregas) || 0, cor: base }); return; }
+    if (n === 1) { out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seq: cl.seq, rot: "P" + cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0, m3Fonte: cl.m3Fonte, entregas: Number(cl.entregas) || 0, cor: base }); return; }
     for (var i = n; i >= 1; i--) {   // fundo primeiro: o último cliente da praça entra antes
       out.push({ k: cl.k + "#" + i, kCli: i === 1 ? cl.k : null, kPai: cl.k, membros: i === 1 ? [cl.k] : [], seq: cl.seq, sub: i, subTot: n, rot: "P" + cl.seq + "." + i,
         fant: cl.cidade + " — cliente " + i + " de " + n, cidade: cl.cidade, peso: (Number(cl.peso) || 0) / n, m3: (Number(cl.m3) || 0) / n, entregas: 1,
@@ -12610,36 +12620,50 @@ function srMontagem(c) {
       blocos.push(b);
     });
   } else {
-    /* v596: batida em colunas de caixas sobre paletes no chão */
-    var BG = srBatidaGeo(B), colIdx = 0, slotsUsados = {};
+    /* v599: batida = carga SOLTA sobre paletes no chão, pela cubagem real de cada cliente
+       (catálogo de embalagens). A carga se espalha pelo assoalho numa altura só -- o peso
+       bate antes do teto -- e cada cliente ocupa o volume dele, a partir da cabine. Cliente
+       pequeno vai em cima do anterior na mesma pilha (entrega antes, sai primeiro). */
+    var BG = srBatidaGeo(B), slotsUsados = {}, foot = SR_CAIXA.c * SR_CAIXA.l, aprov = 0.9;
     var colPos = function (i) {
       var fila = Math.floor(i / BG.colsPorFila), r = i % BG.colsPorFila;
       var xs = Math.floor(r / (BG.cyL * G.porFila)), r2 = r % (BG.cyL * G.porFila), lado = Math.floor(r2 / BG.cyL), ys = r2 % BG.cyL;
       return { fila: fila, lado: lado, x: fila * G.ao + BG.offX + xs * SR_CAIXA.c, y: lado * G.atr + BG.offY + ys * SR_CAIXA.l, fora: fila >= G.filas };
     };
-    var vCx = SR_CAIXA.c * SR_CAIXA.l * SR_CAIXA.a;
+    var vols = ordem.map(function (u) { var q = srM3Cliente(c, u); fontes[q.fonte] = 1; return q.m3 / aprov; });
+    var vTot = vols.reduce(function (s0, v) { return s0 + v; }, 0);
+    var hAlvo = Math.min(BG.hMax, Math.max(SR_CAMADA, Math.ceil((vTot / (BG.totCols * foot)) / SR_CAMADA - 0.001) * SR_CAMADA));
+    var colH = [], ci = 0;
     ordem.forEach(function (u, i) {
-      var q = srM3Cliente(c, u); fontes[q.fonte] = 1;
-      var vv = volsDe(u);
-      var nCxCli = vv.length ? vv.length : Math.max(1, Math.ceil(q.m3 / vCx - 0.05));
-      var ncol = Math.ceil(nCxCli / BG.nCx), resto = nCxCli;
+      var q = srM3Cliente(c, u), vv = volsDe(u), resto = vols[i], segs = [];
       var b = { k: u.k, kCli: u.kCli, membros: u.membros, seq: u.seq, rot: u.rot, fant: u.fant, cidade: u.cidade, peso: u.peso, m3: q.m3, cor: u.cor, passo: i + 1,
-        entregas: u.entregas, estimado: u.estimado, sub: u.sub, subTot: u.subTot, caixasN: nCxCli, estCx: !vv.length, cols: ncol, slots: [] };
-      var meio = Math.floor((ncol - 1) / 2), xs = [];
-      for (var j = 0; j < ncol; j++) {
-        var p = colPos(colIdx++), n = Math.min(BG.nCx, resto); resto -= n;
-        var key = p.fila + "|" + p.lado;
+        entregas: u.entregas, estimado: u.estimado, sub: u.sub, subTot: u.subTot, slots: [], m3Fonte: q.fonte };
+      var guarda = 0;
+      while (resto > 1e-6 && guarda++ < 2000) {
+        if (colH[ci] == null) colH[ci] = 0;
+        var teto = ci < BG.totCols ? hAlvo : BG.hMax, livre = teto - colH[ci];
+        if (livre <= 1e-6) { ci++; continue; }
+        var take = Math.min(resto, livre * foot), p = colPos(ci), dz = take / foot;
+        segs.push({ p: p, z0: colH[ci], dz: dz, ci: ci }); colH[ci] += dz; resto -= take;
+        if (colH[ci] >= teto - 1e-6) ci++;
+      }
+      var maior = segs.reduce(function (m0, sg) { return !m0 || sg.dz > m0.dz ? sg : m0; }, null);
+      segs.forEach(function (sg) {
+        var p = sg.p, key = p.fila + "|" + p.lado;
         if (!slotsUsados[key]) { slotsUsados[key] = 1; caixas.push({ soBase: true, palete: true, x: p.fila * G.ao + 0.04, y: p.lado * G.atr + 0.04, z: 0, dx: G.ao - 0.08, dy: G.atr - 0.08, dz: 0.14, cor: "#a8743c", fora: p.fora }); }
         if (!b.slots.some(function (s0) { return s0.fila === p.fila + 1 && s0.lado === p.lado; })) b.slots.push({ fila: p.fila + 1, lado: p.lado, n: b.slots.length + 1, fora: p.fora, x: p.fila * G.ao, y: p.lado * G.atr, dx: G.ao, dy: G.atr, fill: 1 });
-        caixas.push({ coluna: true, x: p.x + 0.015, y: p.y + 0.015, z: 0.14, dx: SR_CAIXA.c - 0.03, dy: SR_CAIXA.l - 0.03, dz: n * SR_CAIXA.a, nFaixas: n, cor: b.cor, rot: (j === meio && !u.sub) ? u.rot : "", palete: false, fora: p.fora });   // faixa de praça (sintético) usa o rótulo do grupo
-        xs.push(p.x);
-      }
-      b.ini = Math.min.apply(null, xs); b.fim = Math.max.apply(null, xs) + SR_CAIXA.c; b.pals = b.slots.length;
-      b.vols = vv.length; b.volIdx = {}; vv.forEach(function (v, n2) { b.volIdx[v.c] = n2; });
+        caixas.push({ coluna: true, x: p.x + 0.015, y: p.y + 0.015, z: 0.14 + sg.z0, dx: SR_CAIXA.c - 0.03, dy: SR_CAIXA.l - 0.03, dz: Math.max(0.04, sg.dz - 0.01), nFaixas: Math.max(1, Math.round(sg.dz / SR_CAMADA)),
+          cor: b.cor, rot: (sg === maior && !u.sub) ? u.rot : "", palete: false, fora: p.fora });
+      });
+      var xs = segs.map(function (sg) { return sg.p.x; });
+      b.ini = xs.length ? Math.min.apply(null, xs) : 0; b.fim = xs.length ? Math.max.apply(null, xs) + SR_CAIXA.c : 0;
+      b.cols = segs.reduce(function (a0, sg) { if (a0.indexOf(sg.ci) < 0) a0.push(sg.ci); return a0; }, []).length; b.pals = b.slots.length;
+      b.vols = vv.length; b.caixasN = vv.length; b.volIdx = {}; vv.forEach(function (v, n2) { b.volIdx[v.c] = n2; });
       m3t += q.m3; kgt += b.peso;
       blocos.push(b);
     });
-    var bat = { cols: colIdx, totCols: BG.totCols, nCx: BG.nCx, porPalete: BG.porPalete, paletesChao: Object.keys(slotsUsados).length };
+    var usadas = colH.filter(function (h0) { return h0 > 1e-6; }).length;
+    var bat = { cols: usadas, totCols: BG.totCols, nCx: BG.nCx, porPalete: BG.porPalete, paletesChao: Object.keys(slotsUsados).length, altura: hAlvo, usoM3: vTot * aprov, capM3: BG.capM3, hMax: BG.hMax };
   }
   var usado = blocos.length ? Math.max.apply(null, blocos.map(function (b) { return b.fim; })) : 0;
   blocos.forEach(function (b) {
@@ -12656,10 +12680,10 @@ function srMontagem(c) {
   return {
     bau: nome, B: B, modo: modo, G: G, hPal: hPal, blocos: blocos, caixas: caixas, usado: usado, m3: m3t, kg: kgt,
     palTot: palTot, vagas: G.vagas, divisao: srDivisaoBau(c), bat: modo === "palete" ? null : bat, temEstimado: blocos.some(function (b) { return b.estimado; }),
-    ocupVol: modo === "palete" ? (G.vagas ? palTot / G.vagas : 0) : (bat.totCols ? bat.cols / bat.totCols : 0),
+    ocupVol: modo === "palete" ? (G.vagas ? palTot / G.vagas : 0) : (bat.capM3 ? bat.usoM3 / bat.capM3 : 0),
     ocupKg: B.kg ? kgt / B.kg : 0,
     kgPortaPct: kgt ? kgPorta / kgt : 0, estimado: !!fontes.peso,
-    naoCabe: (modo === "palete" ? palTot > G.vagas : bat.cols > bat.totCols) || kgt > B.kg,
+    naoCabe: (modo === "palete" ? palTot > G.vagas : bat.usoM3 > bat.capM3 + 0.001) || kgt > B.kg,
   };
 }
 function srBlocoDoCliente(c, k) {
@@ -12820,7 +12844,7 @@ function srGradeHTML(c, claro) {
     h += '<div style="text-align:center;font-size:10px;color:' + (claro ? "#333" : "#999") + ';">fila ' + f + '</div></div>';
   }
   h += '<div style="writing-mode:vertical-rl;font-size:10px;color:' + (claro ? "#000" : "#E8C46A") + ';font-weight:700;padding:2px 4px;border:1px solid ' + bd + ';border-radius:0 6px 6px 0;text-align:center;">PORTA</div></div>'
-    + '<div style="font-size:10px;color:' + (claro ? "#333" : "#999") + ';margin-top:2px;">Vista de cima. ' + (G.porFila === 2 ? 'Em cima = lado esquerdo (motorista), embaixo = lado direito, olhando da porta para a cabine. ' : '') + (bat ? 'Carga batida sobre paletes no chão: cada palete leva ' + m.bat.porPalete + ' colunas de caixas de 0,50×0,50 m, até ' + m.bat.nCx + ' caixas de altura. ' : '') + 'Palete PBR 1,00×1,20 m, ' + G.porFila + ' por fila, ' + G.filas + ' filas = ' + G.vagas + ' vagas.</div>';
+    + '<div style="font-size:10px;color:' + (claro ? "#333" : "#999") + ';margin-top:2px;">Vista de cima. ' + (G.porFila === 2 ? 'Em cima = lado esquerdo (motorista), embaixo = lado direito, olhando da porta para a cabine. ' : '') + (bat ? 'Carga batida (solta) sobre paletes no chão, espalhada até ~' + srFmtM(m.bat.altura) + ' m de altura — o peso bate antes do teto. ' : '') + 'Palete PBR 1,00×1,20 m, ' + G.porFila + ' por fila, ' + G.filas + ' filas = ' + G.vagas + ' vagas.</div>';
   return h;
 }
 
@@ -12847,12 +12871,13 @@ function srMontagemHTML(c) {
     + ' Carga <select onchange="srSetNum(\'' + c.id + '\',\'modo\',this.value)" style="font-weight:700;"><option value="palete"' + (pal ? ' selected' : '') + '>Paletizada</option><option value="batida"' + (!pal ? ' selected' : '') + '>Batida (solta)</option></select>'
     + (pal ? ' Altura do palete <input type="number" step="0.1" value="' + srFmtM(m.hPal).replace(",", ".") + '" onchange="srSetNum(\'' + c.id + '\',\'altPal\',this.value)" style="width:62px;"> m' : '')
     + ' Densidade <input type="number" value="' + srDens(c) + '" onchange="srSetNum(\'' + c.id + '\',\'dens\',this.value)" style="width:66px;"> kg/m³'
+    + (c.clientes.some(function (x) { return x.itens && x.itens.length; }) ? '<button onclick="srCatAplicar(srCarga(\'' + c.id + '\'), true);salvar();render();" title="refaz o espaço de cada cliente com o catálogo de embalagens" style="font-size:12px;">↻ Recalcular pelo catálogo</button>' : '')
     + '<button onclick="srImprimirMapa(\'' + c.id + '\')" style="margin-left:auto;padding:8px 12px;font-weight:800;">🖨 Mapa de montagem (A4)</button></div>'
     + sr3dHTML(c)   // v590: 3D que gira (a impressão segue com o SVG fixo)
     + srGradeHTML(c)
     + '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:8px;">'
     + (pal ? '<span>Paletes <b style="color:' + corO(pctV) + ';">' + m.palTot + ' de ' + m.vagas + ' vagas (' + pctV + '%)</b></span>'
-           : '<span>Colunas de caixas <b style="color:' + corO(pctV) + ';">' + m.bat.cols + ' de ' + m.bat.totCols + ' (' + pctV + '%)</b></span><span>Paletes no chão <b>' + m.bat.paletesChao + ' de ' + m.vagas + '</b></span><span>~' + srFmt(m.blocos.reduce(function (s0, b) { return s0 + (b.caixasN || 0); }, 0)) + ' caixas</span>')
+           : '<span>Espaço <b style="color:' + corO(pctV) + ';">' + srFmtM(m.bat.usoM3) + ' de ' + srFmtM(m.bat.capM3) + ' m³ (' + pctV + '%)</b></span><span>Altura da carga <b>~' + srFmtM(m.bat.altura) + ' m</b> de ' + srFmtM(m.bat.hMax) + '</span><span>Paletes no chão <b>' + m.bat.paletesChao + ' de ' + m.vagas + '</b></span>')
     + '<span>Peso <b style="color:' + corO(pctK) + ';">' + srFmt(m.kg, 0) + ' de ' + srFmt(B.kg) + ' kg (' + pctK + '%)</b></span>'
     + '<span>Cubagem ' + srFmtM(m.m3) + ' m³' + (m.estimado ? ' <i style="color:#999;">(estimada pelo peso)</i>' : '') + '</span>'
     + '<span>Peso na metade da porta <b style="color:' + (pctP > 65 ? "#E67E22" : "#ccc") + ';">' + pctP + '%</b></span></div>'
@@ -12862,7 +12887,7 @@ function srMontagemHTML(c) {
     + (pctP > 65 && !m.naoCabe ? '<div style="margin-top:6px;color:#E67E22;font-size:12px;">⚠ Peso concentrado perto da porta: segure os paletes pesados no chão e encostados na fila da frente.</div>' : '')
     + '<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
     + '<tr style="color:' + GOLD + ';text-align:left;"><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>'
-    + (pal ? '<th style="text-align:center;">Paletes</th><th>Vagas</th>' : '<th style="text-align:right;">Caixas</th><th>Paletes (vagas)</th>')
+    + (pal ? '<th style="text-align:center;">Paletes</th><th>Vagas</th>' : '<th style="text-align:right;">Espaço</th><th>Paletes (vagas)</th>')
     + '<th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th>Parada / ordem</th></tr>';
   m.blocos.forEach(function (b) {
     var tv = c.sintetico ? ((b.entregas || 0) + ' ent.') : b.vols;   // v592; v595: por unidade
@@ -12871,13 +12896,13 @@ function srMontagemHTML(c) {
       + (pal ? '<td style="text-align:center;white-space:nowrap;"><input type="number" min="1" value="' + b.pals + '" title="calculado: ' + srFmtM(b.palCalc) + ' palete(s)" onchange="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',this.value)" style="width:48px;font-weight:700;' + (b.palManual ? 'border:2px solid #E8C46A;' : '') + '">'
           + (b.palManual ? ' <a href="javascript:void(0)" onclick="srSetPaletes(\'' + c.id + '\',\'' + b.k + '\',0)" title="voltar ao cálculo" style="font-size:10px;color:#999;">auto</a>' : '') + '</td>'
           + '<td style="font-size:11px;">' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>'
-        : '<td style="text-align:right;white-space:nowrap;">' + (b.estCx ? '≈' : '') + b.caixasN + ' cx<br><small style="color:#999;">' + b.cols + ' coluna' + (b.cols > 1 ? 's' : '') + '</small></td><td style="font-size:11px;">' + b.slots.map(function (s0) { return 'F' + s0.fila + ' ' + srLadoTxt(m, s0); }).join(", ") + '</td>')
+        : '<td style="text-align:right;white-space:nowrap;">' + srFmtM(b.m3 >= 1 ? b.m3 : b.m3) .replace(/^0,0$/, "0,0") + ' m³' + (b.m3 < 0.1 ? ' <small>(' + (b.m3 * 1000).toFixed(0) + ' L)</small>' : '') + '<br><small style="color:' + (b.m3Fonte === "catalogo" ? "#4CAF50" : "#999") + ';">' + (b.m3Fonte === "catalogo" ? "catálogo" : b.m3Fonte === "arquivo" ? "arquivo" : "pelo peso") + (b.vols ? ' · ' + b.vols + ' vol' : '') + '</small></td><td style="font-size:11px;">' + b.slots.map(function (s0) { return 'F' + s0.fila + ' ' + srLadoTxt(m, s0); }).join(", ") + '</td>')
       + '<td style="text-align:right;">' + srFmt(b.peso, 0) + '</td><td style="text-align:right;">' + tv + '</td>'
       + (b.kCli ? '<td style="white-space:nowrap;"><input type="number" min="1" max="' + c.clientes.length + '" value="' + b.seq + '" title="digite a parada desejada" onchange="srPosicao(\'' + c.id + '\',\'' + b.kCli + '\',this.value)" style="width:44px;font-weight:800;"> <button title="entrega mais cedo" onclick="srMover(\'' + c.id + '\',\'' + b.kCli + '\',-1)">▲</button><button title="entrega mais tarde" onclick="srMover(\'' + c.id + '\',\'' + b.kCli + '\',1)">▼</button></td></tr>' : '<td style="color:#777;font-size:11px;">' + (b.sub ? 'junto da praça' : 'por cidade') + '</td></tr>');
   });
   h += '</table></div><div style="font-size:11px;color:#999;margin-top:6px;line-height:1.5;">'
     + (pal ? 'Regras da doca: carregar na ordem da coluna <b>Carregar</b>, preenchendo as vagas da fila 1 (encostada na cabine) até a porta. Cada cliente tem os paletes dele — o número sai da cubagem e do peso (palete até ' + srFmt(SR_PALETE.kgMax) + ' kg e ' + srFmtM(m.hPal) + ' m de altura) e pode ser corrigido na coluna Paletes. A etiqueta de cada volume diz em que palete e vaga ele vai. '
-           : 'Carga batida sobre paletes: os paletes ficam no chão e as caixas (média 0,50×0,50 m) são empilhadas soltas em cima, em colunas de até ' + m.bat.nCx + ' caixas. Cada ' + (m.divisao === "cidade" ? 'cidade' : 'cliente') + ' tem as colunas dele, a partir da cabine; quem compra pouco divide o palete com o vizinho, sem misturar caixa na mesma coluna. ' + (m.blocos.some(function (b) { return b.estCx; }) ? 'Nº de caixas estimado pela cubagem (≈) até chegar o arquivo com os volumes. ' : '') + 'Pesado embaixo, fracionado por cima. ')
+           : 'Carga batida sobre paletes: paletes no chão e a carga solta em cima, espalhada pelo assoalho até a altura que o volume pede (o peso limita antes do teto). Cada ' + (m.divisao === "cidade" ? 'cidade' : 'cliente') + ' ocupa o espaço real dos produtos dele (catálogo de embalagens), a partir da cabine; quem compra pouco vai em cima do anterior, porque sai antes. Pesado embaixo, fracionado por cima. ')
     + 'Para mudar a ordem de entrega, digite a parada desejada ou use ▲▼: o impacto em KM, R$ e tempo aparece na hora no quadro de cima, e o mapa e as etiquetas acompanham (reimprima se já tiver impresso).</div>';
   return h;
 }
@@ -12888,7 +12913,7 @@ function srImprimirMapa(cargaId) {
   if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
   var linhas = m.blocos.map(function (b) {
     return '<tr><td class="c">' + b.passo + 'º</td><td class="c"><span style="background:' + b.cor + ';color:#fff;padding:1px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;"><b>' + b.rot + '</b></span></td><td><b>' + esc(b.fant) + '</b></td><td>' + esc(b.cidade) + '</td><td class="c"><b>' + b.zona + '</b></td>'
-      + (pal ? '<td class="c"><b>' + b.pals + '</b></td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>' : '<td class="n">' + (b.estCx ? '≈' : '') + b.caixasN + ' cx · ' + b.cols + ' col.</td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>')
+      + (pal ? '<td class="c"><b>' + b.pals + '</b></td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>' : '<td class="n">' + srFmtM(b.m3) + ' m³' + (b.vols ? ' · ' + b.vols + ' vol' : '') + '</td><td>' + b.slots.map(function (s) { return 'F' + s.fila + ' ' + srLadoTxt(m, s); }).join(", ") + '</td>')
       + '<td class="n">' + srFmt(b.peso, 0) + '</td><td class="n">' + (c.sintetico ? (b.entregas || 0) + ' ent.' : b.vols) + '</td><td></td></tr>';
   }).join("");
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Mapa de montagem ' + esc(srNomeCarga(c)) + '</title><style>'
@@ -12899,13 +12924,13 @@ function srImprimirMapa(cargaId) {
     + '</style></head><body><div class="hd"><img src="' + srLogo() + '"><div><h1>MAPA DE MONTAGEM DO BAÚ — CARGA ' + esc(srNomeCarga(c)) + '</h1>'
     + 'RF Logística · ' + esc(c.data.split("-").reverse().join("/")) + ' · placa ' + esc(c.placa || "—") + ' · motorista ' + esc(c.motorista || "—") + ' · baú ' + m.bau + ' (' + srFmtM(m.B.c) + ' m) · carga ' + (pal ? 'paletizada' : 'batida')
     + '<br>' + t.clientes + ' paradas · ' + srFmt(t.peso, 0) + ' kg (' + Math.round(m.ocupKg * 100) + '% da capacidade) · ' + t.vols + ' volumes · '
-    + (pal ? m.palTot + ' paletes em ' + m.vagas + ' vagas (' + Math.round(m.ocupVol * 100) + '%)' : m.bat.cols + ' de ' + m.bat.totCols + ' colunas de caixas sobre ' + m.bat.paletesChao + ' paletes no chão (' + Math.round(m.ocupVol * 100) + '%)') + (m.estimado ? ' · cubagem estimada pelo peso' : '')
+    + (pal ? m.palTot + ' paletes em ' + m.vagas + ' vagas (' + Math.round(m.ocupVol * 100) + '%)' : srFmtM(m.bat.usoM3) + ' de ' + srFmtM(m.bat.capM3) + ' m³ sobre ' + m.bat.paletesChao + ' paletes no chão, altura ~' + srFmtM(m.bat.altura) + ' m (' + Math.round(m.ocupVol * 100) + '%)') + (m.estimado ? ' · parte da cubagem estimada pelo peso' : '') + (c.catAplicadoEm ? ' · catálogo: ' + srCatResumo(c).pct + '% dos itens' : '')
     + (function () { try { var ir = srImpactoRota(c); return '<br>Rota (ordem desta folha): <b>' + srFmt(ir.atual.km, 0) + ' km</b> · ' + srFmtR(ir.atual.km * ir.ck.porKm) + ' — sugerida pelo sistema ' + srFmt(ir.sug.km, 0) + ' km' + (ir.difKm > 1 ? ' (<b>+' + srFmt(ir.difKm, 0) + ' km, +' + srFmtR(ir.difR) + '</b>)' : ' (ordem ótima)') + ' · ' + srBaseCoord().nome + ' → ' + ir.atual.cidades.map(function (x) { return esc(x.nome); }).join(' → ') + ' → volta'; } catch (e) { return ''; } })()
     + '</div></div><div class="d3">' + (function () { var cv3 = document.querySelector('canvas[data-sr3d="' + c.id + '"]'); if (cv3 && cv3._three) { try { srGlDesenhar(cv3); return '<img src="' + cv3.toDataURL("image/png") + '" style="width:100%;display:block;">'; } catch (e) {} } return srBau3DSvg(c, 1000, true); })() + '</div>'   // v598: foto do 3D realista
     + srGradeHTML(c, true)
     + '<div class="pg2"></div><p><b>Carregue na ordem da 1ª coluna: o 1º cliente vai no FUNDO, encostado na cabine; o último fica na PORTA e é a 1ª entrega.</b> '
     + (pal ? 'Cada cliente nos paletes dele, nas vagas indicadas (F = fila contada da cabine; esq./dir. olhando da porta para a cabine).' : 'Um cliente por bloco, sem misturar. Pesado embaixo, fracionado (etiqueta amarela) em cima, virado para a porta.') + '</p>'
-    + '<table><tr><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>' + (pal ? '<th>Paletes</th><th>Vagas</th>' : '<th>Caixas</th><th>Paletes (vagas)</th>') + '<th>kg</th><th>Vol</th><th>✓</th></tr>' + linhas + '</table></body></html>');
+    + '<table><tr><th>Carregar</th><th>Parada</th><th>Cliente</th><th>Cidade</th><th>Zona</th>' + (pal ? '<th>Paletes</th><th>Vagas</th>' : '<th>Espaço</th><th>Paletes (vagas)</th>') + '<th>kg</th><th>Vol</th><th>✓</th></tr>' + linhas + '</table></body></html>');
   w.document.close();
   setTimeout(function () { try { w.print(); } catch (err) {} }, 500);
 }
@@ -13606,9 +13631,8 @@ function srCustoKmTipo(tipo) {
 function srEspaco(c, cl, tipo) {
   var B = SR_BAUS[tipo];
   if (srModo(c) === "palete") return { u: srPaletesCliente(c, cl, B).n, cap: srGrade(B).vagas };
-  var BG = srBatidaGeo(B);   // v596: batida = colunas de caixas sobre paletes
-  var nv = (c.vols || []).filter(function (v) { return v.k === cl.k; }).length;
-  return { u: nv ? Math.ceil(nv / BG.nCx) : srM3Cliente(c, cl).m3 / BG.colVol, cap: BG.totCols };
+  var BG = srBatidaGeo(B);   // v599: batida medida em m³ (cubagem real), capacidade = assoalho × altura útil
+  return { u: srM3Cliente(c, cl).m3 / 0.9, cap: BG.capM3 };
 }
 function srDividir(c, opt) {
   opt = opt || srDivOpt(c);
@@ -13625,7 +13649,7 @@ function srDividir(c, opt) {
   pts.sort(function (a, b) { return a.ang - b.ang || a.dist - b.dist; });
   var n = pts.length;
   if (!n) return { carros: [], km: 0, custo: 0, semCoord: semCoord };
-  var caps = tipos.map(function (t) { var B = SR_BAUS[t]; return { kg: B.kg, u: srModo(c) === "palete" ? srGrade(B).vagas : srBatidaGeo(B).totCols }; });
+  var caps = tipos.map(function (t) { var B = SR_BAUS[t]; return { kg: B.kg, u: srModo(c) === "palete" ? srGrade(B).vagas : srBatidaGeo(B).capM3 }; });
   var Kmax = opt.n > 0 ? Math.min(opt.n, n) : Math.min(n, 10);
   var starts = [];
   for (var s0 = 0; s0 < n; s0++) if (s0 === 0 || Math.abs(pts[s0].ang - pts[s0 - 1].ang) > 1e-6) starts.push(s0);
@@ -13677,7 +13701,7 @@ function srDividir(c, opt) {
     var r = srKmDaOrdem(c, ks), ck = srCustoKmTipo(tipo);
     var peso = 0, u = 0, ent = 0;
     ks.forEach(function (k) { var cl = srCliente(c, k); peso += Number(cl.peso) || 0; u += srEspaco(c, cl, tipo).u; ent += Number(cl.entregas) || 0; });
-    var cap = srModo(c) === "palete" ? srGrade(SR_BAUS[tipo]).vagas : srBatidaGeo(SR_BAUS[tipo]).totCols;
+    var cap = srModo(c) === "palete" ? srGrade(SR_BAUS[tipo]).vagas : srBatidaGeo(SR_BAUS[tipo]).capM3;
     return { letra: String.fromCharCode(65 + idx), tipo: tipo, ks: ks, km: r.km, custo: r.km * ck, peso: peso, u: u, cap: cap, kgCap: SR_BAUS[tipo].kg,
       cidades: r.cidades.map(function (x) { return x.nome; }), cidadesCo: r.cidades, excede: sg.excede, entregas: ent };
   });
@@ -13745,7 +13769,7 @@ function srDivHTML(c) {
     totFrete += Number(ff[i]) || 0;
     h += '<tr style="border-top:1px solid #333;vertical-align:top;"><td><b style="font-size:16px;color:' + GOLD + ';">' + v.letra + '</b></td><td><b>' + v.tipo + '</b></td>'
       + '<td style="text-align:right;">' + srFmt(v.peso, 0) + ' kg</td>'
-      + '<td style="text-align:right;white-space:nowrap;"><span style="color:' + cor(pk) + ';font-weight:700;">' + pk + '% peso</span><br><span style="color:' + cor(pu) + ';">' + (srModo(c) === "palete" ? v.u + '/' + v.cap + ' pal.' : Math.ceil(v.u) + '/' + v.cap + ' col.') + '</span></td>'
+      + '<td style="text-align:right;white-space:nowrap;"><span style="color:' + cor(pk) + ';font-weight:700;">' + pk + '% peso</span><br><span style="color:' + cor(pu) + ';">' + (srModo(c) === "palete" ? v.u + '/' + v.cap + ' pal.' : srFmtM(v.u) + '/' + srFmtM(v.cap) + ' m³') + '</span></td>'
       + '<td style="text-align:right;">' + v.ks.length + (v.entregas ? '<br><small style="color:#999;">' + v.entregas + ' ent.</small>' : '') + '</td>'
       + '<td>' + esc(srBaseCoord().nome) + ' → ' + v.cidades.map(esc).join(' → ') + ' → volta'
       + '<br><a href="' + srGmLink(v.cidadesCo) + '" target="_blank" rel="noopener" style="font-size:11px;color:#7FA7C9;">📍 ver no Google Maps</a>'
@@ -13763,7 +13787,7 @@ function srDivHTML(c) {
     + (plano.carros.length > 1 ? '<button onclick="srDivAplicar(\'' + c.id + '\')" style="background:#4CAF50;color:#000;font-weight:900;padding:9px 14px;border-radius:8px;">✅ Aplicar divisão (' + plano.carros.length + ' cargas)</button>' : '<span style="color:#4CAF50;font-weight:800;align-self:center;">✓ Um veículo só resolve esta carga.</span>')
     + '<button onclick="srDivExportar(\'' + c.id + '\')" style="padding:9px 14px;border-radius:8px;font-weight:800;">📊 Planilha da divisão (modelo RF)</button></div>'
     + '<div style="font-size:10.5px;color:#888;margin-top:8px;line-height:1.5;">Como o sistema divide: agrupa os clientes pela direção a partir de ' + esc(srBaseCoord().nome) + ' (quem está na mesma estrada vai junto), sem partir cliente, e escolhe o corte de menor custo — km × custo por km do tipo'
-    + (plano.auto ? ' + a diária de cada caminhão (R$ ' + srFmt(SR_DIARIA_VEICULO) + ': motorista e ajudante)' : '') + '. Cada grupo vai no menor veículo permitido em que cabe (peso e ' + (srModo(c) === "palete" ? 'paletes' : 'colunas de caixas') + '). Dentro de cada carro a ordem é a menor volta.</div></div>';
+    + (plano.auto ? ' + a diária de cada caminhão (R$ ' + srFmt(SR_DIARIA_VEICULO) + ': motorista e ajudante)' : '') + '. Cada grupo vai no menor veículo permitido em que cabe (peso e ' + (srModo(c) === "palete" ? 'paletes' : 'm³ pela cubagem real') + '). Dentro de cada carro a ordem é a menor volta.</div></div>';
   return h;
 }
 
@@ -13833,7 +13857,7 @@ function srDivExportar(cargaId) {
   resumo.push(["TOTAL", "", "", "", tot.cli, tot.par, Math.round(tot.peso * 10) / 10, tot.vol, "", "", tot.frete ? Math.round(tot.frete * 100) / 100 : ""]);
   resumo.push([]); resumo.push(["PREMISSAS E OBSERVAÇÕES"]);
   [
-    "Frota considerada: " + plano.tipos.map(function (t) { var B = SR_BAUS[t]; return t + " (" + srFmt(B.kg) + " kg, " + (srModo(c) === "palete" ? srGrade(B).vagas + " paletes" : srBatidaGeo(B).totCols + " colunas de caixas sobre paletes") + ")"; }).join("; ") + ".",
+    "Frota considerada: " + plano.tipos.map(function (t) { var B = SR_BAUS[t]; return t + " (" + srFmt(B.kg) + " kg, " + (srModo(c) === "palete" ? srGrade(B).vagas + " paletes" : srFmtM(srBatidaGeo(B).capM3) + " m³ de carga solta sobre paletes") + ")"; }).join("; ") + ".",
     "Agrupamento por recebedor: nenhum cliente foi partido entre veículos — cada pedido sai inteiro.",
     "Paradas agrupadas por eixo rodoviário a partir de " + srBaseCoord().nome + "; dentro de cada veículo a ordem é a menor volta.",
     "KM estimado (distância entre cidades × 1,3): " + plano.carros.map(function (v) { return v.letra + " " + srFmt(v.km, 0) + " km, custo variável " + srFmtR(v.custo); }).join(" · ") + ".",
@@ -14216,6 +14240,317 @@ function srGlDesenhar(cv) {
   t.cam.position.set(C.x + D * Math.cos(el) * Math.sin(az), C.y + D * Math.sin(el), C.z + D * Math.cos(el) * Math.cos(az));
   t.cam.lookAt(C);
   t.rd.render(t.info.cena, t.cam);
+}
+
+
+/* ---- v599: CATÁLOGO DE EMBALAGENS + NF-e -------------------------------------
+   Renato (08/10 09:50–09:53): a São Roque entrega de tudo (alimento, bebida,
+   limpeza, higiene, eletro); o sistema tem que saber o ESPAÇO de cada produto
+   para dividir a carga. "Nesse momento temos que buscar na internet; depois
+   vamos atualizando à medida que entrarmos no contrato."
+   - Catálogo base: 321 produtos pesquisados na internet em 08/10/2026 (caixa
+     master / fardo / produto embalado), com C × L × A, peso bruto e unidades.
+     Só 18 têm a medida tirada de página de fabricante/varejo ("fonte"); os
+     outros são ESTIMADOS pelo tamanho da unidade × arranjo -- fabricante quase
+     nunca publica a medida da caixa de embarque. Cada item diz qual é.
+   - O catálogo da RF (state.produtosCatalogo) soma/corrige o base: importação
+     do cadastro do cliente (CSV/Excel), item medido na doca, edição manual.
+   - Leitura: NF-e (XML) ou planilha de carga; cada item é casado com o
+     catálogo pelo EAN e, sem EAN, pela descrição (marca, produto e tamanho).
+     Sem casamento, o espaço sai do peso pela densidade típica da categoria.
+   - O espaço de cada cliente passa a ser a soma real dos itens; o PESO é o
+     que limita o caminhão (Toco 8 t), não o teto. */
+var SR_CAT_BASE = [["mercearia","ARROZ BRANCO TIPO 1 1KG","Tio João","","FD",10,"1kg",40.0,25.0,15.0,10.15,0,""],["mercearia","ARROZ BRANCO TIPO 1 1KG","Camil","","FD",10,"1kg",40.0,25.0,15.0,10.15,0,""],["mercearia","ARROZ BRANCO TIPO 1 5KG","Tio João","","FD",6,"5kg",50.0,38.0,26.0,30.3,0,""],["mercearia","ARROZ BRANCO TIPO 1 5KG","Camil","7896006711155","FD",6,"5kg",50.0,38.0,26.0,30.3,0,"https://www.systax.com.br/ean/07896006711155"],["mercearia","ARROZ PARBOILIZADO TIPO 1 1KG","Kicaldo","","FD",10,"1kg",40.0,25.0,15.0,10.15,0,""],["mercearia","ARROZ BRANCO TIPO 1 1KG","Namorado","","FD",10,"1kg",40.0,25.0,15.0,10.15,0,""],["mercearia","FEIJAO CARIOCA TIPO 1 1KG","Kicaldo","","FD",10,"1kg",37.0,25.0,14.0,10.12,0,""],["mercearia","FEIJAO CARIOCA TIPO 1 1KG","Camil","","FD",10,"1kg",37.0,25.0,14.0,10.12,0,""],["mercearia","FEIJAO CARIOCA TIPO 1 1KG","Namorado","","FD",10,"1kg",37.0,25.0,14.0,10.12,0,""],["mercearia","FEIJAO PRETO TIPO 1 1KG","Kicaldo","","FD",10,"1kg",37.0,25.0,14.0,10.12,0,""],["mercearia","FEIJAO PRETO TIPO 1 1KG","Camil","","FD",10,"1kg",37.0,25.0,14.0,10.12,0,""],["mercearia","ACUCAR CRISTAL 1KG","Caravelas","","FD",10,"1kg",34.0,22.0,16.0,10.1,0,""],["mercearia","ACUCAR REFINADO 1KG","União","","FD",10,"1kg",34.0,22.0,16.0,10.1,0,""],["mercearia","ACUCAR CRISTAL 5KG","Caravelas","","FD",6,"5kg",48.0,34.0,22.0,30.2,0,""],["mercearia","ACUCAR REFINADO 5KG","União","","FD",6,"5kg",48.0,34.0,22.0,30.2,0,""],["mercearia","CAFE TORRADO E MOIDO TRADICIONAL 250G","Pilão","","CX",20,"250g",32.0,22.0,20.0,5.4,0,""],["mercearia","CAFE TORRADO E MOIDO TRADICIONAL 500G","Pilão","","CX",20,"500g",40.0,27.0,26.0,10.6,0,""],["mercearia","CAFE TORRADO E MOIDO TRADICIONAL 250G","Santa Clara","","FD",20,"250g",34.0,24.0,20.0,5.4,0,""],["mercearia","CAFE TORRADO E MOIDO TRADICIONAL 500G","3 Corações","","CX",20,"500g",40.0,27.0,26.0,10.6,0,""],["mercearia","CAFE TORRADO E MOIDO 250G","São Braz","","FD",20,"250g",34.0,24.0,20.0,5.4,0,""],["mercearia","MACARRAO ESPAGUETE 500G","Vitarella","","FD",20,"500g",31.0,30.0,22.0,10.2,0,""],["mercearia","MACARRAO PARAFUSO 500G","Fortaleza","","FD",20,"500g",45.0,35.0,30.0,10.25,0,""],["mercearia","MACARRAO ESPAGUETE N8 GRANO DURO 500G","Renata","7896022200046","CX",20,"500g",30.0,27.0,22.0,10.4,0,"https://world.openfoodfacts.org/product/7896022200046"],["mercearia","MACARRAO ESPAGUETE COM OVOS 500G","Santa Amália","","CX",20,"500g",30.0,27.0,22.0,10.4,0,""],["mercearia","FARINHA DE TRIGO TIPO 1 1KG","Dona Benta","","FD",10,"1kg",36.0,25.0,16.0,10.1,0,""],["mercearia","FARINHA DE TRIGO TIPO 1 1KG","Fortaleza","","FD",10,"1kg",36.0,25.0,16.0,10.1,0,""],["mercearia","FARINHA DE MANDIOCA TORRADA 1KG","Maratá","","FD",10,"1kg",40.0,25.0,16.0,10.1,0,""],["mercearia","FLOCAO DE MILHO (CUSCUZ) 500G","Vitamilho","","FD",20,"500g",40.0,30.0,20.0,10.15,0,""],["mercearia","FLOCAO DE MILHO (CUSCUZ) 500G","Kimilho","","FD",20,"500g",40.0,30.0,20.0,10.15,0,""],["mercearia","FLOCAO DE MILHO (CUSCUZ) 500G","São Braz","","FD",20,"500g",40.0,30.0,20.0,10.15,0,""],["mercearia","FUBA MIMOSO 1KG","Sinhá","","FD",10,"1kg",36.0,25.0,16.0,10.1,0,""],["mercearia","OLEO DE SOJA PET 900ML","Soya","","CX",20,"900ml",38.0,30.0,25.0,17.6,0,""],["mercearia","OLEO DE SOJA PET 900ML","Liza","17896036090241","CX",20,"900ml",38.0,30.0,25.0,17.6,0,"https://www.systax.com.br/ean/17896036090241"],["mercearia","SAL REFINADO IODADO 1KG","Cisne","","FD",10,"1kg",32.0,22.0,14.0,10.08,0,""],["mercearia","LEITE EM PO INTEGRAL SACHE 200G","Italac","","CX",50,"200g",42.0,30.0,26.0,10.6,0,""],["mercearia","LEITE EM PO INTEGRAL SACHE 400G","Piracanjuba","","CX",25,"400g",42.0,30.0,26.0,10.5,0,""],["mercearia","LEITE EM PO INTEGRAL SACHE 200G","Nestlé Ninho","","CX",50,"200g",42.0,30.0,26.0,10.6,0,""],["mercearia","BISCOITO CREAM CRACKER 400G","Vitarella","","CX",20,"400g",48.0,34.0,26.0,8.6,0,""],["mercearia","BISCOITO CREAM CRACKER 400G","Fortaleza","","CX",20,"400g",48.0,34.0,26.0,8.6,0,""],["mercearia","BISCOITO MAISENA 350G","Vitarella","","CX",20,"350g",46.0,32.0,24.0,7.6,0,""],["mercearia","BISCOITO CREAM CRACKER 184G","Piraquê","","CX",30,"184g",45.0,30.0,22.0,5.9,0,""],["mercearia","BISCOITO RECHEADO CHOCOLATE 130G","Vitarella Treloso","","CX",48,"130g",42.0,30.0,28.0,6.9,0,""],["mercearia","SARDINHA EM OLEO 125G","Coqueiro","7896009301049","CX",50,"125g",38.0,24.0,16.0,8.1,0,"https://world.openfoodfacts.org/product/7896009301049"],["mercearia","SARDINHA AO MOLHO DE TOMATE 125G","Gomes da Costa","","CX",50,"125g",38.0,24.0,16.0,8.1,0,""],["mercearia","MILHO VERDE EM CONSERVA LATA 170G","Quero","17896102500605","CX",24,"170g drenado",30.0,23.0,18.0,6.1,0,"https://www.systax.com.br/ean/17896102500605"],["mercearia","ERVILHA EM CONSERVA LATA 170G","Quero","","CX",24,"170g drenado",30.0,23.0,18.0,6.1,0,""],["mercearia","EXTRATO DE TOMATE LATA 340G","Elefante","","CX",24,"340g",30.0,22.0,24.0,9.9,0,""],["mercearia","MOLHO DE TOMATE TRADICIONAL SACHE 300G","Pomarola","","CX",24,"300g",32.0,24.0,18.0,7.6,0,""],["mercearia","EXTRATO DE TOMATE SACHE 300G","Fugini","","CX",30,"300g",34.0,24.0,20.0,9.4,0,""],["mercearia","ACHOCOLATADO EM PO LATA 370G","Nescau","","CX",24,"370g",42.0,32.0,27.0,10.7,0,""],["mercearia","VINAGRE DE ALCOOL 750ML","Castelo","","CX",12,"750ml",29.0,22.0,28.0,9.7,0,""],["mercearia","VINAGRE DE ALCOOL 750ML","Maratá","","CX",12,"750ml",29.0,22.0,28.0,9.7,0,""],["mercearia","MARGARINA COM SAL 500G","Qualy","","CX",12,"500g",33.0,23.0,16.0,6.6,0,""],["mercearia","MARGARINA COM SAL 500G","Delícia","","CX",12,"500g",33.0,23.0,16.0,6.6,0,""],["mercearia","LEITE CONDENSADO TETRA PAK 395G","Italac","","CX",27,"395g",39.0,20.0,15.0,11.4,0,""],["mercearia","LEITE CONDENSADO TETRA PAK 395G","Piracanjuba","","CX",27,"395g",39.0,20.0,15.0,11.4,0,""],["mercearia","CREME DE LEITE TETRA PAK 200G","Italac","","CX",27,"200g",37.0,19.0,10.0,5.9,0,""],["mercearia","CREME DE LEITE TETRA PAK 200G","Piracanjuba","","CX",27,"200g",37.0,19.0,10.0,5.9,0,""],["mercearia","TEMPERO COMPLETO 300G","Maratá","","CX",24,"300g",48.0,32.0,13.0,8.3,0,""],["mercearia","CALDO DE GALINHA 57G (6 TABLETES)","Maggi","","CX",60,"57g",40.0,25.0,22.0,4.0,0,""],["mercearia","GELATINA EM PO 20G","Royal","","CX",144,"20g",46.0,30.0,26.0,3.4,0,""],["mercearia","MISTURA PARA BOLO 390G","Fleischmann","","CX",24,"390g",40.0,30.0,26.0,10.4,0,""],["mercearia","MISTURA PARA BOLO 450G","Dona Benta","","CX",12,"450g",32.0,24.0,22.0,5.8,0,""],["mercearia","AMIDO DE MILHO 200G","Maizena","","CX",24,"200g",36.0,23.0,22.0,5.2,0,""],["mercearia","AVEIA EM FLOCOS 170G","Nestlé","","CX",24,"170g",40.0,30.0,22.0,4.7,0,""],["mercearia","GOIABADA 300G","Quero","","CX",24,"300g",36.0,26.0,16.0,7.6,0,""],["mercearia","MILHO PARA PIPOCA 500G","Yoki","","FD",20,"500g",38.0,27.0,16.0,10.1,0,""],["mercearia","SALGADINHO DE MILHO 70G","Torcida","","FD",20,"70g",60.0,40.0,35.0,1.6,0,""],["bebidas","REFRIGERANTE COCA-COLA PET 2L","Coca-Cola","","FD",6,"2L",32.0,21.5,32.0,12.8,0,""],["bebidas","REFRIGERANTE COCA-COLA ZERO PET 2L","Coca-Cola","","FD",6,"2L",32.0,21.5,32.0,12.7,0,""],["bebidas","REFRIGERANTE GUARANA ANTARCTICA PET 2L","Antarctica","","FD",6,"2L",32.0,21.5,32.0,12.8,0,""],["bebidas","REFRIGERANTE FANTA LARANJA PET 2L","Fanta","","FD",6,"2L",32.0,21.5,32.0,12.8,0,""],["bebidas","REFRIGERANTE FANTA UVA PET 2L","Fanta","27894900051517","FD",6,"2L",32.0,21.5,32.0,12.8,0,"https://www.systax.com.br/ean/27894900051517"],["bebidas","REFRIGERANTE SPRITE PET 2L","Sprite","","FD",6,"2L",32.0,21.5,32.0,12.7,0,""],["bebidas","REFRIGERANTE PEPSI PET 2L","Pepsi","","FD",6,"2L",32.0,21.5,32.0,12.8,0,""],["bebidas","REFRIGERANTE DOLLY GUARANA PET 2L","Dolly","","FD",6,"2L",32.0,21.5,32.0,12.7,0,""],["bebidas","REFRIGERANTE GUARANA KUAT PET 2L","Kuat","","FD",6,"2L",32.0,21.5,32.0,12.8,0,""],["bebidas","REFRIGERANTE COCA-COLA PET 2,5L","Coca-Cola","27894900027024","FD",6,"2,5L",34.0,23.0,34.0,16.0,0,"https://www.systax.com.br/ean/27894900027024"],["bebidas","REFRIGERANTE COCA-COLA PET 1L","Coca-Cola","","FD",6,"1L",25.0,17.0,28.5,6.6,0,""],["bebidas","REFRIGERANTE GUARANA ANTARCTICA PET 1L","Antarctica","","FD",6,"1L",25.0,17.0,28.5,6.6,0,""],["bebidas","REFRIGERANTE COCA-COLA PET 600ML","Coca-Cola","","FD",12,"600ml",28.0,21.0,23.5,7.8,0,""],["bebidas","REFRIGERANTE GUARANA ANTARCTICA PET 600ML","Antarctica","","FD",12,"600ml",28.0,21.0,23.5,7.8,0,""],["bebidas","REFRIGERANTE FANTA LARANJA PET 600ML","Fanta","27894900031601","FD",6,"600ml",21.0,14.0,23.5,3.9,0,"https://www.systax.com.br/ean/27894900031601"],["bebidas","REFRIGERANTE COCA-COLA LATA 350ML","Coca-Cola","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","REFRIGERANTE COCA-COLA LATA 350ML","Coca-Cola","","FD",6,"350ml",20.0,13.5,12.5,2.3,0,""],["bebidas","REFRIGERANTE GUARANA ANTARCTICA LATA 350ML","Antarctica","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","REFRIGERANTE FANTA LARANJA LATA 350ML","Fanta","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","REFRIGERANTE SPRITE LATA 350ML","Sprite","","FD",6,"350ml",20.0,13.5,12.5,2.3,0,""],["bebidas","REFRIGERANTE PEPSI LATA 350ML","Pepsi","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","AGUA MINERAL INDAIA SEM GAS PET 500ML","Indaiá","","FD",12,"500ml",26.5,20.0,21.5,6.3,0,""],["bebidas","AGUA MINERAL CRYSTAL SEM GAS PET 500ML","Crystal","","FD",12,"500ml",26.5,20.0,21.5,6.3,0,""],["bebidas","AGUA MINERAL INDAIA SEM GAS PET 1,5L","Indaiá","","FD",6,"1,5L",27.5,18.5,31.5,9.3,0,""],["bebidas","AGUA MINERAL DIAS D'AVILA SEM GAS PET 1,5L","Dias d'Ávila","","FD",6,"1,5L",27.5,18.5,31.5,9.3,0,""],["bebidas","AGUA MINERAL INDAIA GALAO 20L","Indaiá","","UN",1,"20L",27.5,27.5,49.0,20.8,0,""],["bebidas","AGUA MINERAL DIAS D'AVILA GALAO 20L","Dias d'Ávila","","UN",1,"20L",27.5,27.5,49.0,20.8,0,""],["bebidas","CERVEJA BRAHMA CHOPP LATA 350ML","Brahma","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","CERVEJA SKOL PILSEN LATA 350ML","Skol","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","CERVEJA ITAIPAVA PILSEN LATA 350ML","Itaipava","","FD",12,"350ml",27.0,20.0,12.5,4.5,0,""],["bebidas","CERVEJA SKOL PILSEN LATA 269ML","Skol","","FD",15,"269ml",33.5,20.0,10.2,4.4,0,""],["bebidas","CERVEJA ANTARCTICA SUBZERO LATA 269ML","Antarctica","","FD",12,"269ml",27.0,20.0,10.2,3.5,0,""],["bebidas","CERVEJA HEINEKEN LONG NECK 330ML","Heineken","","CX",24,"330ml",38.0,26.0,23.5,13.2,0,""],["bebidas","CERVEJA BUDWEISER LONG NECK 330ML","Budweiser","","CX",24,"330ml",38.0,26.0,23.5,13.2,0,""],["bebidas","CERVEJA SKOL GARRAFA 600ML RETORNAVEL","Skol","","EN",24,"600ml",47.0,31.0,30.0,28.0,0,""],["bebidas","CERVEJA BRAHMA GARRAFA 600ML RETORNAVEL","Brahma","","EN",24,"600ml",47.0,31.0,30.0,28.0,0,""],["bebidas","SUCO DEL VALLE NECTAR UVA TETRA PAK 1L","Del Valle","","CX",12,"1L",29.0,26.0,20.5,13.2,0,""],["bebidas","NECTAR MAGUARY MARACUJA TETRA PAK 1L","Maguary","27896000530367","CX",12,"1L",29.0,26.0,20.5,13.2,0,"https://www.systax.com.br/ean/27896000530367"],["bebidas","NECTAR MAGUARY UVA TETRA PAK 1L","Maguary","27896000530329","CX",12,"1L",29.0,26.0,20.5,13.2,0,"https://www.systax.com.br/ean/27896000530329"],["bebidas","SUCO CONCENTRADO MAGUARY CAJU VIDRO 500ML","Maguary","","CX",12,"500ml",29.0,22.0,23.0,10.6,0,""],["bebidas","NECTAR DEL VALLE KAPO/MINI 200ML","Del Valle","","CX",27,"200ml",36.0,17.0,12.5,6.1,0,""],["bebidas","ENERGETICO MONSTER LATA 473ML","Monster","","FD",6,"473ml",20.0,13.5,17.0,3.1,0,""],["bebidas","ENERGETICO RED BULL LATA 250ML","Red Bull","","CX",24,"250ml",32.0,21.5,13.5,6.7,0,""],["bebidas","ISOTONICO GATORADE PET 500ML","Gatorade","","FD",6,"500ml",21.5,14.5,21.5,3.3,0,""],["bebidas","CHA MATTE LEAO PET 1,5L","Leão","","FD",6,"1,5L",28.0,19.0,31.0,9.5,0,""],["bebidas","LEITE UHT INTEGRAL PIRACANJUBA 1L","Piracanjuba","","CX",12,"1L",29.0,26.0,21.0,12.8,0,""],["bebidas","LEITE UHT INTEGRAL ITALAC 1L","Italac","","CX",12,"1L",29.0,26.0,21.0,12.8,0,""],["bebidas","LEITE UHT INTEGRAL BETANIA 1L","Betânia","","CX",12,"1L",29.0,26.0,21.0,12.8,0,""],["bebidas","LEITE UHT INTEGRAL VALEDOURADO 1L","Valedourado","","CX",12,"1L",29.0,26.0,21.0,12.8,0,""],["bebidas","LEITE UHT INTEGRAL ELEGE 1L","Elegê","17896079510232","CX",12,"1L",29.0,26.0,21.0,12.8,0,"https://www.systax.com.br/ean/17896079510232"],["bebidas","LEITE UHT INTEGRAL TRIANGULO 1L","Triângulo","17896434920546","CX",12,"1L",29.0,26.0,21.0,12.8,0,"https://www.systax.com.br/ean/17896434920546"],["bebidas","BEBIDA LACTEA TODDYNHO CHOCOLATE 200ML","Toddynho","","CX",27,"200ml",36.0,17.0,12.5,6.1,0,""],["bebidas","BEBIDA LACTEA NESCAU PRONTINHO 200ML","Nescau","","CX",27,"200ml",36.0,17.0,12.5,6.1,0,""],["bebidas","ACHOCOLATADO PRONTO ITALAC 1L","Italac","","CX",12,"1L",29.0,26.0,21.0,13.3,0,""],["bebidas","VINHO PERGOLA TINTO SUAVE 750ML","Pérgola","","CX",6,"750ml",24.0,16.5,31.5,7.9,0,""],["bebidas","VINHO SANGUE DE BOI TINTO SUAVE 750ML","Aurora","","CX",12,"750ml",32.0,24.5,31.5,15.5,0,""],["bebidas","CACHACA 51 GARRAFA 965ML","51","","CX",12,"965ml",35.0,26.5,30.0,17.5,0,""],["bebidas","CACHACA YPIOCA PRATA 965ML","Ypióca","","CX",12,"965ml",35.0,26.5,31.0,17.5,0,""],["bebidas","AGUARDENTE PITU GARRAFA 965ML","Pitú","","CX",12,"965ml",35.0,26.5,30.0,17.5,0,""],["bebidas","AGUARDENTE PITU LATA 350ML","Pitú","","FD",12,"350ml",27.0,20.0,12.5,4.4,0,""],["bebidas","VODKA SMIRNOFF 998ML","Smirnoff","","CX",12,"998ml",34.0,26.0,31.0,17.8,0,""],["bebidas","VODKA ORLOFF 1L","Orloff","","CX",12,"1L",34.0,26.0,31.0,17.6,0,""],["limpeza","DETERGENTE LIQUIDO NEUTRO 500ML","Ypê","17896098906207","CX",24,"500ml",34.0,27.0,22.0,13.2,0,"https://www.systax.com.br/ean/17896098906207"],["limpeza","DETERGENTE LIQUIDO NEUTRO 500ML","Limpol","","CX",24,"500ml",34.0,27.0,22.0,13.2,0,""],["limpeza","DETERGENTE LIQUIDO NEUTRO 500ML","Minuano","","CX",24,"500ml",34.0,27.0,22.0,13.1,0,""],["limpeza","SABAO EM PO 800G (SACHE)","Omo","7891150064324","CX",20,"800g",50.0,33.0,30.0,16.9,0,"https://www.systax.com.br/ean/07891150064324"],["limpeza","SABAO EM PO 1,6KG (SACHE)","Omo","","CX",10,"1,6kg",48.0,33.0,32.0,16.8,0,""],["limpeza","SABAO EM PO 400G (CARTUCHO)","Tixan Ypê","","CX",40,"400g",46.0,34.0,30.0,17.1,0,""],["limpeza","SABAO EM PO 800G (CARTUCHO)","Tixan Ypê","","CX",20,"800g",47.0,33.0,30.0,16.9,0,""],["limpeza","SABAO EM PO 1,6KG (SACHE)","Tixan Ypê","","CX",10,"1,6kg",48.0,33.0,32.0,16.8,0,""],["limpeza","SABAO EM PO 800G (SACHE)","Brilhante","","CX",20,"800g",50.0,33.0,30.0,16.9,0,""],["limpeza","SABAO EM PO 400G (SACHE)","Surf","","CX",40,"400g",48.0,34.0,28.0,17.0,0,""],["limpeza","SABAO EM PO 800G (SACHE)","Surf","","CX",20,"800g",50.0,33.0,30.0,16.9,0,""],["limpeza","SABAO EM PO 800G (SACHE)","Ace","","CX",20,"800g",50.0,33.0,30.0,16.9,0,""],["limpeza","SABAO LIQUIDO PARA ROUPA 3L","Omo","","CX",4,"3L",37.0,23.0,31.0,13.6,0,""],["limpeza","SABAO LIQUIDO PARA ROUPA 3L","Brilhante","","CX",4,"3L",37.0,23.0,31.0,13.6,0,""],["limpeza","SABAO LIQUIDO PARA ROUPA 5L","Tixan Ypê","","CX",4,"5L",40.0,27.0,31.0,22.3,0,""],["limpeza","AGUA SANITARIA 1L","Qboa","7891038160308","CX",12,"1L",34.0,26.0,27.0,13.8,0,"https://www.systax.com.br/ean/07891038160308"],["limpeza","AGUA SANITARIA 2L","Qboa","","CX",6,"2L",34.0,23.0,31.0,13.4,0,""],["limpeza","AGUA SANITARIA 5L","Qboa","","CX",4,"5L",39.0,27.0,30.0,22.1,0,""],["limpeza","AGUA SANITARIA 1L","Ypê","","CX",12,"1L",34.0,26.0,27.0,13.8,0,""],["limpeza","AGUA SANITARIA 2L","Ypê","","CX",6,"2L",34.0,23.0,31.0,13.4,0,""],["limpeza","AGUA SANITARIA 1L","Candura","","CX",12,"1L",34.0,26.0,27.0,13.8,0,""],["limpeza","AGUA SANITARIA 5L","Candura","","CX",4,"5L",39.0,27.0,30.0,22.1,0,""],["limpeza","AMACIANTE 2L","Ypê","","CX",6,"2L",36.0,21.0,31.0,13.0,0,""],["limpeza","AMACIANTE 5L","Ypê","","CX",4,"5L",40.0,27.0,31.0,22.0,0,""],["limpeza","AMACIANTE 2L","Fofo","7891038127448","CX",6,"2L",36.0,21.0,31.0,13.0,0,"https://www.systax.com.br/ean/07891038127448"],["limpeza","AMACIANTE 5L","Fofo","","CX",4,"5L",40.0,27.0,31.0,22.0,0,""],["limpeza","AMACIANTE CONCENTRADO 1,5L","Downy","","CX",6,"1,5L",33.0,21.0,28.0,10.0,0,""],["limpeza","AMACIANTE CONCENTRADO 1L","Comfort","","CX",12,"1L",38.0,27.0,25.0,13.4,0,""],["limpeza","DESINFETANTE 500ML","Pinho Sol","","CX",12,"500ml",28.0,21.0,22.0,6.8,0,""],["limpeza","DESINFETANTE 1L","Pinho Sol","","CX",12,"1L",36.0,27.0,27.0,13.6,0,""],["limpeza","DESINFETANTE 2L","Ypê (Bak)","","CX",6,"2L",34.0,23.0,31.0,13.2,0,""],["limpeza","DESINFETANTE 500ML","Ypê (Bak)","","CX",12,"500ml",28.0,21.0,22.0,6.7,0,""],["limpeza","DESINFETANTE 2L","Veja (Limpeza Pesada)","","CX",6,"2L",34.0,23.0,31.0,13.2,0,""],["limpeza","MULTIUSO 500ML","Veja","","CX",24,"500ml",34.0,23.0,23.0,13.1,0,""],["limpeza","MULTIUSO 500ML","Ypê","","CX",24,"500ml",34.0,23.0,23.0,13.1,0,""],["limpeza","LIMPA-VIDROS 500ML GATILHO","Veja Vidrex","","CX",12,"500ml",40.0,20.0,28.0,7.3,0,""],["limpeza","SABAO EM BARRA 5X200G","Ypê","","FD",10,"pct 5x200g",38.0,22.0,24.0,10.2,0,""],["limpeza","SABAO EM BARRA 5X200G","Brilhante","","FD",10,"pct 5x200g",38.0,22.0,24.0,10.2,0,""],["limpeza","SABAO EM BARRA 5X200G","Minuano","","FD",10,"pct 5x200g",38.0,22.0,24.0,10.2,0,""],["limpeza","PALHA DE ACO 60G (PCT 8 UN)","Bombril","","FD",20,"pct 60g",42.0,28.0,24.0,1.4,0,""],["limpeza","LA DE ACO 60G (PCT 8 UN)","Assolan","","FD",20,"pct 60g",42.0,28.0,24.0,1.4,0,""],["limpeza","ESPONJA DUPLA FACE (PCT 10)","Scotch-Brite","","CX",10,"pct 10 un",46.0,24.0,24.0,1.3,0,""],["limpeza","ESPONJA DUPLA FACE (PCT 4)","Ypê / Assolan","","FD",30,"pct 4 un",50.0,35.0,30.0,1.6,0,""],["limpeza","ALCOOL LIQUIDO 70% 1L","Itajá","7898051680806","CX",12,"1L",34.0,26.0,27.0,11.4,0,"https://cbsmed.com.br/wp-content/uploads/2022/11/004844.pdf"],["limpeza","ALCOOL LIQUIDO 70% 1L","Santa Cruz","","CX",12,"1L",34.0,26.0,27.0,11.4,0,""],["limpeza","SAPONACEO CREMOSO 450ML","Cif","","CX",12,"450ml",26.0,22.0,21.0,7.5,0,""],["limpeza","SAPONACEO EM PO 300G","Radium","","CX",24,"300g",46.0,31.0,14.0,8.0,0,""],["limpeza","LUSTRA-MOVEIS 200ML","Poliflor","","CX",24,"200ml",34.0,18.0,18.0,5.4,0,""],["limpeza","INSETICIDA AEROSSOL 450ML","SBP","","CX",12,"450ml",27.0,21.0,24.0,4.9,0,""],["limpeza","INSETICIDA AEROSSOL 420ML","Raid","","CX",12,"420ml",27.0,21.0,24.0,4.8,0,""],["limpeza","NAFTALINA BOLA 30G","Diversas","","CX",48,"30g",30.0,20.0,15.0,2.0,0,""],["limpeza","SACO DE LIXO 50L (PCT 10)","Diversas","","FD",50,"pct 10 un",55.0,40.0,30.0,12.8,0,""],["limpeza","SACO DE LIXO 100L (PCT 5)","Diversas","","FD",40,"pct 5 un",55.0,40.0,35.0,12.3,0,""],["limpeza","RODO 40CM COM CABO","Diversas","","FD",12,"1 un",130.0,45.0,25.0,5.6,0,""],["limpeza","VASSOURA COM CABO","Diversas","","FD",12,"1 un",130.0,35.0,40.0,6.2,0,""],["limpeza","PANO DE CHAO ALVEJADO","Diversas","","FD",60,"1 un",50.0,40.0,30.0,7.4,0,""],["limpeza","SODA CAUSTICA ESCAMAS 1KG","Diversas","","CX",12,"1kg",50.0,38.0,16.0,13.2,0,""],["limpeza","DESENTUPIDOR EM PO 300G","Diabo Verde","","CX",24,"300g",36.0,24.0,18.0,8.0,0,""],["limpeza","CLORO GEL 2L","Candura","","CX",6,"2L",34.0,23.0,31.0,13.8,0,""],["limpeza","TIRA-MANCHAS PO 450G","Vanish","","CX",12,"450g",47.0,35.0,15.0,6.3,0,""],["limpeza","TIRA-MANCHAS LIQUIDO 1,5L","Vanish","","CX",6,"1,5L",30.0,22.0,29.0,10.0,0,""],["higiene","PAPEL HIGIENICO FOLHA DUPLA NEUTRO 4 ROLOS 30M","Neve","","FD",16,"4 rolos",45.0,45.0,41.0,6.4,0,""],["higiene","PAPEL HIGIENICO FOLHA DUPLA 12 ROLOS 30M","Neve","","FD",4,"12 rolos",66.0,45.0,21.0,4.8,0,""],["higiene","PAPEL HIGIENICO FOLHA TRIPLA SUPREME 4 ROLOS 20M","Neve","","FD",16,"4 rolos",44.0,44.0,41.0,5.6,0,""],["higiene","PAPEL HIGIENICO VIP FOLHA DUPLA NEUTRO 4 ROLOS 30M","Personal","17896110000173","FD",16,"4 rolos",44.0,44.0,40.0,6.0,0,"https://www.drogaraia.com.br/papel-higienico-personal-vip-folha-dupla-neutro-30m-16-embalagens-com-4-unidades-1207495.html"],["higiene","PAPEL HIGIENICO FOLHA SIMPLES 4 ROLOS 30M","Personal","","FD",16,"4 rolos",41.0,41.0,40.0,3.7,0,""],["higiene","PAPEL HIGIENICO FOLHA SIMPLES 12 ROLOS 30M","Personal","","FD",4,"12 rolos",62.0,42.0,20.0,2.9,0,""],["higiene","PAPEL HIGIENICO FOLHA SIMPLES 4 ROLOS 30M","Familia","","FD",16,"4 rolos",41.0,41.0,40.0,3.8,0,""],["higiene","PAPEL HIGIENICO FOLHA DUPLA 4 ROLOS 30M","Sublime","","FD",16,"4 rolos",44.0,44.0,40.0,6.1,0,""],["higiene","PAPEL HIGIENICO FOLHA DUPLA 4 ROLOS 30M","Mili","","FD",16,"4 rolos",44.0,44.0,40.0,6.1,0,""],["higiene","PAPEL HIGIENICO FOLHA DUPLA 12 ROLOS 30M","Mili","","FD",4,"12 rolos",66.0,44.0,21.0,4.7,0,""],["higiene","PAPEL HIGIENICO ROLAO INOVATTA ECO FOLHA SIMPLES 300M","Santher","17896110005826","FD",8,"1 rolo 300m",17.5,35.0,40.2,4.61,1,"https://ticket.fabesul.com.br/catalogo/19184-FICHA.pdf"],["higiene","PAPEL TOALHA 2 ROLOS 55 TOALHAS","Snob","","FD",12,"2 rolos",48.0,36.0,44.0,3.0,0,""],["higiene","PAPEL TOALHA KITCHEN 2 ROLOS 60 TOALHAS","Kitchen (Santher)","","FD",12,"2 rolos",48.0,36.0,44.0,3.1,0,""],["higiene","PAPEL TOALHA INTERFOLHA 2 DOBRAS 22X20 1000 FL","Mili","","FD",4,"250 folhas",46.0,23.0,12.0,1.7,0,""],["higiene","GUARDANAPO FOLHA SIMPLES 24X22 PCT 50","Snob","","FD",40,"50 un",48.0,26.0,24.0,2.5,0,""],["higiene","GUARDANAPO FOLHA DUPLA 33X30 PCT 50","Personal","","FD",24,"50 un",52.0,32.0,28.0,3.4,0,""],["higiene","FRALDA CONFORT SEC G PACOTE MEGA 34 UN","Pampers","","FD",4,"34 un",50.0,40.0,38.0,4.9,0,""],["higiene","FRALDA TRIPLA PROTECAO G PACOTE MEGA 40 UN","Huggies","","CX",4,"40 un",52.0,40.0,40.0,5.8,0,""],["higiene","FRALDA DIA & NOITE G PACOTE MEGA 46 UN","MamyPoko","","FD",4,"46 un",50.0,42.0,40.0,6.3,0,""],["higiene","FRALDA ULTRASEC G PACOTE 30 UN","Babysec","","FD",6,"30 un",60.0,38.0,40.0,6.2,0,""],["higiene","FRALDA GERIATRICA PLUS G PACOTE 8 UN","Bigfral","","FD",6,"8 un",54.0,36.0,36.0,4.6,0,""],["higiene","ABSORVENTE BASICO SECA COM ABAS 8 UN","Always","","CX",24,"8 un",42.0,28.0,26.0,1.8,0,""],["higiene","ABSORVENTE GEL TRIPLA PROTECAO COM ABAS 8 UN","Intimus","","CX",24,"8 un",42.0,28.0,26.0,1.8,0,""],["higiene","ABSORVENTE ESPECIAL ADAPT COM ABAS 8 UN","Sempre Livre","","CX",24,"8 un",42.0,28.0,26.0,1.7,0,""],["higiene","SABONETE BARRA 85G","Lux","","CX",144,"85 g",48.0,37.0,20.0,13.4,0,""],["higiene","SABONETE BARRA ANTIBACTERIANO 85G","Protex","","CX",144,"85 g",46.0,38.0,20.0,13.4,0,""],["higiene","SABONETE BARRA SUAVE 90G","Francis","","CX",144,"90 g",48.0,37.0,21.0,14.1,0,""],["higiene","SABONETE BARRA NATURALS 85G","Palmolive","","CX",72,"85 g",38.0,24.0,20.0,6.8,0,""],["higiene","SABONETE BARRA 84G","Rexona","","CX",72,"84 g",38.0,24.0,20.0,6.7,0,""],["higiene","SABONETE BARRA VEGETAL PATCHOULY 90G","Phebo","17896512934533","CX",144,"90 g",48.0,37.0,21.0,14.0,0,"https://www.systax.com.br/ean/17896512934533/caixa-144-sabonete-barra-vegetal-patchouly-phebo-envoltorio-90g"],["higiene","CREME DENTAL MAXIMA PROTECAO ANTICARIES 90G","Colgate","","CX",144,"90 g",46.0,40.0,22.0,17.0,0,""],["higiene","CREME DENTAL DENTES BRANCOS 90G","Sorriso","","CX",144,"90 g",46.0,40.0,22.0,16.8,0,""],["higiene","CREME DENTAL RED HOT 90G","Close Up","","CX",144,"90 g",46.0,40.0,22.0,16.8,0,""],["higiene","ESCOVA DENTAL CLASSIC MEDIA","Colgate","","CX",72,"1 un",45.0,30.0,22.0,2.2,0,""],["higiene","ESCOVA DENTAL INDICATOR PLUS 35 MACIA","Oral-B","","CX",72,"1 un",45.0,30.0,22.0,2.3,0,""],["higiene","SHAMPOO 350ML","Seda","7891037012936","CX",12,"350 ml",32.0,24.0,22.0,4.9,0,""],["higiene","CONDICIONADOR 350ML","Seda","","CX",12,"350 ml",32.0,24.0,22.0,5.0,0,""],["higiene","SHAMPOO 350ML","Pantene","","CX",12,"350 ml",32.0,24.0,23.0,5.0,0,""],["higiene","DESODORANTE AEROSOL 150ML","Rexona","","CX",12,"150 ml",24.0,18.0,17.0,2.1,0,""],["higiene","DESODORANTE AEROSOL 150ML","Nivea","","CX",12,"150 ml",24.0,18.0,17.0,2.0,0,""],["higiene","LOCAO HIDRATANTE MILK 400ML","Nivea","","CX",12,"400 ml",30.0,23.0,22.0,5.7,0,""],["higiene","HASTES FLEXIVEIS COTONETE 75 UN","Cotonete (Johnson's)","","CX",48,"75 un",44.0,30.0,25.0,2.3,0,""],["higiene","ALGODAO HIDROFILO 50G","Cremer","","FD",24,"50 g",50.0,40.0,32.0,1.5,0,""],["higiene","APARELHO DE BARBEAR PRESTOBARBA ULTRAGRIP 2 UN","Gillette","","CX",48,"2 un",40.0,30.0,25.0,1.8,0,""],["higiene","LENCO UMEDECIDO TRIPLA PROTECAO 48 UN","Huggies","","CX",24,"48 un",45.0,37.0,30.0,7.1,0,""],["higiene","FIO DENTAL TOTAL 25M","Colgate","","CX",72,"25 m",30.0,20.0,15.0,1.1,0,""],["higiene","COPO PLASTICO PP 200ML CF-200 TRANSLUCIDO","Copobras","","CX",25,"100 un",52.0,37.0,37.0,5.2,0,""],["higiene","COPO PLASTICO PP 200ML","Totalplast","","CX",25,"100 un",52.0,37.0,37.0,5.0,0,""],["higiene","COPO PLASTICO PP 50ML CAFE CF-050","Copobras","","CX",50,"100 un",51.0,27.0,27.0,4.4,0,""],["higiene","COPO PLASTICO PP 300ML CF-300","Copobras","","CX",20,"100 un",57.0,40.0,32.0,5.2,0,""],["higiene","PRATO DESCARTAVEL PS 15CM PR-015","Copobras","","CX",50,"10 un",34.0,32.0,34.0,2.4,0,""],["higiene","PRATO DESCARTAVEL PS 21CM PR-021","Copobras","","CX",25,"10 un",46.0,23.0,40.0,2.5,0,""],["higiene","GARFO DESCARTAVEL REFEICAO PCT 50","Strawplast","","CX",20,"50 un",40.0,30.0,20.0,3.4,0,""],["higiene","PAPEL ALUMINIO 45CM X 7,5M","Wyda","7898933283040","CX",24,"1 rolo",48.0,31.0,21.0,4.7,0,""],["higiene","FILME PVC 28CM X 30M","Wyda","","CX",24,"1 rolo",30.0,33.0,21.0,5.1,0,""],["higiene","SACO PARA LIXO 50L PRETO ROLO 10 UN","Embalixo","","CX",50,"10 un",50.0,35.0,30.0,7.9,0,""],["higiene","SACOLA PLASTICA ALCA CAMISETA 40X50 BRANCA PCT 1KG","Generica","","FD",5,"1 kg",42.0,30.0,25.0,5.1,0,""],["higiene","PALITO DE DENTE CX 100 UN","Gina","","FD",25,"100 un",30.0,20.0,15.0,0.6,0,""],["higiene","VELA BRANCA N7 PCT 8 UN","Uchoa","","CX",24,"8 un",40.0,30.0,20.0,5.1,0,""],["higiene","FOSFORO PINHEIRO PCT 10 CAIXAS","Fiat Lux","7896007912124","FD",50,"10 caixas",45.0,30.0,20.0,5.6,0,""],["higiene","PILHA ALCALINA AA CARTELA 2","Duracell","","CX",144,"2 un",45.0,30.0,25.0,8.5,0,""],["higiene","PILHA ALCALINA AAA CARTELA 4","Rayovac","","CX",144,"4 un",45.0,30.0,25.0,10.2,0,""],["eletro","GELADEIRA 1 PORTA 240L CYCLE DEFROST RE31","Electrolux","","UN",1,"240L",65.0,57.9,144.2,40.0,1,"https://loja.electrolux.com.br/geladeira-refrigerador-degelo-pratico-240l-cycle-defrost-branco-re31-electrolux/p"],["eletro","GELADEIRA 1 PORTA 261L DEGELO SECO CRA30","Consul","7891129588608","UN",1,"261L",66.0,58.0,146.0,42.0,0,"https://www.gazin.com.br/produto/geladeira-consul-263l-1-porta-degelo-seco-cra30mb/9709/branco/220-volts"],["eletro","GELADEIRA FROST FREE DUPLEX 310L TF39S","Electrolux","7896584080087","UN",1,"310L",65.7,63.3,173.9,54.0,1,"https://loja.electrolux.com.br/geladeira-refrigerador-frost-free-310-litros-platinum-tf39s-electrolux/p"],["eletro","GELADEIRA FROST FREE DUPLEX 375L BRM45JB","Brastemp","","UN",1,"375L",74.7,65.2,180.0,59.0,1,"https://www.brastemp.com.br/geladeira-brastemp-frost-free-duplex-375-litros-cor-branca-com-espaco-adapt-brm45jb-326031047/p"],["eletro","GELADEIRA FROST FREE DUPLEX 410L CRM50","Consul","","UN",1,"410L",77.0,74.0,190.0,70.0,0,""],["eletro","FREEZER HORIZONTAL 1 PORTA 314L H330","Electrolux","7909569246122","UN",1,"314L",110.0,78.5,96.0,49.5,1,"https://loja.electrolux.com.br/freezer-horizontal-314l-electrolux--h330--/p"],["eletro","FREEZER HORIZONTAL 2 PORTAS 385L H400","Electrolux","","UN",1,"385L",130.5,76.3,91.5,58.0,0,""],["eletro","FREEZER HORIZONTAL 1 PORTA 309L CHA31","Consul","","UN",1,"309L",103.0,74.0,98.0,45.0,0,""],["eletro","FREEZER VERTICAL 1 PORTA 142L","Consul","","UN",1,"142L",62.0,60.0,148.0,45.0,0,""],["eletro","FOGAO 4 BOCAS PISO EFFICIENT FE4GB","Electrolux","7909569490457","UN",1,"4 bocas",69.5,56.5,100.2,31.8,1,"https://loja.electrolux.com.br/fogao-4-bocas-electrolux-preto-efficient-mesa-vidro--tripla-chama-e-perfectcook--fe4gb-/p"],["eletro","FOGAO 5 BOCAS PISO EFFICIENT FE5GB","Electrolux","7909569440032","UN",1,"5 bocas",79.2,69.0,100.0,43.0,1,"https://loja.electrolux.com.br/fogao-5-bocas-electrolux-preto-efficient-mesa-de-vidro--perfectcook-e-grades-de-ferro--fe5gb-/p"],["eletro","FOGAO 4 BOCAS MONACO PLUS MESA INOX","Atlas","7897180512415","UN",1,"4 bocas",58.0,53.0,93.0,18.0,0,"https://www.gazin.com.br/produto/fogao-atlas-monaco-plus-4-bocas-automatico-mesa-de-inox-forno/10292/branco/bivolt"],["eletro","FOGAO 4 BOCAS BALI","Esmaltec","","UN",1,"4 bocas",58.0,55.0,92.0,20.0,0,""],["eletro","FOGAO 5 BOCAS DECOR","Mueller","","UN",1,"5 bocas",75.0,60.0,95.0,27.0,0,""],["eletro","FOGAO 4 BOCAS CFO4N","Consul","","UN",1,"4 bocas",60.0,56.0,97.0,26.0,0,""],["eletro","COOKTOP 4 BOCAS GAS KE4GP","Electrolux","7909569244081","UN",1,"4 bocas",58.5,48.5,19.0,7.2,1,"https://loja.electrolux.com.br/cooktop-a-gas-4-bocas--ke4gp-electrolux/p"],["eletro","COOKTOP 5 BOCAS GAS KE5GP","Electrolux","","UN",1,"5 bocas",77.0,55.0,19.0,10.0,0,""],["eletro","MICRO-ONDAS 20L MTD30","Electrolux","7896584062052","UN",1,"20L",49.4,39.7,31.3,11.9,1,"https://loja.electrolux.com.br/forno-micro-ondas-painel-seguro-mtd30-electrolux/p"],["eletro","MICRO-ONDAS 31L MI41T","Electrolux","7896584066111","UN",1,"31L",55.4,45.7,34.8,15.7,1,"https://loja.electrolux.com.br/micro-ondas-painel-integrado-electrolux-mi4it/p"],["eletro","MICRO-ONDAS 20L MRAS22","Midea","","UN",1,"20L",49.0,39.0,31.0,11.5,0,""],["eletro","MICRO-ONDAS 30L PMO33","Philco","","UN",1,"30L",56.0,44.0,35.0,15.0,0,""],["eletro","LAVADORA 12KG LAC12","Electrolux","7896584072143","UN",1,"12kg",70.7,62.5,105.5,41.2,1,"https://loja.electrolux.com.br/lavadora-compacta-lac12-com-dispenser-autolimpante-cesto-inox-electrolux/p"],["eletro","LAVADORA 12KG EFFICIENT LET12","Electrolux","7909569501740","UN",1,"12kg",63.5,59.0,106.0,34.0,1,"https://loja.electrolux.com.br/maquina-de-lavar-electrolux-efficient-12kg-branca-compacta--economica-e-pre-diluicao-let12/p"],["eletro","LAVADORA 12KG CWH12BB","Consul","","UN",1,"12kg",64.0,62.0,105.0,35.0,0,""],["eletro","LAVADORA 12KG BWK12","Brastemp","","UN",1,"12kg",66.0,63.0,110.0,42.0,0,""],["eletro","LAVADORA 12KG TOP LOAD","Midea","","UN",1,"12kg",63.0,62.0,103.0,38.0,0,""],["eletro","LAVADORA 10KG CWB10","Consul","","UN",1,"10kg",61.0,58.0,100.0,31.0,0,""],["eletro","TANQUINHO SEMIAUTOMATICO 10KG ECOMAX LCS10","Colormaq","","UN",1,"10kg",60.0,52.0,99.0,11.0,0,""],["eletro","TANQUINHO LAVAMAX ECO 10KG","Suggar","","UN",1,"10kg",58.0,52.0,97.0,10.0,0,""],["eletro","CENTRIFUGA DE ROUPAS 10KG","Mueller","","UN",1,"10kg",47.0,47.0,78.0,11.0,0,""],["eletro","SMART TV LED 32 HD T4300","Samsung","","UN",1,"32pol",87.9,12.7,50.0,5.4,1,"https://www.samsung.com/ph/tvs/hd-tv/t4300-32-inch-hd-smart-tv-ua32t4300agxxp"],["eletro","SMART TV LED 32 HD","Philco","","UN",1,"32pol",81.0,12.0,50.0,5.0,0,""],["eletro","SMART TV LED 43 4K 43UT8000PSA","LG","7893299951855","UN",1,"43pol",105.5,14.2,66.0,10.6,1,"https://www.lg.com/br/tvs-e-soundbars/tv-uhd-4k/43ut8000psa/"],["eletro","SMART TV LED 43 FHD","TCL","","UN",1,"43pol",104.0,13.0,64.0,8.8,0,""],["eletro","SMART TV LED 50 4K 50UT8000PSA","LG","7893299958755","UN",1,"50pol",121.5,15.2,77.5,14.6,1,"https://www.lg.com/br/tvs-e-soundbars/tv-uhd-4k/50ut8000psa/"],["eletro","SMART TV LED 50 4K UN50U8600F","Samsung","7892509140737","UN",1,"50pol",124.8,15.4,76.0,12.5,1,"https://site.fastshop.com.br/samsung-smart-tv-50--uhd-4k-u8600f-2025-sgun50u860pto_prd/p"],["eletro","SMART TV LED 55 4K 55UT8000PSA","LG","7893299958748","UN",1,"55pol",136.0,16.2,81.0,19.0,1,"https://www.lg.com/br/tvs-e-soundbars/tv-uhd-4k/55ut8000psa/"],["eletro","SMART TV LED 55 4K","TCL","","UN",1,"55pol",135.0,15.0,84.0,16.0,0,""],["eletro","AR SPLIT 12000 BTUS EVAPORADORA JI12R","Electrolux","7909569412329","UN",1,"12000BTU",91.6,27.3,37.6,11.0,1,"https://loja.electrolux.com.br/ar-condicionado-split-electrolux-inverter-12000-btus-color-adapt-quente-frio-ji12r-je12r/p"],["eletro","AR SPLIT 12000 BTUS CONDENSADORA JE12R","Electrolux","7909569412336","UN",1,"12000BTU",80.0,36.0,58.0,23.9,0,"https://loja.electrolux.com.br/ar-condicionado-split-electrolux-inverter-12000-btus-color-adapt-quente-frio-ji12r-je12r/p"],["eletro","AR SPLIT 9000 BTUS EVAPORADORA","Electrolux","","UN",1,"9000BTU",85.0,28.0,34.0,9.5,0,""],["eletro","AR SPLIT 9000 BTUS CONDENSADORA","Electrolux","","UN",1,"9000BTU",79.0,34.0,56.0,24.0,0,""],["eletro","VENTILADOR DE COLUNA 40CM VSP-40C","Mondial","","UN",1,"40cm",50.0,22.0,70.0,6.0,0,""],["eletro","VENTILADOR DE MESA 40CM","Arno","","UN",1,"40cm",45.0,22.0,45.0,3.5,0,""],["eletro","VENTILADOR DE COLUNA 40CM","Britania","","UN",1,"40cm",50.0,22.0,70.0,5.5,0,""],["eletro","LIQUIDIFICADOR 1000W COPO VIDRO EBS30","Electrolux","","UN",1,"1,95L",24.0,22.0,44.0,3.6,0,""],["eletro","LIQUIDIFICADOR TURBO L-99","Mondial","","UN",1,"2,2L",21.0,20.0,40.0,2.4,0,""],["eletro","BATEDEIRA PLANETARIA","Mondial","","UN",1,"4L",38.0,26.0,36.0,4.8,0,""],["eletro","AIR FRYER 4,6L EAF15","Electrolux","","UN",1,"4,6L",38.0,34.0,38.0,5.75,0,""],["eletro","AIR FRYER 4L","Mondial","","UN",1,"4L",34.0,31.0,37.0,4.8,0,""],["eletro","SANDUICHEIRA","Britania","","UN",1,"",26.0,24.0,11.0,1.3,0,""],["eletro","FERRO DE PASSAR A VAPOR","Arno","","UN",1,"",30.0,15.0,16.0,1.6,0,""],["eletro","PANELA ELETRICA DE ARROZ 5 XICARAS","Mondial","","UN",1,"5 xic",30.0,28.0,28.0,2.5,0,""],["eletro","CAFETEIRA ELETRICA 30 XICARAS","Philco","","UN",1,"30 xic",30.0,22.0,35.0,2.0,0,""],["eletro","BEBEDOURO DE GARRAFAO COLUNA","IBBL","","UN",1,"garrafao 20L",37.0,35.0,105.0,15.0,0,""],["eletro","BEBEDOURO DE GARRAFAO MESA EGM30","Esmaltec","","UN",1,"garrafao 20L",36.0,35.0,50.0,10.0,0,""],["eletro","PURIFICADOR DE AGUA PE11B","Electrolux","","UN",1,"",30.0,25.0,45.0,4.5,0,""],["eletro","ASPIRADOR DE PO VERTICAL STK14","Electrolux","","UN",1,"",59.0,22.0,16.0,2.8,0,""],["eletro","ASPIRADOR DE PO SEM SACO ABS05","Electrolux","","UN",1,"",45.0,30.0,32.0,6.0,0,""],["eletro","SECADOR DE CABELO","Taiff","","UN",1,"",28.0,10.0,25.0,0.9,0,""],["eletro","MICRO SYSTEM","Philco","","UN",1,"",45.0,30.0,30.0,5.0,0,""],["eletro","CAIXA DE SOM AMPLIFICADA","Mondial","","UN",1,"",38.0,35.0,58.0,9.0,0,""],["eletro","CELULAR SMARTPHONE (CAIXA)","Samsung","","UN",1,"",17.0,9.0,5.0,0.4,0,""],["eletro","NOTEBOOK 15,6 IDEAPAD","Lenovo","","UN",1,"",50.0,30.0,7.0,2.6,0,""],["eletro","IMPRESSORA MULTIFUNCIONAL ECOTANK L3250","Epson","","UN",1,"",47.0,37.0,24.0,6.4,0,""],["eletro","COLCHAO CASAL D33 138X188X14 SELADO","Ortobom","","UN",1,"casal",190.0,140.0,15.0,23.5,0,""],["eletro","COLCHAO SOLTEIRO D28 88X188X14","Ortobom","","UN",1,"solteiro",190.0,90.0,15.0,10.0,0,""],["eletro","BOTIJAO DE GAS P13 VAZIO","","","UN",1,"13kg",36.0,36.0,48.0,13.5,0,""]];
+var SR_CAT_CAMPOS = ["cat", "desc", "marca", "ean", "emb", "un", "cont", "c", "l", "a", "kg", "fonte1", "fonte"];
+function srCatBase() {
+  if (SR3DGL.catBase) return SR3DGL.catBase;
+  SR3DGL.catBase = SR_CAT_BASE.map(function (r, i) {
+    var o = { id: "b" + i, base: true };
+    SR_CAT_CAMPOS.forEach(function (k, j) { o[k] = r[j]; });
+    o.conf = o.fonte1 ? "fonte" : "estimado"; delete o.fonte1;
+    return o;
+  });
+  return SR3DGL.catBase;
+}
+function srCatUser() { if (!Array.isArray(state.produtosCatalogo)) state.produtosCatalogo = []; return state.produtosCatalogo; }
+function srCatalogo() {
+  var u = srCatUser(), porId = {};
+  u.forEach(function (x) { porId[x.id] = x; });
+  var out = srCatBase().filter(function (b) { return !porId[b.id]; });
+  u.forEach(function (x) { if (!x.removido) out.push(x); });
+  if (SR3DGL.catVer !== out.length + ":" + u.length + ":" + (u.length ? u[u.length - 1].atualizadoEm : 0)) { SR3DGL.catIdx = null; SR3DGL.catVer = out.length + ":" + u.length + ":" + (u.length ? u[u.length - 1].atualizadoEm : 0); }
+  return out;
+}
+function srCatM3(x) { return (Number(x.c) || 0) * (Number(x.l) || 0) * (Number(x.a) || 0) / 1e6; }
+
+/* --- normalização e casamento por descrição --- */
+var SR_CAT_RUIDO = { "DE": 1, "DA": 1, "DO": 1, "COM": 1, "C": 1, "E": 1, "EM": 1, "P": 1, "PARA": 1, "UN": 1, "UND": 1, "UNID": 1, "CX": 1, "FD": 1, "FARDO": 1, "CAIXA": 1, "PCT": 1, "PACOTE": 1, "X": 1, "TP": 1, "TIPO": 1, "PET": 0, "LATA": 0 };
+function srCatNorm(s) {
+  s = String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+  s = s.replace(/(\d),(\d)/g, "$1.$2");
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(LITROS|LITRO|LTS|LT|L)\b/g, function (a, n) { return " " + (+n) + "L "; })
+       .replace(/(\d+(?:\.\d+)?)\s*(ML)\b/g, function (a, n) { var v = +n; return v >= 1000 ? " " + (v / 1000) + "L " : " " + v + "ML "; })
+       .replace(/(\d+(?:\.\d+)?)\s*(KGS|KG|K)\b/g, function (a, n) { return " " + (+n) + "KG "; })
+       .replace(/(\d+(?:\.\d+)?)\s*(GRS|GR|G)\b/g, function (a, n) { var v = +n; return v >= 1000 ? " " + (v / 1000) + "KG " : " " + v + "G "; })
+       .replace(/(\d+(?:\.\d+)?)\s*(MTS|MT|M)\b/g, function (a, n) { return " " + (+n) + "M "; })
+       .replace(/\bTIPO\s*1\b|\bT\s*1\b|\bT1\b/g, " T1 ");
+  return s.split(/[^A-Z0-9.]+/).filter(function (t) { return t && t.length > 0 && !SR_CAT_RUIDO[t]; });
+}
+function srCatEhTam(t) { return /^\d+(\.\d+)?(L|ML|KG|G|M)$/.test(t); }
+function srCatIndice() {
+  if (SR3DGL.catIdx) return SR3DGL.catIdx;
+  var porEan = {}, lista = srCatalogo().map(function (x) {
+    String(x.ean || "").split(/[|,; ]+/).forEach(function (e) { e = e.replace(/\D/g, ""); if (e.length >= 8) { porEan[e] = x; porEan[e.replace(/^0+/, "")] = x; } });
+    var tk = srCatNorm(x.desc + " " + (x.marca || "") + " " + (x.cont || ""));
+    var uniq = {}; tk.forEach(function (t) { uniq[t] = 1; });
+    return { x: x, tk: Object.keys(uniq), marca: srCatNorm(x.marca || "") };
+  });
+  SR3DGL.catIdx = { porEan: porEan, lista: lista };
+  return SR3DGL.catIdx;
+}
+function srCatAchar(desc, eans) {
+  var I = srCatIndice();
+  for (var i = 0; i < (eans || []).length; i++) {
+    var e = String(eans[i] || "").replace(/\D/g, "");
+    if (e.length >= 8 && (I.porEan[e] || I.porEan[e.replace(/^0+/, "")])) return { x: I.porEan[e] || I.porEan[e.replace(/^0+/, "")], score: 1, por: "EAN" };
+  }
+  var tk = srCatNorm(desc); if (!tk.length) return null;
+  var set = {}; tk.forEach(function (t) { set[t] = 1; });
+  var tamItem = tk.filter(srCatEhTam);
+  var melhor = null;
+  I.lista.forEach(function (e) {
+    var w = 0, wt = 0, palavras = 0, tamOk = 0, tamRuim = 0;
+    e.tk.forEach(function (t) {
+      var peso = srCatEhTam(t) ? 3 : (e.marca.indexOf(t) >= 0 ? 2 : (/^\d+$/.test(t) ? 0.5 : 1.5));
+      wt += peso;
+      if (set[t]) { w += peso; if (srCatEhTam(t)) tamOk++; else if (!/^\d+$/.test(t)) palavras++; }
+    });
+    var tamE = e.tk.filter(srCatEhTam);
+    if (tamItem.length && tamE.length && !tamOk) tamRuim = 1;
+    if (!palavras) return;
+    var cobE = w / (wt || 1), cobI = (palavras + tamOk) / tk.length;
+    var sc = 0.6 * cobE + 0.4 * Math.min(1, cobI) - (tamRuim ? 0.35 : 0);
+    if (!melhor || sc > melhor.score) melhor = { x: e.x, score: sc, por: "descrição" };
+  });
+  return melhor && melhor.score >= 0.48 ? melhor : null;
+}
+/* densidade típica (kg/m³) por categoria, tirada do próprio catálogo */
+var SR_CAT_PALAVRAS = [
+  ["eletro", /GELADEIRA|REFRIGERADOR|FREEZER|FOGAO|COOKTOP|MICRO.?ONDAS|LAVADORA|LAVA.?ROUPA|TANQUINHO|CENTRIFUGA|\bTV\b|TELEVISOR|SMART TV|AR.?CONDICIONADO|SPLIT|VENTILADOR|LIQUIDIFICADOR|BATEDEIRA|AIR.?FRYER|FRITADEIRA|SANDUICHEIRA|FERRO DE PASSAR|CAFETEIRA|BEBEDOURO|PURIFICADOR|ASPIRADOR|SECADOR|NOTEBOOK|IMPRESSORA|COLCHAO|CELULAR|SMARTPHONE|CAIXA DE SOM|MICRO.?SYSTEM/],
+  ["bebidas", /REFRIG|REFRI\b|AGUA MINERAL|AGUA S\/GAS|AGUA C\/GAS|CERVEJA|CERV\b|SUCO|NECTAR|ENERGETICO|VINHO|CACHACA|AGUARDENTE|VODKA|WHISKY|GUARANA|COCA|PEPSI|FANTA|SPRITE|ISOTONICO|CHA PRONTO|LEITE UHT|LEITE INTEGRAL|LEITE DESN|LEITE SEMI|BEBIDA LACTEA|TODDYNHO|ACHOCOLATADO PRONTO/],
+  ["limpeza", /DETERG|SABAO|SAB\.? PO|LAVA ROUPA|AGUA SANIT|AMACIANTE|DESINF|MULTIUSO|ALCOOL|ESPONJA|BOMBRIL|LA DE ACO|PALHA DE ACO|INSETIC|CLORO|LIMPA|SAPONACEO|LUSTRA|NAFTALINA|SACO P\/ LIXO|SACO DE LIXO|SACO LIXO|VASSOURA|RODO|PANO DE CHAO|SODA CAUST|TIRA MANCHA|VANISH/],
+  ["higiene", /PAPEL HIG|PAP\.? HIG|PAPEL TOALHA|GUARDANAPO|FRALDA|ABSORV|SABONETE|CREME DENTAL|DENTAL|ESCOVA|SHAMPOO|CONDICIONADOR|DESOD|HIDRATANTE|COTONETE|HASTE|ALGODAO|APARELHO DE BARB|LENCO|FIO DENTAL|COPO DESC|COPO PLAST|PRATO DESC|TALHER|PAPEL ALUMINIO|FILME PVC|SACOLA|PALITO|VELA|FOSFORO|PILHA/],
+];
+function srCatCategoria(desc) {
+  var s = String(desc || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+  for (var i = 0; i < SR_CAT_PALAVRAS.length; i++) if (SR_CAT_PALAVRAS[i][1].test(s)) return SR_CAT_PALAVRAS[i][0];
+  return "mercearia";
+}
+function srCatDensidades() {
+  if (SR3DGL.catDens) return SR3DGL.catDens;
+  var g = {};
+  srCatBase().forEach(function (x) { var v = srCatM3(x); if (v > 0 && x.kg > 0) (g[x.cat] = g[x.cat] || []).push(x.kg / v); });
+  var out = {};
+  Object.keys(g).forEach(function (k) { var a = g[k].sort(function (p, q) { return p - q; }); out[k] = a[Math.floor(a.length / 2)]; });
+  SR3DGL.catDens = out; return out;
+}
+/* um item: quantas embalagens, m³ e kg. unidade = como veio (CX, FD, UN, KG…) */
+function srCatItem(desc, eans, qtd, unidade, qtSoltas) {
+  var m = srCatAchar(desc, eans), u = String(unidade || "CX").toUpperCase().replace(/[^A-Z]/g, "");
+  var ehEmb = /^(CX|CXA|CAIXA|FD|FDO|FARDO|PCT|PC|PT|DP|DISP|EN|ENG|SC|SACO|BD|BAL|FR|GL|GALAO)$/.test(u) || !u;
+  if (m) {
+    var x = m.x, emb;
+    if (u === "KG" && x.kg > 0) emb = qtd / x.kg;
+    else emb = ehEmb ? qtd : qtd / Math.max(1, x.un || 1);
+    emb += (Number(qtSoltas) || 0) / Math.max(1, x.un || 1);
+    return { m3: emb * srCatM3(x), kg: emb * (x.kg || 0), emb: emb, x: x, por: m.por, score: m.score };
+  }
+  return { m3: 0, kg: 0, emb: ehEmb ? qtd : 0, x: null, cat: srCatCategoria(desc) };
+}
+/* aplica o catálogo em todos os clientes de uma carga (itens: [desc, qtcx, qtun, eans, miu, ...]) */
+function srCatAplicar(c, forcar) {
+  var dens = srCatDensidades();
+  (c.clientes || []).forEach(function (cl) {
+    if (!cl.itens || !cl.itens.length) return;
+    if (cl.m3Arquivo && !forcar) return;   // cubagem que veio do próprio arquivo vale mais
+    var m3 = 0, kgCat = 0, hits = 0, semM3 = [];
+    cl.itens.forEach(function (it) {
+      var r = srCatItem(it[0], String(it[3] || "").split("|"), Number(it[1]) || 0, it[6] || "CX", Number(it[2]) || 0);
+      if (r.x) { m3 += r.m3; kgCat += r.kg; hits++; it[5] = r.x.id; }
+      else { it[5] = ""; semM3.push(it); }
+    });
+    // itens sem casamento: espaço pelo peso proporcional, na densidade da categoria
+    var kgSem = 0;
+    if (semM3.length) {
+      var pesoTot = Number(cl.peso) || kgCat, pesoSem = Math.max(0, pesoTot - kgCat);
+      var porItem = semM3.length ? pesoSem / semM3.length : 0;
+      semM3.forEach(function (it) { var d = dens[srCatCategoria(it[0])] || 450; m3 += porItem / d; kgSem += porItem; });
+    }
+    cl.m3 = Math.round(m3 * 1000) / 1000; cl.m3Fonte = "catalogo";
+    cl.catHits = hits; cl.catTot = cl.itens.length;
+    if (!(Number(cl.peso) > 0)) cl.peso = Math.round((kgCat + kgSem) * 10) / 10;
+  });
+  c.catAplicadoEm = Date.now();
+}
+function srCatResumo(c) {
+  var h = 0, t = 0, m3 = 0;
+  (c.clientes || []).forEach(function (cl) { h += cl.catHits || 0; t += cl.catTot || 0; m3 += Number(cl.m3) || 0; });
+  return { hits: h, tot: t, m3: m3, pct: t ? Math.round(h * 100 / t) : 0 };
+}
+
+/* ---- NF-e (XML) -> carga ---- */
+function srXmlTx(n, tag) { var e = n && n.getElementsByTagName(tag)[0]; return e ? String(e.textContent || "").trim() : ""; }
+function srLerNfe(txt) {
+  var doc = new DOMParser().parseFromString(txt, "application/xml");
+  var inf = doc.getElementsByTagName("infNFe")[0]; if (!inf) return null;
+  var ide = inf.getElementsByTagName("ide")[0], dest = inf.getElementsByTagName("dest")[0], end = dest ? dest.getElementsByTagName("enderDest")[0] : null;
+  var itens = Array.prototype.map.call(inf.getElementsByTagName("det"), function (d) {
+    var p = d.getElementsByTagName("prod")[0];
+    return { desc: srXmlTx(p, "xProd"), eans: [srXmlTx(p, "cEAN"), srXmlTx(p, "cEANTrib")].filter(function (e) { return /^\d{8,14}$/.test(e); }),
+      qtd: Number(srXmlTx(p, "qCom")) || 0, un: srXmlTx(p, "uCom"), v: Number(srXmlTx(p, "vProd")) || 0 };
+  });
+  var pesoB = 0, qVol = 0;
+  Array.prototype.forEach.call(inf.getElementsByTagName("vol"), function (v) { pesoB += Number(srXmlTx(v, "pesoB")) || 0; qVol += Number(srXmlTx(v, "qVol")) || 0; });
+  return {
+    chave: String(inf.getAttribute("Id") || "").replace(/\D/g, ""), nf: srXmlTx(ide, "nNF"), data: (srXmlTx(ide, "dhEmi") || srXmlTx(ide, "dEmi")).slice(0, 10),
+    doc: srXmlTx(dest, "CNPJ") || srXmlTx(dest, "CPF"), nome: srXmlTx(dest, "xNome"),
+    end: [srXmlTx(end, "xLgr"), srXmlTx(end, "nro")].filter(Boolean).join(", "), bairro: srXmlTx(end, "xBairro"), cidade: srXmlTx(end, "xMun"), uf: srXmlTx(end, "UF"), cep: srXmlTx(end, "CEP"),
+    itens: itens, pesoB: pesoB, qVol: qVol, valor: Number(srXmlTx(inf.getElementsByTagName("ICMSTot")[0], "vNF")) || 0,
+  };
+}
+function srImportarXml(input) {
+  var files = Array.prototype.slice.call(input.files || []);
+  if (!files.length) return;
+  Promise.all(files.map(function (f) { return f.text().then(function (t) { return { nome: f.name, txt: t }; }); })).then(function (lst) {
+    input.value = "";
+    var nfs = [], erros = [];
+    lst.forEach(function (a) { try { var n = srLerNfe(a.txt); if (n) nfs.push(n); else erros.push(a.nome); } catch (e) { erros.push(a.nome); } });
+    if (!nfs.length) { alert("Nenhum XML de NF-e válido." + (erros.length ? "\n\nNão li: " + erros.join(", ") : "")); return; }
+    var numcar = String(Date.now()).slice(-7), porCli = {}, ordem = [];
+    nfs.forEach(function (n) {
+      var k = n.doc || n.nome;
+      var cl = porCli[k];
+      if (!cl) { cl = porCli[k] = { k: k, nome: n.nome, fant: n.nome, end: n.end, bairro: n.bairro, cidade: srTitulo(n.cidade), uf: n.uf || "BA", cep: n.cep, seq: 0, obs: "", nfs: [], peds: [], peso: 0, itens: [], valor: 0, m3: 0, chaves: [], _qvol: 0 }; ordem.push(k); }
+      if (cl.nfs.indexOf(n.nf) < 0) cl.nfs.push(n.nf);
+      cl.chaves.push(n.chave); cl.peso += n.pesoB; cl.valor += n.valor; cl._qvol += n.qVol;
+      n.itens.forEach(function (it) { cl.itens.push([it.desc, it.qtd, 0, it.eans.join("|"), "", "", it.un]); });
+    });
+    var clientes = ordem.map(function (k, i) { var c0 = porCli[k]; c0.seq = i + 1; return c0; });
+    var carga = { id: "sr-" + numcar, numcar: numcar, data: (nfs[0].data || hojeISO()), arquivo: nfs.length + " NF-e (XML)", criadoEm: Date.now(), atualizadoEm: Date.now(),
+      placa: "", motorista: "", viagemId: "", clientes: clientes, vols: [], ordemArquivo: clientes.map(function (x) { return x.k; }), origemNfe: true };
+    srCatAplicar(carga, true);
+    // volumes para etiqueta: 1 por embalagem do item (catálogo), ou a qVol da NF quando não der para contar
+    var seq = 0, cod = function () { seq++; return numcar + String(seq).padStart(5, "0"); };
+    clientes.forEach(function (cl) {
+      var meus = [];
+      cl.itens.forEach(function (it) {
+        var r = srCatItem(it[0], String(it[3] || "").split("|"), Number(it[1]) || 0, it[6], 0);
+        var inteiras = Math.floor(r.emb + 1e-6), frac = r.emb - inteiras;
+        for (var q = 0; q < inteiras; q++) meus.push({ c: cod(), k: cl.k, t: "CX", d: it[0], e: (String(it[3] || "").split("|")[0] || "") });
+        if (frac > 0.01 || (!r.x && !r.emb && it[1] > 0)) meus.push({ c: cod(), k: cl.k, t: "SOL", d: "fracionado · " + it[0] });
+      });
+      if (!meus.length && cl._qvol) for (var v = 0; v < cl._qvol; v++) meus.push({ c: cod(), k: cl.k, t: "CX", d: "volume da NF " + cl.nfs.join("/") });
+      meus.forEach(function (v, i) { v.n = i + 1; v.tot = meus.length; });
+      cl.vols = meus.length; cl.peso = Math.round(cl.peso * 10) / 10; delete cl._qvol;
+      carga.vols = carga.vols.concat(meus);
+    });
+    srCargas().push(carga); state.srCargaAberta = carga.id;
+    salvar(); render();
+    var r = srCatResumo(carga);
+    alert("✓ " + nfs.length + " NF-e lida(s): " + clientes.length + " clientes, " + srFmt(clientes.reduce(function (s, x) { return s + x.peso; }, 0), 0) + " kg, " + carga.vols.length + " volumes.\n"
+      + "Espaço calculado: " + srFmtM(r.m3) + " m³ — " + r.hits + " de " + r.tot + " itens achados no catálogo (" + r.pct + "%)."
+      + (erros.length ? "\n\nNão li: " + erros.join(", ") : "") + "\n\nA ordem das paradas segue a dos arquivos — use \"Aplicar a rota sugerida\".");
+  });
+}
+
+/* ---- tela do catálogo ---- */
+function srCatSalvarItem(x) {
+  x.atualizadoEm = Date.now();
+  var u = srCatUser(), i = u.findIndex(function (y) { return y.id === x.id; });
+  if (i >= 0) u[i] = x; else u.push(x);
+  SR3DGL.catIdx = null; salvar(); render();
+}
+function srCatEditar(id) {
+  var x = srCatalogo().find(function (y) { return y.id === id; }) || { id: "u" + Date.now(), cat: "mercearia", desc: "", marca: "", ean: "", emb: "CX", un: 1, cont: "", c: 0, l: 0, a: 0, kg: 0, conf: "medido", fonte: "" };
+  var t = prompt("Produto (descrição ; marca ; EAN ; embalagem CX/FD/UN ; unidades ; C×L×A em cm ; peso kg)\nEx.: ARROZ T1 5KG ; Camil ; 7896006711155 ; FD ; 6 ; 50x38x26 ; 30,3",
+    [x.desc, x.marca, x.ean, x.emb, x.un, x.c + "x" + x.l + "x" + x.a, String(x.kg).replace(".", ",")].join(" ; "));
+  if (t == null) return;
+  var p = t.split(";").map(function (s) { return s.trim(); });
+  var d = String(p[5] || "").toLowerCase().split(/x|\*/).map(function (v) { return Number(String(v).replace(",", ".")) || 0; });
+  if (!p[0] || d.length < 3 || !(d[0] && d[1] && d[2])) { alert("Preencha pelo menos a descrição e as 3 medidas (ex.: 50x38x26)."); return; }
+  var y = Object.assign({}, x, { desc: p[0].toUpperCase(), marca: p[1] || "", ean: (p[2] || "").replace(/[^\d|]/g, ""), emb: (p[3] || "CX").toUpperCase(), un: Number(p[4]) || 1,
+    c: d[0], l: d[1], a: d[2], kg: Number(String(p[6] || "0").replace(",", ".")) || 0, conf: "medido", cat: srCatCategoria(p[0]) });
+  delete y.base; srCatSalvarItem(y);
+}
+function srCatRemover(id) {
+  if (!confirm("Tirar este produto do catálogo?")) return;
+  var u = srCatUser(), i = u.findIndex(function (y) { return y.id === id; });
+  if (i >= 0) u[i] = Object.assign({}, u[i], { removido: true, atualizadoEm: Date.now() }); else u.push({ id: id, removido: true, atualizadoEm: Date.now() });
+  SR3DGL.catIdx = null; salvar(); render();
+}
+/* importa o cadastro do cliente (CSV/Excel): colunas reconhecidas pelo nome */
+function srCatImportar(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  rfLerArquivoBytes(f).then(function (bytes) {
+    input.value = "";
+    var linhas = srLinhasDoArquivo(bytes);
+    var hi = linhas.findIndex(function (l) { return (l || []).some(function (x) { return /DESCRI/i.test(String(x)); }); });
+    if (hi < 0) { alert("Não achei a coluna DESCRIÇÃO no arquivo."); return; }
+    var cab = linhas[hi].map(function (x) { return String(x).normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim(); });
+    var col = function (re) { for (var i = 0; i < cab.length; i++) if (re.test(cab[i])) return i; return -1; };
+    var C = { desc: col(/DESCRI/), marca: col(/MARCA|FABRIC/), ean: col(/EAN|GTIN|COD.*BARRA|CODAUX/), emb: col(/EMBALAGEM|UNID.*VENDA|^UN$|^UND$/), un: col(/QT.*UN|UNID.*CX|MULTIPLO|QTD.*EMB/),
+      c: col(/COMPRIM|PROFUND/), l: col(/LARG/), a: col(/ALTUR/), kg: col(/PESO.*BRUTO|^PESO|PESOBRUTO/), vol: col(/VOLUME|CUBAG|M3/) };
+    var n = 0, agora = Date.now();
+    for (var r = hi + 1; r < linhas.length; r++) {
+      var l = linhas[r] || [], g = function (k) { return C[k] >= 0 ? String(l[C[k]] == null ? "" : l[C[k]]).trim() : ""; };
+      var desc = g("desc"); if (!desc) continue;
+      var c = srNum(g("c")), lg = srNum(g("l")), a = srNum(g("a")), vol = srNum(g("vol"));
+      if (c > 0 && c < 5) { c *= 100; lg *= 100; a *= 100; }   // veio em metros
+      if (!(c && lg && a) && vol > 0) { var lado = Math.cbrt(vol) * 100; c = lg = a = Math.round(lado * 10) / 10; }
+      if (!(c && lg && a)) continue;
+      srCatUser().push({ id: "c" + agora + "-" + r, cat: srCatCategoria(desc), desc: desc.toUpperCase(), marca: g("marca"), ean: g("ean").replace(/\D/g, ""), emb: (g("emb") || "CX").toUpperCase(), un: srNum(g("un")) || 1,
+        c: c, l: lg, a: a, kg: srNum(g("kg")), conf: "cliente", fonte: f.name, atualizadoEm: agora });
+      n++;
+    }
+    SR3DGL.catIdx = null; salvar(); render();
+    alert(n ? "✓ " + n + " produto(s) do cadastro entraram no catálogo (marcados como do cliente — valem mais que os da internet)." : "Nenhuma linha com medidas. O arquivo precisa ter descrição e comprimento/largura/altura (ou volume/cubagem).");
+  }).catch(function (e) { input.value = ""; alert("Não consegui ler: " + ((e && e.message) || e)); });
+}
+function srCatExportar() {
+  if (!window.XLSX) { alert("A biblioteca de planilha não carregou."); return; }
+  var aoa = [["Categoria", "Descrição", "Marca", "EAN", "Embalagem", "Unidades", "Conteúdo", "Comprimento (cm)", "Largura (cm)", "Altura (cm)", "Peso bruto (kg)", "m³", "kg/m³", "Origem", "Fonte"]];
+  srCatalogo().forEach(function (x) { var v = srCatM3(x); aoa.push([x.cat, x.desc, x.marca, x.ean, x.emb, x.un, x.cont || "", x.c, x.l, x.a, x.kg, Math.round(v * 10000) / 10000, v ? Math.round(x.kg / v) : "", x.conf, x.fonte || ""]); });
+  var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Catalogo");
+  XLSX.writeFile(wb, "RF_Catalogo_Embalagens_" + hojeISO().replace(/-/g, "") + ".xlsx");
+}
+function srCatHTML() {
+  var lista = srCatalogo(), aberto = state.srCatAberto;
+  var nFonte = lista.filter(function (x) { return x.conf !== "estimado"; }).length;
+  var h = '<div style="border:1px solid #333;border-radius:12px;background:#0f0f0f;margin-bottom:12px;">'
+    + '<div onclick="state.srCatAberto=!state.srCatAberto;render();" style="cursor:pointer;padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+    + '<b style="color:' + GOLD + ';">' + (aberto ? "−" : "+") + ' 📦 Catálogo de embalagens</b><span style="font-size:12px;color:#aaa;">' + lista.length + ' produtos · ' + nFonte + ' com medida de fonte/cliente/medida na doca · o resto estimado pela internet</span></div>';
+  if (!aberto) return h + '</div>';
+  var q = String(state.srCatBusca || ""), tk = srCatNorm(q);
+  var filtrada = !tk.length ? lista : lista.filter(function (x) { var s = srCatNorm(x.desc + " " + x.marca + " " + x.ean + " " + x.cat).join(" "); return tk.every(function (t) { return s.indexOf(t) >= 0; }); });
+  var cor = { fonte: "#4CAF50", cliente: "#4CAF50", medido: "#4CAF50", estimado: "#999" };
+  h += '<div style="padding:0 14px 12px 14px;"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">'
+    + '<input value="' + esc(q) + '" placeholder="buscar produto, marca ou EAN" oninput="state.srCatBusca=this.value;clearTimeout(window._srCatT);window._srCatT=setTimeout(function(){render();var e=document.getElementById(\'sr-cat-busca\');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},350);" id="sr-cat-busca" style="flex:1;min-width:200px;padding:7px;">'
+    + '<button onclick="srCatEditar(\'\')">＋ produto medido</button>'
+    + '<label style="background:#1d2a36;color:#cfe3f5;border:1px solid #7FA7C9;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;">⬆ Importar cadastro do cliente (CSV/Excel)<input type="file" style="display:none;" onchange="srCatImportar(this)"></label>'
+    + '<button onclick="srCatExportar()" style="font-size:12px;">⬇ Exportar</button></div>'
+    + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">'
+    + '<tr style="color:' + GOLD + ';text-align:left;position:sticky;top:0;background:#0f0f0f;"><th>Produto</th><th>Marca</th><th>Emb.</th><th style="text-align:right;">C×L×A cm</th><th style="text-align:right;">kg</th><th style="text-align:right;">m³</th><th>Origem</th><th></th></tr>';
+  filtrada.slice(0, 120).forEach(function (x) {
+    var v = srCatM3(x);
+    h += '<tr style="border-top:1px solid #222;"><td>' + esc(x.desc) + (x.cont ? ' <small style="color:#888;">' + esc(x.cont) + '</small>' : '') + (x.ean ? '<br><small style="color:#777;">EAN ' + esc(String(x.ean).slice(0, 14)) + '</small>' : '') + '</td><td>' + esc(x.marca || "") + '</td>'
+      + '<td>' + esc(x.emb) + ' ' + x.un + '</td><td style="text-align:right;white-space:nowrap;">' + srFmtM(x.c) + '×' + srFmtM(x.l) + '×' + srFmtM(x.a) + '</td><td style="text-align:right;">' + srFmt(x.kg, 1) + '</td><td style="text-align:right;">' + v.toFixed(3).replace(".", ",") + '</td>'
+      + '<td style="color:' + (cor[x.conf] || "#999") + ';">' + (x.fonte && /^https?:/.test(x.fonte) ? '<a href="' + esc(x.fonte) + '" target="_blank" rel="noopener" style="color:inherit;">' + x.conf + ' ↗</a>' : x.conf) + '</td>'
+      + '<td style="white-space:nowrap;"><button onclick="srCatEditar(\'' + x.id + '\')" title="corrigir com a medida real" style="font-size:11px;">✎</button><button onclick="srCatRemover(\'' + x.id + '\')" style="font-size:11px;">✕</button></td></tr>';
+  });
+  h += '</table></div><div style="font-size:11px;color:#888;margin-top:6px;line-height:1.5;">' + (filtrada.length > 120 ? 'Mostrando 120 de ' + filtrada.length + '. ' : '')
+    + 'Base inicial pesquisada na internet em 08/10/2026. Fabricante quase nunca publica a medida da caixa de embarque, então a maioria está <b>estimada</b> (tamanho da unidade × arranjo); <b>fonte</b> = medida tirada da página citada. '
+    + 'Quando chegar o cadastro de produtos do cliente (descrição, EAN, embalagem, comprimento/largura/altura ou cubagem, peso), use "Importar cadastro": esses valem mais que os da internet. Corrija com ✎ quando medir uma caixa na doca.</div></div>';
+  return h + '</div>';
 }
 
 /* ---- v586: carga de EXEMPLO para a demonstração ---------------------------
@@ -34881,7 +35216,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v599 — CATÁLOGO DE EMBALAGENS E NF-e: a São Roque entrega de tudo (alimento, bebida, limpeza, higiene, eletro). O app tem um catálogo com 321 produtos pesquisados na internet em 08/10/2026 (medida C×L×A e peso bruto da caixa master/fardo/produto embalado; 18 com medida de fonte citada, os demais ESTIMADOS pelo tamanho da unidade × arranjo, porque fabricante quase nunca publica a caixa de embarque), mais o que a RF acrescentar: cadastro do cliente importado (vale mais), produto medido na doca (✎) e edições. Densidade típica do catálogo: bebidas ~640 kg/m³, mercearia ~550, limpeza ~510, higiene/papel ~80, eletro ~100. Importação de NF-e (XML, vários de uma vez): cada destinatário vira um cliente, cada item é casado com o catálogo pelo EAN ou pela descrição (marca, produto e tamanho); o espaço do cliente é a soma real dos itens; item sem casamento usa o peso pela densidade da categoria; os volumes para etiqueta saem de 1 por embalagem. A planilha da carga (Winthor) também passa pelo catálogo quando não traz cubagem. Na carga batida, a carga fica solta sobre paletes, espalhada pelo assoalho até a altura que o volume pede (o PESO limita antes do teto: Toco 8 t), e a divisão entre veículos mede o espaço em m³. Densidade padrão (sem itens, ex. 910 sintético) passou a 450 kg/m³. v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
@@ -41293,7 +41628,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "compras", "extratos", "medicoes", "campanhas"];   // v586: saoroque; v423; v467: medicoes; v564: campanhas
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423; v467: medicoes; v564: campanhas
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -41311,7 +41646,7 @@ revalidarSessaoAoAbrir();
   /* v418: paradasNaoVieram tambem entra por UNIAO. Quem tira a parada pode ser
      o tablet enquanto o PC esta com a caixa antiga aberta; por substituicao o
      PC devolveria a parada removida na proxima subida. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips"];   // v423; v586
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo"];   // v423; v586; v599
   /* v400: ficha de motorista e editada em mais de um aparelho (a recepcao
      preenche, o Renato confere). Uniao simples por id manteria SEMPRE a versao
      local e a edicao do outro aparelho nunca chegaria. Aqui vence a mais
@@ -41359,6 +41694,7 @@ revalidarSessaoAoAbrir();
     goiasCargas: "rf-frota-goiascargas-v1",       /* v423 */
     saoroqueCargas: "rf-frota-saoroquecargas-v1", /* v586 */
     saoroqueBips: "rf-frota-saoroquebips-v1",     /* v586 */
+    produtosCatalogo: "rf-frota-produtoscatalogo-v1", /* v599 */
     goiasBips: "rf-frota-goiasbips-v1",           /* v423 */
     compras: "rf-frota-compras-v1",               /* v446 */
     extratos: "rf-frota-extratos-v1",             /* v448 */
