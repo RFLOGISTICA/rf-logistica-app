@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v601)</title>
+<title>RF Logística — Painel da Frota (v602)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v601">
+<meta name="rf-versao" content="v602">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v602 (08/10/2026): São Roque -- importa o ESPELHO em PDF de DANFEs (DanfeUnificado): 1 NF por DANFE (NF de 2 folhas juntada pela chave), cliente pelo código interno do destinatário, endereço/município/CEP, peso bruto, valor da nota, produtos e QUANTIDADE de volumes (= etiquetas); ordem das paradas pela rota sugerida. -->
 <!-- v601 (08/10/2026): São Roque -- DOCUMENTOS DA VIAGEM no fim da montagem (passo 3): CT-e por cliente (um por um, marcados ou todos), CIOT e MDF-e, botão Emitir tudo (CT-e → CIOT → MDF-e, para na rejeição e continua de onde parou, sem duplicar), encerrar MDF-e encerra o CIOT. MODO DEMONSTRAÇÃO: chaves simuladas, sem valor fiscal, nada vai para SEFAZ/ANTT. -->
 <!-- v600 (08/10/2026): CAMPANHAS -- publicar em TODAS as redes ligadas: Instagram (na hora pela API, como antes), Facebook (página RF Logistica Transportadora) e Google Meu Negócio, escolhendo as redes por caixinha; Facebook e Google saem pelo robô via Metricool (até 1 hora); status por rede na campanha; campanha já publicada pode ir "também" para as redes que faltam. -->
 <!-- v599 (08/10/2026): São Roque -- CATÁLOGO DE EMBALAGENS (321 produtos da internet + cadastro do cliente + medidos na doca), importação de NF-e XML com casamento por EAN/descrição, espaço real de cada cliente, batida solta sobre paletes pela cubagem real (peso limita antes do teto), divisão em m³, densidade padrão 450. -->
@@ -888,7 +889,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v601" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v602" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12317,7 +12318,7 @@ function srBlocoHTML() {
     + '<label style="font-size:11px;color:#bbb;cursor:pointer;text-decoration:underline;">trocar logo<input type="file" accept="image/*" style="display:none;" onchange="srTrocarLogo(this)"></label>'
     + (state.config && state.config.srLogo ? '<a href="javascript:void(0)" onclick="srLogoPadrao()" style="font-size:11px;color:#888;">voltar à logo padrão</a>' : '')
     + '<button onclick="srCargaExemplo()" style="font-size:12px;padding:7px 10px;">🧪 Carga de exemplo (demonstração)</button>'
-    + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (PDF 910 ou planilha da São Roque)'
+    + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (espelho DANFE, PDF 910 ou planilha)'
     + '<input type="file" style="display:none;" onchange="srImportar(this)"></label>' + '<label style="background:#1d2a36;color:#cfe3f5;border:1px solid #7FA7C9;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">🧾 Importar NF-e (XML)<input type="file" accept=".xml,text/xml" multiple style="display:none;" onchange="srImportarXml(this)"></label></div>'
     + '<div style="font-size:12px;color:#aaa;margin-bottom:12px;line-height:1.5;">Fluxo: <b>1</b> importar o arquivo da carga → <b>2</b> conferir a ordem das paradas e a montagem do baú → <b>3</b> imprimir as etiquetas (1 por volume, com a zona do baú) e colar → <b>4</b> bipar cada volume que sobe no caminhão → <b>5</b> criar e liberar a rota do motorista → <b>6</b> bipar na entrega. '
     + 'Etiqueta: <select onchange="srSetEtiquetaFormato(this.value)" style="font-size:12px;">'
@@ -13758,9 +13759,165 @@ function srCarga910(info, nomeArquivo) {
     entregasTot: pr.reduce(function (s, p) { return s + p.ent; }, 0), pedidosTot: pr.reduce(function (s, p) { return s + p.ped; }, 0),
   };
 }
+/* ---- v602: importar o ESPELHO da São Roque = PDF de DANFEs ("DanfeUnificado")
+   Renato (08/10/2026 16:51): "esse é o espelho da São Roque e não está lendo no
+   sistema". O arquivo é um PDF com todas as DANFEs da carga (uma NF por folha;
+   NF grande ocupa 2 folhas). O app lê cada DANFE pelo texto do PDF (pdf.js, sem
+   OCR) e transforma em linhas no MESMO formato do arquivo Winthor, para usar o
+   mesmo montador (srMontarCarga): 1 cliente por destinatário (código interno),
+   1 NF por DANFE, peso = PESO BRUTO, valor = VALOR TOTAL DA NOTA, endereço,
+   bairro, município, UF e CEP do destinatário, e os produtos da NF.
+   Volumes: a DANFE traz a QUANTIDADE de volumes do bloco Transportador; esse
+   número vira o número de etiquetas da NF (as caixas são repartidas entre os
+   produtos pelo valor, só para a etiqueta dizer o que tem dentro). Se a NF vier
+   sem quantidade, cada unidade em CX/FD/PCT/FARDO vira 1 caixa e as unidades
+   soltas vão num saco. A DANFE não tem número de carga: o app usa o menor nº de
+   NF do arquivo como número da carga. A ordem das paradas sai pela rota
+   sugerida (o PDF não tem sequência de entrega). */
+function srDanfeLinhas(its) {
+  var lin = [];
+  its.slice().sort(function (a, b) { return b.y - a.y || a.x - b.x; }).forEach(function (o) {
+    var l = lin.length ? lin[lin.length - 1] : null;
+    if (l && Math.abs(l.y - o.y) < 2.5) l.its.push(o); else lin.push({ y: o.y, its: [o] });
+  });
+  lin.forEach(function (l) { l.its.sort(function (a, b) { return a.x - b.x; }); l.its.forEach(function (o) { o.t = String(o.s).trim(); }); l.txt = l.its.map(function (o) { return o.t; }).join(" "); });
+  return lin;
+}
+function srDanfeEhDanfe(paginas) {
+  var p = (paginas || [])[0] || [];
+  var txt = p.map(function (o) { return o.s; }).join(" ");
+  return /DANF-?E/i.test(txt) && /CHAVE DE ACESSO/i.test(txt);
+}
+function srDanfePagina(its) {
+  var lin = srDanfeLinhas(its);
+  var norm = function (s) { return String(s || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); };
+  // valor logo abaixo de um rótulo (mesma coluna)
+  var abaixo = function (rotulo, depoisDe, tol) {
+    var R = norm(rotulo), ini = 0;
+    if (depoisDe) { for (var q = 0; q < lin.length; q++) if (norm(lin[q].txt).indexOf(norm(depoisDe)) >= 0) { ini = q; break; } }
+    for (var i = ini; i < lin.length; i++) {
+      var r = lin[i].its.filter(function (o) { return norm(o.t) === R || norm(o.t).indexOf(R) === 0; })[0];
+      if (!r) continue;
+      var prox = lin[i + 1]; if (!prox || r.y - prox.y > 16) return "";
+      if (tol === "ultimo") return prox.its.length ? prox.its[prox.its.length - 1].t : "";   // valor total da nota: último da linha
+      var best = null, bd = 1e9;
+      prox.its.forEach(function (o) { var d = Math.abs(o.x - r.x); if (d < bd) { bd = d; best = o; } });
+      return best && bd < (tol || 45) ? best.t : "";
+    }
+    return "";
+  };
+  var txt = lin.map(function (l) { return l.txt; }).join("\n");
+  var ch = (txt.match(/(\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4}\s\d{4})/) || [])[1] || "";
+  var fl = txt.match(/(\d+)\s*de\s*(\d+)\s+Consulta/i);
+  var p = {
+    chave: ch.replace(/\s/g, ""), folha: fl ? Number(fl[1]) : 1, folhas: fl ? Number(fl[2]) : 1,
+    nf: ((txt.match(/N[ºo°]\.?\s*(\d{3,})/) || [])[1] || ""),
+    codcli: abaixo("CÓDIGO INTERNO"), nome: abaixo("NOME/RAZÃO SOCIAL"), cnpj: abaixo("CNPJ/CPF", "DESTINATÁRIO"),
+    emissao: abaixo("DATA DA EMISSÃO"), saida: abaixo("DATA DA ENTRADA/SAÍDA"),
+    end: abaixo("LOGRADOURO", "DESTINATÁRIO"), bairro: abaixo("BAIRRO/DISTRITO"), cep: abaixo("CEP", "DESTINATÁRIO"),
+    cidade: abaixo("MUNICÍPIO", "DESTINATÁRIO"), uf: abaixo("UF", "DESTINATÁRIO"),
+    vlnf: abaixo("VALOR TOTAL DA NOTA", "", "ultimo"), qvol: abaixo("QUANTIDADE", "TRANSPORTADOR"), especie: abaixo("ESPÉCIE", "TRANSPORTADOR"),
+    pesoB: abaixo("PESO BRUTO"), pesoL: abaixo("PESO LÍQUIDO"), itens: [],
+  };
+  if (/^\d{1,3}(\.\d{3})*,\d+$|^\d+(,\d+)?$/.test(p.especie || "")) p.especie = "";
+  // produtos
+  var hi = lin.findIndex(function (l) { return /^C[oó]digo\b/i.test(l.its[0] ? l.its[0].t : "") && /UND/.test(l.txt); });
+  if (hi >= 0) {
+    var hUnd = lin[hi].its.filter(function (o) { return o.t === "UND"; })[0];
+    var xUnd = hUnd ? hUnd.x : 298, xDesc = (lin[hi].its[1] || {}).x || 53;
+    for (var i = hi + 1; i < lin.length; i++) {
+      var l = lin[i];
+      if (/C[AÁ]LCULO DO ISSQN|DADOS ADICIONAIS/i.test(l.txt)) break;
+      var a = l.its;
+      if (a.length >= 6 && /^\d+$/.test(a[0].t) && a[0].x < xDesc - 10) {
+        var iu = a.findIndex(function (o) { return Math.abs(o.x - xUnd) < 14 && /^[A-Za-z]{1,6}\d{0,3}$/.test(o.t); });
+        if (iu < 0) continue;
+        p.itens.push({ cod: a[0].t, desc: a.slice(1, 2).map(function (o) { return o.t; }).join(" "), und: a[iu].t.toUpperCase(),
+          qtd: srNum(a[iu + 1] && a[iu + 1].t), vtot: srNum(a[iu + 3] && a[iu + 3].t) });
+      } else if (p.itens.length && a.length && Math.abs(a[0].x - xDesc) < 6 && a.length <= 2) {
+        p.itens[p.itens.length - 1].desc += " " + a.map(function (o) { return o.t; }).join(" ");   // descrição quebrada em 2 linhas
+      }
+    }
+  }
+  return p;
+}
+function srLerDanfes(paginas) {
+  var porChave = {}, ordem = [];
+  (paginas || []).forEach(function (its) {
+    var p = srDanfePagina(its);
+    var k = p.chave || ("NF" + p.nf);
+    if (!p.chave && !p.nf) return;
+    if (!porChave[k]) { porChave[k] = p; ordem.push(k); }
+    else { porChave[k].itens = porChave[k].itens.concat(p.itens); ["codcli", "nome", "end", "bairro", "cep", "cidade", "uf", "vlnf", "qvol", "pesoB", "emissao", "saida"].forEach(function (f) { if (!porChave[k][f] && p[f]) porChave[k][f] = p[f]; }); }
+  });
+  var nfs = ordem.map(function (k) { return porChave[k]; });
+  if (!nfs.length) throw new Error("não achei nenhuma DANFE neste PDF.");
+  return nfs;
+}
+var SR_UND_CAIXA = /^(CX|FD|FARDO|PCT|PC|PT|DP|DZ|BD|SC|SACO|FR|GL|BAL|BL|EB|ED|KIT|PALETE|PL)$/;
+function srDanfeParaLinhas(nfs) {
+  var cab = ["NUMCAR", "DATA", "CODCLI", "CLIENTE", "FANTASIA", "ENDERENT", "BAIRROENT", "ESTADO", "CEPENT", "NUMSEQENTREGA", "NUMNOTA", "NUMPED", "PESOTOTAL", "DESCRICAO", "QTCX", "QTUN", "CODAUXILIAR", "MIUDEZA", "NUMMIUDEZA", "VLNF"];
+  var numeros = nfs.map(function (n) { return Number(n.nf) || 0; }).filter(function (x) { return x > 0; });
+  var numcar = numeros.length ? String(Math.min.apply(null, numeros)) : String(Date.now()).slice(-7);
+  var linhas = [cab], seqCli = {}, nSeq = 0;
+  nfs.forEach(function (n) {
+    var codcli = n.codcli || String(n.cnpj || "").replace(/\D/g, "") || ("NF" + n.nf);
+    if (!seqCli[codcli]) seqCli[codcli] = ++nSeq;
+    var cep = String(n.cep || "").replace(/\D/g, "");
+    var est = (n.cidade || "").toUpperCase() + " - " + (n.uf || "BA").toUpperCase();
+    var data = srDataISO(n.saida || n.emissao || "");
+    var peso = srNum(n.pesoB) || srNum(n.pesoL);
+    var Q = Math.round(srNum(n.qvol));
+    var itens = n.itens.length ? n.itens : [{ desc: "MERCADORIA NF " + n.nf, und: "VOL", qtd: Q || 1, vtot: 1 }];
+    var vt = itens.reduce(function (s, it) { return s + (it.vtot || 0); }, 0) || itens.length;
+    var cx = itens.map(function () { return 0; }), un = itens.map(function () { return 0; });
+    if (Q > 0) {   // a quantidade de volumes da NF manda: repartida pelos produtos (maior resto)
+      var quota = itens.map(function (it) { return Q * ((it.vtot || 1) / vt); });
+      cx = quota.map(Math.floor);
+      var falta = Q - cx.reduce(function (s, x) { return s + x; }, 0);
+      quota.map(function (q, i) { return [q - Math.floor(q), i]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, falta).forEach(function (r) { cx[r[1]]++; });
+    } else {
+      itens.forEach(function (it, i) { if (SR_UND_CAIXA.test(it.und)) cx[i] = Math.round(it.qtd) || 1; else un[i] = Math.round(it.qtd) || 1; });
+    }
+    itens.forEach(function (it, i) {
+      var pesoIt = peso * ((it.vtot || 1) / vt);
+      linhas.push([numcar, data, codcli, n.nome || codcli, n.nome || codcli, n.end || "", n.bairro || "", est, cep, String(seqCli[codcli]), n.nf, "",
+        String(Math.round(pesoIt * 1000) / 1000).replace(".", ","), (it.desc || "") + " · " + srFmt(it.qtd, 0) + " " + (it.und || ""), String(cx[i]), String(un[i]), "", "", "",
+        String(srNum(n.vlnf)).replace(".", ",")]);
+    });
+  });
+  return linhas;
+}
+function srImportarDanfe(paginas, file, input) {
+  var nfs = srLerDanfes(paginas);
+  var carga = srMontarCarga(srDanfeParaLinhas(nfs), file.name);
+  carga.origem = "danfe";
+  carga.chavesNfe = nfs.map(function (n) { return n.chave; }).filter(Boolean);
+  // a DANFE não tem sequência de entrega: começa pela rota sugerida
+  try { var ok = srOrdemSugeridaK(carga); if (ok && ok.length === carga.clientes.length) srAplicarOrdem(carga, ok); } catch (e) {}
+  input.value = "";
+  if (srCargas().some(function (x) { return x.pai === carga.id; })) { alert("A carga " + carga.numcar + " já foi dividida entre veículos. Use \"Juntar de novo\" numa das partes antes de importar outra vez."); return; }
+  var ja = srCarga(carga.id);
+  if (ja) {
+    if (srTotais(ja).carregados > 0) { alert("A carga " + carga.numcar + " já está no app e já tem volumes bipados. Não vou substituir."); return; }
+    if (!confirm("A carga " + carga.numcar + " já foi importada. Substituir pela versão deste arquivo? (as etiquetas mudam de número)")) return;
+    carga.placa = ja.placa; carga.motorista = ja.motorista; carga.viagemId = ja.viagemId;
+    state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== ja.id; });
+  }
+  srCargas().push(carga);
+  state.srCargaAberta = carga.id;
+  salvar(); render();
+  var t = srTotais(carga);
+  var semVol = nfs.filter(function (n) { return !(srNum(n.qvol) > 0); }).length;
+  alert("✓ Espelho (DANFEs) importado · carga " + carga.numcar + "\n\n" + nfs.length + " notas · " + t.clientes + " clientes · " + t.cidades + " cidades\n"
+    + srFmt(t.peso, 1) + " kg (peso bruto) · " + t.vols + " volumes · mercadoria R$ " + srFmt(t.valor, 2)
+    + (semVol ? "\n⚠ " + semVol + " NF sem quantidade de volumes: contei pelas unidades em caixa/fardo." : "")
+    + "\n\nA ordem das paradas já está na rota sugerida. Confira no passo 2.");
+}
 function srImportarPdf(file, input) {
   if (typeof exPdfItens !== "function") { alert("Leitor de PDF indisponível nesta versão."); return; }
   exPdfItens(file).then(function (paginas) {
+    if (srDanfeEhDanfe(paginas)) { srImportarDanfe(paginas, file, input); return; }   // v602: espelho = PDF de DANFEs
     var info = srLer910(paginas), carga = srCarga910(info, file.name);
     input.value = "";
     if (srCargas().some(function (x) { return x.pai === carga.id; })) { alert("A carga " + carga.numcar + " já foi dividida entre veículos. Use \"Juntar de novo\" numa das partes antes de importar outra vez."); return; }   // v594
@@ -35409,7 +35566,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
   // --- v586: operação Grupo São Roque (cópia da Goiás + montagem do baú) ---
   const blocoSaoRoque = !podeVerAba("saoroquecarga") ? "" : (function () {
     const cargas = (state.saoroqueCargas || []);
-    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v599 — CATÁLOGO DE EMBALAGENS E NF-e: a São Roque entrega de tudo (alimento, bebida, limpeza, higiene, eletro). O app tem um catálogo com 321 produtos pesquisados na internet em 08/10/2026 (medida C×L×A e peso bruto da caixa master/fardo/produto embalado; 18 com medida de fonte citada, os demais ESTIMADOS pelo tamanho da unidade × arranjo, porque fabricante quase nunca publica a caixa de embarque), mais o que a RF acrescentar: cadastro do cliente importado (vale mais), produto medido na doca (✎) e edições. Densidade típica do catálogo: bebidas ~640 kg/m³, mercearia ~550, limpeza ~510, higiene/papel ~80, eletro ~100. Importação de NF-e (XML, vários de uma vez): cada destinatário vira um cliente, cada item é casado com o catálogo pelo EAN ou pela descrição (marca, produto e tamanho); o espaço do cliente é a soma real dos itens; item sem casamento usa o peso pela densidade da categoria; os volumes para etiqueta saem de 1 por embalagem. A planilha da carga (Winthor) também passa pelo catálogo quando não traz cubagem. Na carga batida, a carga fica solta sobre paletes, espalhada pelo assoalho até a altura que o volume pede (o PESO limita antes do teto: Toco 8 t), e a divisão entre veículos mede o espaço em m³. Densidade padrão (sem itens, ex. 910 sintético) passou a 450 kg/m³. v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir. v601 — DOCUMENTOS DA VIAGEM (passo 3 do cartão da carga, logo depois da montagem do baú): pedido da São Roque na visita de 08/10. Gera CT-e (1 por cliente; um por um, só os marcados ou todos), CIOT (1 por veículo, só depois de todos os CT-e autorizados) e MDF-e (só depois do CIOT, junta todos os CT-e). O botão "Emitir tudo" faz CT-e → CIOT → MDF-e; se um CT-e volta rejeitado, para antes do CIOT e, ao tocar de novo, continua de onde parou; CT-e autorizado não é emitido de novo. Encerrar o MDF-e encerra o CIOT junto. Emitente: RF Logística (quem emite ainda será discutido com a São Roque). Por enquanto é MODO DEMONSTRAÇÃO: as chaves são simuladas, sem valor fiscal, nada vai para a SEFAZ nem para a ANTT; na carga EXEMPLO a 5ª parada volta rejeitada uma vez (CEP) para mostrar a correção. "Reiniciar demonstração" zera os documentos da carga.`;
+    const regra = `COMO FUNCIONA A OPERAÇÃO GRUPO SÃO ROQUE (aba "Carregamento São Roque", v586): prospect novo (reunião em 07/10/2026, visita ao processo deles em 08/10). É o MESMO fluxo da Goiás, com dados separados: importar o arquivo da carga (formato Winthor, igual ao da Goiás), o app monta 1 volume por caixa fechada, 1 por caixa de miudeza e 1 saco por cliente para as unidades soltas; imprime 1 etiqueta por volume (caixa no rolo branco, fracionado no amarelo); bipa no carregamento e na entrega (volume de outro cliente na entrega é recusado com PARE); e cria a viagem com 1 entrega por cliente. NOVO nesta aba — MONTAGEM DO BAÚ: a última parada entra primeiro, no FUNDO (encostada na cabine), e a 1ª parada fica na PORTA. v587: a São Roque carrega PALETIZADO (mesmo quando a carga é batida), então o padrão é PALETE PBR 1,00×1,20 m: cada cliente recebe o número de paletes da quantidade dele = o maior entre (cubagem ÷ volume útil do palete, com altura padrão 1,6 m e 85% de aproveitamento) e (peso ÷ 1.000 kg por palete), arredondado para cima; esse número pode ser corrigido à mão na coluna Paletes. Os paletes ocupam as vagas em filas a partir da cabine (Toco 7 filas × 2 = 14 vagas; 3/4 3 filas × 2 = 6; VAN 3; Truck 16); cada vaga tem fila (F1 = encostada na cabine) e lado (esq./dir. olhando da porta para a cabine). A etiqueta de cada volume diz o palete (ex. 2/3) e a vaga (ex. F4 esq.). Há também o modo "Batida (solta)", em que o cliente ocupa um bloco na largura toda com comprimento = cubagem ÷ (largura × altura × 0,85). v599 — CATÁLOGO DE EMBALAGENS E NF-e: a São Roque entrega de tudo (alimento, bebida, limpeza, higiene, eletro). O app tem um catálogo com 321 produtos pesquisados na internet em 08/10/2026 (medida C×L×A e peso bruto da caixa master/fardo/produto embalado; 18 com medida de fonte citada, os demais ESTIMADOS pelo tamanho da unidade × arranjo, porque fabricante quase nunca publica a caixa de embarque), mais o que a RF acrescentar: cadastro do cliente importado (vale mais), produto medido na doca (✎) e edições. Densidade típica do catálogo: bebidas ~640 kg/m³, mercearia ~550, limpeza ~510, higiene/papel ~80, eletro ~100. Importação de NF-e (XML, vários de uma vez): cada destinatário vira um cliente, cada item é casado com o catálogo pelo EAN ou pela descrição (marca, produto e tamanho); o espaço do cliente é a soma real dos itens; item sem casamento usa o peso pela densidade da categoria; os volumes para etiqueta saem de 1 por embalagem. A planilha da carga (Winthor) também passa pelo catálogo quando não traz cubagem. Na carga batida, a carga fica solta sobre paletes, espalhada pelo assoalho até a altura que o volume pede (o PESO limita antes do teto: Toco 8 t), e a divisão entre veículos mede o espaço em m³. Densidade padrão (sem itens, ex. 910 sintético) passou a 450 kg/m³. v598 — o caminhão em 3D na tela passou a ser REALISTA (WebGL/three.js carregado na hora): cabine arredondada com para-brisa, janelas, grade cromada, faróis, para-choque e retrovisores, rodas com aro e porcas e rodado duplo, para-lamas, tanque, baú com quadro de alumínio e paredes translúcidas, faixa RF LOGÍSTICA na frente do baú e nas portas abertas, paletes de madeira e caixas de papelão na cor de cada cliente, etiquetas flutuantes com a parada, sombra e reflexo de estúdio. Sem internet o app usa o desenho próprio. O mapa A4 imprime a foto do 3D realista. v596 — CARGA BATIDA DA SÃO ROQUE: mesmo batida, eles põem os clientes em cima de paletes no chão. O app modela paletes PBR no assoalho e, em cima, colunas de caixas de 0,50×0,50 m (caixa média de alimento, 0,35 m de altura; 4 colunas por palete; até 6 caixas de altura no Toco), cada cliente com as colunas dele em sequência a partir da cabine; quem compra pouco ocupa 1–2 colunas e divide o palete com o vizinho, sem misturar caixas na mesma coluna. Nº de caixas = volumes do arquivo, ou cubagem ÷ volume da caixa (estimado, ≈) no sintético. Toco = 56 colunas sobre 14 paletes. A divisão entre veículos mede a batida em colunas. v595 — DIVISÃO DO BAÚ: opção "Por cliente" (padrão) ou "Por cidade". Por cidade, clientes da mesma cidade em paradas seguidas viram um bloco só (rótulo P2–P5). Por cliente, um bloco por cliente; no 910 SINTÉTICO, na carga batida, cada praça é repartida em uma faixa por entrega com o mesmo peso (rótulo P2.1, P2.2…, marcado peso estimado) até chegar o 910 analítico; na paletizada do sintético a praça fica inteira. O desenho do caminhão é em 3D, com a parede do baú cortada para ver os paletes coloridos por cliente, mais a vista de cima com as vagas. v594 — ROTEIRIZAR / DIVIDIR CARGA (botão "🚚 Roteirizar / dividir carga" em cada carga): divide a carga entre veículos sem partir cliente, pelo menor custo. Método (todo no app, sem IA): agrupa os clientes pela direção a partir de Feira de Santana (varredura em leque: quem está na mesma estrada vai junto), testa todos os cortes por programação dinâmica e escolhe o de menor custo = km × custo por km do tipo (diesel ÷ km/l + pneus R$ 0,12) + a diária de cada caminhão (R$ 800 = motorista 500 + ajudante 300) no modo automático; cada grupo vai no menor tipo permitido em que cabe (peso e paletes, ou comprimento na carga batida); dentro do carro a ordem é a menor volta. Opções: tipos permitidos (VAN, 3/4, Toco 8 t, Truck) e nº de veículos (automático ou fixo). Mostra tabela por veículo (tipo, peso, ocupação, paradas, cidades, km, custo estimado, placa e frete editáveis), comparação com a carga inteira num carro só, link do Google Maps por veículo e a planilha no modelo fixo da RF (Resumo por Veiculo / Detalhe por Cliente / Carteira por Cidade). "Aplicar divisão" cria uma carga por veículo (ex. 5017334-A, 5017334-B) com seus volumes, baú, rota e etiquetas; na bipagem, volume de outro caminhão é recusado dizendo a placa certa; "Juntar de novo" desfaz enquanto nada foi bipado e a rota não foi criada. v592: a importação também lê o PDF "910 - Pedido por Carregamento" da São Roque (ReportBuilder). Primeiro arquivo real recebido (30/09/2026): romaneio 5017334, região ALAGOINHAS FAT, 7.657,45 kg, praças Aramari (seq 20, 2 entregas, 916,76 kg), Alagoinhas (seq 30, 22 entregas, 4.094,83 kg), Araçás (seq 40, 6 entregas, 2.536,82 kg) e Itanagra (seq 45, 2 entregas, 109,04 kg), 72 pedidos e 32 entregas. O tipo SINTÉTICO por praça não traz cliente, NF nem volume: vira uma carga com uma parada por praça (cidade), que já serve para montar o baú pelo peso e calcular a rota, mas etiqueta, bipagem e canhoto por cliente exigem o 910 ANALÍTICO ou o Excel. Capacidade do Toco: até 8 t (Renato, 08/10), então os 7,6 t cabem no peso; o limite passa a ser o espaço (paletes). v591: o mapa da rota é o do GOOGLE MAPS (embutido, rota atual ou sugerida) com botões "Abrir rota ATUAL/sugerida no Google Maps", que abrem a navegação com o KM real de estrada (link aceita até 9 cidades intermediárias); o esquema desenhado pelo app continua como opção sem internet. v590: na tela o caminhão 3D GIRA — arrastar com o dedo/mouse gira em volta, dois dedos ou a roda do mouse dão zoom, toque duplo volta à vista inicial, e há botões de vista rápida (Lado, Traseira com as portas abertas, De cima, Outro lado) e "girar sozinho" para apresentação; paredes e teto do baú são translúcidos para ver a carga de qualquer ângulo. A impressão (mapa A4) continua com o desenho fixo. v589 — IMPACTO DA ORDEM NA ROTA: o app calcula o KM da ordem atual (saindo e voltando a Feira de Santana; distância entre cidades por coordenada do IBGE × fator estrada 1,30; paradas seguidas na mesma cidade não somam km) e a ROTA SUGERIDA (menor volta: vizinho mais próximo + 2-opt). Mostra a diferença em km, em R$ (diesel da config ÷ km/l do veículo ou do tipo + pneus R$ 0,12/km) e em tempo (50 km/h), um mapinha com as duas rotas, e, a cada mudança de ordem (digitar a parada ou ▲▼), um aviso na hora com o impacto daquela mudança (verde se melhorou, vermelho se piorou). Botões: aplicar a rota sugerida e voltar à ordem do arquivo. Não conta pedágio nem diária. A cubagem vem do arquivo quando é coerente com o peso; senão é estimada pelo peso com a densidade da carga (padrão 250 kg/m³, editável). Baús: VAN 3,0 m/1.500 kg, 3/4 4,5 m/4.000 kg, Toco 7,0 m/8.000 kg, Truck 8,5 m/12.000 kg; o baú segue o tipo do veículo da placa e pode ser trocado. Cada etiqueta traz a ZONA (FUNDO/MEIO/PORTA), o metro a partir da cabine e a ordem de carregamento; há o "Mapa de montagem (A4)" para a doca e botões ▲▼ para mudar a ordem de entrega (se as etiquetas já tiverem sido impressas, precisa reimprimir). Avisos: não cabe (comprimento ou peso acima do baú) e peso concentrado na metade da porta acima de 65%. Há uma "Carga de exemplo (demonstração)" fictícia (carga 900001, marcada EXEMPLO) para mostrar ao cliente. A logo oficial do Atacadão São Roque já está embutida (colorida na tela e no mapa, preto e branco na etiqueta térmica); o link "trocar logo" permite substituir. v601 — DOCUMENTOS DA VIAGEM (passo 3 do cartão da carga, logo depois da montagem do baú): pedido da São Roque na visita de 08/10. Gera CT-e (1 por cliente; um por um, só os marcados ou todos), CIOT (1 por veículo, só depois de todos os CT-e autorizados) e MDF-e (só depois do CIOT, junta todos os CT-e). O botão "Emitir tudo" faz CT-e → CIOT → MDF-e; se um CT-e volta rejeitado, para antes do CIOT e, ao tocar de novo, continua de onde parou; CT-e autorizado não é emitido de novo. Encerrar o MDF-e encerra o CIOT junto. Emitente: RF Logística (quem emite ainda será discutido com a São Roque). v602 — o botão "Importar carga" também lê o ESPELHO da São Roque, que é um PDF com todas as DANFEs da carga (DanfeUnificado): cada DANFE vira uma NF; o cliente é o destinatário (código interno), com endereço, município e CEP; peso = peso bruto; valor = valor total da nota; a QUANTIDADE de volumes da DANFE é o número de etiquetas da NF; a DANFE não tem número de carga, então a carga recebe o menor número de NF do arquivo; como não há sequência de entrega, as paradas já entram na ordem da rota sugerida. Sobre os documentos fiscais: por enquanto é MODO DEMONSTRAÇÃO: as chaves são simuladas, sem valor fiscal, nada vai para a SEFAZ nem para a ANTT; na carga EXEMPLO a 5ª parada volta rejeitada uma vez (CEP) para mostrar a correção. "Reiniciar demonstração" zera os documentos da carga.`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
