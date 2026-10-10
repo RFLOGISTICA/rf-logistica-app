@@ -2,12 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v602)</title>
+<title>RF Logística — Painel da Frota (v603)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v602">
+<meta name="rf-versao" content="v603">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v603 (10/10/2026): VIAGENS -- a data de saida editada pela equipe VOLTAVA sozinha (Renato: "estou atualizando a
+     data das viagens, pois foi criada em um dia e saiu no outro, porem todas que atualizo voltam pro anterior").
+     Causa: viagemSincronizarInicio() (v417) reescrevia `data` com o dia em que o motorista confirmou a saida no
+     celular (inicioRealMs) a cada carregamento, por cima da correcao manual. Agora a data mexida pela equipe
+     (campo Data saida ou botao "data de saida") marca inicioManual e a sincronizacao respeita: correcao da
+     equipe vence a confirmacao do app. --> 
 <!-- v602 (08/10/2026): São Roque -- importa o ESPELHO em PDF de DANFEs (DanfeUnificado): 1 NF por DANFE (NF de 2 folhas juntada pela chave), cliente pelo código interno do destinatário, endereço/município/CEP, peso bruto, valor da nota, produtos e QUANTIDADE de volumes (= etiquetas); ordem das paradas pela rota sugerida. -->
 <!-- v601 (08/10/2026): São Roque -- DOCUMENTOS DA VIAGEM no fim da montagem (passo 3): CT-e por cliente (um por um, marcados ou todos), CIOT e MDF-e, botão Emitir tudo (CT-e → CIOT → MDF-e, para na rejeição e continua de onde parou, sem duplicar), encerrar MDF-e encerra o CIOT. MODO DEMONSTRAÇÃO: chaves simuladas, sem valor fiscal, nada vai para SEFAZ/ANTT. -->
 <!-- v600 (08/10/2026): CAMPANHAS -- publicar em TODAS as redes ligadas: Instagram (na hora pela API, como antes), Facebook (página RF Logistica Transportadora) e Google Meu Negócio, escolhendo as redes por caixinha; Facebook e Google saem pelo robô via Metricool (até 1 hora); status por rede na campanha; campanha já publicada pode ir "também" para as redes que faltam. -->
@@ -889,7 +895,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v602" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v603" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -8226,6 +8232,7 @@ function viagemSincronizarInicio(v) {
   var real = viagemDataInicioReal(v);
   if (!real || real === String(v.data || "").slice(0, 10)) return false;
   if (v.trancada) return false;
+  if (v.inicioManual) return false;   // v603: a equipe corrigiu a data na mao -- a correcao vence a confirmacao do app
   // checagem SILENCIOSA de mes fechado: podeAlterarViagem() dispara alert, e
   // isso roda em lote no carregamento -- viraria uma fila de popups.
   try { if (typeof mesFechado === "function" && mesFechado(v.data) && !ehAdmin()) return false; } catch (e) {}
@@ -8279,7 +8286,15 @@ function atualizarViagem(id, campo, valor) {
   // v212: mexeu na data de saída com data fim preenchida -> recalcula os dias
   if (campo === "data") {
     const vv = (state.viagens || []).find((x) => String(x.id) === String(id));
-    if (vv) { vv.data = valor; const dd = viagemDiasPelasDatas(vv); if (dd !== null && dd >= 1) vv.dias = dd; }
+    if (vv) {
+      if (vv.trancada && !ehAdmin()) return;
+      if (!vv.dataCriacao) vv.dataCriacao = String(vv.data || "").slice(0, 10);
+      vv.data = valor;
+      // v603: data mexida pela equipe nao volta mais pra data confirmada no app do motorista
+      vv.inicioManual = true;
+      vv.inicioMarcadoPor = (state.sessao && state.sessao.nome) || "";
+      const dd = viagemDiasPelasDatas(vv); if (dd !== null && dd >= 1) vv.dias = dd;
+    }
   }
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
@@ -35109,7 +35124,7 @@ function gerarContextoAssistente() {
     return "ABA OPERAÇÃO SUZANO (v495 — reorganizada a pedido do Renato em 30/09/2026): a aba 'Carregamento Suzano' abre numa tela inicial com 9 ferramentas. OPERAÇÃO DO DIA: 1 Roteirização (FOCRI → caminhões, rota, e-mail, exportar); 2 CARREGAMENTO = faz TUDO do caminhão num quadro só: anexar o espelho no caminhão certo, escolher o motorista, emitir os CT-e (SEFAZ direto, averbação automática), CIOT (quadro roxo: emitir pela ANTT ou informar) e MDF-e (quadro azul; só sai com CIOT); aba XML por viagem; 3 ENVIAR DOCUMENTOS = caixa própria, um quadro por caminhão com CT-e autorizado: botão Enviar documentos → para o ANDRÉ (modelo v508, aprovado pelo Renato em 30/09): e-mail com saudação pela hora, placa e o NOSSO motorista (escolhido na mão ou condutor do MDF-e; o nome do espelho é mera formalidade e não entra), e uma linha por CT-e marcado (número com 3 dígitos – cliente – NF) com a chave embaixo, CIOT só se marcado; anexo = UM ZIP só com os DACTE dos CT-e marcados + o espelho da carga (sem XML, sem DAMDFE, sem txt). O 'Pacote completo da viagem' é arquivo da RF e NÃO vai ao André; para o MOTORISTA os PDFs por WhatsApp; marca 'enviado ao André' com data e hora; 4 CONFERÊNCIA = bipar volumes e liberar o caminhão (era a antiga ferramenta Carregamento); 5 Entregas e canhotos. ACOMPANHAMENTO: 6 MDF-e (em aberto, encerrar, encerrados); 7 CIOT (manifestos sem/com CIOT). CONTROLE: 8 Auditoria Suzano (NF x espelho x CT-e x canhoto — antiga 'Conferência Suzano'); 9 Arquivos e contabilidade. Quando perguntarem onde fazer algo da Suzano, diga o NOME da ferramenta. TRAVA DO MDF-e: não emite com nome de login no lugar do nome do motorista, pede o nome da CNH, e avisa tara fora de 2.500 a 8.000 kg. Situação agora:\n" + pend;
   })();
   const blocoDonoViagem = "DONO DA VIAGEM (v462, regra do Renato): a viagem e' do MOTORISTA (login), nunca da placa. O dono fica gravado em motoristaNaEpoca -- ao enviar a viagem para um login, esse login vira o dono; ao trocar o motorista de um caminhao na aba Frota, as viagens antigas daquela placa ficam com quem as fez (o motorista anterior ou o login para quem foram enviadas) e NAO passam para o motorista novo. Se perguntarem de quem e' uma viagem, responda pelo motoristaNaEpoca, nunca pelo motorista atual do caminhao.";
-  const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
+  const blocoDatasViagem = "DATAS DA VIAGEM (v417): cada viagem tem DATA DE CRIACAO (dataCriacao -- o dia em que foi montada na roteirizacao) e DATA DE INICIO (campo 'data' -- o dia em que o caminhao realmente saiu). O que vale para o MES, para o CUSTO e para o calculo de DIAS e' sempre a data de INICIO, nunca a de criacao. A data de inicio e' preenchida de tres formas: (1) sozinha, quando o motorista confirma a saida no celular (grava inicioRealMs e o painel traz essa data para o campo 'data' no proximo carregamento); (2) na mao pela equipe, pelo botao 'data de saida' na caixa da roteirizacao, quando o motorista viajou sem iniciar no app (marca inicioManual); (3) editando o campo Data saida na aba Viagens. Desde a v603, quando a equipe corrige a data na mao (formas 2 e 3) a viagem fica marcada inicioManual e a data confirmada pelo motorista NAO sobrescreve mais a correcao. Viagem criada numa sexta que so saiu na segunda pertence ao dia da SEGUNDA e conta 1 dia, nao 4 -- isso importa porque o campo Dias alimenta diaria, pernoite e o rateio CLT. Viagem de mes ja fechado nao tem a data mexida automaticamente (so o Admin altera).";
   /* v418: sem isto o assistente diz que a viagem tem N paradas quando ela tem
      N-1, e nao sabe explicar por que o peso entregue nao bate com o FOCRI. */
   const nv = (state.paradasNaoVieram || []);
@@ -40374,7 +40389,7 @@ function renderTabela() {
                 const ini = String(v.data || "").slice(0, 10);
                 if (!cri || cri === ini) return "";
                 const br = (d) => d.split("-").reverse().join("/");
-                const fonte = v.inicioRealMs ? "motorista confirmou" : (v.inicioManual ? "equipe marcou" : "");
+                const fonte = v.inicioManual ? "equipe marcou" : (v.inicioRealMs ? "motorista confirmou" : "");   // v603: manual vence
                 return `<div style="font-size:9px;color:#888;" title="Data em que a viagem foi montada na roteirizacao">criada ${br(cri)}${fonte ? " · " + fonte : ""}</div>`;
               })()}
             </td>
