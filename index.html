@@ -2,12 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v604)</title>
+<title>RF Logística — Painel da Frota (v605)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v604">
+<meta name="rf-versao" content="v605">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v605 (10/10/2026): SÃO ROQUE -- cores dos clientes: saiu o marrom (confundia com o "falta" do 3D) e nenhum
+     cliente repete cor dentro do baú (12 cores fixas + geradas sem repetir a partir da 13ª; antes repetia a cada 10
+     e as faixas da mesma praça alternavam duas cores). -->
 <!-- v604 (10/10/2026): SÃO ROQUE -- piloto liberado na reunião de 10/10; dois pedidos: (1) ETIQUETAGEM vista numa DOCA
      em 3D (mesmo arranjo do baú): tudo marrom, cada etiqueta colada e bipada (bip tipo "t") pinta o volume com a cor do
      cliente; barra de progresso e lista de quem falta. (2) CARREGAMENTO: baú em 3D que começa todo marrom e ganha a cor
@@ -900,7 +903,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v604" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v605" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12729,7 +12732,30 @@ var SR_APROVEITAMENTO = 0.85;   // folga de arrumação (caixas não encaixam 10
 /* v597: Renato -- a cor de cada cliente no baú e na legenda tem que chamar a
    atenção: cores FECHADAS e fortes, vizinhos bem diferentes, texto branco. O
    vermelho fica reservado para o que "não cabe". */
-var SR_CORES = ["#1565C0", "#E65100", "#2E7D32", "#6A1B9A", "#00838F", "#AD1457", "#5D4037", "#283593", "#558B2F", "#37474F"];
+/* v605 (Renato, 10/10/2026): o marrom (#5D4037) saiu -- confundia com o marrom de "falta" do
+   acompanhamento em 3D -- e, dentro do baú, NENHUM cliente repete cor. As 12 primeiras são cores
+   fortes escolhidas a dedo; a partir da 13ª o sistema gera uma cor nova (nunca repetida), sempre
+   forte, fugindo do marrom, do vermelho de "não cabe" e das já usadas. */
+var SR_CORES = ["#1565C0", "#E65100", "#2E7D32", "#6A1B9A", "#00838F", "#AD1457", "#283593", "#7CB342", "#37474F", "#F9A825", "#00BFA5", "#D500F9"];
+function srHslHex(h, sat, l) {
+  sat /= 100; l /= 100;
+  var k = function (n) { return (n + h / 30) % 12; }, a = sat * Math.min(l, 1 - l);
+  var f = function (n) { return Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))))).toString(16).padStart(2, "0"); };
+  return ("#" + f(0) + f(8) + f(4)).toUpperCase();
+}
+function srCorUnica(i) {
+  if (i < SR_CORES.length) return SR_CORES[i];
+  var n = i - SR_CORES.length, tent = 0, usadas = {};
+  SR_CORES.forEach(function (x) { usadas[x.toUpperCase()] = 1; });
+  for (var j = 0; j <= n + tent; j++) {
+    var h = (j * 137.508 + 200) % 360, l = [42, 30, 54][j % 3];
+    var cor = srHslHex(h, 85, l);
+    if ((h >= 12 && h <= 48) || h >= 348 || h <= 6 || usadas[cor]) { tent++; continue; }   // sem marrom/laranja-escuro nem vermelho
+    usadas[cor] = 1;
+    if (Object.keys(usadas).length - SR_CORES.length === n + 1) return cor;
+  }
+  return srHslHex((n * 47) % 360, 80, 40);
+}
 
 function srBauDaCarga(c) {
   if (c.bau && SR_BAUS[c.bau]) return c.bau;
@@ -12821,7 +12847,7 @@ function srUnidades(c) {
         return;
       }
       out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seqs: [cl.seq], seq: cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0, m3Fonte: cl.m3Fonte,
-        entregas: Number(cl.entregas) || 0, cor: SR_CORES[(cor++) % SR_CORES.length] });
+        entregas: Number(cl.entregas) || 0, cor: srCorUnica(cor++) });   // v605: nunca repete
     });
     out.forEach(function (u) {
       var sq = u.seqs.slice().sort(function (a, b) { return a - b; });
@@ -12831,13 +12857,13 @@ function srUnidades(c) {
     return out;
   }
   ordem.forEach(function (cl) {
-    var base = SR_CORES[(cor++) % SR_CORES.length];
+    var base = srCorUnica(cor++);   // v605: nunca repete
     var n = (c.sintetico && modo === "batida") ? Math.max(1, Math.round(Number(cl.entregas) || 1)) : 1;
     if (n === 1) { out.push({ k: cl.k, kCli: cl.k, membros: [cl.k], seq: cl.seq, rot: "P" + cl.seq, fant: cl.fant || cl.nome, cidade: cl.cidade, peso: Number(cl.peso) || 0, m3: Number(cl.m3) || 0, m3Fonte: cl.m3Fonte, entregas: Number(cl.entregas) || 0, cor: base }); return; }
     for (var i = n; i >= 1; i--) {   // fundo primeiro: o último cliente da praça entra antes
       out.push({ k: cl.k + "#" + i, kCli: i === 1 ? cl.k : null, kPai: cl.k, membros: i === 1 ? [cl.k] : [], seq: cl.seq, sub: i, subTot: n, rot: "P" + cl.seq + "." + i,
         fant: cl.cidade + " — cliente " + i + " de " + n, cidade: cl.cidade, peso: (Number(cl.peso) || 0) / n, m3: (Number(cl.m3) || 0) / n, entregas: 1,
-        cor: i % 2 ? base : srEscurecer(base, 0.72), estimado: true });   // v597: alterna sem clarear
+        cor: i === n ? base : srCorUnica(cor++), estimado: true });   // v605: cada cliente da praça com cor própria (antes alternava e repetia)
     }
   });
   return out;
