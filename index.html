@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v603)</title>
+<title>RF Logística — Painel da Frota (v604)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v603">
+<meta name="rf-versao" content="v604">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v604 (10/10/2026): SÃO ROQUE -- piloto liberado na reunião de 10/10; dois pedidos: (1) ETIQUETAGEM vista numa DOCA
+     em 3D (mesmo arranjo do baú): tudo marrom, cada etiqueta colada e bipada (bip tipo "t") pinta o volume com a cor do
+     cliente; barra de progresso e lista de quem falta. (2) CARREGAMENTO: baú em 3D que começa todo marrom e ganha a cor
+     do cliente no lugar certo a cada bip, para os gestores acompanharem. A montagem aprovada não muda (srProgCaixas só
+     pinta). Os dois desenhos (three.js e o 2D de reserva) entendem os modos "doca" e "carga". -->
 <!-- v603 (10/10/2026): VIAGENS -- a data de saida editada pela equipe VOLTAVA sozinha (Renato: "estou atualizando a
      data das viagens, pois foi criada em um dia e saiu no outro, porem todas que atualizo voltam pro anterior").
      Causa: viagemSincronizarInicio() (v417) reescrevia `data` com o dia em que o motorista confirmou a saida no
@@ -895,7 +900,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v603" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v604" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12072,13 +12077,16 @@ function srBipar(cargaId, tipo, codigo, kEsperado) {
     return { ok: false, msg: "⚠ PARE. Este volume é de " + dono.fant + " (" + dono.cidade + ", parada " + dono.seq + "). Não entregue aqui.", vol: vol };
   }
   var id = cargaId + "|" + vol.c + "|" + tipo;
-  if (srBips().some(function (b) { return b.id === id; })) return { ok: false, msg: "Este volume já foi bipado" + (tipo === "e" ? " na entrega." : " no carregamento."), vol: vol };
+  if (srBips().some(function (b) { return b.id === id; })) return { ok: false, msg: "Este volume já foi bipado" + (tipo === "e" ? " na entrega." : tipo === "t" ? " na etiquetagem." : " no carregamento."), vol: vol };
+  if (tipo === "t" && srBips().some(function (b) { return b.id === cargaId + "|" + vol.c + "|c"; })) return { ok: false, msg: "Este volume já foi carregado — a etiqueta já conta como colada.", vol: vol };   // v604
   if (tipo === "e" && !srBips().some(function (b) { return b.id === cargaId + "|" + vol.c + "|c"; })) {
     return { ok: false, msg: "Este volume não consta como carregado. Confira antes de entregar.", vol: vol };
   }
   srBips().push({ id: id, carga: cargaId, cod: vol.c, tipo: tipo, em: Date.now(), por: (state.sessao && state.sessao.nome) || "", atualizadoEm: Date.now() });
   salvar();
   var tc = srTotaisCliente(c, vol.k);
+  if (tipo === "t") { var fe = srFeitos(c, "t"), et = c.vols.filter(function (v) { return v.k === vol.k && fe[v.c]; }).length;   // v604
+    return { ok: true, msg: "✓ etiqueta colada · " + dono.fant + " — volume " + vol.n + "/" + vol.tot + " · cliente " + et + "/" + tc.vols, vol: vol }; }
   return { ok: true, msg: "✓ " + dono.fant + " — volume " + vol.n + "/" + vol.tot + " · cliente " + (tipo === "e" ? tc.ent : tc.car) + "/" + tc.vols, vol: vol };
 }
 function srBiparCampo(cargaId, tipo, inputId) {
@@ -12343,6 +12351,36 @@ function srBlocoHTML() {
   cargas.forEach(function (c) { h += srCardHTML(c); });
   return h;
 }
+/* v604: etiquetagem acompanhada na DOCA + baú que ganha cor a cada bip (ver srProgCaixas) */
+function srVer3DHTML(c, modo) {
+  var oc = state.srOcultar3D && state.srOcultar3D[modo];
+  var bt = '<button onclick="if(!state.srOcultar3D)state.srOcultar3D={};state.srOcultar3D[\'' + modo + '\']=' + (oc ? 'false' : 'true') + ';render();" style="font-size:11px;margin-top:10px;">'
+    + (oc ? '👁 mostrar ' : '🙈 ocultar ') + (modo === "doca" ? 'a doca em 3D' : 'o carregamento em 3D') + '</button>';
+  if (oc) return '<div>' + bt + '</div>';
+  var txt = modo === "doca"
+    ? 'Doca em 3D, no mesmo arranjo do baú: cada cliente no lugar onde vai ser carregado. Tudo começa <b style="color:#C8925A;">marrom</b>; a cada etiqueta colada e bipada, o volume ganha a cor do cliente. Quando estiver tudo colorido, está tudo etiquetado.'
+    : 'Acompanhamento do carregamento: o baú começa todo <b style="color:#C8925A;">marrom</b> e, a cada bip, a cor do cliente aparece no lugar certo (palete por palete na paletizada, coluna por coluna na batida). Atualiza sozinho em todos os aparelhos.';
+  return '<div>' + bt + '<div style="font-size:11px;color:#999;margin:6px 0;">' + txt + '</div>' + sr3dHTML(c, modo) + '</div>';
+}
+function srDocaHTML(c, msg) {
+  var r = srProgResumo(c, "t"), cor = r.tot && r.ok === r.tot ? "#2E7D32" : GOLD;
+  var falta = [];
+  if (r.ok < r.tot) {
+    var fe = srFeitos(c, "t");
+    c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; }).forEach(function (cl) {
+      var n = c.vols.filter(function (v) { return v.k === cl.k && !fe[v.c]; }).length;
+      if (n) falta.push('<span style="white-space:nowrap;">P' + cl.seq + ' ' + esc(String(cl.fant || cl.nome).slice(0, 22)) + ' <b>' + n + '</b></span>');
+    });
+  }
+  return '<div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">'
+    + '<div style="font-weight:800;margin-bottom:6px;">🏷 Conferir etiquetagem na doca <span style="font-weight:700;color:' + cor + ';">' + r.ok + '/' + r.tot + ' (' + r.pct + '%)</span></div>'
+    + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + r.pct + '%;background:' + cor + ';"></div></div>'
+    + '<input id="sr-bip-t" placeholder="bipe a etiqueta já colada" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'t\',\'sr-bip-t\')" style="font-size:16px;padding:8px;width:230px;"> '
+    + '<button onclick="srBiparCampo(\'' + c.id + '\',\'t\',\'sr-bip-t\')">✔ bipar</button> '
+    + '<button onclick="srLerCamera(\'' + c.id + '\',\'t\',\'sr-bip-t\')">📷 câmera</button>' + msg("t")
+    + (falta.length ? '<div style="font-size:11px;color:#E67E22;margin-top:6px;line-height:1.6;">Falta etiquetar: ' + falta.join(" · ") + '</div>' : (r.tot ? '<div style="font-size:12px;color:#4CAF50;font-weight:800;margin-top:6px;">✓ todos os volumes etiquetados</div>' : ''))
+    + srVer3DHTML(c, "doca") + '</div>';
+}
 function srCardHTML(c) {
   var t = srTotais(c), aberta = String(state.srCargaAberta) === String(c.id);
   var pc = t.vols ? Math.round(t.carregados * 100 / t.vols) : 0;
@@ -12381,13 +12419,15 @@ function srCardHTML(c) {
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'cx\')" style="background:#fff;color:#000;font-weight:800;padding:8px 12px;">⬜ Caixas fechadas (' + t.cx + ') — rolo branco</button> '
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'fr\')" style="background:#F2E600;color:#000;font-weight:800;padding:8px 12px;">🟨 Fracionados (' + (t.miu + t.sol) + ') — rolo amarelo</button> '
     + '<button onclick="srImprimirRomaneio(\'' + c.id + '\')" style="padding:8px 12px;">📄 Romaneio de carregamento</button>'
+    + srDocaHTML(c, msg)
     + '<div style="font-size:11px;color:#999;margin-top:6px;">Impressora térmica: a cor vem do ROLO. Imprima as caixas no rolo branco e troque para o rolo amarelo nos fracionados (miudeza e soltos, que vão em saco ou meia caixa). Saem na ordem de carregamento (última parada primeiro) e cada etiqueta diz a ZONA do baú e o metro onde o volume vai. Na bipagem vale a etiqueta RF e o número da caixa de miudeza.</div></div>';
   // carregamento
   h += '<div ' + box + '>' + tit("5", "Bipar o carregamento")
     + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pc + '%;background:' + cor + ';"></div></div>'
     + '<input id="sr-bip-c" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')" style="font-size:16px;padding:8px;width:230px;"> '
     + '<button onclick="srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')">✔ bipar</button> '
-    + '<button onclick="srLerCamera(\'' + c.id + '\',\'c\',\'sr-bip-c\')">📷 câmera</button>' + msg("c") + '</div>';
+    + '<button onclick="srLerCamera(\'' + c.id + '\',\'c\',\'sr-bip-c\')">📷 câmera</button>' + msg("c")
+    + srVer3DHTML(c, "carga") + '</div>';   // v604: baú em 3D pintando a cada bip
   // rota
   var viagem = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
   var ents = viagem ? entregasDaViagem(viagem.id) : [];
@@ -12820,7 +12860,7 @@ function srMontagem(c) {
         var s = { fila: fila + 1, lado: lado, fora: fila >= G.filas, fill: fill, n: j + 1 };
         s.x = fila * G.ao; s.y = lado * G.atr; s.dx = G.ao; s.dy = G.atr;
         b.slots.push(s);
-        caixas.push({ x: s.x + 0.04, y: s.y + 0.04, z: 0, dx: G.ao - 0.08, dy: G.atr - 0.08, dz: hPal * fill, cor: b.cor, rot: u.rot, palete: true, fora: s.fora });
+        caixas.push({ x: s.x + 0.04, y: s.y + 0.04, z: 0, dx: G.ao - 0.08, dy: G.atr - 0.08, dz: hPal * fill, cor: b.cor, rot: u.rot, palete: true, fora: s.fora, bk: b.k, sn: j + 1 });   // v604: bk/sn = bloco e palete
         vaga++;
       }
       b.ini = b.slots[0].x; b.fim = b.slots[b.slots.length - 1].x + G.ao;
@@ -12862,7 +12902,7 @@ function srMontagem(c) {
         if (!slotsUsados[key]) { slotsUsados[key] = 1; caixas.push({ soBase: true, palete: true, x: p.fila * G.ao + 0.04, y: p.lado * G.atr + 0.04, z: 0, dx: G.ao - 0.08, dy: G.atr - 0.08, dz: 0.14, cor: "#a8743c", fora: p.fora }); }
         if (!b.slots.some(function (s0) { return s0.fila === p.fila + 1 && s0.lado === p.lado; })) b.slots.push({ fila: p.fila + 1, lado: p.lado, n: b.slots.length + 1, fora: p.fora, x: p.fila * G.ao, y: p.lado * G.atr, dx: G.ao, dy: G.atr, fill: 1 });
         caixas.push({ coluna: true, x: p.x + 0.015, y: p.y + 0.015, z: 0.14 + sg.z0, dx: SR_CAIXA.c - 0.03, dy: SR_CAIXA.l - 0.03, dz: Math.max(0.04, sg.dz - 0.01), nFaixas: Math.max(1, Math.round(sg.dz / SR_CAMADA)),
-          cor: b.cor, rot: (sg === maior && !u.sub) ? u.rot : "", palete: false, fora: p.fora });
+          cor: b.cor, rot: (sg === maior && !u.sub) ? u.rot : "", palete: false, fora: p.fora, bk: b.k });   // v604: bk = bloco
       });
       var xs = segs.map(function (sg) { return sg.p.x; });
       b.ini = xs.length ? Math.min.apply(null, xs) : 0; b.fim = xs.length ? Math.max.apply(null, xs) + SR_CAIXA.c : 0;
@@ -13482,13 +13522,69 @@ function sr3dRoda(x, y0, y1, zc, r) {
 }
 function sr3dPlaca(pts, n, cor, alpha, ordem) { return { faces: [{ p: pts, n: n, cor: cor, duasFaces: true }], c: pts.reduce(function (s, q) { return [s[0] + q[0] / pts.length, s[1] + q[1] / pts.length, s[2] + q[2] / pts.length]; }, [0, 0, 0]), alpha: alpha, ordem: ordem || 0 }; }
 
+/* ---- v604: ACOMPANHAMENTO EM 3D (São Roque, reunião de 10/10/2026 -- piloto liberado) ----
+   Pedidos do cliente:
+   (1) ETIQUETAGEM: uma tela igual à do caminhão, mas numa DOCA, para saber se tudo foi
+       etiquetado. A etiqueta conta como colada quando o conferente BIPA a etiqueta RF
+       depois de colar (bip tipo "t"); volume já bipado no carregamento também conta.
+   (2) CARREGAMENTO: a imagem do baú começa toda MARROM (papelão sem cor) e, a cada bip
+       do carregamento, a cor do cliente aparece no lugar certo -- palete por palete na
+       paletizada, coluna por coluna na batida --, para os gestores acompanharem em 3D.
+   A montagem aprovada (seção 2) NÃO muda: estas vistas só pintam o mesmo arranjo. */
+var SR_PENDENTE = "#9C6B3E";   // marrom de papelão: volume ainda não etiquetado / não carregado
+function srFeitos(c, tipo) {
+  var out = {};
+  srBips().forEach(function (b) {
+    if (b.carga !== c.id) return;
+    if (b.tipo === tipo || (tipo === "t" && b.tipo === "c")) out[b.cod] = 1;   // carregado = etiquetado
+  });
+  return out;
+}
+/* fração pronta de cada caixa do desenho (0 = toda marrom, 1 = toda na cor do cliente) */
+function srProgCaixas(c, m, tipo) {
+  var feitos = srFeitos(c, tipo), porBloco = {}, totH = {}, acum = {};
+  m.blocos.forEach(function (b) {
+    var inf = { tot: 0, ok: 0, slot: {} };
+    (c.vols || []).forEach(function (v) {
+      if ((b.membros || []).indexOf(v.k) < 0) return;
+      var f = !!feitos[v.c]; inf.tot++; if (f) inf.ok++;
+      if (m.modo === "palete") { var sl = srPaleteDoVolume(b, v), n = sl ? sl.n : 1, o = inf.slot[n] || (inf.slot[n] = { tot: 0, ok: 0 }); o.tot++; if (f) o.ok++; }
+    });
+    porBloco[b.k] = inf;
+  });
+  m.caixas.forEach(function (bx) { if (bx.coluna && bx.bk != null) totH[bx.bk] = (totH[bx.bk] || 0) + bx.dz; });
+  return m.caixas.map(function (bx) {
+    if (bx.soBase || bx.bk == null) return null;
+    var inf = porBloco[bx.bk]; if (!inf || !inf.tot) return 0;
+    if (bx.coluna) {   // batida: a cor sobe coluna por coluna, na ordem em que o cliente foi arrumado
+      var alvo = inf.ok / inf.tot * totH[bx.bk], a = acum[bx.bk] || 0; acum[bx.bk] = a + bx.dz;
+      return Math.max(0, Math.min(1, (alvo - a) / (bx.dz || 1)));
+    }
+    var sl = inf.slot[bx.sn]; return sl && sl.tot ? sl.ok / sl.tot : 0;
+  });
+}
+function srProgResumo(c, tipo) {
+  var f = srFeitos(c, tipo), tot = (c.vols || []).length, ok = 0;
+  (c.vols || []).forEach(function (v) { if (f[v.c]) ok++; });
+  return { tot: tot, ok: ok, pct: tot ? Math.round(ok * 100 / tot) : 0 };
+}
+
 /* cena do caminhão a partir da montagem ---------------------------------- */
-function sr3dCena(c) {
+function sr3dCena(c, opt) {
+  opt = opt || {};
+  var doca = !!opt.doca;
   var m = srMontagem(c), B = m.B, L = B.c, W = B.l, H = B.a;
+  var prog = opt.tipo ? srProgCaixas(c, m, opt.tipo) : null;   // v604
   var cabC = Math.max(1.5, Math.min(2.1, L * 0.28)), c0 = -cabC, c1 = -0.12, ch = Math.min(H, 2.3);
   var obj = [];
   // chão (sombra)
   obj.push(Object.assign(sr3dPlaca([[c0 - 0.6, -0.8, -0.92], [L + 1.2, -0.8, -0.92], [L + 1.2, W + 0.8, -0.92], [c0 - 0.6, W + 0.8, -0.92]], [0, 0, 1], "#000000", 0.35, -3), { chao: true }));
+  if (doca) {   // v604: piso de concreto da doca com a faixa amarela de demarcação
+    obj.push(Object.assign(sr3dCaixa(-0.6, -0.6, -0.2, L + 0.6, W + 0.6, 0, "#6b6f75", { cores: { topo: "#7d8187", lado: "#55585d", frente: "#55585d" } }), { ordem: -1 }));
+    [[-0.45, -0.45, L + 0.45, -0.33], [-0.45, W + 0.33, L + 0.45, W + 0.45], [-0.45, -0.45, -0.33, W + 0.45], [L + 0.33, -0.45, L + 0.45, W + 0.45]].forEach(function (r) {
+      obj.push(Object.assign(sr3dCaixa(r[0], r[1], 0, r[2], r[3], 0.012, "#F2C200"), { ordem: -1 }));
+    });
+  } else {
   // chassi e assoalho
   obj.push(Object.assign(sr3dCaixa(c0 + 0.1, 0.3, -0.6, L + 0.1, W - 0.3, -0.25, "#2a2a2a"), { ordem: -1 }));
   obj.push(Object.assign(sr3dCaixa(0, 0, -0.2, L, W, 0, "#7a5833", { cores: { topo: "#8a6438", lado: "#9AA0A6", frente: "#9AA0A6" }, faixas: true }), { ordem: -1, assoalho: true }));
@@ -13496,18 +13592,29 @@ function sr3dCena(c) {
   var rodas = [c0 + cabC * 0.42, L * 0.70];
   if (L > 6) rodas.push(L * 0.70 + 1.15);
   rodas.forEach(function (rx) { obj.push(sr3dRoda(rx, -0.06, 0.3, -0.47, 0.45)); obj.push(sr3dRoda(rx, W - 0.3, W + 0.06, -0.47, 0.45)); });
+  }
   // carga
-  m.caixas.forEach(function (bx) {
-    var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy, base = 0;
+  /* v604: com acompanhamento, a caixa vira duas: a parte pronta (cor do cliente, de baixo
+     para cima) e a que falta (marrom). O rótulo do cliente fica sempre no topo. */
+  var empilha = function (x0, y0, x1, y1, z0, z1, cor, p, op) {
+    if (p == null) { obj.push(sr3dCaixa(x0, y0, z0, x1, y1, z1, cor, op)); return; }
+    var zc = z0 + (z1 - z0) * p, rot = op.rot;
+    if (p > 0.001) obj.push(sr3dCaixa(x0, y0, z0, x1, y1, zc, cor, Object.assign({}, op, { rot: p >= 0.999 ? rot : undefined, nFaixas: op.nFaixas ? Math.max(1, Math.round(op.nFaixas * p)) : undefined })));
+    if (p < 0.999) obj.push(sr3dCaixa(x0, y0, zc, x1, y1, z1, SR_PENDENTE, Object.assign({}, op, { rot: rot, nFaixas: op.nFaixas ? Math.max(1, Math.round(op.nFaixas * (1 - p))) : undefined })));
+  };
+  m.caixas.forEach(function (bx, i) {
+    var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy, base = 0, p = prog ? prog[i] : null;
     if (bx.soBase) { obj.push(sr3dCaixa(x0, y0, 0, x1, y1, 0.14, "#a8743c", { cores: { topo: "#c08a4e", lado: "#8a5e2e", frente: "#7a5228" }, linhas: "#4a3218" })); return; }   // v596
-    if (bx.coluna) { obj.push(sr3dCaixa(x0, y0, bx.z, x1, y1, bx.z + bx.dz, bx.fora ? "#E74C3C" : bx.cor, { rot: bx.rot, linhas: "rgba(0,0,0,.5)", faixas: true, nFaixas: bx.nFaixas })); return; }
+    if (bx.coluna) { empilha(x0, y0, x1, y1, bx.z, bx.z + bx.dz, bx.fora ? "#E74C3C" : bx.cor, p, { rot: bx.rot, linhas: "rgba(0,0,0,.5)", faixas: true, nFaixas: bx.nFaixas }); return; }
     if (bx.palete) {
       base = 0.14;
       obj.push(sr3dCaixa(x0, y0, 0, x1, y1, base, "#a8743c", { cores: { topo: "#c08a4e", lado: "#8a5e2e", frente: "#7a5228" }, linhas: "#4a3218" }));
     }
     var zb = base + Math.max(0.12, bx.dz - base), cor = bx.fora ? "#E74C3C" : bx.cor;
-    obj.push(sr3dCaixa(x0 + 0.01, y0 + 0.01, base, x1 - 0.01, y1 - 0.01, zb, cor, { rot: bx.rot, linhas: "rgba(0,0,0,.45)", faixas: bx.palete }));
+    empilha(x0 + 0.01, y0 + 0.01, x1 - 0.01, y1 - 0.01, base, zb, cor, p, { rot: bx.rot, linhas: "rgba(0,0,0,.45)", faixas: bx.palete });
   });
+  var arestas = [];
+  if (!doca) {   // v604: na doca não há baú nem cabine
   // baú: paredes translúcidas (longe, perto, teto, frente) e portas abertas
   var vidroBau = "#dfe3e8";
   obj.push(sr3dPlaca([[0, W, 0], [L, W, 0], [L, W, H], [0, W, H]], [0, 1, 0], vidroBau, 0.22));
@@ -13518,7 +13625,7 @@ function sr3dCena(c) {
   obj.push(sr3dPlaca([[L, 0, 0], [L + dw * Math.sin(a), dw * Math.cos(a), 0], [L + dw * Math.sin(a), dw * Math.cos(a), H], [L, 0, H]], [0, -1, 0], "#e6e9ec", 0.92));
   obj.push(sr3dPlaca([[L, W, 0], [L, W, H], [L + dw * Math.sin(a), W - dw * Math.cos(a), H], [L + dw * Math.sin(a), W - dw * Math.cos(a), 0]], [0, 1, 0], "#e6e9ec", 0.92));
   // arestas do baú (desenhadas como linhas)
-  var arestas = [[[0, 0, 0], [L, 0, 0]], [[0, W, 0], [L, W, 0]], [[0, 0, H], [L, 0, H]], [[0, W, H], [L, W, H]],
+  arestas = [[[0, 0, 0], [L, 0, 0]], [[0, W, 0], [L, W, 0]], [[0, 0, H], [L, 0, H]], [[0, W, H], [L, W, H]],
     [[0, 0, 0], [0, 0, H]], [[0, W, 0], [0, W, H]], [[L, 0, 0], [L, 0, H]], [[L, W, 0], [L, W, H]],
     [[0, 0, H], [0, W, H]], [[L, 0, H], [L, W, H]]];
   // cabine: prisma de perfil + vidros, faróis, para-choque, retrovisores
@@ -13533,12 +13640,15 @@ function sr3dCena(c) {
   obj.push(sr3dCaixa(c0 + 0.32, -0.3, ch * 0.62, c0 + 0.38, -0.2, ch * 0.9, "#222"));
   obj.push(sr3dCaixa(c0 + 0.32, W + 0.2, ch * 0.62, c0 + 0.38, W + 0.3, ch * 0.9, "#222"));
   obj.push(sr3dCaixa(c1, 0.2, 0.1, 0, W - 0.2, ch * 0.9, "#5f656b"));
+  }
   var mapaVagas = [];
   if (m.modo === "palete") for (var f = 1; f <= m.G.filas; f++) mapaVagas.push({ p: [(f - 0.5) * m.G.ao, -0.25, 0.02], t: "F" + f });
   // v595: faixas finas (um cliente por faixa) ganham um rótulo por parada acima da carga
   var grupos = [];
   m.blocos.forEach(function (b) { if (!b.sub) return; var g = grupos.length ? grupos[grupos.length - 1] : null; if (g && g.seq === b.seq) { g.fim = b.fim; } else grupos.push({ seq: b.seq, ini: b.ini, fim: b.fim, n: b.subTot }); });
   grupos.forEach(function (g) { mapaVagas.push({ p: [(g.ini + g.fim) / 2, W / 2, H * 0.97], t: "P" + g.seq + " · " + g.n + " cli.", cor: "#ffffff" }); });
+  if (doca) return { obj: obj, arestas: arestas, rotulos: mapaVagas.concat([{ p: [L + 0.9, W / 2, 0.3], t: "▶ PORTA DO CAMINHÃO", cor: "#E8C46A" }, { p: [-0.3, W / 2, 0.3], t: "1º A CARREGAR", cor: "#bbb" }, { p: [L / 2, -0.85, 0.02], t: "DOCA — separação e etiquetagem", cor: "#F2C200" }]),
+    centro: [L / 2, W / 2, H * 0.3], raio: L * 0.62 };
   return { obj: obj, arestas: arestas, rotulos: mapaVagas.concat([{ p: [L + 0.6, W / 2, H + 0.25], t: "PORTA", cor: "#E8C46A" }, { p: [0.2, W / 2, H + 0.25], t: "FUNDO", cor: "#bbb" }]),
     centro: [(c0 + L) / 2, W / 2, H * 0.35], raio: (L + cabC) * 0.62 };
 }
@@ -13643,8 +13753,9 @@ function sr3dIniciar() {
   var l = document.querySelectorAll("canvas[data-sr3d]");
   for (var i = 0; i < l.length; i++) (function (cv) {
     var c = srCarga(cv.getAttribute("data-sr3d")); if (!c) return;
-    if (!cv._srCena && !cv._three && window.THREE && SR3DGL.estado !== "semgl" && srGlSuportado()) { try { srGlIniciar(cv, c); } catch (e) { console.warn("3D realista indisponível:", e); SR3DGL.estado = "semgl"; } }   // v598
-    if (!cv._three) { try { cv._srCena = sr3dCena(c); } catch (e) { return; } }
+    var modo = cv.getAttribute("data-sr3d-modo") || "", opt = modo === "doca" ? { doca: true, tipo: "t" } : modo === "carga" ? { tipo: "c" } : {};   // v604
+    if (!cv._srCena && !cv._three && window.THREE && SR3DGL.estado !== "semgl" && srGlSuportado()) { try { srGlIniciar(cv, c, opt); } catch (e) { console.warn("3D realista indisponível:", e); SR3DGL.estado = "semgl"; } }   // v598
+    if (!cv._three) { try { cv._srCena = sr3dCena(c, opt); } catch (e) { return; } }
     sr3dDesenhar(cv);
     if (cv._srPronto) return; cv._srPronto = true;
     var dedos = {}, ult = null, dist0 = 0, zoom0 = 1, toque = 0;
@@ -13692,7 +13803,7 @@ function srVista3D(nome) {
 }
 function srGiro3D() {
   SR3D.auto = !SR3D.auto;
-  var b = document.getElementById("sr3d-giro"); if (b) b.textContent = SR3D.auto ? "⏸ parar" : "⟳ girar sozinho";
+  var bs = document.querySelectorAll("[data-sr3d-giro]"); for (var ib = 0; ib < bs.length; ib++) bs[ib].textContent = SR3D.auto ? "⏸ parar" : "⟳ girar sozinho";   // v604: pode haver mais de um 3D na tela
   var ult = performance.now();
   var passo = function (t) {
     if (!SR3D.auto || !document.querySelector("canvas[data-sr3d]")) { SR3D.auto = false; return; }
@@ -13700,13 +13811,21 @@ function srGiro3D() {
   };
   if (SR3D.auto) requestAnimationFrame(passo);
 }
-function sr3dHTML(c) {
+function sr3dHTML(c, modo) {
+  var leg = "";
+  if (modo) {   // v604: legenda do acompanhamento
+    var r = srProgResumo(c, modo === "doca" ? "t" : "c"), oque = modo === "doca" ? "etiquetado" : "carregado";
+    leg = '<div style="position:absolute;left:8px;top:8px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:8px;padding:6px 9px;font-size:12px;color:#eee;line-height:1.5;">'
+      + '<b style="font-size:14px;color:' + (r.ok === r.tot && r.tot ? "#4CAF50" : "#E8C46A") + ';">' + r.ok + '/' + r.tot + ' ' + oque + ' (' + r.pct + '%)</b><br>'
+      + '<span style="display:inline-block;width:11px;height:11px;background:' + SR_PENDENTE + ';border-radius:2px;vertical-align:-1px;"></span> falta '
+      + '<span style="display:inline-block;width:11px;height:11px;background:linear-gradient(90deg,#1565C0,#E65100,#2E7D32);border-radius:2px;vertical-align:-1px;margin-left:8px;"></span> ' + oque + ' (cor do cliente)</div>';
+  }
   var bt = function (v, t) { return '<button onclick="srVista3D(\'' + v + '\')" style="font-size:12px;padding:6px 9px;background:rgba(0,0,0,.6);color:#eee;border:1px solid #555;border-radius:6px;">' + t + '</button>'; };
   return '<div style="position:relative;border-radius:10px;overflow:hidden;background:#050505;">'
-    + '<canvas data-sr3d="' + esc(c.id) + '" style="width:100%;display:block;touch-action:none;cursor:grab;"></canvas>'
+    + '<canvas data-sr3d="' + esc(c.id) + '"' + (modo ? ' data-sr3d-modo="' + modo + '"' : '') + ' style="width:100%;display:block;touch-action:none;cursor:grab;"></canvas>' + leg
     + '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'
     + bt("lado", "🚚 Lado") + bt("traseira", "🚪 Traseira") + bt("cima", "⬇ De cima") + bt("outro", "↔ Outro lado")
-    + '<button id="sr3d-giro" onclick="srGiro3D()" style="font-size:12px;padding:6px 9px;background:rgba(232,196,106,.9);color:#000;font-weight:800;border:0;border-radius:6px;">' + (SR3D.auto ? "⏸ parar" : "⟳ girar sozinho") + '</button></div></div>';
+    + '<button data-sr3d-giro="1" onclick="srGiro3D()" style="font-size:12px;padding:6px 9px;background:rgba(232,196,106,.9);color:#000;font-weight:800;border:0;border-radius:6px;">' + (SR3D.auto ? "⏸ parar" : "⟳ girar sozinho") + '</button></div></div>';
 }
 
 
@@ -14415,8 +14534,11 @@ function srSprite(texto, corFundo, corTexto, escala) {
 
 /* monta a cena; coordenadas do app (x comprimento cabine->porta, y largura, z altura com o
    assoalho do baú em 0) viram three (X = x, Y = z + 0.92 com o chão em 0, Z = -y) */
-function srGlCena(c) {
+function srGlCena(c, opt) {
+  opt = opt || {};
+  var doca = !!opt.doca;   // v604
   var m = srMontagem(c), B = m.B, L = B.c, W = B.l, H = B.a, M = srMats();
+  var prog = opt.tipo ? srProgCaixas(c, m, opt.tipo) : null;   // v604
   var cena = new THREE.Scene(), raiz = new THREE.Group(); cena.add(raiz);
   var S = function (x, y, z) { return new THREE.Vector3(x, z + 0.92, -y); };
   var add = function (geo, mat, x, y, z, sombra) { var me = new THREE.Mesh(geo, mat); me.position.copy(S(x, y, z)); me.castShadow = sombra !== false; me.receiveShadow = true; raiz.add(me); return me; };
@@ -14428,6 +14550,11 @@ function srGlCena(c) {
 
   // chão que recebe a sombra
   var chao = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), M.sombra); chao.rotation.x = -Math.PI / 2; chao.position.y = 0.001; chao.receiveShadow = true; raiz.add(chao);
+  if (doca) {   // v604: piso de concreto da doca + faixa amarela; sem caminhão
+    var piso = new THREE.MeshStandardMaterial({ color: 0x7a7e84, roughness: 0.9 }), faixa = new THREE.MeshStandardMaterial({ color: 0xF2C200, roughness: 0.6 });
+    caixa(-0.8, -0.8, -0.92, L + 0.8, W + 0.8, 0, piso, false);
+    [[-0.5, -0.5, L + 0.5, -0.36], [-0.5, W + 0.36, L + 0.5, W + 0.5], [-0.5, -0.5, -0.36, W + 0.5], [L + 0.36, -0.5, L + 0.5, W + 0.5]].forEach(function (r) { caixa(r[0], r[1], 0, r[2], r[3], 0.012, faixa, false); });
+  } else {
   // longarinas e travessas
   [0.32, W - 0.32].forEach(function (yy) { caixa(c0 + 0.25, yy - 0.06, -0.66, L + 0.12, yy + 0.06, -0.38, M.chassi); });
   for (var tx = c1 + 0.4; tx < L; tx += 1.1) caixa(tx - 0.05, 0.3, -0.6, tx + 0.05, W - 0.3, -0.45, M.chassi);
@@ -14532,10 +14659,12 @@ function srGlCena(c) {
   [[0.12, 0.42], [W - 0.42, W - 0.12]].forEach(function (yy) { caixa(L + 0.08, yy[0], -0.62, L + 0.14, yy[1], -0.46, M.lanterna, false); });
   caixa(L - 0.02, W / 2 - 0.35, -0.5, L + 0.18, W / 2 + 0.35, -0.46, M.aluminio);
 
+  }
   // ---- carga
   var etiquetas = [];
-  m.caixas.forEach(function (bx) {
-    var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy;
+  var pend = function (tipo) { return srMatCor(SR_PENDENTE, tipo); };   // v604: marrom = ainda não feito
+  m.caixas.forEach(function (bx, ic) {
+    var x0 = bx.x, x1 = bx.x + bx.dx, y0 = bx.y, y1 = bx.y + bx.dy, pr = prog ? prog[ic] : null;
     if (bx.palete || bx.soBase) {   // palete PBR: tábuas de cima + 3 longarinas
       caixa(x0, y0, 0.11, x1, y1, 0.14, M.madeira);
       [0.04, 0.5, 0.96].forEach(function (f) { var yy = y0 + (y1 - y0) * f; caixa(x0, yy - 0.05, 0.0, x1, yy + 0.05, 0.11, M.madeiraEsc); });
@@ -14544,8 +14673,17 @@ function srGlCena(c) {
     var base = bx.coluna ? bx.z : (bx.palete ? 0.14 : 0), topo = bx.coluna ? bx.z + bx.dz : base + Math.max(0.12, bx.dz - (bx.palete ? 0.14 : 0));
     var mat = bx.fora ? M.fora : srMatCor(bx.cor, bx.coluna ? "caixa" : "filme");
     var camadas = bx.coluna ? (bx.nFaixas || 1) : Math.max(1, Math.round((topo - base) / 0.3));
-    var me = new THREE.Mesh(srBoxGeo(x1 - x0 - 0.01, topo - base, y1 - y0 - 0.01, camadas, bx.coluna ? 1 : 2), mat);
-    me.position.copy(S((x0 + x1) / 2, (y0 + y1) / 2, (base + topo) / 2)); me.castShadow = true; me.receiveShadow = true; raiz.add(me);
+    var bloco = function (z0, z1, mt, cam) {
+      if (z1 - z0 < 0.005) return;
+      var me = new THREE.Mesh(srBoxGeo(x1 - x0 - 0.01, z1 - z0, y1 - y0 - 0.01, Math.max(1, cam), bx.coluna ? 1 : 2), mt);
+      me.position.copy(S((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)); me.castShadow = true; me.receiveShadow = true; raiz.add(me);
+    };
+    if (pr == null) bloco(base, topo, mat, camadas);
+    else {   // v604: parte pronta na cor do cliente (de baixo para cima), o resto em marrom
+      var zc = base + (topo - base) * pr;
+      bloco(base, zc, mat, Math.round(camadas * pr));
+      bloco(zc, topo, pend(bx.coluna ? "caixa" : "filme"), Math.round(camadas * (1 - pr)));
+    }
     if (bx.rot) etiquetas.push({ t: bx.rot, cor: bx.fora ? "#E53935" : bx.cor, p: S((x0 + x1) / 2, (y0 + y1) / 2, topo + 0.22) });
   });
   // rótulo por praça quando o cliente virou faixas (sintético)
@@ -14553,8 +14691,14 @@ function srGlCena(c) {
   m.blocos.forEach(function (b) { if (!b.sub) return; var g = grupos.length ? grupos[grupos.length - 1] : null; if (g && g.seq === b.seq) { g.fim = b.fim; } else grupos.push({ seq: b.seq, ini: b.ini, fim: b.fim, n: b.subTot, cor: b.cor }); });
   grupos.forEach(function (g) { etiquetas.push({ t: "P" + g.seq + " · " + g.n + " cli.", cor: g.cor, p: S((g.ini + g.fim) / 2, W / 2, H * 0.9) }); });
   etiquetas.forEach(function (e) { var sp = srSprite(e.t, e.cor, "#fff", 0.3); sp.position.copy(e.p); raiz.add(sp); });
+  if (doca) {   // v604
+    var d1 = srSprite("1º A CARREGAR", null, "#cfd3d8", 0.24); d1.position.copy(S(-0.2, W / 2, 0.5)); raiz.add(d1);
+    var d2 = srSprite("PORTA DO CAMINHÃO ▶", null, "#E8C46A", 0.28); d2.position.copy(S(L + 1.1, W / 2, 0.5)); raiz.add(d2);
+    var d3 = srSprite("DOCA · separação e etiquetagem", null, "#F2C200", 0.28); d3.position.copy(S(L / 2, -0.95, 0.15)); raiz.add(d3);
+  } else {
   var f1 = srSprite("FUNDO", null, "#cfd3d8", 0.26); f1.position.copy(S(0.35, W / 2, H + 0.35)); raiz.add(f1);
   var f2 = srSprite("PORTA ▶", null, "#E8C46A", 0.3); f2.position.copy(S(L + 0.7, W / 2, H + 0.25)); raiz.add(f2);
+  }
 
   // ---- luz de estúdio + reflexo de ambiente
   cena.add(new THREE.HemisphereLight(0xdfe8f2, 0x2a2622, 0.55));
@@ -14562,6 +14706,7 @@ function srGlCena(c) {
   sol.shadow.mapSize.set(2048, 2048); sol.shadow.camera.left = -8; sol.shadow.camera.right = 8; sol.shadow.camera.top = 8; sol.shadow.camera.bottom = -8; sol.shadow.bias = -0.0005; sol.shadow.radius = 4;
   sol.target.position.set(L / 2 - 1, 0, -W / 2); cena.add(sol); cena.add(sol.target);
   var luz2 = new THREE.DirectionalLight(0xbcd2ff, 0.35); luz2.position.set(8, 4, -6); cena.add(luz2);
+  if (doca) return { cena: cena, centro: new THREE.Vector3(L / 2, 1.0, -W / 2), raio: L * 0.62 };   // v604
   var centro = new THREE.Vector3((c0 + L) / 2, 1.25, -W / 2);
   return { cena: cena, centro: centro, raio: (L + cabC) * 0.62 };
 }
@@ -14578,7 +14723,7 @@ function srGlAmbiente(renderer) {
   } catch (e) { SR3DGL.env = null; }
   return SR3DGL.env;
 }
-function srGlIniciar(cv, c) {
+function srGlIniciar(cv, c, opt) {
   // libera renderizadores de telas que já saíram da página
   SR3DGL.renderers = SR3DGL.renderers.filter(function (r) { if (document.body.contains(r.domElement)) return true; try { r.dispose(); r.forceContextLoss(); } catch (e) {} return false; });
   var rd = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -14588,7 +14733,7 @@ function srGlIniciar(cv, c) {
   rd.toneMapping = THREE.NoToneMapping;   // sem tone mapping: não lava as cores dos clientes
   rd.physicallyCorrectLights = false;
   SR3DGL.renderers.push(rd);
-  var info = srGlCena(c);
+  var info = srGlCena(c, opt);
   var env = srGlAmbiente(rd); if (env) info.cena.environment = env;
   var cam = new THREE.PerspectiveCamera(30, 2, 0.1, 200);
   cv._three = { rd: rd, info: info, cam: cam };
@@ -35585,9 +35730,9 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
     if (!cargas.length) return regra + "\nNenhuma carga da São Roque importada ainda.";
     const linhas = cargas.slice().sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0)).slice(0, 8).map((c) => {
       const t = srTotais(c), m = srMontagem(c);
-      return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
+      return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 4 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 5 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. A montagem aprovada (seção 2) não muda.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
