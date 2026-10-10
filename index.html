@@ -2,12 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v605)</title>
+<title>RF Logística — Painel da Frota (v606)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v605">
+<meta name="rf-versao" content="v606">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v606 (10/10/2026): SÃO ROQUE -- "Documentos da viagem" (CT-e, CIOT, MDF-e) passou a ser a ÚLTIMA seção da carga
+     (8), por ser o processo final; as demais subiram uma posição (Etiquetas 3 ... Paradas 7). -->
 <!-- v605 (10/10/2026): SÃO ROQUE -- cores dos clientes: saiu o marrom (confundia com o "falta" do 3D) e nenhum
      cliente repete cor dentro do baú (12 cores fixas + geradas sem repetir a partir da 13ª; antes repetia a cada 10
      e as faixas da mesma praça alternavam duas cores). -->
@@ -903,7 +905,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v605" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v606" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12416,16 +12418,15 @@ function srCardHTML(c) {
   h += srDivHTML(c);   // v594: roteirizar / dividir carga
   // v586: montagem do baú
   h += '<div ' + box + '>' + tit("2", "Ordem das paradas, rota e montagem do baú") + srImpactoHTML(c) + '<div style="height:12px;"></div>' + srMontagemHTML(c) + '</div>';
-  h += '<div ' + box + '>' + tit("3", "Documentos da viagem · CT-e, CIOT e MDF-e") + srFiscHTML(c) + '</div>';   // v601
   // etiquetas
-  h += '<div ' + box + '>' + tit("4", "Etiquetas")
+  h += '<div ' + box + '>' + tit("3", "Etiquetas")
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'cx\')" style="background:#fff;color:#000;font-weight:800;padding:8px 12px;">⬜ Caixas fechadas (' + t.cx + ') — rolo branco</button> '
     + '<button onclick="srImprimirEtiquetas(\'' + c.id + '\',\'\',\'fr\')" style="background:#F2E600;color:#000;font-weight:800;padding:8px 12px;">🟨 Fracionados (' + (t.miu + t.sol) + ') — rolo amarelo</button> '
     + '<button onclick="srImprimirRomaneio(\'' + c.id + '\')" style="padding:8px 12px;">📄 Romaneio de carregamento</button>'
     + srDocaHTML(c, msg)
     + '<div style="font-size:11px;color:#999;margin-top:6px;">Impressora térmica: a cor vem do ROLO. Imprima as caixas no rolo branco e troque para o rolo amarelo nos fracionados (miudeza e soltos, que vão em saco ou meia caixa). Saem na ordem de carregamento (última parada primeiro) e cada etiqueta diz a ZONA do baú e o metro onde o volume vai. Na bipagem vale a etiqueta RF e o número da caixa de miudeza.</div></div>';
   // carregamento
-  h += '<div ' + box + '>' + tit("5", "Bipar o carregamento")
+  h += '<div ' + box + '>' + tit("4", "Bipar o carregamento")
     + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + pc + '%;background:' + cor + ';"></div></div>'
     + '<input id="sr-bip-c" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')" style="font-size:16px;padding:8px;width:230px;"> '
     + '<button onclick="srBiparCampo(\'' + c.id + '\',\'c\',\'sr-bip-c\')">✔ bipar</button> '
@@ -12435,7 +12436,7 @@ function srCardHTML(c) {
   var viagem = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
   var ents = viagem ? entregasDaViagem(viagem.id) : [];
   var lib = ents.length && ents.every(function (e) { return e.liberada; });
-  h += '<div ' + box + '>' + tit("6", "Rota do motorista")
+  h += '<div ' + box + '>' + tit("5", "Rota do motorista")
     + (viagem
       ? '<div style="font-size:13px;margin-bottom:6px;">Viagem ' + esc(viagem.placa) + ' · ' + esc(String(viagem.data).split("-").reverse().join("/")) + ' · ' + ents.length + ' entregas · '
         + (lib ? '<b style="color:#4CAF50;">liberada para ' + esc(viagem.motoristaNaEpoca || "o motorista") + '</b>' : '<b style="color:' + GOLD + ';">ainda não liberada</b>') + '</div>'
@@ -12447,7 +12448,7 @@ function srCardHTML(c) {
     + '</div>';
   // entrega
   var sel = state.srEntregaCli || "";
-  h += '<div ' + box + '>' + tit("7", "Bipar na entrega")
+  h += '<div ' + box + '>' + tit("6", "Bipar na entrega")
     + '<select onchange="state.srEntregaCli=this.value;state.srMsg=null;render();" style="font-weight:700;max-width:100%;"><option value="">— cliente da parada —</option>'
     + c.clientes.map(function (cl) { var tc = srTotaisCliente(c, cl.k); return '<option value="' + esc(cl.k) + '"' + (cl.k === sel ? ' selected' : '') + '>' + cl.seq + ' · ' + esc(cl.fant) + ' — ' + esc(cl.cidade) + ' (' + tc.ent + '/' + tc.vols + ')</option>'; }).join("")
     + '</select><div style="margin-top:8px;"><input id="sr-bip-e" placeholder="bipe a etiqueta" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'e\',\'sr-bip-e\')" style="font-size:16px;padding:8px;width:230px;"> '
@@ -12455,7 +12456,7 @@ function srCardHTML(c) {
     + '<button onclick="srLerCamera(\'' + c.id + '\',\'e\',\'sr-bip-e\')">📷 câmera</button></div>' + msg("e") + '</div>';
   // clientes
   var car = srBipsDaCarga(c.id, "c");
-  h += '<div ' + box + '>' + tit("8", "Paradas") + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+  h += '<div ' + box + '>' + tit("7", "Paradas") + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
     + '<tr style="color:' + GOLD + ';text-align:left;"><th>#</th><th>Cliente</th><th>Cidade</th><th>NF</th><th style="text-align:right;">kg</th><th style="text-align:right;">Vol</th><th style="text-align:right;">Carreg.</th><th style="text-align:right;">Entr.</th><th></th></tr>';
   c.clientes.forEach(function (cl) {
     var tc = srTotaisCliente(c, cl.k), ok = tc.car === tc.vols;
@@ -12475,6 +12476,8 @@ function srCardHTML(c) {
     }
   });
   h += '</table></div></div>';
+  // v606: documentos da viagem por último -- é o processo final (Renato, 10/10/2026)
+  h += '<div ' + box + '>' + tit("8", "Documentos da viagem · CT-e, CIOT e MDF-e") + srFiscHTML(c) + '</div>';   // v601
   return h + '</div>';
 }
 
@@ -35758,7 +35761,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 4 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 5 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. A montagem aprovada (seção 2) não muda.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
