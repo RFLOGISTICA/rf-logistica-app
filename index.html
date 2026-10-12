@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v618)</title>
+<title>RF Logística — Painel da Frota (v619)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v618">
+<meta name="rf-versao" content="v619">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v619 (12/10/2026): PORTAL DO GESTOR SÃO ROQUE -- MAPA DA FROTA. "Frota ao vivo" abre num mapa de ruas (Leaflet +
+     OpenStreetMap/CARTO) com o CD e um ícone 🚚 por caminhão na cor do status (linha cheia = feito, tracejada = falta);
+     toque no caminhão abre a rota dele: paradas numeradas (✓ entregues), onde ele está (estimado), última entrega, próxima
+     com horário, volta ao CD, botões Ver o baú em 3D e Paradas. Botão Mapa/Lista. O "Entreguei" do motorista grava o GPS do
+     celular (entregas.entregue_lat/lng). Sem internet para o mapa: desenho simples das cidades. -->
 <!-- v618 (12/10/2026): PORTAL DO GESTOR SÃO ROQUE -- "FROTA DO DIA AO VIVO" no topo: um card por caminhão com status
      (Aguardando/Etiquetando/Carregando/Em trânsito/No prazo/Atenção/Atrasado/Voltando/Concluída), entregas x/y, previsão de
      chegada ao CD com o atraso, última entrega e próxima cidade; ordem prevista de chegada; recalcula a cada entrega e a cada
@@ -953,7 +958,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v618" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v619" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12566,7 +12571,7 @@ function srParadasEntregues(c) {   // { k: {em, por, via} }
   if (!c || !c.viagemId) return out;
   (c.clientes || []).forEach(function (cl) {
     var e = srEntregaDoCliente(c, cl.k);
-    if (srParadaEntregue(e)) out[cl.k] = { em: e.entregueEm || e.concluidaEm || 0, por: e.entreguePor || e.motoristaNome || "", via: e.entregueEm ? "marcada" : "canhoto" };
+    if (srParadaEntregue(e)) out[cl.k] = { em: e.entregueEm || e.concluidaEm || 0, por: e.entreguePor || e.motoristaNome || "", via: e.entregueEm ? "marcada" : "canhoto", lat: e.entregueLat || 0, lng: e.entregueLng || 0 };
   });
   return out;
 }
@@ -12583,16 +12588,25 @@ function srEntreguesPorParada(c, out) {
 /* marca/desmarca paradas como entregues (motorista ou equipe) */
 function rfEntregaMarcarEntregue(ids, on) {
   var nome = (state.sessao && state.sessao.nome) || "";
-  var mud = 0;
+  var mud = 0, marcadas = [];
   (ids || []).forEach(function (id) {
     var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
     if (!e) return;
     if (on && e.entregueEm) return;
     if (!on && !e.entregueEm) return;
     e.entregueEm = on ? Date.now() : 0; e.entreguePor = on ? nome : "";
-    mud++; rfEntregaSalvar(e);
+    if (!on) { e.entregueLat = 0; e.entregueLng = 0; }
+    mud++; rfEntregaSalvar(e); marcadas.push(e);
   });
   if (mud) { salvar(); render(); }
+  // v619: o celular do motorista manda o ponto de GPS da entrega (o gestor vê no mapa). Se negar ou não pegar, segue sem.
+  if (on && marcadas.length && typeof ehMotorista === "function" && ehMotorista() && navigator.geolocation) {
+    try {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        marcadas.forEach(function (e) { if (!e.entregueEm) return; e.entregueLat = p.coords.latitude; e.entregueLng = p.coords.longitude; rfEntregaSalvar(e); });
+      }, function () {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 120000 });
+    } catch (err) {}
+  }
   return mud;
 }
 function srMarcarParadas(cargaId, ks, on, rotulo) {
@@ -13000,7 +13014,7 @@ function srFrotaStatus(c, agora) {
     return { cl: cl, feita: tc.vols > 0 && tc.ent >= tc.vols, quando: quando };
   });
   var feitas = info.filter(function (x) { return x.feita; }).length, tot = info.length;
-  var r = { c: c, tot: tot, feitas: feitas, st: "", cor: "#888", ordem: 9, prev: 0, prazo: 0, atraso: 0, ult: 0, prox: "", txtPrev: "" };
+  var r = { c: c, tot: tot, feitas: feitas, st: "", cor: "#888", ordem: 9, prev: 0, prazo: 0, atraso: 0, ult: 0, prox: "", txtPrev: "", info: info, ultQ: 0, saida: 0 };
   var hm = function (ms) { return new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
   if (!ca.ok) {
     if (et.ok) { r.st = "Etiquetando"; r.cor = "#E8C46A"; r.ordem = 6; r.txtPrev = et.pct + "% etiquetado"; }
@@ -13013,7 +13027,7 @@ function srFrotaStatus(c, agora) {
   r.prazo = saida + (plano.km / SR_VEL_KMH) * 3600e3 + tot * SR_PARADA_MIN * 60e3;
   var b0 = srBaseCoord(), pos = b0, ultQ = saida;
   info.forEach(function (x) { if (x.feita) { if (x.quando > ultQ) ultQ = x.quando; var co = srCoordCidade(x.cl.cidade, x.cl.uf); if (co) pos = co; } });
-  r.ult = ultQ > saida ? ultQ : 0;
+  r.ult = ultQ > saida ? ultQ : 0; r.ultQ = ultQ; r.saida = saida;
   var falta = info.filter(function (x) { return !x.feita; });
   if (!falta.length) {
     r.prev = ultQ + (srKmEntre(pos, b0) / SR_VEL_KMH) * 3600e3;
@@ -13037,41 +13051,211 @@ function srFrotaStatus(c, agora) {
   r.txtPrev = hm(r.prev) + (r.atraso >= 60e3 ? " (+" + srFmtH(r.atraso / 3600e3) + ")" : "");
   return r;
 }
-function srFrotaPainelHTML(cargas, preview) {
+/* ===== v619: MAPA DA FROTA (portal do gestor) =================================================================
+   Renato, 12/10/2026: "a visão ainda está bem simples; tem que ter o ícone do caminhão e, quando abre, mostra em
+   que local no mapa o caminhão está -- o motorista vai estar atualizando as entregas; tem que ficar mais
+   gerenciável". Aprovado com o GPS no "Entreguei": o celular do motorista grava o ponto (entregue_lat/lng) quando
+   ele toca Entreguei. Posição do caminhão = ESTIMADA: entre a última entrega (ponto do GPS, ou a cidade) e a
+   próxima parada, proporcional ao tempo que passou sobre o tempo previsto do trecho (máx. 90%). Com rastreador
+   (Pósitron/Sascar) passa a ser a posição real. Mapa: Leaflet + mapa de ruas (OpenStreetMap/CARTO); se não
+   carregar (sem internet), cai num desenho simples das cidades. */
+var SR_LEAFLET = { st: "", cbs: [] };
+function srLeafletCarregar(cb) {
+  if (window.L && window.L.map) { cb(true); return; }
+  if (SR_LEAFLET.st === "falhou") { cb(false); return; }
+  SR_LEAFLET.cbs.push(cb);
+  if (SR_LEAFLET.st === "carregando") return;
+  SR_LEAFLET.st = "carregando";
+  var fim = function (ok) { if (SR_LEAFLET.st !== "carregando") return; SR_LEAFLET.st = ok ? "ok" : "falhou"; var l = SR_LEAFLET.cbs; SR_LEAFLET.cbs = []; l.forEach(function (f) { try { f(ok); } catch (e) {} }); };
+  try {
+    var css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"; document.head.appendChild(css);
+    var s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    s.onload = function () { fim(!!(window.L && window.L.map)); }; s.onerror = function () { fim(false); };
+    document.head.appendChild(s);
+    setTimeout(function () { fim(!!(window.L && window.L.map)); }, 15000);
+  } catch (e) { fim(false); }
+}
+/* onde está cada parada e o caminhão (estimado) */
+function srFrotaGeo(r, agora) {
+  agora = agora || Date.now();
+  var c = r.c, cd = srBaseCoord(), pe = srParadasEntregues(c);
+  var pts = (r.info || []).map(function (x, i) {
+    var m = pe[x.cl.k], co = (m && m.lat && m.lng) ? { lat: m.lat, lng: m.lng, gps: true } : srCoordCidade(x.cl.cidade, x.cl.uf);
+    return co ? { lat: co.lat, lng: co.lng, gps: !!co.gps, nome: x.cl.cidade, cli: x.cl.fant || x.cl.nome, feita: x.feita, ordem: i + 1, quando: x.quando } : null;
+  }).filter(Boolean);
+  var feitas = pts.filter(function (p) { return p.feita; }), falta = pts.filter(function (p) { return !p.feita; });
+  var g = { cd: cd, pts: pts, pos: { lat: cd.lat, lng: cd.lng }, de: null, para: null, noCD: true };
+  if (r.ordem >= 5 && r.ordem <= 7) return g;           // ainda no CD (aguardando / etiquetando / carregando)
+  if (r.ordem === 8) return g;                            // concluída e já chegou
+  var a = feitas.length ? feitas[feitas.length - 1] : cd, b = falta.length ? falta[0] : cd;
+  var leg = (srKmEntre(a, b) / SR_VEL_KMH) * 3600e3 + (falta.length ? 0 : 0);
+  var frac = leg > 0 ? Math.min(0.9, Math.max(0, (agora - (r.ultQ || agora)) / leg)) : 0;
+  g.pos = { lat: a.lat + (b.lat - a.lat) * frac, lng: a.lng + (b.lng - a.lng) * frac };
+  g.de = a === cd ? "CD" : a.nome; g.para = b === cd ? "CD" : b.nome; g.noCD = false; g.frac = frac;
+  return g;
+}
+function srFrotaLista(cargas, preview) {
   var agora = Date.now();
-  var lista = cargas.filter(function (c) {
+  return cargas.filter(function (c) {
     if (c.exemplo && !preview) return false;
     var ult = 0; srBips().forEach(function (b) { if (b.carga === c.id && Number(b.em) > ult) ult = Number(b.em); });
     var r0 = srProgResumo(c, "e");
-    if (r0.tot && r0.ok === r0.tot && agora - ult > 12 * 3600e3) return false;   // terminou há mais de 12 h: sai do painel
+    if (r0.tot && r0.ok === r0.tot && agora - ult > 12 * 3600e3) return false;
     return (agora - ult < 36 * 3600e3) || String(c.data || "") >= hojeISO();
-  }).map(function (c) { return srFrotaStatus(c, agora); });
+  }).map(function (c) { return srFrotaStatus(c, agora); })
+    .sort(function (a, b) { return (a.ordem - b.ordem) || (b.atraso - a.atraso) || (a.prev - b.prev); });
+}
+/* desenho simples (sem internet / sem Leaflet): cidades, rotas e caminhões num SVG */
+function srFrotaSvg(lista, W, H, foco) {
+  var agora = Date.now(), geos = lista.map(function (r) { return srFrotaGeo(r, agora); }), cd = srBaseCoord(), all = [cd];
+  geos.forEach(function (g) { all = all.concat(g.pts); all.push(g.pos); });
+  var la = all.map(function (x) { return x.lat; }), lo = all.map(function (x) { return x.lng; });
+  var a1 = Math.min.apply(null, la), a2 = Math.max.apply(null, la), o1 = Math.min.apply(null, lo), o2 = Math.max.apply(null, lo);
+  var pad = Math.max(0.08, 0.12 * Math.max(a2 - a1, o2 - o1)); a1 -= pad; a2 += pad; o1 -= pad; o2 += pad;
+  var k = Math.cos((a1 + a2) / 2 * Math.PI / 180), s = Math.min(W / ((o2 - o1) * k), H / (a2 - a1));
+  var ox = (W - (o2 - o1) * k * s) / 2, oy = (H - (a2 - a1) * s) / 2;
+  var P = function (c) { return [(ox + (c.lng - o1) * k * s).toFixed(1), (oy + (a2 - c.lat) * s).toFixed(1)]; };
+  var g = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="display:block;width:100%;height:auto;background:#0d1a14;">';
+  for (var i = 0; i < W; i += 26) g += '<line x1="' + i + '" y1="0" x2="' + i + '" y2="' + H + '" stroke="#12251c"/>';
+  for (var j = 0; j < H; j += 26) g += '<line x1="0" y1="' + j + '" x2="' + W + '" y2="' + j + '" stroke="#12251c"/>';
+  lista.forEach(function (r, n) {
+    var ge = geos[n], feitos = ge.pts.filter(function (p) { return p.feita; }), falta = ge.pts.filter(function (p) { return !p.feita; });
+    var l1 = [cd].concat(feitos).concat([ge.pos]).map(P).map(function (x) { return x.join(","); }).join(" ");
+    var l2 = [ge.pos].concat(falta).concat([cd]).map(P).map(function (x) { return x.join(","); }).join(" ");
+    g += '<polyline points="' + l2 + '" fill="none" stroke="' + r.cor + '" stroke-opacity=".45" stroke-width="' + (foco ? 3 : 2) + '" stroke-dasharray="6 5"/>'
+      + '<polyline points="' + l1 + '" fill="none" stroke="' + r.cor + '" stroke-width="' + (foco ? 4 : 3) + '"/>';
+    ge.pts.forEach(function (p) {
+      var q = P(p);
+      g += foco ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="11" fill="' + (p.feita ? "#2E7D32" : "#222") + '" stroke="' + (p.feita ? "#4CAF50" : "#888") + '" stroke-width="2"/><text x="' + q[0] + '" y="' + (+q[1] + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + (p.feita ? "✓" : p.ordem) + '</text><text x="' + (+q[0] + 14) + '" y="' + (+q[1] + 4) + '" font-size="10.5" fill="#cfd8d3">' + esc(p.nome) + '</text>'
+        : '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="3.2" fill="' + (p.feita ? r.cor : "#555") + '"/>';
+    });
+  });
+  var c0 = P(cd);
+  g += '<rect x="' + (c0[0] - 13) + '" y="' + (c0[1] - 13) + '" width="26" height="26" rx="6" fill="' + GOLD + '"/><text x="' + c0[0] + '" y="' + (+c0[1] + 5) + '" text-anchor="middle" font-size="13">🏠</text>';
+  lista.forEach(function (r, n) {
+    var q = P(geos[n].pos), w = foco ? 30 : 24;
+    g += '<g onclick="state._srpCam=\'' + r.c.id + '\';render()" style="cursor:pointer;"><circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + (w / 2) + '" fill="' + r.cor + '" stroke="#000" stroke-width="2"/><text x="' + q[0] + '" y="' + (+q[1] + 5) + '" text-anchor="middle" font-size="' + (foco ? 16 : 13) + '">🚚</text>'
+      + '<rect x="' + (+q[0] - 27) + '" y="' + (+q[1] - w / 2 - 19) + '" width="54" height="15" rx="4" fill="#000" stroke="' + r.cor + '"/><text x="' + q[0] + '" y="' + (+q[1] - w / 2 - 8) + '" text-anchor="middle" font-size="9.5" font-weight="800" fill="#fff">' + esc(r.c.placa || "—") + '</text></g>';
+  });
+  return g + '</svg>';
+}
+/* liga o Leaflet no div #srp-mapa depois do render */
+function srFrotaMapaIniciar() {
+  var el = document.getElementById("srp-mapa");
+  if (!el) return;
+  var modo = el.getAttribute("data-modo"), cargas = srCargas(), preview = !!state._srpPreview;
+  var lista = srFrotaLista(cargas, preview);
+  if (modo !== "frota") lista = lista.filter(function (r) { return r.c.id === modo; });
+  if (!lista.length) { var c1 = srCarga(modo); if (c1) lista = [srFrotaStatus(c1)]; }
+  srLeafletCarregar(function (ok) {
+    var el2 = document.getElementById("srp-mapa");
+    if (!el2 || el2 !== el) return;
+    if (!ok) { el.innerHTML = srFrotaSvg(lista, 362, modo === "frota" ? 430 : 360, modo !== "frota"); el.style.height = "auto"; return; }
+    try { if (window.__srpMapa) window.__srpMapa.remove(); } catch (e) {}
+    var L = window.L, map = L.map(el, { zoomControl: true, attributionControl: true });
+    window.__srpMapa = map;
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: "© OpenStreetMap · © CARTO" }).addTo(map);
+    var agora = Date.now(), cd = srBaseCoord(), bounds = [[cd.lat, cd.lng]], foco = modo !== "frota";
+    // caminhão que está no CD (aguardando, etiquetando, carregando ou já de volta) não ganha ícone próprio no mapa geral:
+    // vira um contador no ícone do CD, para não empilhar caminhões em cima do CD.
+    var noCD = foco ? [] : lista.filter(function (r) { return srFrotaGeo(r, agora).noCD; });
+    var tipCD = "CD " + esc(cd.nome || "") + (noCD.length ? "<br>" + noCD.map(function (r) { return "🚚 " + esc(r.c.placa || "—") + " · " + esc(r.st); }).join("<br>") : "");
+    L.marker([cd.lat, cd.lng], { zIndexOffset: 500, icon: L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14], html: '<div style="position:relative;width:28px;height:28px;border-radius:7px;background:' + GOLD + ';display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 0 2px #000;">🏠'
+      + (noCD.length ? '<span style="position:absolute;top:-8px;right:-10px;background:#3D8BFD;color:#fff;font:800 10px sans-serif;border-radius:10px;padding:1px 5px;border:1px solid #000;">' + noCD.length + '🚚</span>' : '') + '</div>' }) }).addTo(map).bindTooltip(tipCD);
+    lista.forEach(function (r) {
+      var ge = srFrotaGeo(r, agora);
+      if (!foco && ge.noCD) return;
+      var feitos = ge.pts.filter(function (p) { return p.feita; }), falta = ge.pts.filter(function (p) { return !p.feita; });
+      var ll = function (p) { return [p.lat, p.lng]; };
+      L.polyline([cd].concat(falta.length ? [ge.pos] : []).concat(falta).concat([cd]).map(ll).slice(falta.length ? 1 : 0), { color: r.cor, weight: foco ? 4 : 3, opacity: 0.5, dashArray: "7 7" }).addTo(map);
+      L.polyline([cd].concat(feitos).concat([ge.pos]).map(ll), { color: r.cor, weight: foco ? 5 : 4, opacity: 0.95 }).addTo(map);
+      ge.pts.forEach(function (p) {
+        bounds.push(ll(p));
+        if (foco) L.marker(ll(p), { icon: L.divIcon({ className: "", iconSize: [24, 24], iconAnchor: [12, 12], html: '<div style="width:24px;height:24px;border-radius:50%;background:' + (p.feita ? "#2E7D32" : "#222") + ';border:2px solid ' + (p.feita ? "#4CAF50" : "#999") + ';color:#fff;font:800 11px sans-serif;display:flex;align-items:center;justify-content:center;">' + (p.feita ? "✓" : p.ordem) + '</div>' }) })
+          .addTo(map).bindTooltip(p.ordem + ". " + esc(p.cli || "") + " — " + esc(p.nome) + (p.feita ? (p.gps ? " · ✓ entregue (GPS)" : " · ✓ entregue") : ""));
+        else L.circleMarker(ll(p), { radius: 4, color: p.feita ? r.cor : "#777", fillOpacity: 1, weight: 1 }).addTo(map);
+      });
+      bounds.push(ll(ge.pos));
+      var w = foco ? 34 : 28;
+      L.marker(ll(ge.pos), { zIndexOffset: 1000, icon: L.divIcon({ className: "", iconSize: [w, w], iconAnchor: [w / 2, w / 2],
+        html: '<div style="position:relative;"><div style="position:absolute;bottom:' + (w + 2) + 'px;left:50%;transform:translateX(-50%);background:#000;border:1px solid ' + r.cor + ';color:#fff;font:800 10px sans-serif;padding:1px 5px;border-radius:4px;white-space:nowrap;">' + esc(r.c.placa || "—") + '</div>'
+          + '<div style="width:' + w + 'px;height:' + w + 'px;border-radius:50%;background:' + r.cor + ';border:2px solid #000;box-shadow:0 0 0 4px ' + r.cor + '44;display:flex;align-items:center;justify-content:center;font-size:' + (foco ? 18 : 15) + 'px;">🚚</div></div>' }) })
+        .addTo(map).on("click", function () { state._srpCam = r.c.id; render(); });
+    });
+    var chave = modo, v = (state._srpMapV || {})[chave];
+    if (v) map.setView(v.c, v.z); else map.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
+    map.on("moveend", function () { (state._srpMapV = state._srpMapV || {})[chave] = { c: map.getCenter(), z: map.getZoom() }; });
+    setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 50);
+  });
+}
+/* tela do caminhão aberto: mapa da rota dele + resumo */
+function srFrotaCaminhaoHTML(c, preview) {
+  var r = srFrotaStatus(c), ge = srFrotaGeo(r), hm = function (ms) { return new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
+  var agora = Date.now(), ultP = ge.pts.filter(function (p) { return p.feita; }).pop(), prox = ge.pts.filter(function (p) { return !p.feita; })[0];
+  var proxHora = 0;
+  if (prox && !ge.noCD) { var a = ultP || ge.cd; proxHora = Math.max(agora, (r.ultQ || agora) + (srKmEntre(a, prox) / SR_VEL_KMH) * 3600e3); }
+  var linha = function (ic, rot, txt) { return '<div style="padding:3px 0;">' + ic + ' <b>' + rot + ':</b> ' + txt + '</div>'; };
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+    + '<button onclick="state._srpCam=\'\';render()" style="background:transparent;color:' + GOLD + ';border:1px solid ' + GOLD + ';border-radius:8px;padding:6px 12px;font-weight:800;">← frota</button>'
+    + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:11px;padding:3px 9px;border-radius:20px;">' + r.st + '</span></div>'
+    + '<div style="font-size:20px;font-weight:900;margin:8px 0 0;color:#fff;">🚚 ' + esc(c.placa || "sem placa") + ' <span style="font-size:13px;color:#999;font-weight:600;">· ' + esc(c.motorista || "") + '</span></div>'
+    + '<div style="font-size:12px;color:#bbb;">Carga ' + esc(srNomeCarga(c)) + ' · ' + r.feitas + ' de ' + r.tot + ' entregas' + (r.saida ? ' · saiu ' + hm(r.saida) : '') + '</div>'
+    + '<div id="srp-mapa" data-modo="' + esc(c.id) + '" style="height:360px;margin-top:8px;border-radius:12px;overflow:hidden;border:1px solid #1f3a2c;background:#0d1a14;"></div>'
+    + '<div style="font-size:10px;color:#666;margin-top:3px;">posição ' + (ge.noCD ? 'no CD' : 'estimada pelas entregas') + ' · ' + (ge.pts.some(function (p) { return p.gps; }) ? 'pontos ✓ com GPS do motorista' : 'pontos pela cidade') + '</div>'
+    + '<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;margin-top:8px;font-size:13px;line-height:1.5;color:#eee;">';
+  if (ge.noCD) h += linha("📍", "Agora", r.ordem === 8 ? "chegou ao CD (~" + hm(r.prev) + ")" : "no CD — " + esc(r.st.toLowerCase()) + (r.txtPrev ? " (" + esc(r.txtPrev) + ")" : ""));
+  else h += linha("📍", "Agora", "entre " + esc(ge.de) + " e " + esc(ge.para) + ' <span style="color:#888;font-size:11px;">(estimado)</span>');
+  if (ultP) { var ha = (agora - ultP.quando) / 3600e3; h += linha("✅", "Última entrega", esc(ultP.nome) + (ultP.quando ? " · " + hm(ultP.quando) + ' <span style="color:' + (ha > 1.5 ? "#E53935" : "#888") + ';">(há ' + srFmtH(ha) + ')</span>' : "")); }
+  if (prox) h += linha("➡️", "Próxima", esc(prox.cli || "") + " — " + esc(prox.nome) + (proxHora ? " · chega ~" + hm(proxHora) : ""));
+  if (r.prev) h += linha("🏁", "Volta ao CD", esc(r.txtPrev));
+  h += '</div><div style="display:flex;gap:8px;margin-top:10px;">'
+    + '<button onclick="state._srpSel=\'' + c.id + '\';state._srpCam=\'\';render()" style="flex:1;background:' + GOLD + ';color:#000;border:0;border-radius:10px;padding:11px;font-weight:900;">📦 Ver o baú em 3D</button>'
+    + '<button onclick="state._srpSel=\'' + c.id + '\';state._srpCam=\'\';state._srpAba=\'paradas\';(state._srpManual=state._srpManual||{})[\'' + c.id + '\']=true;render()" style="flex:1;background:#111;color:#ddd;border:1px solid #333;border-radius:10px;padding:11px;font-weight:800;">📋 Paradas</button></div>';
+  setTimeout(srFrotaMapaIniciar, 0);
+  return h;
+}
+function srFrotaPainelHTML(cargas, preview) {
+  var agora = Date.now(), lista = srFrotaLista(cargas, preview);
   if (!lista.length) return "";
-  lista.sort(function (a, b) { return (a.ordem - b.ordem) || (b.atraso - a.atraso) || (a.prev - b.prev); });
+  var vista = state._srpVista || "mapa";
   var n = function (f) { return lista.filter(f).length; };
-  var caixa = function (v, rot, cor) { return '<div style="flex:1;background:#111;border-radius:10px;padding:8px 2px;text-align:center;"><div style="font-size:22px;font-weight:900;color:' + cor + ';">' + v + '</div><div style="font-size:10px;color:#aaa;">' + rot + '</div></div>'; };
+  var caixa = function (v, rot, cor) { return '<div style="flex:1;background:#111;border-radius:10px;padding:7px 2px;text-align:center;"><div style="font-size:20px;font-weight:900;color:' + cor + ';">' + v + '</div><div style="font-size:10px;color:#aaa;">' + rot + '</div></div>'; };
   var hm = function (ms) { return new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
   var meia = new Date(agora); meia.setSeconds(0, 0); meia.setMinutes(meia.getMinutes() < 30 ? 30 : 60);
   var cheg = lista.filter(function (r) { return r.prev; }).sort(function (a, b) { return a.prev - b.prev; });
+  var abre = function (r) { return 'state._srpCam=\'' + r.c.id + '\';render()'; };
   var h = '<div style="margin-bottom:16px;">'
-    + '<div style="font-size:18px;font-weight:900;color:#fff;">🛰 Frota do dia — ao vivo</div>'
+    + '<div style="font-size:18px;font-weight:900;color:#fff;">🛰 Frota ao vivo</div>'
     + '<div style="font-size:11px;color:#888;">recalculado às ' + hm(agora) + ' · próximo cálculo às ' + hm(meia.getTime()) + ' (e a cada entrega)</div>'
-    + '<div style="display:flex;gap:6px;margin:10px 0;">' + caixa(lista.length, "caminhões", "#fff")
+    + '<div style="display:flex;gap:6px;margin:10px 0 8px;">' + caixa(lista.length, "caminhões", "#fff")
     + caixa(n(function (r) { return r.ordem === 2 || r.ordem === 4 || r.ordem === 8; }), "no prazo", "#4CAF50")
-    + caixa(n(function (r) { return r.ordem === 1; }), "atenção", "#E6A100") + caixa(n(function (r) { return r.ordem === 0; }), "atrasado", "#E53935") + '</div>';
-  if (cheg.length) h += '<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:12px;line-height:1.6;">'
-    + '<div style="color:' + GOLD + ';font-weight:800;font-size:11px;margin-bottom:2px;">🏁 ORDEM PREVISTA DE CHEGADA AO CD</div>'
-    + cheg.map(function (r, i) { return (i + 1) + 'º ' + esc(r.c.placa || srNomeCarga(r.c)) + (r.ordem === 8 ? ' ✅ chegou ~' : ' ') + hm(r.prev); }).join(' · ') + '</div>';
-  h += '<div style="font-size:11px;color:#888;margin-bottom:6px;">Quem precisa de atenção aparece primeiro · toque no caminhão para abrir o baú</div>';
-  h += lista.map(function (r) {
-    var c = r.c, pct = r.tot ? Math.round(r.feitas * 100 / r.tot) : 0;
-    return '<div onclick="state._srpSel=\'' + c.id + '\';render()" style="cursor:pointer;background:#0f0f0f;border:1px solid #262626;border-left:5px solid ' + r.cor + ';border-radius:12px;padding:10px 12px;margin-bottom:8px;">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><div><b style="font-size:15px;color:#fff;">🚚 ' + esc(c.placa || "sem placa") + '</b> <span style="color:#999;font-size:12px;">· ' + esc(c.motorista || ("carga " + srNomeCarga(c))) + '</span>' + (c.exemplo ? ' <span style="background:#7B3FA0;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px;">EXEMPLO</span>' : '') + '</div>'
-      + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap;">' + r.st + '</span></div>'
-      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:12px;color:#ccc;margin-top:6px;"><span>📦 ' + r.feitas + '/' + r.tot + ' entregas</span><span>🏁 previsão: <b style="color:#fff;">' + esc(r.txtPrev) + '</b></span></div>'
-      + '<div style="background:#222;border-radius:5px;height:7px;margin-top:5px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:' + r.cor + ';"></div></div>'
-      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;color:#888;margin-top:5px;"><span>última entrega: ' + (r.ult ? "há " + srFmtH((agora - r.ult) / 3600e3) : "—") + '</span><span>próxima: ' + esc(r.prox || "—") + '</span></div></div>';
-  }).join("");
+    + caixa(n(function (r) { return r.ordem === 1; }), "atenção", "#E6A100") + caixa(n(function (r) { return r.ordem === 0; }), "atrasados", "#E53935") + '</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+    + ['mapa|🗺 Mapa', 'lista|☰ Lista'].map(function (x) { var p = x.split("|"), on = vista === p[0]; return '<button onclick="state._srpVista=\'' + p[0] + '\';render()" style="flex:1;border-radius:8px;padding:8px;font-weight:800;' + (on ? 'background:' + GOLD + ';color:#000;border:0;' : 'background:#111;color:#ddd;border:1px solid #333;') + '">' + p[1] + '</button>'; }).join("") + '</div>';
+  if (vista === "mapa") {
+    h += '<div id="srp-mapa" data-modo="frota" style="height:430px;border-radius:12px;overflow:hidden;border:1px solid #1f3a2c;background:#0d1a14;"></div>'
+      + '<div style="font-size:11px;color:#888;margin:6px 0;">Toque num caminhão (no mapa ou abaixo) para ver a rota dele</div>'
+      + lista.map(function (r) {
+        return '<div onclick="' + abre(r) + '" style="cursor:pointer;display:flex;align-items:center;gap:8px;background:#0f0f0f;border:1px solid #262626;border-left:4px solid ' + r.cor + ';border-radius:10px;padding:7px 10px;margin-bottom:6px;">'
+          + '<span style="font-size:18px;">🚚</span><div style="flex:1;min-width:0;"><b style="font-size:13px;color:#fff;">' + esc(r.c.placa || "sem placa") + '</b> <span style="color:#999;font-size:11px;">' + esc(r.c.motorista || "") + ' · ' + r.feitas + '/' + r.tot + '</span>'
+          + '<div style="font-size:11px;color:#bbb;">🏁 ' + esc(r.txtPrev) + '</div></div>'
+          + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:10.5px;padding:2px 7px;border-radius:20px;white-space:nowrap;">' + r.st + '</span></div>';
+      }).join("");
+    setTimeout(srFrotaMapaIniciar, 0);
+  } else {
+    if (cheg.length) h += '<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:12px;line-height:1.6;">'
+      + '<div style="color:' + GOLD + ';font-weight:800;font-size:11px;margin-bottom:2px;">🏁 ORDEM PREVISTA DE CHEGADA AO CD</div>'
+      + cheg.map(function (r, i) { return (i + 1) + 'º ' + esc(r.c.placa || srNomeCarga(r.c)) + (r.ordem === 8 ? ' ✅ chegou ~' : ' ') + hm(r.prev); }).join(' · ') + '</div>';
+    h += lista.map(function (r) {
+      var c = r.c, pct = r.tot ? Math.round(r.feitas * 100 / r.tot) : 0;
+      return '<div onclick="' + abre(r) + '" style="cursor:pointer;background:#0f0f0f;border:1px solid #262626;border-left:5px solid ' + r.cor + ';border-radius:12px;padding:10px 12px;margin-bottom:8px;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><div><b style="font-size:15px;color:#fff;">🚚 ' + esc(c.placa || "sem placa") + '</b> <span style="color:#999;font-size:12px;">· ' + esc(c.motorista || ("carga " + srNomeCarga(c))) + '</span>' + (c.exemplo ? ' <span style="background:#7B3FA0;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px;">EXEMPLO</span>' : '') + '</div>'
+        + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap;">' + r.st + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:12px;color:#ccc;margin-top:6px;"><span>📦 ' + r.feitas + '/' + r.tot + ' entregas</span><span>🏁 previsão: <b style="color:#fff;">' + esc(r.txtPrev) + '</b></span></div>'
+        + '<div style="background:#222;border-radius:5px;height:7px;margin-top:5px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:' + r.cor + ';"></div></div>'
+        + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;color:#888;margin-top:5px;"><span>última entrega: ' + (r.ult ? "há " + srFmtH((agora - r.ult) / 3600e3) : "—") + '</span><span>próxima: ' + esc(r.prox || "—") + '</span></div></div>';
+    }).join("");
+  }
   return h + '</div>';
 }
 function srPortalHTML(preview) {
@@ -13089,6 +13273,8 @@ function srPortalHTML(preview) {
     + '<div style="padding:12px 16px;">';
   if (state._srpCarregando && !cargas.length) return h + '<div style="padding:30px;text-align:center;color:#888;">Carregando...</div></div></div>';
   if (state._srpErro) h += '<div style="color:#E67E22;font-size:12px;margin-bottom:8px;">⚠ ' + esc(state._srpErro) + ' — tentando de novo.</div>';
+  var cam = !sel && state._srpCam ? srCarga(state._srpCam) : null;   // v619: caminhão aberto no mapa
+  if (cam) return h + srFrotaCaminhaoHTML(cam, preview) + '</div></div>';
   if (!sel) {
     h += srFrotaPainelHTML(cargas, preview);   // v618
     if (!window.__srpRecalc) window.__srpRecalc = setInterval(function () { if ((srPortalEhCliente() || state._srpPreview) && !state._srpSel && !document.hidden) render(); }, 30 * 60e3);   // v618: recálculo a cada 30 min
@@ -31692,6 +31878,8 @@ function rfEntregaParaJS(r) {
     concluidaEm: Number(r.concluida_em) || 0,
     entregueEm: Number(r.entregue_em) || 0,   // v615: parada marcada como entregue (sem bip)
     entreguePor: r.entregue_por || "",
+    entregueLat: Number(r.entregue_lat) || 0,   // v619: GPS do "Entreguei"
+    entregueLng: Number(r.entregue_lng) || 0,
   };
 }
 function rfEntregaParaDB(e) {
@@ -31717,6 +31905,8 @@ function rfEntregaParaDB(e) {
     concluida_em: e.concluidaEm || null,
     entregue_em: e.entregueEm || null,   // v615
     entregue_por: e.entreguePor || null,
+    entregue_lat: e.entregueLat || null,   // v619
+    entregue_lng: e.entregueLng || null,
   };
 }
 function rfEntregasCarregar() {
@@ -36721,7 +36911,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
