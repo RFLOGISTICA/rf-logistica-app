@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v612)</title>
+<title>RF Logística — Painel da Frota (v613)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v612">
+<meta name="rf-versao" content="v613">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v613 (12/10/2026): PORTAL DOS GESTORES DA SÃO ROQUE -- login de cliente vinculado a "Grupo São Roque" abre uma
+     tela própria (celular): cargas, andamento etiquetagem/carregamento/entrega, doca e baú em 3D, paradas; atualiza a
+     cada 15 s. Dados só pela função cliente_saoroque_dados() (security definer; só esse login ou admin; sem fiscal,
+     frete ou financeiro). Botão "👁 Ver como gestor" para a equipe pré-visualizar. "Grupo São Roque" aparece na
+     escolha de cliente ao criar o login. -->
 <!-- v612 (12/10/2026): EXTRAÇÃO -- "O que extrair": PDF + chave (padrão) · Só o PDF · Só XML + chave · Só as chaves
      (.txt + copia para colar no e-mail) · Completo (contador). Todas conferem na SEFAZ antes. -->
 <!-- v611 (12/10/2026): EXTRAÇÃO 100% segura -- (1) antes de extrair, cada chave é consultada na SEFAZ (rf-sefaz
@@ -927,7 +932,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v612" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v613" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -12816,6 +12821,103 @@ function srCriarRota(cargaId) {
 }
 
 /* ---- tela ------------------------------------------------------------------ */
+/* ===== v613: PORTAL DOS GESTORES DO GRUPO SÃO ROQUE ======================================
+   Renato, 12/10/2026: "você vai fazer os testes, eu vou enxergar como os gestores pelo meu
+   celular; antes crie o ambiente dos gestores para eu fazer o papel deles".
+   Login de CLIENTE vinculado a "Grupo São Roque" abre ESTA tela (não a de viagens/valores):
+   - lista das cargas (últimos 45 dias), cada uma com o andamento da etiquetagem, do
+     carregamento e da entrega;
+   - abrindo a carga: a doca em 3D (etiquetagem) e o baú em 3D (carregamento), os dois
+     começando marrons e ganhando a cor do cliente a cada bip, e a lista de paradas com o
+     que já foi carregado e entregue;
+   - atualiza sozinha a cada 15 s (só redesenha se mudou algum bip).
+   Segurança: os dados vêm só da função cliente_saoroque_dados() no banco (security definer),
+   que só responde ao login de cliente da São Roque ou a um admin. Sem documentos fiscais,
+   sem frete, sem financeiro. O login de cliente nunca baixa nem grava a caixa geral.
+   Para o Renato testar sem criar login: botão "👁 Ver como gestor" na aba da São Roque. */
+var SR_CLIENTE_PORTAL = "Grupo São Roque";
+function srPortalEhCliente() { return ehCliente() && /roque/i.test((state.sessao && state.sessao.cliente_nome) || ""); }
+function srPortalAssinatura() { return (state.saoroqueCargas || []).map(function (c) { return c.id + ":" + (c.atualizadoEm || 0); }).join("|") + "#" + (state.saoroqueBips || []).length; }
+function srPortalCarregar(silencioso) {
+  if (!srPortalEhCliente()) return;
+  if (!silencioso) { state._srpCarregando = true; }
+  rfGetClient().then(function (sb) {
+    if (!sb) { state._srpCarregando = false; state._srpErro = "sem conexão"; render(); return; }
+    return sb.rpc("cliente_saoroque_dados").then(function (res) {
+      state._srpCarregando = false;
+      var j = res && res.data;
+      if (res.error || !j || j.ok === false) { state._srpErro = (res.error && res.error.message) || (j && j.erro) || "sem resposta"; render(); return; }
+      var antes = srPortalAssinatura();
+      state.saoroqueCargas = j.cargas || []; state.saoroqueBips = j.bips || [];
+      state.veiculos = j.veiculos || []; state._srpErro = ""; state._srpEm = Date.now();
+      if (!silencioso || antes !== srPortalAssinatura()) render();
+      else { var el = document.getElementById("srp-em"); if (el) el.textContent = srPortalHora(); }
+    });
+  }).catch(function (e) { state._srpCarregando = false; state._srpErro = (e && e.message) || "falha"; render(); });
+  if (!window.__srpTimer) window.__srpTimer = setInterval(function () { if (srPortalEhCliente() && !document.hidden) srPortalCarregar(true); }, 15000);
+}
+function srPortalHora() { return state._srpEm ? "atualizado às " + new Date(state._srpEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""; }
+function srPortalBarra(rot, r, cor) {
+  return '<div style="margin-top:7px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#ccc;"><span>' + rot + '</span><b style="color:' + (r.tot && r.ok === r.tot ? "#4CAF50" : cor) + ';">' + r.ok + '/' + r.tot + ' (' + r.pct + '%)</b></div>'
+    + '<div style="background:#222;border-radius:5px;height:9px;overflow:hidden;margin-top:3px;"><div style="height:100%;width:' + r.pct + '%;background:' + (r.tot && r.ok === r.tot ? "#4CAF50" : cor) + ';"></div></div></div>';
+}
+function srPortalHTML(preview) {
+  var cargas = srCargas().slice().sort(function (a, b) { return String(b.data || "").localeCompare(String(a.data || "")) || (b.criadoEm || 0) - (a.criadoEm || 0); });
+  var sel = state._srpSel ? srCarga(state._srpSel) : null;
+  var nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "";
+  var h = '<div style="background:#000;min-height:100vh;color:#eee;font-family:inherit;">'
+    + '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:2px solid ' + GOLD + ';flex-wrap:wrap;">'
+    + '<img src="' + srLogo() + '" style="height:42px;max-width:40vw;object-fit:contain;">'
+    + '<div style="flex:1;min-width:150px;"><div style="font-size:16px;font-weight:800;color:#fff;">Acompanhamento de carregamento</div><div style="font-size:11px;color:' + GOLD + ';letter-spacing:1px;font-weight:700;">RF LOGÍSTICA · ' + esc(nome) + '</div></div>'
+    + (preview ? '<button onclick="state._srpPreview=false;state._srpSel=\'\';render()" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:8px 12px;">← voltar ao sistema</button>'
+               : '<button class="btn-outline" onclick="logout()">Sair</button>')
+    + '</div>'
+    + (preview ? '<div style="background:#1a1408;color:' + GOLD + ';font-size:12px;padding:6px 16px;">👁 Pré-visualização: é exatamente o que o gestor da São Roque vê no celular dele.</div>' : '')
+    + '<div style="padding:12px 16px;">';
+  if (state._srpCarregando && !cargas.length) return h + '<div style="padding:30px;text-align:center;color:#888;">Carregando...</div></div></div>';
+  if (state._srpErro) h += '<div style="color:#E67E22;font-size:12px;margin-bottom:8px;">⚠ ' + esc(state._srpErro) + ' — tentando de novo.</div>';
+  if (!sel) {
+    h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;"><div style="font-size:18px;font-weight:800;color:' + GOLD + ';">🚚 Cargas</div><span id="srp-em" style="font-size:11px;color:#777;">' + srPortalHora() + '</span></div>';
+    if (!cargas.length) h += '<div style="padding:24px;border:1px dashed #444;border-radius:10px;color:#888;text-align:center;">Nenhuma carga nos últimos 45 dias.</div>';
+    cargas.forEach(function (c) {
+      var t = srTotais(c), et = srProgResumo(c, "t"), ca = srProgResumo(c, "c"), en = { tot: t.vols, ok: t.entregues, pct: t.vols ? Math.round(t.entregues * 100 / t.vols) : 0 };
+      var fase = en.ok === en.tot && en.tot ? "✅ Entregue" : en.ok ? "🛣 Em entrega" : ca.ok === ca.tot && ca.tot ? "🚚 Carregado" : ca.ok ? "📦 Carregando" : et.ok ? "🏷 Etiquetando" : "⏳ Aguardando";
+      h += '<div onclick="state._srpSel=\'' + c.id + '\';render()" style="cursor:pointer;border:1px solid #333;border-left:4px solid ' + GOLD + ';border-radius:10px;background:#0E0E0E;padding:12px 14px;margin-bottom:10px;">'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><b style="font-size:15px;color:#fff;">Carga ' + esc(srNomeCarga(c)) + '</b>' + (c.exemplo ? '<span style="background:#7B3FA0;color:#fff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;">EXEMPLO</span>' : '')
+        + '<span style="margin-left:auto;font-size:12px;font-weight:800;color:' + GOLD + ';">' + fase + '</span></div>'
+        + '<div style="font-size:12px;color:#aaa;margin-top:3px;">' + esc(String(c.data || "").split("-").reverse().join("/")) + (c.placa ? ' · 🚚 ' + esc(c.placa) : '') + (c.motorista ? ' · ' + esc(c.motorista) : '') + ' · ' + t.clientes + ' clientes · ' + t.vols + ' volumes</div>'
+        + srPortalBarra("🏷 Etiquetagem", et, "#E8C46A") + srPortalBarra("📦 Carregamento", ca, "#4FC3F7") + srPortalBarra("🛣 Entrega", en, "#81C784")
+        + '<div style="font-size:11.5px;color:' + GOLD + ';margin-top:8px;text-align:right;">ver em 3D ›</div></div>';
+    });
+    return h + '</div></div>';
+  }
+  var c = sel, t = srTotais(c), et = srProgResumo(c, "t"), ca = srProgResumo(c, "c"), en = { tot: t.vols, ok: t.entregues, pct: t.vols ? Math.round(t.entregues * 100 / t.vols) : 0 };
+  var aba = state._srpAba || "carga";
+  var bt = function (id, txt) { return '<button onclick="state._srpAba=\'' + id + '\';render()" style="flex:1;padding:9px 6px;border-radius:8px;font-weight:800;font-size:13px;border:1px solid ' + (aba === id ? GOLD : "#444") + ';background:' + (aba === id ? GOLD : "#111") + ';color:' + (aba === id ? "#000" : "#ddd") + ';">' + txt + '</button>'; };
+  h += '<button onclick="state._srpSel=\'\';render()" style="background:none;border:0;color:' + GOLD + ';font-weight:700;padding:0 0 8px;">‹ todas as cargas</button>'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;"><div style="font-size:18px;font-weight:800;color:#fff;">Carga ' + esc(srNomeCarga(c)) + '</div><span id="srp-em" style="font-size:11px;color:#777;">' + srPortalHora() + '</span></div>'
+    + '<div style="font-size:12px;color:#aaa;">' + esc(String(c.data || "").split("-").reverse().join("/")) + (c.placa ? ' · 🚚 ' + esc(c.placa) : '') + (c.motorista ? ' · ' + esc(c.motorista) : '') + ' · ' + t.clientes + ' clientes · ' + t.vols + ' volumes</div>'
+    + srPortalBarra("🏷 Etiquetagem", et, "#E8C46A") + srPortalBarra("📦 Carregamento", ca, "#4FC3F7") + srPortalBarra("🛣 Entrega", en, "#81C784")
+    + '<div style="display:flex;gap:8px;margin:14px 0 10px;">' + bt("doca", "🏷 Doca") + bt("carga", "🚚 Baú") + bt("paradas", "📍 Paradas") + '</div>';
+  if (aba === "paradas") {
+    var car = srBipsDaCarga(c.id, "c"), ent = srBipsDaCarga(c.id, "e"), fe = srFeitos(c, "t");
+    h += c.clientes.slice().sort(function (a, b) { return a.seq - b.seq; }).map(function (cl) {
+      var vs = c.vols.filter(function (v) { return v.k === cl.k; }), nE = vs.filter(function (v) { return fe[v.c]; }).length, nC = vs.filter(function (v) { return car[v.c]; }).length, nN = vs.filter(function (v) { return ent[v.c]; }).length;
+      var cor = (srBlocoDoCliente(c, cl.k) || {}).cor || "#888";
+      var st = nN === vs.length && vs.length ? '<b style="color:#4CAF50;">✅ entregue</b>' : nN ? '<b style="color:#81C784;">entregando ' + nN + '/' + vs.length + '</b>' : nC === vs.length && vs.length ? '<b style="color:#4FC3F7;">no caminhão</b>' : nC ? '<b style="color:#4FC3F7;">carregando ' + nC + '/' + vs.length + '</b>' : nE === vs.length && vs.length ? '<b style="color:#E8C46A;">🏷 etiquetado · aguardando carregar</b>' : nE ? '<b style="color:#E8C46A;">etiquetando ' + nE + '/' + vs.length + '</b>' : '<span style="color:#888;">aguardando</span>';
+      return '<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #222;">'
+        + '<span style="min-width:34px;text-align:center;background:' + cor + ';color:#fff;font-weight:900;border-radius:6px;padding:3px 0;">' + cl.seq + '</span>'
+        + '<div style="flex:1;min-width:0;"><div style="font-weight:700;color:#fff;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(cl.fant || cl.nome) + '</div><div style="font-size:11.5px;color:#999;">' + esc(cl.cidade || "") + ' · ' + vs.length + ' vol</div></div>'
+        + '<div style="font-size:12px;text-align:right;">' + st + '</div></div>';
+    }).join("");
+  } else {
+    h += '<div style="font-size:11.5px;color:#999;margin-bottom:6px;">' + (aba === "doca" ? "Doca, no mesmo arranjo do baú: o volume fica marrom até a etiqueta ser colada e conferida, depois ganha a cor do cliente." : "Baú do caminhão: começa marrom e cada volume bipado no carregamento ganha a cor do cliente no lugar certo.") + ' Arraste para girar.</div>'
+      + sr3dHTML(c, aba);
+  }
+  return h + '</div></div>';
+}
+/* pré-visualização para a equipe (admin): mesma tela, com os dados que o sistema já tem */
+function srPortalPreview() { state._srpPreview = true; state._srpSel = ""; render(); try { window.scrollTo(0, 0); } catch (e) {} }
 function srBlocoHTML() {
   var cargas = srCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
   var F = (state.config && state.config.srEtiqueta) || "100x50";
@@ -12825,6 +12927,7 @@ function srBlocoHTML() {
     + '<label style="font-size:11px;color:#bbb;cursor:pointer;text-decoration:underline;">trocar logo<input type="file" accept="image/*" style="display:none;" onchange="srTrocarLogo(this)"></label>'
     + (state.config && state.config.srLogo ? '<a href="javascript:void(0)" onclick="srLogoPadrao()" style="font-size:11px;color:#888;">voltar à logo padrão</a>' : '')
     + '<button onclick="srCargaExemplo()" style="font-size:12px;padding:7px 10px;">🧪 Carga de exemplo (demonstração)</button>'
+    + '<button onclick="srPortalPreview()" style="font-size:12px;padding:7px 10px;border:1px solid ' + GOLD + ';color:' + GOLD + ';background:none;border-radius:6px;font-weight:700;">👁 Ver como gestor da São Roque</button>'
     + '<label style="margin-left:auto;background:' + GOLD + ';color:#000;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">📥 Importar carga (espelho DANFE, PDF 910 ou planilha)'
     + '<input type="file" style="display:none;" onchange="srImportar(this)"></label>' + '<label style="background:#1d2a36;color:#cfe3f5;border:1px solid #7FA7C9;font-weight:800;padding:9px 14px;border-radius:8px;cursor:pointer;">🧾 Importar NF-e (XML)<input type="file" accept=".xml,text/xml" multiple style="display:none;" onchange="srImportarXml(this)"></label></div>'
     + '<div style="font-size:12px;color:#aaa;margin-bottom:12px;line-height:1.5;">Fluxo: <b>1</b> importar o arquivo da carga → <b>2</b> conferir a ordem das paradas e a montagem do baú → <b>3</b> imprimir as etiquetas (1 por volume, com a zona do baú) e colar → <b>4</b> bipar cada volume que sobe no caminhão → <b>5</b> criar e liberar a rota do motorista → <b>6</b> bipar na entrega. '
@@ -14323,14 +14426,14 @@ function sr3dHTML(c, modo) {
   var leg = "";
   if (modo) {   // v604: legenda do acompanhamento
     var r = srProgResumo(c, modo === "doca" ? "t" : "c"), oque = modo === "doca" ? "etiquetado" : "carregado";
-    leg = '<div style="position:absolute;left:8px;top:8px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:8px;padding:6px 9px;font-size:12px;color:#eee;line-height:1.5;">'
+    leg = '<div style="background:#0b0b0b;border:1px solid #333;border-radius:8px;padding:6px 9px;font-size:12px;color:#eee;line-height:1.5;margin-bottom:6px;">'   /* v613: legenda fora do 3D (no celular cobria os botões) */
       + '<b style="font-size:14px;color:' + (r.ok === r.tot && r.tot ? "#4CAF50" : "#E8C46A") + ';">' + r.ok + '/' + r.tot + ' ' + oque + ' (' + r.pct + '%)</b><br>'
       + '<span style="display:inline-block;width:11px;height:11px;background:' + SR_PENDENTE + ';border-radius:2px;vertical-align:-1px;"></span> falta '
       + '<span style="display:inline-block;width:11px;height:11px;background:linear-gradient(90deg,#1565C0,#E65100,#2E7D32);border-radius:2px;vertical-align:-1px;margin-left:8px;"></span> ' + oque + ' (cor do cliente)</div>';
   }
   var bt = function (v, t) { return '<button onclick="srVista3D(\'' + v + '\')" style="font-size:12px;padding:6px 9px;background:rgba(0,0,0,.6);color:#eee;border:1px solid #555;border-radius:6px;">' + t + '</button>'; };
-  return '<div style="position:relative;border-radius:10px;overflow:hidden;background:#050505;">'
-    + '<canvas data-sr3d="' + esc(c.id) + '"' + (modo ? ' data-sr3d-modo="' + modo + '"' : '') + ' style="width:100%;display:block;touch-action:none;cursor:grab;"></canvas>' + leg
+  return leg + '<div style="position:relative;border-radius:10px;overflow:hidden;background:#050505;">'
+    + '<canvas data-sr3d="' + esc(c.id) + '"' + (modo ? ' data-sr3d-modo="' + modo + '"' : '') + ' style="width:100%;display:block;touch-action:none;cursor:grab;"></canvas>'
     + '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'
     + bt("lado", "🚚 Lado") + bt("traseira", "🚪 Traseira") + bt("cima", "⬇ De cima") + bt("outro", "↔ Outro lado")
     + '<button data-sr3d-giro="1" onclick="srGiro3D()" style="font-size:12px;padding:6px 9px;background:rgba(232,196,106,.9);color:#000;font-weight:800;border:0;border-radius:6px;">' + (SR3D.auto ? "⏸ parar" : "⟳ girar sozinho") + '</button></div></div>';
@@ -30870,6 +30973,7 @@ function reabrirViagemFim(id) {
 // (RPC cliente_minhas_viagens). Nunca toca em painel_dados nem em state.tarifas/config.
 function clienteCarregarViagens() {
   if (!ehCliente()) return;
+  if (srPortalEhCliente()) { srPortalCarregar(); return; }   // v613: gestor da São Roque
   state._carregandoViagensCliente = true;
   rfGetClient().then(function (sb) {
     if (!sb) { state._carregandoViagensCliente = false; render(); return; }
@@ -35454,7 +35558,17 @@ function render() {
     return;
   }
   if (ehCliente()) {
+    if (srPortalEhCliente()) {   // v613: gestor da São Roque
+      if (root0) root0.innerHTML = srPortalHTML(false);
+      setTimeout(function () { try { sr3dIniciar(); } catch (e) {} }, 0);
+      return;
+    }
     if (root0) root0.innerHTML = painelClienteHTML();
+    return;
+  }
+  if (state._srpPreview) {   // v613: pré-visualização do portal do gestor (equipe)
+    if (root0) root0.innerHTML = srPortalHTML(true);
+    setTimeout(function () { try { sr3dIniciar(); } catch (e) {} }, 0);
     return;
   }
   // v248: a primeira coisa que a equipe ve ao entrar e a tela inicial limpa,
@@ -36242,7 +36356,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
@@ -40288,7 +40402,7 @@ function renderTabela() {
           <div><div style="font-size:11px;color:#999;margin-bottom:4px;">Cliente vinculado (obrigatório p/ papel Cliente)</div>
             <select id="nuClienteNome" onchange="criarUsuarioCampo('clienteNome',this.value)" style="width:160px;">
               <option value="">(selecione)</option>
-              ${state.clientes.map((c) => `<option>${esc(c)}</option>`).join("")}
+              ${state.clientes.concat(state.clientes.indexOf(SR_CLIENTE_PORTAL) < 0 ? [SR_CLIENTE_PORTAL] : []).map((c) => `<option>${esc(c)}</option>`).join("")}
             </select>
           </div>
         </div>
@@ -40374,7 +40488,7 @@ function renderTabela() {
             <div><div style="${lbl}">Cliente vinculado</div>
               <select style="width:160px;${p.cliente_nome ? "" : "border-color:#C0392B;"}" onchange="atualizarPerfilCampo('${p.id}','cliente_nome',this.value)">
                 <option value="">(selecione)</option>
-                ${state.clientes.map((c) => `<option ${p.cliente_nome === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+                ${state.clientes.concat(state.clientes.indexOf(SR_CLIENTE_PORTAL) < 0 ? [SR_CLIENTE_PORTAL] : []).map((c) => `<option ${p.cliente_nome === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
               </select>
             </div>
             ${!p.cliente_nome ? `<div style="color:#C0392B;font-size:11px;">⚠ sem cliente vinculado — login não vai ver nenhuma viagem</div>` : ""}
