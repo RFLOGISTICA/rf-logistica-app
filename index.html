@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v606)</title>
+<title>RF Logística — Painel da Frota (v607)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v606">
+<meta name="rf-versao" content="v607">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v607 (11/10/2026): PESSOAL > APLICAÇÕES -- rendimento em FAIXA de saldo. A 99Pay só paga "até 110% do CDI" nos
+     primeiros R$ 5 mil; o resto rende ~80% (o histórico diário do app confirmou: R$ 67,89/dia sobre R$ 236 mil). O sistema
+     mostrava como se fossem 110% em tudo (R$ 2.102/mês em vez de ~R$ 1.540). Campos novos por aplicação: "Taxa cheia só
+     até (R$)" e "Acima disso rende (% do CDI)"; 99Pay usa 5.000 / 80 por padrão. Transferência entre bancos também
+     respeita a faixa do destino. -->
 <!-- v606 (10/10/2026): SÃO ROQUE -- "Documentos da viagem" (CT-e, CIOT, MDF-e) passou a ser a ÚLTIMA seção da carga
      (8), por ser o processo final; as demais subiram uma posição (Etiquetas 3 ... Paradas 7). -->
 <!-- v605 (10/10/2026): SÃO ROQUE -- cores dos clientes: saiu o marrom (confundia com o "falta" do 3D) e nenhum
@@ -905,7 +910,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v606" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v607" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -39025,7 +39030,7 @@ function pvTransfPrev() {   // v558: mostra o efeito da transferência antes de 
   var so = pvSaldoBruto(o, data), v = tudo ? so : pfNum(pvG("pv-t-valor"));
   var vi = document.getElementById("pv-t-valor"); if (tudo && vi) vi.value = String(so.toFixed(2)).replace(".", ",");
   if (!(v > 0)) { el.innerHTML = ""; return; }
-  var dif = v * (pvTaxaMes(d) - pvTaxaMes(o));
+  var sd = pvSaldoBruto(d, data), dif = (sd + v) * pvTaxaMes(d, sd + v) - sd * pvTaxaMes(d, sd) - v * pvTaxaMes(o, so);   // v607: respeita a faixa de saldo do destino
   el.innerHTML = 'Sai <b>' + fmtR(v) + '</b> de ' + esc(o.banco) + ' (' + pvTaxaTxt(o) + ') e entra em ' + esc(d.banco) + ' (' + pvTaxaTxt(d) + '). '
     + (v > so + 0.01 ? '<b style="color:#E57373;">⚠ maior que o saldo estimado de ' + esc(o.banco) + ' (' + fmtR(so) + ').</b> ' : "")
     + 'Esse valor passa a render <b style="color:' + (dif >= 0 ? "#81C784" : "#E57373") + ';">' + (dif >= 0 ? "+" : "−") + fmtR(Math.abs(dif)) + ' por mês</b> (bruto).';
@@ -39058,11 +39063,33 @@ function pvGravar(obj) {   // grava (cria ou substitui) um registro e salva crip
 }
 function pvAchar(id) { return __pf.itens.filter(function (x) { return x.id === id; })[0]; }
 function pvG(id) { var e = document.getElementById(id); return e ? e.value : ""; }
-function pvTaxaTxt(a) { return a.modalidade === "cdi" ? String(a.taxa).replace(".", ",") + "% do CDI" : a.modalidade === "aa" ? String(a.taxa).replace(".", ",") + "% a.a." : String(a.taxa).replace(".", ",") + "% a.m."; }
+function pvTaxaTxt(a) { var fx = pvFaixa(a); if (fx) return String(a.taxa).replace(".", ",") + "% do CDI até " + fmtR(fx.ate) + " · " + String(fx.acima).replace(".", ",") + "% acima"; return a.modalidade === "cdi" ? String(a.taxa).replace(".", ",") + "% do CDI" : a.modalidade === "aa" ? String(a.taxa).replace(".", ",") + "% a.a." : String(a.taxa).replace(".", ",") + "% a.m."; }
 
 /* ---------- APLICAÇÕES ---------- */
-function pvTaxaMes(a) {
-  if (a.modalidade === "cdi") { var cdi = (Number(pvCfg().cdi) || 0) / 100, d = (Math.pow(1 + cdi, 1 / 252) - 1) * (Number(a.taxa) || 0) / 100; return Math.pow(1 + d, 21) - 1; }
+/* v607 -- RENDIMENTO EM FAIXA (Renato, 11/10/2026, conferindo o app da 99Pay): a taxa cheia só vale até um teto de
+   saldo; o que passa disso rende menos. Na 99Pay: "até 110% do CDI" só nos primeiros R$ 5 mil e uns 80% no resto --
+   o histórico diário do app confirmou (R$ 67,89/dia sobre R$ 236 mil = ~81% do CDI; o sistema mostrava como se
+   fossem 110% em tudo). Campos por aplicação: faixaAte (R$) e taxaAcima (% do CDI). Banco "99Pay" sem os campos
+   preenchidos usa o padrão 5.000 / 80. A 99Pay credita o lucro todo dia (inclusive fim de semana); o cálculo já
+   capitaliza por dia corrido. */
+function pvFaixa(a) {
+  if (!a || a.modalidade !== "cdi") return null;
+  if (a.faixaAte === 0 || a.semFaixa) return null;
+  var ate = Number(a.faixaAte), acima = Number(a.taxaAcima);
+  if (!(ate > 0) && /99\s*pay|pay\s*99/i.test(String(a.banco || ""))) { ate = 5000; if (!(acima > 0)) acima = 80; }
+  if (!(ate > 0) || !(acima > 0)) return null;
+  return { ate: ate, acima: acima };
+}
+function pvTaxaCdiMes(pct) { var cdi = (Number(pvCfg().cdi) || 0) / 100, d = (Math.pow(1 + cdi, 1 / 252) - 1) * (Number(pct) || 0) / 100; return Math.pow(1 + d, 21) - 1; }
+function pvTaxaMes(a, saldo) {
+  var fx = pvFaixa(a);
+  if (fx) {
+    if (saldo == null) { try { saldo = pvAtiva(a, pvHoje()) ? pvSaldoBruto(a, pvHoje()) : a.valor; } catch (e) { saldo = a.valor; } }
+    saldo = Number(saldo) || 0;
+    if (saldo <= fx.ate) return pvTaxaCdiMes(a.taxa);
+    return (fx.ate * pvTaxaCdiMes(a.taxa) + (saldo - fx.ate) * pvTaxaCdiMes(fx.acima)) / saldo;
+  }
+  if (a.modalidade === "cdi") return pvTaxaCdiMes(a.taxa);
   if (a.modalidade === "aa") return Math.pow(1 + (Number(a.taxa) || 0) / 100, 1 / 12) - 1;
   return (Number(a.taxa) || 0) / 100;
 }
@@ -39071,7 +39098,7 @@ function pvBase(a, iso) { return a.saldoInf && a.saldoInf.data <= iso ? a.saldoI
 function pvSaldoBruto(a, iso, base) {   // saldo estimado na data (sem olhar resgate)
   if (!iso || iso < a.inicio) return 0;
   base = base || pvBase(a, iso);
-  return base.valor * Math.pow(1 + pvTaxaMes(a), Math.max(0, pvDias(base.data, iso)) / 30.4375);
+  return base.valor * Math.pow(1 + pvTaxaMes(a, base.valor), Math.max(0, pvDias(base.data, iso)) / 30.4375);   // v607: taxa pela faixa do saldo
 }
 function pvAtiva(a, iso) { return a.inicio <= iso && (!a.resgate || a.resgate > iso); }
 function pvSaldoHoje(a) { var h = pvHoje(); return pvAtiva(a, h) ? pvSaldoBruto(a, h) : 0; }
@@ -39088,7 +39115,7 @@ function pvRendMes(a, mes) {   // rendimento estimado dentro do mês (até hoje 
 }
 function pvRendMensalAtual(a) {   // quanto rende por mês a partir de hoje (líquido)
   var h = pvHoje(); if (!pvAtiva(a, h)) return { bruto: 0, liquido: 0 };
-  var b = pvSaldoBruto(a, h) * pvTaxaMes(a);
+  var sh = pvSaldoBruto(a, h), b = sh * pvTaxaMes(a, sh);   // v607
   return { bruto: b, liquido: a.isento ? b : b * (1 - pvAliqIR(pvDias(a.inicio, h) + 30)) };
 }
 function pvSalvarApl() {
@@ -39098,6 +39125,12 @@ function pvSalvarApl() {
     inicio: pvG("pv-a-ini"), vencimento: pvG("pv-a-venc"), modalidade: pvG("pv-a-mod"), taxa: pfNum(pvG("pv-a-taxa")),
     isento: !!(document.getElementById("pv-a-isento") || {}).checked, obs: pvG("pv-a-obs"), apagado: false
   });
+  (function () {   // v607: faixa de saldo (vazio = automático; 0 = taxa cheia em todo o saldo)
+    var fRaw = String(pvG("pv-a-faixa")).trim(), f = pfNum(fRaw), ac = pfNum(pvG("pv-a-acima"));
+    if (fRaw === "") { delete a.faixaAte; delete a.taxaAcima; delete a.semFaixa; }
+    else if (!(f > 0)) { a.faixaAte = 0; a.semFaixa = true; delete a.taxaAcima; }
+    else { a.faixaAte = f; a.taxaAcima = ac > 0 ? ac : 80; delete a.semFaixa; }
+  })();
   if (!a.banco || !(a.valor > 0) || !a.inicio || !(a.taxa > 0)) { __pf.msg = "Preencha banco, valor, data da aplicação e taxa."; render(); return; }
   state._pvEdApl = null; state._pvFormApl = false; state._pvPreApl = null;   // v555
   pvGravar(a);
@@ -39169,6 +39202,8 @@ function pvAplicacoesHTML() {
     + '<label style="font-size:11px;color:#999;">Data da aplicação<input id="pv-a-ini" type="date" value="' + esc(pv && pv.inicio ? pv.inicio : pvHoje()) + '" style="width:100%;"></label>'
     + '<label style="font-size:11px;color:#999;">Como rende<select id="pv-a-mod" style="width:100%;"><option value="cdi"' + (mod === "cdi" ? " selected" : "") + '>% do CDI</option><option value="am"' + (mod === "am" ? " selected" : "") + '>Taxa fixa ao mês</option><option value="aa"' + (mod === "aa" ? " selected" : "") + '>Taxa fixa ao ano</option></select></label>'
     + '<label style="font-size:11px;color:#999;">Taxa (%)<input id="pv-a-taxa" inputmode="decimal" value="' + (pv && pv.taxa ? String(pv.taxa).replace(".", ",") : "") + '" placeholder="ex.: 110 (CDI) ou 1,2" style="width:100%;"></label>'
+    + (function () { var fx = pv ? pvFaixa(pv) : null; return '<label style="font-size:11px;color:#999;" title="Algumas contas só pagam a taxa cheia até um teto de saldo. Ex.: 99Pay paga 110% até R$ 5 mil. Deixe 0 se a taxa vale para todo o saldo.">Taxa cheia só até (R$)<input id="pv-a-faixa" inputmode="decimal" value="' + (fx ? String(fx.ate).replace(".", ",") : (pv && pv.faixaAte === 0 ? "0" : "")) + '" placeholder="vazio = todo o saldo" style="width:100%;"></label>'
+      + '<label style="font-size:11px;color:#999;">Acima disso rende (% do CDI)<input id="pv-a-acima" inputmode="decimal" value="' + (fx ? String(fx.acima).replace(".", ",") : "") + '" placeholder="ex.: 80" style="width:100%;"></label>'; })()   // v607
     + '<label style="font-size:11px;color:#999;">Vencimento (opcional)<input id="pv-a-venc" type="date" value="' + esc(pv ? pv.vencimento || "" : "") + '" style="width:100%;"></label>'
     + '<label style="font-size:11px;color:#999;">Observação<input id="pv-a-obs" value="' + esc(pv ? pv.obs || "" : "") + '" style="width:100%;"></label>'
     + '</div><div id="pv-a-dica" style="font-size:11.5px;color:#aaa;margin-top:8px;">' + (pv && PV_PRESET[pv.produto] && PV_PRESET[pv.produto].dica ? "💡 " + PV_PRESET[pv.produto].dica + " — confira a taxa no app do banco." : "") + '</div>'
@@ -39200,7 +39235,7 @@ function pvAplicacoesHTML() {
       return cab + '<tr style="' + (at ? "" : "opacity:.5;") + '"><td><b>' + esc(a.banco) + '</b> · ' + esc(a.produto || "") + '<div style="font-size:11px;color:#888;">desde ' + exDataBr(a.inicio)
         + (a.vencimento ? ' · vence ' + exDataBr(a.vencimento) : "") + (a.isento ? " · isento IR" : "") + (a.saldoInf ? ' · saldo real ' + fmtR(a.saldoInf.valor) + ' em ' + exDataBr(a.saldoInf.data) : "")
         + (a.resgate ? ' · <b style="color:#E57373;">resgatada ' + exDataBr(a.resgate) + '</b>' : "") + (vencendo ? ' · <b style="color:' + GOLD + ';">⚠ vence em ' + pvDias(hoje, a.vencimento) + ' dia(s)</b>' : "") + (a.obs ? '<br>' + esc(a.obs) : "") + (a.movs && a.movs.length ? '<br>' + a.movs.slice(-3).map(function (m) { return (m.tipo === "entrada" ? "⬅ entrou " : "➡ saiu ") + fmtR(m.valor) + ' em ' + exDataBr(m.data) + (m.par === "aporte" || m.par === "retirada" ? "" : (m.tipo === "entrada" ? " de " : " para ") + esc(m.par)); }).join(" · ") : "") + '</div></td>'
-        + '<td style="white-space:nowrap;">' + pvTaxaTxt(a) + '<div style="font-size:11px;color:#888;">≈ ' + (pvTaxaMes(a) * 100).toFixed(2).replace(".", ",") + '% a.m.</div></td>'
+        + '<td style="white-space:nowrap;">' + pvTaxaTxt(a) + '<div style="font-size:11px;color:#888;">≈ ' + (pvTaxaMes(a) * 100).toFixed(2).replace(".", ",") + '% a.m.' + (pvFaixa(a) ? ' no saldo atual' : '') + '</div></td>'
         + '<td style="text-align:right;white-space:nowrap;">' + fmtR(a.valor) + '</td>'
         + '<td style="text-align:right;white-space:nowrap;font-weight:800;">' + (at ? fmtR(pvSaldoHoje(a)) : "—") + '</td>'
         + '<td style="text-align:right;white-space:nowrap;font-weight:800;color:#81C784;">' + (at ? fmtR(r.liquido) : "—") + '</td>'
