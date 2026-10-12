@@ -2,13 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v621)</title>
+<title>RF Logística — Painel da Frota (v622)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v621">
-<meta name="rf-data" content="2026-10-08">
+<meta name="rf-versao" content="v622">
+<meta name="rf-data" content="2026-10-12">
 <meta name="rf-cliente" content="RF Logística">
-<!-- v621 (12/10/2026): PORTAL DO GESTOR -- "CENTRAL DA FROTA". Números do dia (na rua, entregas, no prazo, atenção,
+<!-- v622 (12/10/2026): CARGA MATEUS -- so o PESO trava a viagem (volume divergente vira aviso); volume e peso de cada cidade editaveis na tabela.
+     v621 (12/10/2026): PORTAL DO GESTOR -- "CENTRAL DA FROTA". Números do dia (na rua, entregas, no prazo, atenção,
      atrasados, ocorrências), botões com as PLACAS em cima do mapa, MAPA REAL (OpenFreeMap/MapLibre: grátis, sem chave,
      estilo claro tipo Google + escuro) com TODOS os caminhões e rotas ao mesmo tempo (cor própria por caminhão, anel na cor
      do status), FICHA COMPLETA da placa (Ligar / WhatsApp do motorista, Baú 3D, PDF, linha do tempo, paradas), e os
@@ -972,7 +973,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v621" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v622" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -2251,6 +2252,24 @@ function mtCusto(km, dias, frete, tipoVeic) {
 }
 
 /* ---------------------------- estado da tela ---------------------------- */
+/* v622: volume e peso de cada cidade editaveis na tabela, pra corrigir a
+   leitura sem colar texto de novo. */
+function mtCampoCidade(nome, campo, valor, larg) {
+  var v = campo === "peso" ? Number(valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 }) : String(valor || 0);
+  return '<input value="' + esc(v) + '" inputmode="decimal" title="toque para corrigir" '
+    + 'onchange="mtEditCidade(\'' + esc(String(nome).replace(/'/g, "\\'")) + '\',\'' + campo + '\',this.value)" '
+    + 'style="width:' + larg + 'px;font-size:11.5px;text-align:right;padding:2px 4px;background:#151515;color:#ddd;border:1px solid #333;border-radius:4px;">';
+}
+function mtEditCidade(nome, campo, valor) {
+  var p = (state._mateus || {}).carga;
+  if (!p) return;
+  var c = (p.cidades || []).find(function (x) { return x.nome === nome; });
+  if (!c) return;
+  var n = campo === "peso" ? (String(valor).indexOf(",") >= 0 ? mtNum(valor) : parseFloat(String(valor).trim())) : parseInt(String(valor).replace(/\D/g, ""), 10);
+  if (!isFinite(n) || n < 0) { alert("Valor inválido."); render(); return; }
+  c[campo] = n;
+  render();
+}
 function mtSet(campo, valor) {
   if (!state._mateus) state._mateus = {};
   state._mateus[campo] = valor;
@@ -2380,6 +2399,10 @@ function mtConferir(p) {
   c.okVol = !c.totalVol || c.totalVol === somaVol;
   c.okPeso = !c.totalPeso || Math.abs(c.totalPeso - somaPeso) <= 0.5;
   c.ok = c.okVol && c.okPeso;
+  /* v622: so o PESO trava a viagem -- e o peso que vira frete. Volume que nao
+     fecha vira aviso: a propria programacao da Mateus as vezes nao fecha em
+     volumes (carga 12424732: cabecalho 56, linhas somam 54, peso exato). */
+  c.bloqueia = c.temTotais && !c.okPeso;
   return c;
 }
 
@@ -2679,8 +2702,8 @@ function mtTentarAutomatico() {
   if (!p || m.autoFeito) return;
   m.autoFeito = true;                          // uma tentativa por importacao
   var conf = mtConferir(p);
-  if (conf && conf.temTotais && !conf.ok) {
-    state._mateusMsg += " A viagem NÃO foi criada: a soma das cidades não fecha com o cabeçalho.";
+  if (conf && conf.bloqueia) {
+    state._mateusMsg += " A viagem NÃO foi criada: o peso das cidades não fecha com o cabeçalho.";
     render(); return;
   }
   var peso = 0;
@@ -2710,11 +2733,11 @@ function mtGerarViagem(auto) {
     return;
   }
   var c = mtConferir(p);
-  if (c && c.temTotais && !c.ok) {
-    alert("A leitura nao fecha com o cabecalho da programacao:\n\n"
+  if (c && c.bloqueia) {
+    alert("O PESO da leitura nao fecha com o cabecalho da programacao:\n\n"
       + "Cabecalho: " + c.totalVol + " volumes / " + c.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg\n"
       + "Soma das cidades: " + c.somaVol + " volumes / " + c.somaPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + " kg\n\n"
-      + "Nao vou gerar viagem com peso que nao bate -- peso errado vira frete errado. Mande o print inteiro ou corrija pelo texto colado.");
+      + "Nao vou gerar viagem com peso que nao bate -- peso errado vira frete errado. Corrija o peso da cidade errada direto na tabela de cidades (os campos sao editaveis) ou mande o print inteiro.");
     return;
   }
   var placa = m.placa || "";
@@ -2920,8 +2943,8 @@ function mtBlocoHTML() {
     h += '<tr style="border-top:1px solid #222;' + (t.volta ? 'color:#8E7A1F;' : '') + '">'
       + '<td style="padding:4px 6px;color:#777;">' + (t.volta ? '↩' : nParada) + '</td>'
       + '<td style="padding:4px 6px;">' + esc(t.de) + ' → <b>' + esc(t.para) + '</b>' + (t.volta ? ' <span style="font-size:10px;">(volta vazio)</span>' : '') + '</td>'
-      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : (c.volumes || 0)) + '</td>'
-      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : (c.peso || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3 })) + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : mtCampoCidade(t.para, "volumes", c.volumes || 0, 46)) + '</td>'
+      + '<td style="padding:4px 6px;text-align:right;">' + (t.volta ? '—' : mtCampoCidade(t.para, "peso", c.peso || 0, 86)) + '</td>'
       + '<td style="padding:4px 6px;text-align:right;color:#ddd;">' + (t.km != null ? Math.round(t.km).toLocaleString("pt-BR") : "—") + '</td>'
       + '<td style="padding:4px 6px;text-align:right;color:#777;">' + Math.round(acum).toLocaleString("pt-BR") + '</td>'
       + '</tr>';
@@ -3016,11 +3039,14 @@ function mtBlocoHTML() {
     h += conf.ok
       ? '<div style="margin-top:12px;font-size:12px;color:#2E7D32;">\u2713 Confere com o cabeçalho da programação: '
         + conf.totalVol + ' volumes e ' + conf.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg.</div>'
-      : '<div style="margin-top:12px;padding:10px;background:#1A0E0E;border-left:4px solid #C0392B;border-radius:6px;font-size:12px;color:#E8A0A0;">'
-        + '<b>\u26a0 A leitura não fecha com o cabeçalho.</b><br>Cabeçalho: ' + conf.totalVol + ' vol / '
+      : '<div style="margin-top:12px;padding:10px;background:#1A0E0E;border-left:4px solid ' + (conf.okPeso ? '#E67E22' : '#C0392B') + ';border-radius:6px;font-size:12px;color:#E8A0A0;">'
+        + '<b>\u26a0 ' + (conf.okPeso ? 'Os volumes não fecham com o cabeçalho.' : 'A leitura não fecha com o cabeçalho.') + '</b><br>Cabeçalho: ' + conf.totalVol + ' vol / '
         + conf.totalPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg &nbsp;·&nbsp; Soma das cidades: '
         + conf.somaVol + ' vol / ' + conf.somaPeso.toLocaleString("pt-BR", { minimumFractionDigits: 3 }) + ' kg.<br>'
-        + 'Falta linha na leitura ou algum número saiu errado. A viagem fica bloqueada até bater — peso errado vira frete errado.</div>';
+        + (conf.okPeso
+          ? '<span style="color:#E8C08A;">O <b>peso bate</b> — só os volumes divergem, então a viagem <b>pode ser gerada</b>. Se quiser, corrija o volume da cidade direto na tabela acima. Às vezes é a própria programação da Mateus que não fecha em volumes.</span>'
+          : 'O <b>peso</b> não bate: falta linha na leitura ou algum número saiu errado. A viagem fica bloqueada até bater — peso errado vira frete errado. Corrija o peso da cidade direto na tabela acima.')
+        + '</div>';
   } else if (p.viaIA) {
     h += '<div style="margin-top:12px;font-size:12px;color:#E67E22;">\u26a0 O cabeçalho com os totais não veio no print, então não deu pra conferir a soma. Confira você antes de gerar a viagem.</div>';
   }
@@ -37573,7 +37599,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
     const cabecalho = `CARGA DA MATEUS / JT (aba "Carga Mateus"): a programação da Mateus só chega como PRINT de tela. `
       + `O app lê o print por IA (Edge Function ler-programacao-mateus), lê PDF com texto direto, e aceita texto colado. `
       + `Antes de gerar viagem ele CONFERE se a soma das cidades bate com o total do cabeçalho (volumes exatos, peso com 0,5 kg de tolerância); `
-      + `não batendo, o botão de gerar viagem fica bloqueado. A viagem sai no cliente JT/Mateus, com o valor da rota cadastrada na tabela da JT `
+      + `desde a v622 só o PESO não batendo bloqueia a viagem (é o peso que vira frete); volume divergente é só aviso, porque a própria programação da Mateus às vezes não fecha em volumes. Volume e peso de cada cidade podem ser corrigidos direto na tabela de cidades da aba. A viagem sai no cliente JT/Mateus, com o valor da rota cadastrada na tabela da JT `
       + `(rota casada pelo nome, ignorando o sufixo -BA), KM estimado pelo roteiro e peso somado das cidades. `
       + `O KM sai da linha reta entre as sedes municipais multiplicada pelo FATOR RODOVIÁRIO DAQUELA ROTA, mais os km urbanos. O fator tem três origens, nesta ordem: MEDIDO (viagem fechada da rota: km real das fotos de hodômetro menos o urbano, dividido pela linha reta guardada na criação), GOOGLE (Renato colou uma vez o km que o Maps deu para a rota) ou GERAL (o fator da tela, 1,16). `
       + `Guarda-se o FATOR e não o km porque a mesma rota vem com 4, 8 ou 10 cidades a cada semana — a razão estrada/linha reta é do terreno, o km é da carga. Fatos conhecidos: a Chapada (Seabra, Irecê, Guanambi) pede fator perto de 1,13 e o Nordeste baiano (rota 3237) perto de 1,22. Os dias seguem a média medida das viagens fechadas da rota; 3 viagens medidas = 100% de confiança. `
