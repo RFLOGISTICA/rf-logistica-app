@@ -2,12 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v609)</title>
+<title>RF Logística — Painel da Frota (v610)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v609">
+<meta name="rf-versao" content="v610">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v610 (12/10/2026): DACTE e DAMDFE montados pela extração agora levam a LOGO DA RF (faixa preta no canto do
+     emitente, como no timbrado) -- regra de 29/09: a logo não pode faltar nos documentos fiscais do app. -->
 <!-- v609 (12/10/2026): EXTRAÇÃO -- o ZIP saía com o XML cru (Renato: "é para sair o CT-e em PDF e a chave"). Agora
      cada documento sai em PDF: o guardado quando existe ou o DACTE/DAMDFE montado a partir do XML autorizado (código
      de barras da chave, protocolo, partes, valores, NF-e). Nome do arquivo = número + chave; Chaves.txt no ZIP;
@@ -918,7 +920,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v609" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v610" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5637,6 +5639,31 @@ function xfBlocoParte(doc, x, y, w, rot, p) {
   doc.text((p.mun || "") + (p.cep ? "   CEP " + p.cep : ""), x + 1, y + 12.4);
   doc.text("CNPJ/CPF " + (p.doc || "") + "   IE " + (p.ie || ""), x + 1, y + 15.6);
 }
+/* v610: logo da RF no DACTE/DAMDFE (Renato: "a nossa tem nossa logo, esqueceu!"; regra de 29/09: a logo NÃO pode
+   faltar nos DACTE e DAMDFE). A logo tem texto branco, então vai numa faixa preta no canto do emitente, como no
+   timbrado. Reduzida uma vez para JPEG de ~600 px, para 150 PDFs não virarem um ZIP de 40 MB. */
+function xfLogo() {
+  if (window.__xfLogo !== undefined) return Promise.resolve(window.__xfLogo);
+  return new Promise(function (ok) {
+    try {
+      var im = new Image();
+      im.onload = function () {
+        try { var w = 600, h = Math.round(w * im.height / im.width), cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+          var g = cv.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, w, h); g.drawImage(im, 0, 0, w, h);
+          window.__xfLogo = { src: cv.toDataURL("image/jpeg", 0.88), r: h / w }; } catch (e) { window.__xfLogo = null; }
+        ok(window.__xfLogo);
+      };
+      im.onerror = function () { window.__xfLogo = null; ok(null); };
+      im.src = RF_LOGO_SRC;
+    } catch (e) { window.__xfLogo = null; ok(null); }
+  });
+}
+function xfFaixaLogo(doc, x, y, w, h) {   // faixa preta com a logo centralizada
+  doc.setFillColor(11, 11, 11); doc.rect(x, y, w, h, "F");
+  var lg = window.__xfLogo; if (!lg) return;
+  var lh = h - 1.6, lw = lh / lg.r; if (lw > w - 2) { lw = w - 2; lh = lw * lg.r; }
+  try { doc.addImage(lg.src, "JPEG", x + (w - lw) / 2, y + (h - lh) / 2, lw, lh); } catch (e) {}
+}
 function xfDactePdf(jsPDF, xmlTxt) {
   var x = new DOMParser().parseFromString(xmlTxt, "application/xml");
   var inf = xfTag(x, "infCte"); if (!inf) return null;
@@ -5648,22 +5675,23 @@ function xfDactePdf(jsPDF, xmlTxt) {
   var tomaRot = ({ "0": "REMETENTE", "1": "EXPEDIDOR", "2": "RECEBEDOR", "3": "DESTINATÁRIO", "4": "OUTROS" })[tomaN] || "";
   var prot = xfTag(x, "infProt"), vPrest = xfTag(inf, "vPrest"), carga = xfTag(inf, "infCarga"), imp = xfTag(inf, "imp");
   var doc = new jsPDF({ unit: "mm", format: "a4" }), L = 8, W = 194, y = 8;
-  // cabeçalho
-  doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(L, y, W, 30);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(doc.splitTextToSize(emit.nome, 74), L + 2, y + 5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
-  doc.text(doc.splitTextToSize(emit.end, 74).slice(0, 2), L + 2, y + 13);
-  doc.text(emit.mun + "  CEP " + emit.cep, L + 2, y + 20.5); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 2, y + 24); if (emit.fone) doc.text("Fone " + emit.fone, L + 2, y + 27.5);
-  doc.line(L + 78, y, L + 78, y + 30);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DACTE", L + 108, y + 6, { align: "center" });
-  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(["Documento Auxiliar do Conhecimento", "de Transporte Eletrônico"], L + 108, y + 10, { align: "center" });
-  xfCampo(doc, L + 80, y + 17, 14, 12, "Modelo", xfTxt(ide, "mod")); xfCampo(doc, L + 94, y + 17, 12, 12, "Série", xfTxt(ide, "serie"));
-  xfCampo(doc, L + 106, y + 17, 18, 12, "Número", xfTxt(ide, "nCT"), 9); xfCampo(doc, L + 124, y + 17, 14, 12, "Folha", "1/1");
-  doc.line(L + 138, y, L + 138, y + 30);
-  xfBarras(doc, chave, L + 141, y + 2, 50, 11);
-  doc.setFontSize(5.5); doc.text("CHAVE DE ACESSO", L + 140, y + 16); doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.text(doc.splitTextToSize(xfChaveFmt(chave), 54), L + 140, y + 19.5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text("Consulta em www.cte.fazenda.gov.br/portal", L + 140, y + 28.5);
-  y += 30;
+  // cabeçalho (v610: faixa preta com a logo da RF no canto do emitente)
+  doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(L, y, W, 36);
+  xfFaixaLogo(doc, L + 0.15, y + 0.15, 77.7, 12);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.text(doc.splitTextToSize(emit.nome, 74).slice(0, 2), L + 2, y + 16.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.6);
+  doc.text(doc.splitTextToSize(emit.end, 74)[0] || "", L + 2, y + 24);
+  doc.text(emit.mun + "  CEP " + emit.cep, L + 2, y + 27.3); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 2, y + 30.6); if (emit.fone) doc.text("Fone " + emit.fone, L + 2, y + 33.9);
+  doc.line(L + 78, y, L + 78, y + 36);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DACTE", L + 108, y + 7, { align: "center" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(["Documento Auxiliar do Conhecimento", "de Transporte Eletrônico"], L + 108, y + 11.5, { align: "center" });
+  xfCampo(doc, L + 80, y + 22, 14, 12, "Modelo", xfTxt(ide, "mod")); xfCampo(doc, L + 94, y + 22, 12, 12, "Série", xfTxt(ide, "serie"));
+  xfCampo(doc, L + 106, y + 22, 18, 12, "Número", xfTxt(ide, "nCT"), 9); xfCampo(doc, L + 124, y + 22, 14, 12, "Folha", "1/1");
+  doc.line(L + 138, y, L + 138, y + 36);
+  xfBarras(doc, chave, L + 141, y + 3, 50, 12);
+  doc.setFontSize(5.5); doc.text("CHAVE DE ACESSO", L + 140, y + 19); doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.text(doc.splitTextToSize(xfChaveFmt(chave), 54), L + 140, y + 22.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text("Consulta em www.cte.fazenda.gov.br/portal", L + 140, y + 34);
+  y += 36;
   xfCampo(doc, L, y, 97, 10, "Protocolo de autorização de uso", prot ? xfTxt(prot, "nProt") + "  " + xfDataHora(xfTxt(prot, "dhRecbto")) : "—");
   xfCampo(doc, L + 97, y, 47, 10, "Data e hora de emissão", xfDataHora(xfTxt(ide, "dhEmi")));
   xfCampo(doc, L + 144, y, 50, 10, "Tipo do CT-e / Serviço", (["Normal", "Complementar", "Anulação", "Substituto"][+xfTxt(ide, "tpCTe")] || "") + " / " + (["Normal", "Subcontratação", "Redespacho", "Redesp. intermediário", "Multimodal"][+xfTxt(ide, "tpServ")] || ""));
@@ -5681,13 +5709,13 @@ function xfDactePdf(jsPDF, xmlTxt) {
   xfCampo(doc, L + 120, y, 74, 10, "Quantidades", qs, 7); y += 11;
   // componentes do valor
   var comps = xfTodos(vPrest, "Comp");
-  doc.setDrawColor(0); doc.rect(L, y, 194, 6 + Math.max(1, Math.ceil(comps.length / 2)) * 4.5);
+  doc.setDrawColor(0); doc.rect(L, y, 194, 6 + Math.max(2, Math.ceil(comps.length / 2)) * 4.5);
   doc.setFontSize(5.5); doc.setFont("helvetica", "normal"); doc.text("COMPONENTES DO VALOR DA PRESTAÇÃO DO SERVIÇO", L + 1, y + 2.4);
   doc.setFontSize(7.5);
   comps.forEach(function (c, i) { var cx = L + 2 + (i % 2) * 70, cy = y + 6 + Math.floor(i / 2) * 4.5; doc.text(xfTxt(c, "xNome"), cx, cy); doc.text(xfMoeda(xfTxt(c, "vComp")), cx + 62, cy, { align: "right" }); });
   doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.text("VALOR TOTAL DO SERVIÇO  R$ " + xfMoeda(xfTxt(vPrest, "vTPrest")), L + 192, y + 6, { align: "right" });
   doc.text("VALOR A RECEBER  R$ " + xfMoeda(xfTxt(vPrest, "vRec")), L + 192, y + 10.5, { align: "right" });
-  y += 7 + Math.max(1, Math.ceil(comps.length / 2)) * 4.5;
+  y += 7 + Math.max(2, Math.ceil(comps.length / 2)) * 4.5;
   var icms = imp ? xfTag(imp, "ICMS") : null, ic = icms && icms.firstElementChild;
   xfCampo(doc, L, y, 60, 10, "Situação tributária (ICMS)", ic ? ic.localName + (xfTxt(ic, "CST") ? " - CST " + xfTxt(ic, "CST") : "") : "", 7);
   xfCampo(doc, L + 60, y, 45, 10, "Base de cálculo", xfMoeda(xfTxt(ic, "vBC")) || "0,00"); xfCampo(doc, L + 105, y, 30, 10, "Alíquota", (xfTxt(ic, "pICMS") || "0") + "%");
@@ -5712,8 +5740,9 @@ function xfDamdfePdf(jsPDF, xmlTxt) {
   var ide = xfTag(inf, "ide"), emit = xfParte(xfTag(inf, "emit")), prot = xfTag(x, "infProt"), tot = xfTag(inf, "tot"), rodo = xfTag(inf, "rodo");
   var doc = new jsPDF({ unit: "mm", format: "a4" }), L = 8, y = 8;
   doc.setLineWidth(0.3); doc.rect(L, y, 194, 26);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(doc.splitTextToSize(emit.nome, 100), L + 2, y + 5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.text(emit.end, L + 2, y + 13); doc.text(emit.mun + "  CEP " + emit.cep, L + 2, y + 16.5); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 2, y + 20);
+  xfFaixaLogo(doc, L + 0.15, y + 0.15, 40, 25.7);   // v610: logo da RF
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.text(doc.splitTextToSize(emit.nome, 64), L + 43, y + 5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.6); doc.text(doc.splitTextToSize(emit.end, 64)[0] || "", L + 43, y + 13); doc.text(emit.mun + "  CEP " + emit.cep, L + 43, y + 16.5); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 43, y + 20);
   doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DAMDFE", L + 150, y + 6, { align: "center" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text("Documento Auxiliar do Manifesto Eletrônico de Documentos Fiscais", L + 150, y + 10, { align: "center" });
   xfBarras(doc, chave, L + 112, y + 13, 78, 11);
@@ -5786,7 +5815,7 @@ function xfExtrair(cliK, soPlanilha) {
       state._xfMsg = "montando o pacote... " + (i + 1) + " de " + fila.length; render();
       return umDoc(fila[i++]).then(proxima, proxima);
     };
-    proxima().then(function () {
+    xfLogo().then(proxima).then(function () {   // v610: logo pronta antes do 1º PDF
       var wb = wbOut(); if (wb) zip.file("Resumo_" + base + ".xlsx", XLSX.write(wb, { bookType: "xlsx", type: "array" }));
       zip.file("Chaves.txt", "Chaves de acesso - " + nomeCli + " - " + P.rot + "\n\n" + chaves.join("\n\n") + "\n");
       if (faltam.length) zip.file("FALTANDO.txt", "Documentos sem PDF e sem XML guardados no app (reimporte o XML no bloco fiscal):\n\n" + faltam.map(function (d) { return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + (d.placa || "") + " - " + (d.chave || ""); }).join("\n"));
