@@ -2,12 +2,16 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v608)</title>
+<title>RF Logística — Painel da Frota (v609)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v608">
+<meta name="rf-versao" content="v609">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v609 (12/10/2026): EXTRAÇÃO -- o ZIP saía com o XML cru (Renato: "é para sair o CT-e em PDF e a chave"). Agora
+     cada documento sai em PDF: o guardado quando existe ou o DACTE/DAMDFE montado a partir do XML autorizado (código
+     de barras da chave, protocolo, partes, valores, NF-e). Nome do arquivo = número + chave; Chaves.txt no ZIP;
+     XML só com "incluir XML (contador)". Monta um documento por vez para não travar o tablet. -->
 <!-- v608 (12/10/2026): ÁREA NOVA "📦 Extração CT-e / MDF-e / CIOT" (grupo VIAGENS, sozinha, não é sub-caixa):
      período por mês/ano ou de/até, todos os clientes listados com CT-e, valor, MDF-e, CIOT e quantos têm XML/PDF;
      "Extrair" por cliente ou "Extrair todos" baixa um ZIP com CT-e/ e MDF-e/ (XML + PDF guardados) e a planilha
@@ -914,7 +918,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v608" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v609" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5565,27 +5569,176 @@ function xfTelaHTML() {
   var lista = cliSel ? res.filter(function (g) { return (g.cli || "__sem") === cliSel; }) : res;
   var tot = { cte: 0, v: 0, mdfe: 0, ciot: 0 };
   var th = function (t, a) { return '<th style="color:' + GOLD + ';font-weight:600;font-size:12px;padding:8px 10px;border-bottom:1px solid #333;text-align:' + (a || "left") + ';">' + t + '</th>'; };
-  h += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:14px;"><tr>' + th("Cliente") + th("CT-e", "center") + th("Valor dos CT-e", "right") + th("MDF-e", "center") + th("CIOT", "center") + th("Arquivos", "center") + th("") + '</tr>';
+  h += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:14px;"><tr>' + th("Cliente") + th("CT-e", "center") + th("Valor dos CT-e", "right") + th("MDF-e", "center") + th("CIOT", "center") + th("PDF", "center") + th("") + '</tr>';
   lista.forEach(function (g) {
     var v = g.cte.reduce(function (s, d) { return s + (Number(d.valor) || 0); }, 0), nci = Object.keys(g.ciot).length, n = g.cte.length + g.mdfe.length;
     tot.cte += g.cte.length; tot.v += v; tot.mdfe += g.mdfe.length; tot.ciot += nci;
-    var xml = g.cte.concat(g.mdfe).filter(function (d) { return d.xmlPath; }).length, pdf = g.cte.concat(g.mdfe).filter(function (d) { return d.pdfPath; }).length;
+    var xml = g.cte.concat(g.mdfe).filter(function (d) { return d.xmlPath; }).length, pdf = g.cte.concat(g.mdfe).filter(function (d) { return d.pdfPath || d.xmlPath; }).length;   // v609: PDF guardado ou montado do XML
     var off = n ? "" : "color:#555;", k = g.cli || "__sem";
     h += '<tr style="border-bottom:1px solid #222;"><td style="padding:10px;"><b>' + esc(g.cli || "Sem cliente identificado") + '</b></td>'
       + '<td style="text-align:center;' + off + '">' + g.cte.length + '</td><td style="text-align:right;' + off + '">' + (v ? fmtR(v) : "—") + '</td>'
       + '<td style="text-align:center;' + off + '">' + g.mdfe.length + '</td><td style="text-align:center;' + off + '">' + nci + '</td>'
-      + '<td style="text-align:center;font-size:12.5px;">' + (n ? '<span style="color:' + (xml === n ? "#4CAF50" : "#E67E22") + ';">XML ' + xml + '/' + n + '</span> · <span style="color:' + (pdf === n ? "#4CAF50" : "#E67E22") + ';">PDF ' + pdf + '/' + n + '</span>' : '<span style="color:#555;">sem documento no período</span>') + '</td>'
+      + '<td style="text-align:center;font-size:12.5px;">' + (n ? '<span style="color:' + (pdf === n ? "#4CAF50" : "#E67E22") + ';">PDF + chave ' + pdf + '/' + n + '</span>' : '<span style="color:#555;">sem documento no período</span>') + '</td>'
       + '<td style="text-align:right;padding:6px 10px;">' + (n ? '<button onclick="xfExtrair(\'' + esc(k).replace(/'/g, "\\'") + '\')" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:7px 14px;">⬇ Extrair</button>' : '<button disabled style="opacity:.35;border:1px solid ' + GOLD + ';color:' + GOLD + ';background:none;border-radius:8px;padding:7px 14px;">⬇ Extrair</button>') + '</td></tr>';
   });
   h += '<tr><td style="padding:10px;color:' + GOLD + ';font-weight:800;border-top:2px solid ' + GOLD + ';">TOTAL · ' + esc(P.rot) + '</td>'
     + ['cte', 'v', 'mdfe', 'ciot'].map(function (kk) { return '<td style="text-align:' + (kk === "v" ? "right" : "center") + ';color:' + GOLD + ';font-weight:800;border-top:2px solid ' + GOLD + ';">' + (kk === "v" ? (tot.v ? fmtR(tot.v) : "—") : tot[kk]) + '</td>'; }).join("")
     + '<td style="border-top:2px solid ' + GOLD + ';"></td><td style="text-align:right;border-top:2px solid ' + GOLD + ';padding:6px 10px;">' + (tot.cte + tot.mdfe && !cliSel ? '<button onclick="xfExtrair(\'\')" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:7px 14px;">⬇ Extrair todos</button>' : '') + '</td></tr></table></div>';
-  h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#aaa;">Sai um ZIP com as pastas <b>CT-e/</b> e <b>MDF-e/</b> (XML oficial e o PDF quando estiver guardado) e a planilha resumo com o CIOT. '
+  h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#aaa;">Sai um ZIP com as pastas <b>CT-e/</b> e <b>MDF-e/</b> com o <b>PDF</b> de cada documento (nome = número + chave), o <b>Chaves.txt</b> e a planilha resumo com o CIOT. '
+    + '<label style="display:inline-flex;gap:5px;align-items:center;white-space:nowrap;"><input type="checkbox"' + (state._xfXml ? " checked" : "") + ' onchange="state._xfXml=this.checked"> incluir XML (contador)</label> '
     + '<button onclick="xfExtrair(state._xfCli||\'\',true)" style="font-size:12px;border:1px solid ' + GOLD + ';color:' + GOLD + ';background:none;border-radius:8px;padding:5px 10px;font-weight:700;">📊 Só a planilha</button></div>'
     + (state._xfMsg ? '<div style="margin-top:10px;font-weight:700;color:' + (/^✓/.test(state._xfMsg) ? "#4CAF50" : "#E8C46A") + ';">' + esc(state._xfMsg) + '</div>' : '')
     + '<div style="font-size:11.5px;color:#777;margin-top:10px;line-height:1.5;">O cliente de cada documento é o contratante do frete (pela viagem vinculada ou pelo remetente/tomador do CT-e), não o destinatário da nota. Cliente sem documento guardado no app aparece com 0. Documento cancelado não entra.</div></div>';
   return h;
 }
+/* ===== v609: DACTE / DAMDFE EM PDF GERADOS A PARTIR DO XML ===================
+   Renato, 12/10/2026, ao abrir o ZIP da extração (v608): "olha como saiu, é para sair o
+   CT-e em PDF e a chave" -- saiu o XML cru. Só 33 de 147 CT-e de setembro têm o PDF
+   (DACTE) guardado; os outros foram emitidos fora do app e só o XML autorizado ficou.
+   Agora a extração entrega o PDF de TODO documento: usa o PDF guardado quando existe e,
+   quando não, MONTA o DACTE/DAMDFE a partir do XML autorizado (mesmos dados, código de
+   barras da chave, protocolo de autorização). O nome do arquivo leva o número e a CHAVE,
+   e o ZIP traz Chaves.txt. O XML só vai se marcar "incluir XML (contador)". */
+function xfTag(el, nome) { if (!el) return null; var l = el.getElementsByTagNameNS ? el.getElementsByTagNameNS("*", nome) : el.getElementsByTagName(nome); return l && l.length ? l[0] : null; }
+function xfTxt(el, nome) { var t = xfTag(el, nome); return t ? String(t.textContent || "").trim() : ""; }
+function xfTodos(el, nome) { if (!el) return []; var l = el.getElementsByTagNameNS("*", nome); return Array.prototype.slice.call(l || []); }
+function xfDocFmt(v) { v = String(v || "").replace(/\D/g, ""); return v.length === 14 ? v.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5") : v.length === 11 ? v.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") : v; }
+function xfChaveFmt(c) { return String(c || "").replace(/\D/g, "").replace(/(\d{4})(?=\d)/g, "$1 "); }
+function xfMoeda(v) { var n = Number(v); return isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ""; }
+function xfDataHora(s) { s = String(s || ""); return s.length >= 16 ? s.slice(8, 10) + "/" + s.slice(5, 7) + "/" + s.slice(0, 4) + " " + s.slice(11, 19) : s; }
+function xfParte(el) {   // remetente / destinatário / tomador / emitente
+  if (!el) return null;
+  var end = xfTag(el, "enderReme") || xfTag(el, "enderDest") || xfTag(el, "enderToma") || xfTag(el, "enderEmit") || xfTag(el, "enderExped") || xfTag(el, "enderReceb") || el;
+  return { nome: xfTxt(el, "xNome"), doc: xfDocFmt(xfTxt(el, "CNPJ") || xfTxt(el, "CPF")), ie: xfTxt(el, "IE"),
+    end: [xfTxt(end, "xLgr"), xfTxt(end, "nro"), xfTxt(end, "xCpl")].filter(Boolean).join(", ") + (xfTxt(end, "xBairro") ? " - " + xfTxt(end, "xBairro") : ""),
+    mun: xfTxt(end, "xMun") + (xfTxt(end, "UF") ? "/" + xfTxt(end, "UF") : ""), cep: xfTxt(end, "CEP"), fone: xfTxt(el, "fone") };
+}
+/* desenha o código de barras Code 128 da chave (mesmo codificador das etiquetas) */
+function xfBarras(doc, txt, x, y, w, h) {
+  var bits = szCode128Bits(String(txt || "").replace(/\D/g, "")); if (!bits) return;
+  var m = w / bits.length; doc.setFillColor(0, 0, 0);
+  for (var i = 0; i < bits.length; i++) if (bits[i] === "1") { var j = i; while (j + 1 < bits.length && bits[j + 1] === "1") j++; doc.rect(x + i * m, y, (j - i + 1) * m, h, "F"); i = j; }
+}
+/* caixa com rótulo pequeno em cima e valor; devolve a altura usada */
+function xfCampo(doc, x, y, w, h, rot, val, tam) {
+  doc.setDrawColor(0); doc.setLineWidth(0.2); doc.rect(x, y, w, h);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text(String(rot || "").toUpperCase(), x + 1, y + 2.4);
+  doc.setFontSize(tam || 8); doc.setFont("helvetica", "bold");
+  var linhas = doc.splitTextToSize(String(val == null ? "" : val), w - 2);
+  doc.text(linhas.slice(0, Math.max(1, Math.floor((h - 3) / ((tam || 8) * 0.42)))), x + 1, y + 5.6);
+}
+function xfBlocoParte(doc, x, y, w, rot, p) {
+  p = p || { nome: "", doc: "", ie: "", end: "", mun: "", cep: "" };
+  doc.setDrawColor(0); doc.rect(x, y, w, 19);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text(rot, x + 1, y + 2.4);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.text(doc.splitTextToSize(p.nome || "—", w - 2)[0], x + 1, y + 5.8);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.6);
+  doc.text(doc.splitTextToSize(p.end || "", w - 2)[0] || "", x + 1, y + 9.2);
+  doc.text((p.mun || "") + (p.cep ? "   CEP " + p.cep : ""), x + 1, y + 12.4);
+  doc.text("CNPJ/CPF " + (p.doc || "") + "   IE " + (p.ie || ""), x + 1, y + 15.6);
+}
+function xfDactePdf(jsPDF, xmlTxt) {
+  var x = new DOMParser().parseFromString(xmlTxt, "application/xml");
+  var inf = xfTag(x, "infCte"); if (!inf) return null;
+  var chave = String(inf.getAttribute("Id") || "").replace(/\D/g, "") || xfTxt(x, "chCTe");
+  var ide = xfTag(inf, "ide"), emit = xfParte(xfTag(inf, "emit")), rem = xfParte(xfTag(inf, "rem")), dest = xfParte(xfTag(inf, "dest"));
+  var exped = xfParte(xfTag(inf, "exped")), receb = xfParte(xfTag(inf, "receb"));
+  var tomaN = xfTxt(xfTag(ide, "toma3") || xfTag(ide, "toma4"), "toma");
+  var toma = xfTag(ide, "toma4") ? xfParte(xfTag(ide, "toma4")) : ({ "0": rem, "1": exped, "2": receb, "3": dest })[tomaN] || rem;
+  var tomaRot = ({ "0": "REMETENTE", "1": "EXPEDIDOR", "2": "RECEBEDOR", "3": "DESTINATÁRIO", "4": "OUTROS" })[tomaN] || "";
+  var prot = xfTag(x, "infProt"), vPrest = xfTag(inf, "vPrest"), carga = xfTag(inf, "infCarga"), imp = xfTag(inf, "imp");
+  var doc = new jsPDF({ unit: "mm", format: "a4" }), L = 8, W = 194, y = 8;
+  // cabeçalho
+  doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(L, y, W, 30);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(doc.splitTextToSize(emit.nome, 74), L + 2, y + 5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
+  doc.text(doc.splitTextToSize(emit.end, 74).slice(0, 2), L + 2, y + 13);
+  doc.text(emit.mun + "  CEP " + emit.cep, L + 2, y + 20.5); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 2, y + 24); if (emit.fone) doc.text("Fone " + emit.fone, L + 2, y + 27.5);
+  doc.line(L + 78, y, L + 78, y + 30);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DACTE", L + 108, y + 6, { align: "center" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text(["Documento Auxiliar do Conhecimento", "de Transporte Eletrônico"], L + 108, y + 10, { align: "center" });
+  xfCampo(doc, L + 80, y + 17, 14, 12, "Modelo", xfTxt(ide, "mod")); xfCampo(doc, L + 94, y + 17, 12, 12, "Série", xfTxt(ide, "serie"));
+  xfCampo(doc, L + 106, y + 17, 18, 12, "Número", xfTxt(ide, "nCT"), 9); xfCampo(doc, L + 124, y + 17, 14, 12, "Folha", "1/1");
+  doc.line(L + 138, y, L + 138, y + 30);
+  xfBarras(doc, chave, L + 141, y + 2, 50, 11);
+  doc.setFontSize(5.5); doc.text("CHAVE DE ACESSO", L + 140, y + 16); doc.setFont("helvetica", "bold"); doc.setFontSize(7.4); doc.text(doc.splitTextToSize(xfChaveFmt(chave), 54), L + 140, y + 19.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text("Consulta em www.cte.fazenda.gov.br/portal", L + 140, y + 28.5);
+  y += 30;
+  xfCampo(doc, L, y, 97, 10, "Protocolo de autorização de uso", prot ? xfTxt(prot, "nProt") + "  " + xfDataHora(xfTxt(prot, "dhRecbto")) : "—");
+  xfCampo(doc, L + 97, y, 47, 10, "Data e hora de emissão", xfDataHora(xfTxt(ide, "dhEmi")));
+  xfCampo(doc, L + 144, y, 50, 10, "Tipo do CT-e / Serviço", (["Normal", "Complementar", "Anulação", "Substituto"][+xfTxt(ide, "tpCTe")] || "") + " / " + (["Normal", "Subcontratação", "Redespacho", "Redesp. intermediário", "Multimodal"][+xfTxt(ide, "tpServ")] || ""));
+  y += 10;
+  xfCampo(doc, L, y, 194, 10, "CFOP - Natureza da operação", xfTxt(ide, "CFOP") + " - " + xfTxt(ide, "natOp"));
+  y += 10;
+  xfCampo(doc, L, y, 97, 10, "Início da prestação", xfTxt(ide, "xMunIni") + "/" + xfTxt(ide, "UFIni"));
+  xfCampo(doc, L + 97, y, 97, 10, "Término da prestação", xfTxt(ide, "xMunFim") + "/" + xfTxt(ide, "UFFim"));
+  y += 11;
+  xfBlocoParte(doc, L, y, 97, "REMETENTE", rem); xfBlocoParte(doc, L + 97, y, 97, "DESTINATÁRIO", dest); y += 19;
+  if (exped || receb) { xfBlocoParte(doc, L, y, 97, "EXPEDIDOR", exped); xfBlocoParte(doc, L + 97, y, 97, "RECEBEDOR", receb); y += 19; }
+  xfBlocoParte(doc, L, y, 194, "TOMADOR DO SERVIÇO (" + tomaRot + ")", toma); y += 20;
+  var qs = xfTodos(carga, "infQ").map(function (q) { return xfTxt(q, "tpMed") + ": " + String(xfTxt(q, "qCarga")).replace(".", ","); }).join("   ");
+  xfCampo(doc, L, y, 80, 10, "Produto predominante", xfTxt(carga, "proPred")); xfCampo(doc, L + 80, y, 40, 10, "Valor total da carga", "R$ " + xfMoeda(xfTxt(carga, "vCarga")));
+  xfCampo(doc, L + 120, y, 74, 10, "Quantidades", qs, 7); y += 11;
+  // componentes do valor
+  var comps = xfTodos(vPrest, "Comp");
+  doc.setDrawColor(0); doc.rect(L, y, 194, 6 + Math.max(1, Math.ceil(comps.length / 2)) * 4.5);
+  doc.setFontSize(5.5); doc.setFont("helvetica", "normal"); doc.text("COMPONENTES DO VALOR DA PRESTAÇÃO DO SERVIÇO", L + 1, y + 2.4);
+  doc.setFontSize(7.5);
+  comps.forEach(function (c, i) { var cx = L + 2 + (i % 2) * 70, cy = y + 6 + Math.floor(i / 2) * 4.5; doc.text(xfTxt(c, "xNome"), cx, cy); doc.text(xfMoeda(xfTxt(c, "vComp")), cx + 62, cy, { align: "right" }); });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.text("VALOR TOTAL DO SERVIÇO  R$ " + xfMoeda(xfTxt(vPrest, "vTPrest")), L + 192, y + 6, { align: "right" });
+  doc.text("VALOR A RECEBER  R$ " + xfMoeda(xfTxt(vPrest, "vRec")), L + 192, y + 10.5, { align: "right" });
+  y += 7 + Math.max(1, Math.ceil(comps.length / 2)) * 4.5;
+  var icms = imp ? xfTag(imp, "ICMS") : null, ic = icms && icms.firstElementChild;
+  xfCampo(doc, L, y, 60, 10, "Situação tributária (ICMS)", ic ? ic.localName + (xfTxt(ic, "CST") ? " - CST " + xfTxt(ic, "CST") : "") : "", 7);
+  xfCampo(doc, L + 60, y, 45, 10, "Base de cálculo", xfMoeda(xfTxt(ic, "vBC")) || "0,00"); xfCampo(doc, L + 105, y, 30, 10, "Alíquota", (xfTxt(ic, "pICMS") || "0") + "%");
+  xfCampo(doc, L + 135, y, 59, 10, "Valor do ICMS", xfMoeda(xfTxt(ic, "vICMS")) || "0,00"); y += 11;
+  // documentos originários
+  var nfes = xfTodos(inf, "infNFe").map(function (n) { return xfTxt(n, "chave"); }).filter(Boolean);
+  var hDocs = 6 + Math.max(1, Math.ceil(nfes.length / 2)) * 4;
+  doc.rect(L, y, 194, hDocs); doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text("DOCUMENTOS ORIGINÁRIOS (NF-e)", L + 1, y + 2.4); doc.setFontSize(7);
+  nfes.forEach(function (c, i) { doc.text("NF " + String(parseInt(c.slice(25, 34), 10)) + "  " + xfChaveFmt(c), L + 2 + (i % 2) * 97, y + 6 + Math.floor(i / 2) * 4); });
+  y += hDocs + 1;
+  var obs = [xfTxt(xfTag(inf, "compl"), "xObs")].concat(xfTodos(xfTag(inf, "compl"), "ObsCont").map(function (o) { return xfTxt(o, "xTexto"); })).filter(Boolean).join("  ·  ");
+  xfCampo(doc, L, y, 140, 16, "Observações", obs, 6.8); xfCampo(doc, L + 140, y, 54, 16, "RNTRC da empresa", xfTxt(inf, "RNTRC")); y += 17;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(90);
+  doc.text("Representação gráfica gerada pelo sistema RF Logística a partir do XML autorizado do CT-e. Consulte a validade pela chave de acesso.", L, y + 3);
+  doc.setTextColor(0);
+  return { pdf: doc.output("arraybuffer"), chave: chave, numero: xfTxt(ide, "nCT") };
+}
+function xfDamdfePdf(jsPDF, xmlTxt) {
+  var x = new DOMParser().parseFromString(xmlTxt, "application/xml");
+  var inf = xfTag(x, "infMDFe"); if (!inf) return null;
+  var chave = String(inf.getAttribute("Id") || "").replace(/\D/g, "");
+  var ide = xfTag(inf, "ide"), emit = xfParte(xfTag(inf, "emit")), prot = xfTag(x, "infProt"), tot = xfTag(inf, "tot"), rodo = xfTag(inf, "rodo");
+  var doc = new jsPDF({ unit: "mm", format: "a4" }), L = 8, y = 8;
+  doc.setLineWidth(0.3); doc.rect(L, y, 194, 26);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(doc.splitTextToSize(emit.nome, 100), L + 2, y + 5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.text(emit.end, L + 2, y + 13); doc.text(emit.mun + "  CEP " + emit.cep, L + 2, y + 16.5); doc.text("CNPJ " + emit.doc + "   IE " + emit.ie, L + 2, y + 20);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DAMDFE", L + 150, y + 6, { align: "center" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.text("Documento Auxiliar do Manifesto Eletrônico de Documentos Fiscais", L + 150, y + 10, { align: "center" });
+  xfBarras(doc, chave, L + 112, y + 13, 78, 11);
+  y += 27;
+  xfCampo(doc, L, y, 20, 10, "Modelo", xfTxt(ide, "mod")); xfCampo(doc, L + 20, y, 14, 10, "Série", xfTxt(ide, "serie")); xfCampo(doc, L + 34, y, 22, 10, "Número", xfTxt(ide, "nMDF"), 9);
+  xfCampo(doc, L + 56, y, 40, 10, "Emissão", xfDataHora(xfTxt(ide, "dhEmi"))); xfCampo(doc, L + 96, y, 22, 10, "UF carreg.", xfTxt(ide, "UFIni")); xfCampo(doc, L + 118, y, 22, 10, "UF descarreg.", xfTxt(ide, "UFFim"));
+  xfCampo(doc, L + 140, y, 54, 10, "Protocolo de autorização", prot ? xfTxt(prot, "nProt") + " " + xfDataHora(xfTxt(prot, "dhRecbto")) : "—", 7); y += 10;
+  xfCampo(doc, L, y, 194, 9, "Chave de acesso", xfChaveFmt(chave), 9); y += 10;
+  var veic = xfTag(rodo, "veicTracao"), cond = xfTodos(veic, "condutor").map(function (c) { return xfTxt(c, "xNome") + " (CPF " + xfDocFmt(xfTxt(c, "CPF")) + ")"; }).join("; ");
+  var ciots = xfTodos(rodo, "infCIOT").map(function (c) { return xfTxt(c, "CIOT"); }).filter(Boolean).join(", ");
+  xfCampo(doc, L, y, 40, 10, "Placa", xfTxt(veic, "placa"), 10); xfCampo(doc, L + 40, y, 154, 10, "Condutor", cond); y += 10;
+  xfCampo(doc, L, y, 64, 10, "CIOT", ciots || "—", 9); xfCampo(doc, L + 64, y, 40, 10, "RNTRC", xfTxt(rodo, "RNTRC")); xfCampo(doc, L + 104, y, 30, 10, "Qtde CT-e", xfTxt(tot, "qCTe"));
+  xfCampo(doc, L + 134, y, 30, 10, "Peso total (kg)", String(xfTxt(tot, "qCarga")).replace(".", ",")); xfCampo(doc, L + 164, y, 30, 10, "Valor da carga", xfMoeda(xfTxt(tot, "vCarga"))); y += 11;
+  xfCampo(doc, L, y, 194, 9, "Municípios de carregamento", xfTodos(ide, "infMunCarrega").map(function (m) { return xfTxt(m, "xMunCarrega"); }).join(", ")); y += 10;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(5.5); doc.text("DOCUMENTOS VINCULADOS POR MUNICÍPIO DE DESCARREGAMENTO", L + 1, y + 2.4); y += 4;
+  doc.setFontSize(7);
+  xfTodos(inf, "infMunDescarga").forEach(function (md) {
+    if (y > 280) { doc.addPage(); y = 12; }
+    doc.setFont("helvetica", "bold"); doc.text(xfTxt(md, "xMunDescarga"), L + 1, y + 3); y += 4; doc.setFont("helvetica", "normal");
+    xfTodos(md, "infCTe").forEach(function (c) { if (y > 285) { doc.addPage(); y = 12; } doc.text("CT-e  " + xfChaveFmt(xfTxt(c, "chCTe")), L + 4, y + 3); y += 3.8; });
+  });
+  doc.setFontSize(6); doc.setTextColor(90); doc.text("Representação gráfica gerada pelo sistema RF Logística a partir do XML autorizado do MDF-e.", L, Math.min(290, y + 6)); doc.setTextColor(0);
+  return { pdf: doc.output("arraybuffer"), chave: chave, numero: xfTxt(ide, "nMDF") };
+}
+
 function xfExtrair(cliK, soPlanilha) {
   var P = xfPeriodo(), T = xfTipos(), docs = xfDocs();
   if (cliK) docs = docs.filter(function (d) { return (d.__cli || "__sem") === cliK; });
@@ -5604,23 +5757,43 @@ function xfExtrair(cliK, soPlanilha) {
   };
   if (soPlanilha) { var wb0 = wbOut(); if (!wb0) { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; } XLSX.writeFile(wb0, "Resumo_" + base + ".xlsx"); return; }
   state._xfMsg = "montando o pacote... (" + (cte.length + mdfe.length) + " documentos)"; render();
-  rfFiscalZipLib().then(function (JSZip) {
-    if (!JSZip) { state._xfMsg = "não consegui carregar o compactador (verifique a internet)."; render(); return; }
-    var zip = new JSZip(), tarefas = [], semXml = [], semPdf = 0;
-    var poe = function (d, pasta, pref) {
-      var nome = pref + "_" + (d.numero || String(d.chave || "").slice(-8));
-      if (d.xmlPath) tarefas.push(rfBaixarDoBucket(d.xmlPath).then(function (b) { if (b) zip.file(pasta + nome + ".xml", b); else semXml.push(d); })); else semXml.push(d);
-      if (d.pdfPath) tarefas.push(rfBaixarDoBucket(d.pdfPath).then(function (b) { if (b) zip.file(pasta + nome + ".pdf", b); })); else semPdf++;
+  Promise.all([rfFiscalZipLib(), rfPdfLib()]).then(function (libs) {   // v609: PDF + chave (XML só se pedir)
+    var JSZip = libs[0], jsPDF = libs[1];
+    if (!JSZip || !jsPDF) { state._xfMsg = "não consegui carregar o compactador/gerador de PDF (verifique a internet)."; render(); return; }
+    var zip = new JSZip(), comXml = !!state._xfXml, chaves = [], faltam = [], gerados = 0, guardados = 0, i = 0;
+    var fila = cte.map(function (d) { return { d: d, pasta: "CT-e/", pref: "CTe" }; }).concat(T.mdfe ? mdfe.map(function (d) { return { d: d, pasta: "MDF-e/", pref: "MDFe" }; }) : []);
+    var nomeArq = function (it, ch) { return it.pasta + it.pref + " " + (it.d.numero || "") + " - " + (ch || it.d.chave || "sem-chave"); };
+    var umDoc = function (it) {
+      var d = it.d;
+      chaves.push((it.pref === "CTe" ? "CT-e " : "MDF-e ") + (d.numero || "?") + "  " + exDataBr(String(d.data || "").slice(0, 10)) + "  " + (d.placa || "") + "\n" + (d.chave || "(sem chave)"));
+      var xmlP = d.xmlPath ? rfBaixarDoBucket(d.xmlPath).then(function (b) { return b ? b.text() : null; }) : Promise.resolve(null);
+      return xmlP.then(function (xml) {
+        if (xml && comXml) zip.file(nomeArq(it) + ".xml", xml);
+        if (d.pdfPath) return rfBaixarDoBucket(d.pdfPath).then(function (b) {
+          if (b) { zip.file(nomeArq(it) + ".pdf", b); guardados++; return; }
+          return gera(xml);
+        });
+        return gera(xml);
+        function gera(x) {
+          if (!x) { faltam.push(d); return; }
+          try { var r = (it.pref === "CTe" ? xfDactePdf : xfDamdfePdf)(jsPDF, x); if (r && r.pdf) { zip.file(nomeArq(it, r.chave) + ".pdf", r.pdf); gerados++; } else faltam.push(d); }
+          catch (e) { faltam.push(d); }
+        }
+      });
     };
-    cte.forEach(function (d) { poe(d, "CT-e/", "CTe"); });
-    if (T.mdfe) mdfe.forEach(function (d) { poe(d, "MDF-e/", "MDFe"); });
-    Promise.all(tarefas).then(function () {
+    var proxima = function () {   // um por vez: o tablet não aguenta 150 downloads + PDFs ao mesmo tempo
+      if (i >= fila.length) return Promise.resolve();
+      state._xfMsg = "montando o pacote... " + (i + 1) + " de " + fila.length; render();
+      return umDoc(fila[i++]).then(proxima, proxima);
+    };
+    proxima().then(function () {
       var wb = wbOut(); if (wb) zip.file("Resumo_" + base + ".xlsx", XLSX.write(wb, { bookType: "xlsx", type: "array" }));
-      if (semXml.length) zip.file("FALTANDO.txt", "Documentos sem o XML original guardado no app (reimporte no bloco fiscal):\n\n" + semXml.map(function (d) { return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + (d.placa || ""); }).join("\n"));
+      zip.file("Chaves.txt", "Chaves de acesso - " + nomeCli + " - " + P.rot + "\n\n" + chaves.join("\n\n") + "\n");
+      if (faltam.length) zip.file("FALTANDO.txt", "Documentos sem PDF e sem XML guardados no app (reimporte o XML no bloco fiscal):\n\n" + faltam.map(function (d) { return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + (d.placa || "") + " - " + (d.chave || ""); }).join("\n"));
       return zip.generateAsync({ type: "blob" });
     }).then(function (blob) {
       rfBaixarBlob(blob, base + ".zip");
-      state._xfMsg = "✓ " + base + ".zip gerado: " + cte.length + " CT-e" + (T.mdfe ? ", " + mdfe.length + " MDF-e" : "") + (semPdf ? " · " + semPdf + " sem PDF guardado (vão só com XML)" : "") + (semXml.length ? " · " + semXml.length + " sem XML (lista no FALTANDO.txt)" : "") + ".";
+      state._xfMsg = "✓ " + base + ".zip gerado: " + (guardados + gerados) + " PDF (" + gerados + " montados a partir do XML) + Chaves.txt + planilha" + (comXml ? " + XML" : "") + (faltam.length ? " · " + faltam.length + " sem arquivo (lista no FALTANDO.txt)" : "") + ".";
       render();
     }).catch(function (e) { state._xfMsg = "falhou ao gerar: " + ((e && e.message) || "erro"); render(); });
   });
@@ -5628,7 +5801,7 @@ function xfExtrair(cliK, soPlanilha) {
 function xfContextoAssistente() {
   try {
     var P = xfPeriodo(), res = xfResumo(xfDocs());
-    return "EXTRAÇÃO DE CT-e / MDF-e / CIOT (v608, área própria no grupo VIAGENS): o usuário escolhe o período (por mês/ano ou de/até) e o cliente, e baixa um ZIP com pastas CT-e/ e MDF-e/ (XML e PDF guardados) mais a planilha resumo com o CIOT de cada MDF-e. O cliente de cada documento é o contratante do frete (viagem vinculada ou remetente/tomador do CT-e), não o destinatário. Período na tela: " + P.rot + ". "
+    return "EXTRAÇÃO DE CT-e / MDF-e / CIOT (v608, área própria no grupo VIAGENS): o usuário escolhe o período (por mês/ano ou de/até) e o cliente, e baixa um ZIP com pastas CT-e/ e MDF-e/ com o PDF de cada documento (o guardado ou, se não houver, o DACTE/DAMDFE montado a partir do XML autorizado), nome do arquivo com número e chave, Chaves.txt e a planilha resumo com o CIOT de cada MDF-e; XML só se marcar 'incluir XML (contador)'. O cliente de cada documento é o contratante do frete (viagem vinculada ou remetente/tomador do CT-e), não o destinatário. Período na tela: " + P.rot + ". "
       + res.filter(function (g) { return g.cte.length || g.mdfe.length; }).map(function (g) { return (g.cli || "Sem cliente identificado") + ": " + g.cte.length + " CT-e, " + g.mdfe.length + " MDF-e, " + Object.keys(g.ciot).length + " CIOT"; }).join("; ");
   } catch (e) { return ""; }
 }
