@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v615)</title>
+<title>RF Logística — Painel da Frota (v616)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v615">
+<meta name="rf-versao" content="v616">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v616 (12/10/2026): SÃO ROQUE -- "MEU BAÚ" NO APP DO MOTORISTA. Na rota do dia, botão "🚚 ABRIR O BAÚ (faltam X entregas)"
+     que leva a uma tela própria (com ← voltar): entregas faltando/feitas, volumes no baú, PRÓXIMA PARADA com o botão
+     "Entreguei esta parada", o baú em 3D esvaziando (a mesma visão do gestor, só a descarga) e a lista do que ainda está
+     no baú. Início/fim da viagem, KM, abastecimento e viagens continuam no painel, sem mudança. Dados pela RPC
+     motorista_saoroque_bau (só a carga daquela viagem; atualiza a cada 20 s). -->
 <!-- v615 (12/10/2026): SÃO ROQUE -- ENTREGA POR PARADA OU POR BIP. Sem leitor na rua, o motorista marca no app dele
      "🚚 Entreguei esta parada" ou "✔ Entreguei tudo em <cidade>"; a equipe também marca na seção 6 (aba "por parada / cidade").
      Os volumes daquele cliente contam como entregues e o baú do gestor esvazia igual ao bip. Parada com todos os canhotos
@@ -940,7 +945,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v615" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v616" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -35316,6 +35321,92 @@ function rfSrBotaoEntregueHTML(e) {
     + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="if(confirm(\'Desfazer a entrega desta parada?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],false)">desfazer</button></div>';
   return '<div style="padding:6px 0 2px 26px;"><button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(e.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],true)">🚚 Entreguei esta parada</button></div>';
 }
+/* ===== v616: "MEU BAÚ" -- TELA DO MOTORISTA (Renato, 12/10/2026: "o pulo do gato: um botão onde ele abre o
+   caminhão e vê o baú, assim ele também sabe quantas entregas faltam -- a mesma visão do gerente, só a parte das
+   entregas -- mas um botão que leva a uma tela nova, senão fica muita informação numa tela só"; "pode ser nesta
+   tela a opção entreguei esta parada; lembra que o app tem que ter o início e fim da viagem, abastecimento, km
+   rodado e viagens" -- tudo isso continua no painel do motorista, intocado; o baú é uma tela à parte com voltar).
+   O celular do motorista não baixa painel_dados: a carga vem da RPC motorista_saoroque_bau(viagem), que só
+   responde ao motorista que tem parada liberada naquela viagem (ou à equipe). */
+function rfSrBotaoBauHTML(itens) {
+  var sr = (itens || []).filter(function (e) { return e.clienteContrato === SR_CLIENTE && e.viagemId; });
+  if (!sr.length) return "";
+  var vids = [];
+  sr.forEach(function (e) { if (vids.indexOf(e.viagemId) < 0) vids.push(e.viagemId); });
+  return vids.map(function (vid) {
+    var ps = sr.filter(function (e) { return e.viagemId === vid; }), feitas = ps.filter(srParadaEntregue).length, falta = ps.length - feitas;
+    return '<button onclick="motoristaAbrirBau(\'' + vid + '\')" style="width:100%;background:' + GOLD + ';color:#000;border:0;border-radius:12px;padding:14px 12px;margin:10px 0 4px;font-size:17px;font-weight:900;box-shadow:0 0 0 3px rgba(201,162,39,.25);cursor:pointer;">🚚 ABRIR O BAÚ'
+      + '<div style="font-size:12px;font-weight:700;margin-top:3px;">' + (falta ? 'faltam ' + falta + ' entrega(s) · ' + feitas + ' de ' + ps.length + ' feitas' : '✅ todas as ' + ps.length + ' entregas feitas') + '</div></button>';
+  }).join("");
+}
+function motoristaAbrirBau(vid) {
+  state._motBau = vid; state._motBauErro = "";
+  try { window.scrollTo(0, 0); } catch (e) {}
+  render(); motoristaBauCarregar(vid, false);
+  if (!window.__motBauTimer) window.__motBauTimer = setInterval(function () { if (state._motBau && !document.hidden) motoristaBauCarregar(state._motBau, true); }, 20000);
+}
+function motoristaFecharBau() { state._motBau = null; render(); }
+function motoristaBauCarregar(vid, silencioso) {
+  if (!silencioso) state._motBauCarregando = true;
+  rfGetClient().then(function (sb) {
+    if (!sb) { state._motBauCarregando = false; state._motBauErro = "sem conexão"; render(); return; }
+    return sb.rpc("motorista_saoroque_bau", { p_viagem: vid }).then(function (res) {
+      state._motBauCarregando = false;
+      var j = res && res.data;
+      if (res.error || !j || j.ok === false) { state._motBauErro = (res.error && res.error.message) || (j && j.erro) || "sem resposta"; if (!silencioso) render(); return; }
+      var ass = (j.bips || []).length + ":" + (j.carga && j.carga.atualizadoEm || 0), mudou = ass !== state._motBauAss;
+      state._motBauAss = ass; state._motBauErro = "";
+      state.saoroqueCargas = [j.carga]; state.saoroqueBips = j.bips || [];
+      (j.veiculos || []).forEach(function (v) { if (!(state.veiculos || []).some(function (x) { return x.placa === v.placa; })) (state.veiculos = state.veiculos || []).push(v); });
+      if (!silencioso || mudou) { if (state._motBau === vid) render(); }
+    });
+  }).catch(function (e) { state._motBauCarregando = false; state._motBauErro = (e && e.message) || "falha"; if (!silencioso) render(); });
+}
+function motoristaBauHTML() {
+  var vid = state._motBau;
+  var c = (state.saoroqueCargas || []).find(function (x) { return String(x.viagemId) === String(vid); });
+  var topo = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+    + '<button onclick="motoristaFecharBau()" style="background:transparent;color:' + GOLD + ';border:1px solid ' + GOLD + ';border-radius:8px;padding:8px 14px;font-weight:800;font-size:14px;cursor:pointer;">← voltar</button>'
+    + '<span style="font-size:12px;color:#888;">' + (c ? esc(c.placa || "") + ' · carga ' + esc(srNomeCarga(c)) : '') + '</span></div>'
+    + '<div style="font-size:22px;font-weight:900;margin:14px 0 2px;color:#fff;">🚚 Meu baú</div>';
+  var casca = function (miolo) { return '<div style="max-width:560px;margin:0 auto;padding:16px 16px 40px;color:#fff;">' + topo + miolo + '</div>'; };
+  if (!c) return casca(state._motBauErro
+    ? '<div style="margin-top:20px;color:#ff7a80;">Não consegui abrir o baú: ' + esc(state._motBauErro) + '</div><button style="margin-top:10px;" onclick="motoristaBauCarregar(\'' + vid + '\',false)">⟳ tentar de novo</button>'
+    : '<div style="margin-top:30px;color:#aaa;text-align:center;">Abrindo o baú…</div>');
+  var ents = (state.entregas || []).filter(function (e) { return String(e.viagemId) === String(vid); }).sort(function (a, b) { return a.ordem - b.ordem; });
+  var feitas = ents.filter(srParadaEntregue).length, falta = ents.length - feitas, r = srProgResumo(c, "e");
+  var prox = ents.find(function (e) { return !srParadaEntregue(e); });
+  var cliDe = function (e) { var nome = String(e.recebedor || "").trim().toLowerCase(); return c.clientes.find(function (cl) { return String(cl.fant || cl.nome || "").trim().toLowerCase() === nome && String(cl.cidade || "") === String(e.cidade || ""); }) || c.clientes[e.ordem - 1] || null; };
+  var card = function (n, rot, cor) { return '<div style="flex:1;background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:10px 4px;text-align:center;"><div style="font-size:26px;font-weight:900;color:' + cor + ';">' + n + '</div><div style="font-size:11px;color:#aaa;">' + rot + '</div></div>'; };
+  var h = '<div style="display:flex;gap:8px;margin:10px 0;">' + card(falta, "entregas faltando", GOLD) + card(feitas, "entregues", "#4CAF50") + card(Math.max(0, r.tot - r.ok), "volumes no baú", "#fff") + '</div>';
+  if (state._motBauErro) h += '<div style="font-size:11px;color:#c9a227;margin-bottom:6px;">⚠ sem atualizar agora (' + esc(state._motBauErro) + ') — mostrando o último que chegou.</div>';
+  if (prox) {
+    var cl = cliDe(prox), tc = cl ? srTotaisCliente(c, cl.k) : { vols: 0, ent: 0 };
+    h += '<div style="background:#14240f;border:1px solid #2E7D32;border-radius:12px;padding:12px;margin-bottom:10px;">'
+      + '<div style="font-size:11px;color:#8fd18f;font-weight:800;">PRÓXIMA PARADA</div>'
+      + '<div style="font-size:17px;font-weight:900;margin-top:2px;">' + prox.ordem + '. ' + esc(prox.recebedor || "") + '</div>'
+      + '<div style="font-size:12px;color:#bbb;">' + esc(prox.cidade || "") + (prox.endereco ? ' · ' + esc(prox.endereco) : '') + '</div>'
+      + '<div style="font-size:13px;color:#ddd;margin-top:4px;">📦 ' + (tc.vols - tc.ent) + ' volume(s) para descarregar</div>'
+      + '<button onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(prox.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + prox.id + '\'],true)" style="width:100%;margin-top:10px;background:#2E7D32;color:#fff;border:0;border-radius:10px;padding:13px;font-size:16px;font-weight:900;cursor:pointer;">🚚 Entreguei esta parada</button>'
+      + '<div style="font-size:11px;color:#9bbf9b;margin-top:6px;">O canhoto continua sendo anexado na tela da rota (← voltar).</div></div>';
+  } else {
+    h += '<div style="background:#14240f;border:1px solid #2E7D32;border-radius:12px;padding:14px;margin-bottom:10px;text-align:center;">'
+      + '<div style="font-size:18px;font-weight:900;color:#4CAF50;">✅ Tudo entregue!</div>'
+      + '<div style="font-size:13px;color:#ddd;margin-top:6px;">Volte, confira se todos os canhotos estão anexados e, ao chegar, tire a foto do <b>KM final</b> para encerrar a viagem.</div>'
+      + '<button onclick="motoristaFecharBau()" style="margin-top:10px;background:' + GOLD + ';color:#000;border:0;border-radius:10px;padding:10px 18px;font-weight:900;cursor:pointer;">← voltar para a viagem</button></div>';
+  }
+  h += sr3dHTML(c, "entrega");
+  h += '<div style="font-size:12px;color:#aaa;margin:12px 0 4px;">O que ainda está no baú (por ordem de entrega):</div>'
+    + ents.map(function (e) {
+      var ok = srParadaEntregue(e), cl = cliDe(e), tc = cl ? srTotaisCliente(c, cl.k) : { vols: 0, ent: 0 };
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:13px;padding:7px 0;border-bottom:1px solid #1a1a1a;' + (ok ? 'color:#666;' : '') + '">'
+        + '<span style="' + (ok ? 'text-decoration:line-through;' : '') + '">' + e.ordem + '. ' + esc(e.recebedor || "") + ' <span style="color:#777;font-size:11px;">' + esc(e.cidade || "") + '</span></span>'
+        + (ok ? '<span style="white-space:nowrap;">✅' + (e.entregueEm ? ' <button style="font-size:10px;padding:1px 6px;" onclick="if(confirm(\'Desfazer a entrega desta parada?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],false)">desfazer</button>' : '') + '</span>'
+             : '<b style="white-space:nowrap;">' + (tc.vols - tc.ent) + ' vol</b>')
+        + '</div>';
+    }).join("");
+  return casca(h);
+}
 function rfSrCidadesEntregueHTML(itens) {
   var sr = (itens || []).filter(function (e) { return e.clienteContrato === SR_CLIENTE; });
   if (!sr.length) return "";
@@ -35395,6 +35486,7 @@ function motoristaRotaLiberadaHTML(modo) {
       + (r.tudoOk
           ? '<div style="font-size:11px;color:#2E7D32;margin-bottom:4px;">✓ Todos os canhotos desta rota estão anexados. Falta só a foto do KM final pra encerrar a viagem.</div>'
           : '<div style="font-size:11px;color:#C0392B;margin-bottom:4px;">Faltam ' + (r.notas - r.canhotos) + ' canhoto(s) em ' + r.pendentes + ' parada(s).</div>')
+      + rfSrBotaoBauHTML(itens)
       + rfSrCidadesEntregueHTML(itens)
       + paradas
       + '</div>';
@@ -35713,6 +35805,11 @@ function render() {
   guardAba();
   const root0 = document.getElementById("root");
   if (ehMotorista()) {
+    if (state._motBau) {   // v616: tela "Meu baú"
+      if (root0) root0.innerHTML = motoristaBauHTML();
+      setTimeout(function () { try { sr3dIniciar(); } catch (e) {} }, 0);
+      return;
+    }
     if (root0) root0.innerHTML = painelMotoristaHTML();
     return;
   }
@@ -36515,7 +36612,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
