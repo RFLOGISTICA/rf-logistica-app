@@ -2,12 +2,20 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v619)</title>
+<title>RF Logística — Painel da Frota (v620)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v619">
+<meta name="rf-versao" content="v620">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v620 (12/10/2026): SÃO ROQUE PRONTA PARA VOLUME (pedido do Renato depois da revisão "o que ainda pode melhorar"):
+     (1) BIPS EM TABELA PRÓPRIA (sr_bips, um registro por bip) com FILA NO APARELHO: bipa sem internet, guarda e sobe
+         sozinho quando volta; selo "⏳ N bips guardados" na carga. Saiu da caixa geral (painel_dados); um gatilho no
+         banco copia o que aparelho antigo ainda mandar. (2) "⚠ NÃO ENTREGUEI": motivo + foto obrigatória + GPS; a rota
+         anda, os volumes ficam no baú (voltam ao CD), exceto entrega parcial; gestor vê em vermelho (coluna
+         entregas.ocorrencia). (3) RELATÓRIO DA CARGA: etiquetagem e carregamento (início, fim, ritmo vol/min, pausas,
+         quem bipou), entregas com horário e tempo entre paradas, prazo x previsão, média das últimas cargas; PDF.
+         (4) ALERTAS: atrasado, 90 min sem entregar e ocorrência -> notificação no celular + vibração + faixa vermelha. -->
 <!-- v619 (12/10/2026): PORTAL DO GESTOR SÃO ROQUE -- MAPA DA FROTA. "Frota ao vivo" abre num mapa de ruas (Leaflet +
      OpenStreetMap/CARTO) com o CD e um ícone 🚚 por caminhão na cor do status (linha cheia = feito, tracejada = falta);
      toque no caminhão abre a rota dele: paradas numeradas (✓ entregues), onde ele está (estimado), última entrega, próxima
@@ -958,7 +966,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v619" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v620" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1289,7 +1297,7 @@ function rfUnirLapides(a, b, agora) {
 /* listas da caixa geral que entram na uniao (as demais chaves sao objetos) */
 var RF_CHAVES_LISTA = ["veiculos", "dividas", "viagens", "clientes", "manutencoes",
   "fechamentos", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais",
-  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
+  "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423: goias; v446: compras; v448: extratos; v467: medicoes; v564: campanhas
 
 /* instantaneo do ultimo salvar, por chave: id -> json do item */
 window.__rfSnap = window.__rfSnap || {};
@@ -7489,7 +7497,7 @@ function salvar() {
     localStorage.setItem("rf-frota-goiascargas-v1", JSON.stringify(state.goiasCargas || []));   // v423
     localStorage.setItem("rf-frota-goiasbips-v1", JSON.stringify(state.goiasBips || []));       // v423
     localStorage.setItem("rf-frota-saoroquecargas-v1", JSON.stringify(state.saoroqueCargas || []));   // v586
-    localStorage.setItem("rf-frota-saoroquebips-v1", JSON.stringify(state.saoroqueBips || []));       // v586
+    try { if (typeof srBipsCacheGravar === "function") srBipsCacheGravar(); } catch (e) {}   // v620: só os bips da carga aberta (a fonte é a tabela sr_bips)
     localStorage.setItem("rf-frota-produtoscatalogo-v1", JSON.stringify(state.produtosCatalogo || []));   // v599
     localStorage.setItem("rf-frota-mateusfator-v1", JSON.stringify(state.mateusFator || {}));
     localStorage.setItem("rf-frota-fiscais-v1", JSON.stringify(state.fiscais || []));   // v286
@@ -12369,6 +12377,174 @@ function goCardHTML(c) {
 
 var SR_CLIENTE = "Grupo São Roque";
 function srCargas() { if (!Array.isArray(state.saoroqueCargas)) state.saoroqueCargas = []; return state.saoroqueCargas; }
+/* ===== v620: BIPS DA SÃO ROQUE EM TABELA PRÓPRIA + BIPAGEM SEM INTERNET ======================================
+   Antes os bips ficavam numa lista única dentro de painel_dados e cada bip regravava a lista inteira (3.810 bips
+   só nos testes; ~30 mil por dia com 10 caminhões) -- lento e com risco de perder bip com dois aparelhos bipando.
+   Agora: um registro por bip na tabela sr_bips (id = carga|código|tipo, então o mesmo volume nunca entra duas vezes).
+   O bip vale NA HORA no aparelho e entra numa FILA guardada no próprio aparelho (localStorage); a fila é enviada
+   em seguida e, se a internet cair (doca com Wi-Fi ruim), continua guardada e sobe sozinha quando a conexão
+   voltar. Os outros aparelhos recebem pelo tempo real da tabela. */
+var SR_FILA_LS = "rf-sr-bips-fila-v1";
+var SRB = { enviando: false, timer: null, canal: null, ultErro: "", ultEnvio: 0, carregado: false, equipe: false, carregando: false, rtIns: {}, rtDel: {}, avisouCheio: false };
+function srFila() {
+  try {
+    var f = JSON.parse(localStorage.getItem(SR_FILA_LS) || "[]");
+    if (!Array.isArray(f)) return [];
+    f.forEach(function (o) { if (!o.q) o.q = "q" + Math.random().toString(36).slice(2) + Date.now().toString(36); });   // cada operação com id próprio
+    return f;
+  } catch (e) { return []; }
+}
+function srFilaGravar(f) {
+  try { localStorage.setItem(SR_FILA_LS, JSON.stringify(f)); return true; }
+  catch (e) {
+    if (!SRB.avisouCheio) { SRB.avisouCheio = true; alert("⚠ A memória deste aparelho encheu e os bips não estão sendo guardados para envio. Conecte à internet agora (ou use outro aparelho) e avise a equipe."); }
+    return false;
+  }
+}
+function srFilaAdd(op) { op.q = "q" + Math.random().toString(36).slice(2) + Date.now().toString(36); var f = srFila(); f.push(op); srFilaGravar(f); srBipsAgendarEnvio(300); }
+function srBipsAgendarEnvio(ms) { if (SRB.timer) clearTimeout(SRB.timer); SRB.timer = setTimeout(srBipsEnviar, ms || 300); }
+function srBipLinha(b) { return { id: b.id, carga: b.carga, cod: b.cod, tipo: b.tipo, em: Number(b.em) || Date.now(), por: b.por || "" }; }
+function srEhEquipe() { return !!(state.sessao && (state.sessao.papel === "admin" || state.sessao.papel === "user")); }
+function srBipsEnviar() {
+  SRB.timer = null;
+  if (SRB.enviando) return;
+  if (!srEhEquipe()) return;   // a fila só é enviada por quem pode gravar bip (equipe); fica guardada até lá
+  var f = srFila();
+  if (!f.length) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { SRB.ultErro = "sem internet"; srBipsSelo(); return; }
+  if (typeof rfGetClient !== "function") return;
+  SRB.enviando = true;
+  var lote = f.slice(0, 500), feitos = {};
+  rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    var passos = [], ins = [];
+    lote.forEach(function (op) {
+      if (op.op === "ins") { ins.push(op); return; }
+      if (ins.length) { passos.push({ ins: ins }); ins = []; }
+      passos.push(op);
+    });
+    if (ins.length) passos.push({ ins: ins });
+    var seq = Promise.resolve();
+    passos.forEach(function (p) {
+      seq = seq.then(function () {
+        var q = p.ins ? sb.from("sr_bips").upsert(p.ins.map(function (o) { return o.row; }), { onConflict: "id", ignoreDuplicates: true })
+          : p.op === "del" ? sb.from("sr_bips").delete().eq("id", p.id)
+          : sb.from("sr_bips").delete().or("carga.eq." + p.carga + ",carga.like." + p.carga + "-%");   // a carga e as partes da divisão (id-A, id-B…)
+        return q.then(function (r) {
+          if (r && r.error) {
+            var lista = p.ins || [p];
+            lista.forEach(function (o) { o.tent = (o.tent || 0) + 1; });
+            throw new Error(r.error.message);
+          }
+          (p.ins || [p]).forEach(function (o) { feitos[o.q] = 1; });
+        });
+      });
+    });
+    return seq;
+  }).then(function () {
+    srFilaGravar(srFila().filter(function (o) { return !feitos[o.q]; }));
+    SRB.enviando = false; SRB.ultErro = ""; SRB.ultEnvio = Date.now(); srBipsSelo();
+    if (srFila().length) srBipsAgendarEnvio(200);
+  }).catch(function (e) {
+    // tira o que já foi; operação recusada pelo banco 8 vezes vai para "falhas" (não trava o resto da fila)
+    var tent = {}; lote.forEach(function (o) { if (o.tent) tent[o.q] = o.tent; });
+    var resto = [], falhas = [];
+    srFila().forEach(function (o) { if (feitos[o.q]) return; if (tent[o.q]) o.tent = tent[o.q]; if ((o.tent || 0) >= 8) falhas.push(o); else resto.push(o); });
+    srFilaGravar(resto);
+    if (falhas.length) { try { var fl = JSON.parse(localStorage.getItem("rf-sr-bips-falhas-v1") || "[]"); localStorage.setItem("rf-sr-bips-falhas-v1", JSON.stringify(fl.concat(falhas).slice(-500))); } catch (x) {} }
+    SRB.enviando = false; SRB.ultErro = (e && e.message) || "falha"; srBipsSelo();
+    srBipsAgendarEnvio(15000);
+  });
+}
+function srBipsSeloHTML() {
+  var n = srFila().filter(function (o) { return o.op === "ins"; }).length;
+  if (!n && !SRB.ultErro) return '<span id="sr-fila-selo" style="font-size:11px;color:#4CAF50;">✓ bips enviados</span>';
+  return '<span id="sr-fila-selo" style="font-size:11px;color:' + (SRB.ultErro ? "#E6A100" : "#aaa") + ';">' + (n ? '⏳ ' + n + ' bip(s) guardado(s) no aparelho' : '') + (SRB.ultErro ? ' — ' + esc(SRB.ultErro) + ', envia sozinho quando a internet voltar' : ' — enviando…') + '</span>';
+}
+function srBipsSelo() { var el = document.getElementById("sr-fila-selo"); if (el) el.outerHTML = srBipsSeloHTML(); }
+/* cópia local enxuta: só os bips da carga aberta (para continuar vendo o progresso se a página recarregar sem internet).
+   Guardar todos os bips de 60 dias estouraria a memória do navegador (~5 MB). */
+function srBipsCacheGravar() {
+  try {
+    var ab = String(state.srCargaAberta || "");
+    var l = ab ? srBips().filter(function (b) { return String(b.carga).indexOf(ab) === 0; }) : [];
+    localStorage.setItem("rf-frota-saoroquebips-v1", JSON.stringify(l));
+  } catch (e) {}
+}
+function srBipsCarregar() {
+  if (typeof rfGetClient !== "function" || SRB.carregando) return;
+  SRB.carregando = true; SRB.rtIns = {}; SRB.rtDel = {};
+  rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    var corte = Date.now() - 60 * 864e5, todos = [], t0 = Date.now(), PAG = 1000;
+    var pag = function (de) {
+      return sb.from("sr_bips").select("id,carga,cod,tipo,em,por").gte("em", corte).order("em").order("id").range(de, de + PAG - 1).then(function (r) {
+        if (r.error) throw new Error(r.error.message);
+        todos = todos.concat(r.data || []);
+        if ((r.data || []).length >= PAG) return pag(de + PAG);   // página cheia: pode ter mais
+      });
+    };
+    return pag(0).then(function () {
+      var pend = {}, apagados = {}, cargasApag = [];
+      srFila().forEach(function (o) { if (o.op === "ins") pend[o.row.id] = o.row; else if (o.op === "del") apagados[o.id] = 1; else if (o.op === "delCarga") cargasApag.push(String(o.carga)); });
+      Object.keys(SRB.rtDel).forEach(function (id) { apagados[id] = 1; });
+      var foiApagada = function (b) { return apagados[b.id] || cargasApag.some(function (cg) { return b.carga === cg || String(b.carga).indexOf(cg + "-") === 0; }); };
+      var por = {};
+      todos.forEach(function (b) { var x = { id: b.id, carga: b.carga, cod: b.cod, tipo: b.tipo, em: Number(b.em), por: b.por || "" }; if (!foiApagada(x)) por[b.id] = x; });
+      Object.keys(pend).forEach(function (id) { if (!por[id]) por[id] = pend[id]; });
+      Object.keys(SRB.rtIns).forEach(function (id) { if (!por[id] && !foiApagada(SRB.rtIns[id])) por[id] = SRB.rtIns[id]; });   // chegou pelo tempo real durante o download
+      srBips().forEach(function (b) { if (!por[b.id] && Number(b.em) >= t0 - 60000 && !foiApagada(b)) por[b.id] = b; });   // bipado aqui enquanto baixava
+      state.saoroqueBips = Object.keys(por).map(function (k) { return por[k]; });
+      SRB.carregando = false; SRB.carregado = true; srBipsIdx.k = "";
+      srBipsCacheGravar();
+      if (typeof render === "function") render();
+    });
+  }).catch(function (e) { SRB.carregando = false; console.warn("sr_bips:", e && e.message); });
+}
+function srBipsTempoReal() {
+  if (SRB.canal || typeof rfGetClient !== "function") return;
+  rfGetClient().then(function (sb) {
+    if (!sb || SRB.canal) return;
+    var rt = null;
+    var redesenha = function () { if (rt) return; rt = setTimeout(function () { rt = null; if (typeof render === "function") render(); }, 400); };
+    SRB.canal = sb.channel("sr-bips-rt")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "sr_bips" }, function (p) {
+        var b = p && p.new; if (!b || !b.id) return;
+        var x = { id: b.id, carga: b.carga, cod: b.cod, tipo: b.tipo, em: Number(b.em), por: b.por || "" };
+        if (SRB.carregando) SRB.rtIns[b.id] = x;
+        if (srBips().some(function (y) { return y.id === b.id; })) return;
+        srBips().push(x); redesenha();
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "sr_bips" }, function (p) {
+        var id = p && p.old && p.old.id; if (!id) return;
+        if (SRB.carregando) SRB.rtDel[id] = 1;
+        var antes = srBips().length; state.saoroqueBips = srBips().filter(function (x) { return x.id !== id; });
+        if (state.saoroqueBips.length !== antes) redesenha();
+      })
+      .subscribe();
+  });
+}
+/* índice dos bips por carga, refeito só quando a lista muda (a lista cresce para dezenas de milhares) */
+var srBipsIdx = { k: "", por: {} };
+function srBipsDaCargaLista(cargaId) {
+  var l = srBips(), k = l.length + "|" + (l.length ? l[l.length - 1].id : "") + "|" + (l.length ? l[0].id : "");
+  if (srBipsIdx.k !== k || srBipsIdx.ref !== l) {
+    var por = {}; l.forEach(function (b) { (por[b.carga] = por[b.carga] || []).push(b); });
+    srBipsIdx = { k: k, por: por, ref: l };
+  }
+  return srBipsIdx.por[cargaId] || [];
+}
+function srBipsIniciar() {
+  SRB.equipe = true;
+  try { srAlertasIniciar(); } catch (e) {}   // v620: alertas também para a equipe
+  srBipsCarregar(); srBipsTempoReal(); srBipsAgendarEnvio(500);
+}
+if (!window.__srBipsIni) {
+  window.__srBipsIni = true;
+  window.addEventListener("online", function () { SRB.ultErro = ""; srBipsAgendarEnvio(300); if (SRB.equipe) srBipsCarregar(); });
+  window.addEventListener("offline", function () { SRB.ultErro = "sem internet"; srBipsSelo(); });
+  setInterval(function () { if (srFila().length) srBipsEnviar(); }, 20000);
+}
 function srBips() { if (!Array.isArray(state.saoroqueBips)) state.saoroqueBips = []; return state.saoroqueBips; }
 function srCarga(id) { return srCargas().find(function (c) { return String(c.id) === String(id); }) || null; }
 function srFmt(n, d) { return Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
@@ -12546,7 +12722,7 @@ function srImportar(input) {
 /* ---- totais e bips --------------------------------------------------------- */
 function srBipsDaCarga(cargaId, tipo) {
   var out = {};
-  srBips().forEach(function (b) { if (b.carga === cargaId && b.tipo === tipo) out[b.cod] = b; });
+  srBipsDaCargaLista(cargaId).forEach(function (b) { if (b.tipo === tipo) out[b.cod] = b; });   // v620: índice por carga
   if (tipo === "e") srEntreguesPorParada(srCarga(cargaId), out);   // v615
   return out;
 }
@@ -12566,6 +12742,266 @@ function srEntregaDoCliente(c, k) {
     || lista.find(function (e) { return Number(e.ordem) === c.clientes.indexOf(cl) + 1; }) || null;
 }
 function srParadaEntregue(e) { return !!(e && (e.entregueEm || e.status === "concluida")); }
+/* ===== v620: OCORRÊNCIA NA ENTREGA ("Não entreguei") =====================================================
+   Cliente fechado, recusa, avaria, parcial, endereço não encontrado ou outro -- com foto obrigatória (e GPS).
+   A parada fica RESOLVIDA (a rota anda para a próxima), mas os volumes CONTINUAM no baú (voltam para o CD),
+   exceto na entrega parcial, que conta como entregue com a ressalva. O gestor vê em vermelho. */
+var SR_OCORR = [["fechado", "Cliente fechado / ausente"], ["recusa", "Cliente recusou a mercadoria"], ["avaria", "Avaria na mercadoria"], ["parcial", "Entrega parcial"], ["endereco", "Endereço não encontrado"], ["outro", "Outro motivo"]];
+function srOcorrRot(t) { var x = SR_OCORR.find(function (o) { return o[0] === t; }); return x ? x[1] : "Ocorrência"; }
+function srParadaOcorr(e) { return e && e.ocorrencia && e.ocorrencia.tipo ? e.ocorrencia : null; }
+function srParadaResolvida(e) { return srParadaEntregue(e) || !!srParadaOcorr(e); }
+function rfOcorrenciaAbrir(id) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  var velho = document.getElementById("rf-ocorr"); if (velho) velho.remove();
+  var d = document.createElement("div"); d.id = "rf-ocorr";
+  d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:flex-end;justify-content:center;";
+  d.innerHTML = '<div style="background:#111;border-top:3px solid #E53935;border-radius:14px 14px 0 0;padding:16px;width:100%;max-width:520px;max-height:92vh;overflow:auto;color:#fff;">'
+    + '<div style="font-size:18px;font-weight:900;color:#ff8a80;">⚠ Não entreguei</div>'
+    + '<div style="font-size:14px;color:#ccc;margin:2px 0 10px;">' + esc(e.ordem + ". " + (e.recebedor || "")) + ' — ' + esc(e.cidade || "") + '</div>'
+    + '<div style="font-size:12px;color:#aaa;margin-bottom:4px;">1) O que aconteceu?</div>'
+    + SR_OCORR.map(function (o) { return '<label style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #333;border-radius:10px;margin-bottom:6px;font-size:15px;"><input type="radio" name="rf-oc-tipo" value="' + o[0] + '" style="width:20px;height:20px;"> ' + o[1] + '</label>'; }).join("")
+    + '<div style="font-size:12px;color:#aaa;margin:10px 0 4px;">2) Foto (obrigatória): da fachada, da mercadoria ou do documento</div>'
+    + '<label style="display:block;text-align:center;background:#222;border:1px dashed #666;border-radius:10px;padding:14px;font-size:15px;font-weight:800;">📷 <span id="rf-oc-ftxt">Tirar foto</span><input id="rf-oc-foto" type="file" accept="image/*" capture="environment" style="display:none" onchange="document.getElementById(\'rf-oc-ftxt\').textContent=this.files&&this.files[0]?\'✓ foto pronta (toque para trocar)\':\'Tirar foto\'"></label>'
+    + '<div style="font-size:12px;color:#aaa;margin:10px 0 4px;">3) Observação (opcional)</div>'
+    + '<textarea id="rf-oc-obs" rows="2" style="width:100%;box-sizing:border-box;font-size:15px;" placeholder="ex.: volta amanhã às 8h; 2 caixas amassadas"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;"><button onclick="document.getElementById(\'rf-ocorr\').remove()" style="flex:1;padding:13px;border-radius:10px;background:#222;color:#ddd;border:1px solid #444;font-weight:800;">cancelar</button>'
+    + '<button id="rf-oc-ok" onclick="rfOcorrenciaSalvar(\'' + e.id + '\')" style="flex:2;padding:13px;border-radius:10px;background:#E53935;color:#fff;border:0;font-size:16px;font-weight:900;">Registrar</button></div></div>';
+  document.body.appendChild(d);
+}
+function rfOcorrenciaSalvar(id) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e) return;
+  var sel = document.querySelector('input[name="rf-oc-tipo"]:checked'), inp = document.getElementById("rf-oc-foto"), obs = (document.getElementById("rf-oc-obs") || {}).value || "";
+  if (!sel) { alert("Escolha o que aconteceu."); return; }
+  var file = inp && inp.files && inp.files[0];
+  if (!file) { alert("Tire a foto: ela é obrigatória para registrar a ocorrência."); return; }
+  var bt = document.getElementById("rf-oc-ok"); if (bt) { bt.disabled = true; bt.textContent = "enviando…"; }
+  var oc = { tipo: sel.value, rot: srOcorrRot(sel.value), obs: String(obs).slice(0, 300), foto: "", em: Date.now(), por: (state.sessao && state.sessao.nome) || "" };
+  var gravar = function (path, erroFoto) {
+    oc.foto = path || ""; if (erroFoto) oc.fotoPendente = true;
+    e.ocorrencia = oc;
+    if (oc.tipo === "parcial" && !e.entregueEm) { e.entregueEm = oc.em; e.entreguePor = oc.por; }
+    rfEntregaSalvar(e); salvar();
+    var d = document.getElementById("rf-ocorr"); if (d) d.remove();
+    if (erroFoto) alert("Ocorrência registrada, mas a FOTO não subiu (" + erroFoto + "). Avise a equipe.");   // (sem internet a foto fica guardada -- ver catch abaixo)
+    render();
+    if (navigator.geolocation) { try { navigator.geolocation.getCurrentPosition(function (p) { if (e.ocorrencia === oc) { oc.lat = p.coords.latitude; oc.lng = p.coords.longitude; rfEntregaSalvar(e); } }, function () {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 120000 }); } catch (x) {} }
+  };
+  rfDocsMaterializar(file).then(function (blob) { return typeof rfComprimirImagem === "function" ? rfComprimirImagem(blob) : blob; }).then(function (blob) {
+    return rfGetClient().then(function (sb) {
+      if (!sb) throw new Error("sem internet");
+      var path = "ocorrencias/" + (e.placa || "sem-placa") + "/" + e.id + "-" + Date.now() + ".jpg";
+      return sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }).then(function (r) { if (r.error) throw r.error; return path; });
+    });
+  }).then(function (path) { gravar(path); }).catch(function (err) {
+    // v620: sem internet -- guarda a foto (já reduzida) no aparelho e sobe sozinha depois
+    rfDocsMaterializar(file).then(function (blob) { return typeof rfComprimirImagem === "function" ? rfComprimirImagem(blob) : blob; }).then(function (blob) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        try { var l = JSON.parse(localStorage.getItem("rf-oc-fotos-v1") || "[]"); l.push({ id: e.id, em: oc.em, placa: e.placa || "", data: fr.result }); localStorage.setItem("rf-oc-fotos-v1", JSON.stringify(l.slice(-15))); oc.fotoPendente = true; }
+        catch (x) {}
+        gravar("", null); alert("Sem internet: a ocorrência ficou guardada no celular e a foto sobe sozinha quando o sinal voltar.");
+      };
+      fr.readAsDataURL(blob);
+    }).catch(function () { gravar("", (err && err.message) || "falha"); });
+  });
+}
+function rfOcFotosReenviar() {
+  var l; try { l = JSON.parse(localStorage.getItem("rf-oc-fotos-v1") || "[]"); } catch (e) { l = []; }
+  if (!l.length || (typeof navigator !== "undefined" && navigator.onLine === false) || rfOcFotosReenviar.ocupado) return;
+  rfOcFotosReenviar.ocupado = true;
+  var it = l[0];
+  fetch(it.data).then(function (r) { return r.blob(); }).then(function (blob) {
+    return rfGetClient().then(function (sb) {
+      if (!sb) throw new Error("sem conexão");
+      var path = "ocorrencias/" + (it.placa || "sem-placa") + "/" + it.id + "-" + it.em + ".jpg";
+      return sb.storage.from(RF_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: true }).then(function (r) { if (r.error) throw r.error; return path; });
+    });
+  }).then(function (path) {
+    var e = (state.entregas || []).find(function (x) { return String(x.id) === String(it.id); });
+    if (e && e.ocorrencia && e.ocorrencia.em === it.em) { e.ocorrencia.foto = path; delete e.ocorrencia.fotoPendente; rfEntregaSalvar(e); }
+    var l2; try { l2 = JSON.parse(localStorage.getItem("rf-oc-fotos-v1") || "[]"); } catch (x) { l2 = []; }
+    localStorage.setItem("rf-oc-fotos-v1", JSON.stringify(l2.filter(function (x) { return !(x.id === it.id && x.em === it.em); })));
+    rfOcFotosReenviar.ocupado = false; rfOcFotosReenviar();
+  }).catch(function () { rfOcFotosReenviar.ocupado = false; });
+}
+function rfOcorrenciaDesfazer(id) {
+  var e = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+  if (!e || !e.ocorrencia) return;
+  if (!confirm("Apagar a ocorrência desta parada? (" + (e.ocorrencia.rot || "") + ")")) return;
+  if (e.ocorrencia.tipo === "parcial" && e.entregueEm === e.ocorrencia.em) { e.entregueEm = 0; e.entreguePor = ""; }
+  e.ocorrencia = null; rfEntregaSalvar(e); salvar(); render();
+}
+/* ===== v620: RELATÓRIO AUTOMÁTICO DA CARGA (São Roque) =====================================================
+   Renato, 12/10/2026: "precisamos fazer os testes reais para ver os resultados e quanto tempo levará para
+   etiquetar e para carregar o caminhão". Tudo sai dos horários dos bips e das entregas -- sem cronômetro:
+   etiquetagem e carregamento (início, fim, duração, volumes por minuto, pausas acima de 5 min e quem bipou),
+   saída, cada entrega (horário, tempo desde a anterior, ocorrência) e a comparação com o previsto.
+   No fim, a média das últimas cargas -- é ela que vai calibrar os 20 min por parada e os 50 km/h. */
+var SR_PAUSA_MIN = 5;
+function srEtapaStats(c, tipo) {
+  var bs = srBipsDaCargaLista(c.id).filter(function (b) { return b.tipo === tipo; }).map(function (b) { return { em: Number(b.em) || 0, por: b.por || "" }; })
+    .filter(function (b) { return b.em > 0; }).sort(function (a, b) { return a.em - b.em; });
+  if (!bs.length) return null;
+  var ini = bs[0].em, fim = bs[bs.length - 1].em, pausas = [], parado = 0, quem = {};
+  for (var i = 0; i < bs.length; i++) {
+    quem[bs[i].por || "—"] = (quem[bs[i].por || "—"] || 0) + 1;
+    if (i) { var gap = bs[i].em - bs[i - 1].em; if (gap > SR_PAUSA_MIN * 60e3) { pausas.push({ de: bs[i - 1].em, ate: bs[i].em, min: gap / 60e3 }); parado += gap; } }
+  }
+  var dur = fim - ini, ativo = Math.max(dur - parado, 0);
+  return { n: bs.length, ini: ini, fim: fim, durMin: dur / 60e3, ativoMin: ativo / 60e3, vpm: ativo > 60e3 ? bs.length / (ativo / 60e3) : null,
+    pausas: pausas.sort(function (a, b) { return b.min - a.min; }), quem: quem };
+}
+function srRelatorioDados(c) {
+  var t = srTotais(c), et = srEtapaStats(c, "t"), ca = srEtapaStats(c, "c"), r = srFrotaStatus(c);
+  var ents = [], ant = ca ? ca.fim : 0;
+  (r.info || []).filter(function (x) { return x.res; }).sort(function (a, b) { return a.quando - b.quando; }).forEach(function (x) {
+    ents.push({ seq: x.cl.seq, cli: x.cl.fant || x.cl.nome, cidade: x.cl.cidade, em: x.quando, desdeAnt: ant && x.quando ? (x.quando - ant) / 60e3 : null, oc: x.oc, feita: x.feita });
+    if (x.quando) ant = x.quando;
+  });
+  var intervalos = ents.map(function (e) { return e.desdeAnt; }).filter(function (v) { return v != null && v > 0; });
+  return { c: c, t: t, et: et, ca: ca, r: r, ents: ents, mediaParadaMin: intervalos.length ? intervalos.reduce(function (a, b) { return a + b; }, 0) / intervalos.length : null };
+}
+function srRelatorioMedias(excluirId) {
+  var cs = srCargas().filter(function (c) { return !c.exemplo && c.id !== excluirId; }).slice(-10), acc = { et: [], ca: [], par: [], n: 0 };
+  cs.forEach(function (c) {
+    var d = srRelatorioDados(c), usou = false;
+    if (d.et && d.et.vpm && d.et.n >= 20) { acc.et.push(d.et.vpm); usou = true; }
+    if (d.ca && d.ca.vpm && d.ca.n >= 20) { acc.ca.push(d.ca.vpm); usou = true; }
+    if (d.mediaParadaMin) { acc.par.push(d.mediaParadaMin); usou = true; }
+    if (usou) acc.n++;
+  });
+  var m = function (l) { return l.length ? l.reduce(function (a, b) { return a + b; }, 0) / l.length : null; };
+  return { n: acc.n, et: m(acc.et), ca: m(acc.ca), par: m(acc.par) };
+}
+function srRelatorioHTML(c, paraImprimir) {
+  var d = srRelatorioDados(c), hm = function (ms) { return ms ? new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"; };
+  var dur = function (min) { return min == null ? "—" : srFmtH(min / 60); };
+  var cor = paraImprimir ? { tx: "#111", sub: "#555", bd: "#ccc", fd: "#fff", tit: "#7a5c00" } : { tx: "#eee", sub: "#999", bd: "#333", fd: "#0B0B0B", tit: GOLD };
+  var bloco = function (tit, miolo) { return '<div style="border:1px solid ' + cor.bd + ';border-radius:10px;padding:10px 12px;margin-bottom:10px;background:' + cor.fd + ';"><div style="font-weight:800;color:' + cor.tit + ';margin-bottom:6px;">' + tit + '</div>' + miolo + '</div>'; };
+  var linha = function (a, b) { return '<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0;font-size:13px;color:' + cor.tx + ';"><span style="color:' + cor.sub + ';">' + a + '</span><b>' + b + '</b></div>'; };
+  var etapa = function (s, nome) {
+    if (!s) return '<div style="font-size:13px;color:' + cor.sub + ';">Ainda não começou.</div>';
+    var quem = Object.keys(s.quem).map(function (k) { return esc(k) + " (" + s.quem[k] + ")"; }).join(", ");
+    return linha("Início → fim", hm(s.ini) + " → " + hm(s.fim)) + linha("Duração total", dur(s.durMin)) + linha("Tempo bipando (sem as pausas)", dur(s.ativoMin))
+      + linha("Volumes " + nome, s.n + " de " + d.t.vols) + linha("Ritmo", s.vpm ? s.vpm.toFixed(1).replace(".", ",") + " volumes/min" : "—")
+      + linha("Pausas acima de " + SR_PAUSA_MIN + " min", s.pausas.length ? s.pausas.length + " (" + dur(s.pausas.reduce(function (a, p) { return a + p.min; }, 0)) + ")" : "nenhuma")
+      + (s.pausas.length ? '<div style="font-size:11.5px;color:' + cor.sub + ';margin-top:2px;">' + s.pausas.slice(0, 4).map(function (p) { return hm(p.de) + "–" + hm(p.ate) + " (" + dur(p.min) + ")"; }).join(" · ") + '</div>' : '')
+      + '<div style="font-size:11.5px;color:' + cor.sub + ';margin-top:2px;">Quem bipou: ' + quem + '</div>';
+  };
+  var h = '<div style="font-size:12px;color:' + cor.sub + ';margin-bottom:8px;">Carga ' + esc(srNomeCarga(c)) + ' · ' + esc(String(c.data || "").split("-").reverse().join("/")) + ' · ' + esc(c.placa || "sem placa") + (c.motorista ? ' · ' + esc(c.motorista) : '') + ' · ' + d.t.clientes + ' clientes · ' + d.t.vols + ' volumes</div>';
+  h += bloco("🏷 Etiquetagem (doca)", etapa(d.et, "etiquetados"));
+  h += bloco("📦 Carregamento", etapa(d.ca, "carregados") + (d.et && d.ca ? linha("Da 1ª etiqueta ao caminhão carregado", dur((d.ca.fim - d.et.ini) / 60e3)) : ''));
+  var r = d.r, ocs = d.ents.filter(function (e) { return e.oc; });
+  var rota = linha("Saída (último volume carregado)", hm(d.ca && d.ca.fim)) + linha("Entregas feitas", r.feitas + " de " + r.tot + (ocs.length ? " · ⚠ " + ocs.length + " ocorrência(s)" : ""))
+    + linha("Tempo médio entre paradas (viagem + descarga)", d.mediaParadaMin ? dur(d.mediaParadaMin) : "—")
+    + (r.prazo ? linha("Prazo previsto de volta ao CD", hm(r.prazo)) : "") + (r.prev ? linha(r.ordem === 8 ? "Chegada ao CD (estimada)" : "Previsão de volta", esc(r.txtPrev)) : "");
+  if (d.ents.length) rota += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px;color:' + cor.tx + ';"><tr style="color:' + cor.sub + ';text-align:left;"><th>#</th><th>Cliente</th><th>Cidade</th><th>Hora</th><th>Desde a anterior</th></tr>'
+    + d.ents.map(function (e) { return '<tr style="border-top:1px solid ' + cor.bd + ';"><td>' + e.seq + '</td><td>' + esc(e.cli) + (e.oc ? ' <span style="color:#E53935;font-weight:700;">⚠ ' + esc(e.oc.rot || "") + '</span>' : '') + '</td><td>' + esc(e.cidade) + '</td><td>' + hm(e.em) + '</td><td>' + (e.desdeAnt != null ? dur(e.desdeAnt) : "—") + '</td></tr>'; }).join("") + '</table>';
+  h += bloco("🛣 Rota e entregas", rota);
+  var md = srRelatorioMedias(c.id);
+  h += bloco("📈 Média das últimas cargas" + (md.n ? " (" + md.n + ")" : ""), md.n
+    ? linha("Etiquetagem", md.et ? md.et.toFixed(1).replace(".", ",") + " vol/min" : "—") + linha("Carregamento", md.ca ? md.ca.toFixed(1).replace(".", ",") + " vol/min" : "—")
+      + linha("Tempo médio por parada", md.par ? dur(md.par) : "—") + '<div style="font-size:11.5px;color:' + cor.sub + ';margin-top:4px;">Hoje a previsão usa ' + SR_PARADA_MIN + ' min por parada + ' + SR_VEL_KMH + ' km/h. Com algumas cargas reais, esses números passam a usar a média real.</div>'
+    : '<div style="font-size:13px;color:' + cor.sub + ';">Ainda não há outras cargas reais para comparar.</div>');
+  return h;
+}
+function srRelatorioImprimir(cargaId) {
+  var c = srCarga(cargaId); if (!c) return;
+  var w = window.open("", "_blank"); if (!w) { alert("Libere a abertura de janelas para imprimir o relatório."); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Relatório carga ' + esc(srNomeCarga(c)) + '</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#111}th,td{padding:4px 6px}@media print{button{display:none}}</style></head><body>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #C9A227;padding-bottom:8px;margin-bottom:12px;"><div><div style="font-size:20px;font-weight:800;">Relatório da carga ' + esc(srNomeCarga(c)) + '</div><div style="font-size:12px;color:#555;">RF Logística · Grupo São Roque · gerado em ' + new Date().toLocaleString("pt-BR") + '</div></div><button onclick="window.print()" style="padding:8px 14px;font-weight:700;">🖨 Imprimir / salvar PDF</button></div>'
+    + srRelatorioHTML(c, true) + '</body></html>');
+  w.document.close();
+}
+function srRelatorioBotaoHTML(c, estilo) {
+  var aberto = !!(state.srRelAberto && state.srRelAberto[c.id]);
+  return '<button onclick="(state.srRelAberto=state.srRelAberto||{})[\'' + c.id + '\']=' + (aberto ? 'false' : 'true') + ';render()" style="' + (estilo || 'font-size:12px;') + '">' + (aberto ? '▲ fechar relatório' : '📊 Relatório da carga') + '</button>'
+    + (aberto ? ' <button onclick="srRelatorioImprimir(\'' + c.id + '\')" style="' + (estilo || 'font-size:12px;') + '">🖨 PDF</button><div style="margin-top:10px;">' + srRelatorioHTML(c, false) + '</div>' : '');
+}
+/* ===== v620: ALERTAS DE ATRASO (gestor e equipe) ==============================================================
+   O gestor não precisa ficar olhando a tela: com o portal (ou a aba São Roque) aberto -- inclusive com o celular
+   no bolso, se ele ativar os alertas -- o sistema confere a frota a cada minuto e avisa (notificação no celular,
+   vibração e faixa vermelha no topo) quando: um caminhão vira ATRASADO; fica 90 min sem entregar; ou o motorista
+   registra uma ocorrência ("Não entreguei"). Cada alerta sai uma vez só (o aparelho lembra o que já avisou). */
+var SR_ALERTA_LS = "rf-sr-alertas-vistos-v1";
+function srAlertasVistos() { try { return JSON.parse(localStorage.getItem(SR_ALERTA_LS) || "{}") || {}; } catch (e) { return {}; } }
+function srAlertasGravarVistos(v) { try { var ks = Object.keys(v), lim = Date.now() - 3 * 864e5; ks.forEach(function (k) { if (v[k] < lim) delete v[k]; }); localStorage.setItem(SR_ALERTA_LS, JSON.stringify(v)); } catch (e) {} }
+function srAlertasCalcular() {
+  var lista = srFrotaLista(srCargas(), false), agora = Date.now(), out = [];   // carga de exemplo nunca gera alerta
+  var hm = function (ms) { return new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
+  lista.forEach(function (r) {
+    var c = r.c, quem = (c.placa || "sem placa") + (c.motorista ? " (" + c.motorista + ")" : "");
+    if (r.ordem === 0) out.push({ k: c.id + "|atrasado", cor: "#E53935", cid: c.id, tit: "🚚 " + quem + " ATRASADO", txt: "Previsão de volta: " + r.txtPrev + (r.prox ? " · próxima: " + r.prox : "") });
+    if (r.ultQ && (r.ordem === 0 || r.ordem === 1 || r.ordem === 2) && agora - r.ultQ > 90 * 60e3 && agora > (r.limProx || 0))
+      out.push({ k: c.id + "|parado|" + r.ultQ, cor: "#E6A100", cid: c.id, tit: "⏱ " + quem + " sem entregar há " + srFmtH((agora - r.ultQ) / 3600e3), txt: "Última entrega às " + hm(r.ultQ) + (r.prox ? " · próxima: " + r.prox : "") });
+    (r.info || []).forEach(function (x) {
+      if (!x.oc) return;
+      out.push({ k: c.id + "|oc|" + x.cl.k + "|" + x.oc.em, cor: "#E53935", cid: c.id, tit: "⚠ " + quem + ": " + (x.oc.rot || "ocorrência"), txt: (x.cl.fant || x.cl.nome) + " — " + x.cl.cidade + (x.oc.obs ? " · " + x.oc.obs : "") });
+    });
+  });
+  return out;
+}
+function srAlertasVerificar() {
+  if (typeof srCargas !== "function") return;
+  var gestor = typeof srPortalEhCliente === "function" && srPortalEhCliente();
+  var equipe = !gestor && state.sessao && (state.sessao.papel === "admin" || state.sessao.papel === "user");
+  if (!gestor && !equipe) return;
+  var alertas = srAlertasCalcular(), vistos = srAlertasVistos(), novos = [];
+  alertas.forEach(function (a) { if (!vistos[a.k]) { vistos[a.k] = Date.now(); novos.push(a); } });
+  state._srAlertas = alertas;   // os que estão valendo agora (faixa no topo)
+  if (!novos.length) return;
+  srAlertasGravarVistos(vistos);
+  if (!SRA_PRIMEIRA) { SRA_PRIMEIRA = true; if (novos.length > 3) novos = novos.slice(0, 1).concat([{ tit: "🔔 " + (alertas.length) + " alertas na frota", txt: "Abra o portal para ver todos." }]); }
+  novos.forEach(function (a) { srAlertaNotificar(a.tit, a.txt); });
+  try { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); } catch (e) {}
+  if (typeof render === "function") render();
+}
+var SRA_PRIMEIRA = false;
+function srAlertaNotificar(tit, txt) {
+  try {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    var op = { body: txt || "", icon: "icon-192.png", badge: "icon-192.png", tag: tit, renotify: true };
+    var feito = false, direto = function () { if (feito) return; feito = true; try { new Notification(tit, op); } catch (e) {} };
+    // no Android a notificação tem que sair pelo service worker; se ele não responder em 3 s, tenta direto
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then(function (reg) { if (feito) return; feito = true; return reg.showNotification(tit, op); }).catch(direto);
+      setTimeout(direto, 3000);
+    } else direto();
+  } catch (e) {}
+}
+function srAlertasAtivar() {
+  if (!("Notification" in window)) { alert("Este navegador não mostra notificações. Os alertas aparecem na faixa vermelha do portal."); return; }
+  Notification.requestPermission().then(function (p) {
+    if (p === "granted") { try { localStorage.removeItem(SR_ALERTA_LS); } catch (e) {} SRA_PRIMEIRA = false; setTimeout(srAlertasVerificar, 1500); srAlertaNotificar("🔔 Alertas ativados", "Você vai ser avisado de atraso, caminhão parado e ocorrência na entrega."); }
+    else alert("As notificações ficaram bloqueadas. Para ativar, libere em Configurações do navegador → Notificações.");
+    render();
+  });
+}
+function srAlertasFaixaHTML() {
+  var a = state._srAlertas || [], podeNotif = ("Notification" in window), perm = podeNotif ? Notification.permission : "denied";
+  var h = "";
+  if (podeNotif && perm !== "granted") h += '<button onclick="srAlertasAtivar()" style="width:100%;margin-bottom:8px;background:#111;color:' + GOLD + ';border:1px dashed ' + GOLD + ';border-radius:10px;padding:9px;font-weight:800;">🔔 Ativar alertas no celular (atraso, caminhão parado, ocorrência)</button>';
+  if (!a.length) return h;
+  var abertos = !!state._srAlertasAbertos, mostra = abertos ? a : a.slice(0, 2);
+  h += '<div style="background:#1c0d0d;border:1px solid #E53935;border-radius:10px;padding:8px 10px;margin-bottom:10px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="color:#ff8a80;font-size:13px;">🔔 ' + a.length + ' alerta(s) agora</b>'
+    + (a.length > 2 ? '<button onclick="state._srAlertasAbertos=' + (abertos ? 'false' : 'true') + ';render()" style="font-size:11px;background:none;border:0;color:#ff8a80;">' + (abertos ? 'menos ▲' : 'ver todos ▼') + '</button>' : '') + '</div>'
+    + mostra.map(function (x) { return '<div onclick="' + (x.cid ? 'if(!srPortalEhCliente())state._srpPreview=true;state._srpSel=\'\';state._srpCam=\'' + x.cid + '\';render();window.scrollTo(0,0)' : '') + '" style="cursor:pointer;border-top:1px solid #2a1515;padding:5px 0;font-size:12.5px;"><b style="color:' + x.cor + ';">' + esc(x.tit) + '</b><div style="color:#ccc;font-size:11.5px;">' + esc(x.txt) + '</div></div>'; }).join("") + '</div>';
+  return h;
+}
+function srAlertasIniciar() {
+  if (window.__srAlertasTimer) return;
+  window.__srAlertasTimer = setInterval(function () { try { srAlertasVerificar(); } catch (e) {} }, 60000);
+  setTimeout(function () { try { srAlertasVerificar(); } catch (e) {} }, 4000);
+}
+function srOcorrSeloHTML(e, comFoto) {
+  var o = srParadaOcorr(e); if (!o) return "";
+  return '<span style="color:#ff8a80;font-weight:800;">⚠ ' + esc(o.rot || srOcorrRot(o.tipo)) + '</span>' + (o.obs ? ' <span style="color:#bbb;">— ' + esc(o.obs) + '</span>' : '')
+    + ' <span style="color:#888;font-size:11px;">' + new Date(o.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + '</span>'
+    + (comFoto && o.foto ? ' <button style="font-size:11px;padding:1px 7px;" onclick="event.stopPropagation();rfCanhotoVer(\'' + esc(o.foto) + '\')">📷 foto</button>' : (o.fotoPendente ? ' <span style="color:#E6A100;font-size:11px;">(foto não subiu)</span>' : ''));
+}
 function srParadasEntregues(c) {   // { k: {em, por, via} }
   var out = {};
   if (!c || !c.viagemId) return out;
@@ -12635,7 +13071,8 @@ function srEntregaPorParadaHTML(c) {
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;"><b style="color:' + (tudo ? "#4CAF50" : "#fff") + ';">' + (tudo ? "✅ " : "📍 ") + esc(cid) + ' <span style="font-weight:400;color:#999;font-size:11px;">' + feitas + '/' + cls.length + ' parada(s)</span></b>'
         + (tudo ? "" : '<button style="font-size:11px;" onclick="srMarcarCidade(\'' + c.id + '\',\'' + esc(cid).replace(/'/g, "\\'") + '\',true)">✔ cidade entregue</button>') + '</div>'
         + cls.map(function (cl) {
-          var m = pe[cl.k], tc = srTotaisCliente(c, cl.k);
+          var m = pe[cl.k], tc = srTotaisCliente(c, cl.k), enO = srEntregaDoCliente(c, cl.k);
+          if (srParadaOcorr(enO) && !m) return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:12px;padding:5px 0 0 8px;flex-wrap:wrap;"><span>' + cl.seq + ' · ' + esc(cl.fant) + ' <span style="color:#999;">(' + tc.ent + '/' + tc.vols + ')</span><br>' + srOcorrSeloHTML(enO, true) + '</span><button style="font-size:10px;" onclick="rfOcorrenciaDesfazer(\'' + enO.id + '\')">apagar ocorrência</button></div>';   // v620
           return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:12px;padding:5px 0 0 8px;flex-wrap:wrap;">'
             + '<span>' + cl.seq + ' · ' + esc(cl.fant) + ' <span style="color:#999;">(' + tc.ent + '/' + tc.vols + ')</span>'
             + (m ? ' <span style="color:#4CAF50;">✓ ' + (m.via === "canhoto" ? "canhotos anexados" : "entregue" + (m.por ? " · " + esc(m.por) : "")) + (m.em ? " · " + new Date(m.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "") + '</span>' : '') + '</span>'
@@ -12693,7 +13130,9 @@ function srBipar(cargaId, tipo, codigo, kEsperado) {
   if (tipo === "e" && !srBips().some(function (b) { return b.id === cargaId + "|" + vol.c + "|c"; })) {
     return { ok: false, msg: "Este volume não consta como carregado. Confira antes de entregar.", vol: vol };
   }
-  srBips().push({ id: id, carga: cargaId, cod: vol.c, tipo: tipo, em: Date.now(), por: (state.sessao && state.sessao.nome) || "", atualizadoEm: Date.now() });
+  var novoBip = { id: id, carga: cargaId, cod: vol.c, tipo: tipo, em: Date.now(), por: (state.sessao && state.sessao.nome) || "", atualizadoEm: Date.now() };
+  srBips().push(novoBip);
+  srFilaAdd({ op: "ins", row: srBipLinha(novoBip) });   // v620: tabela sr_bips (fila guardada no aparelho se cair a internet)
   salvar();
   var tc = srTotaisCliente(c, vol.k);
   if (tipo === "t") { var fe = srFeitos(c, "t"), et = c.vols.filter(function (v) { return v.k === vol.k && fe[v.c]; }).length;   // v604
@@ -12717,6 +13156,7 @@ function srDesfazerBip(cargaId, cod, tipo) {
   if (!confirm("Desfazer o bip deste volume?")) return;
   var id = cargaId + "|" + cod + "|" + tipo;
   state.saoroqueBips = srBips().filter(function (b) { return b.id !== id; });
+  srFilaAdd({ op: "del", id: id });   // v620
   salvar(); render();
 }
 function srLerCamera(cargaId, tipo, inputId) {
@@ -12959,7 +13399,7 @@ function srCriarRota(cargaId) {
    Para o Renato testar sem criar login: botão "👁 Ver como gestor" na aba da São Roque. */
 var SR_CLIENTE_PORTAL = "Grupo São Roque";
 function srPortalEhCliente() { return ehCliente() && /roque/i.test((state.sessao && state.sessao.cliente_nome) || ""); }
-function srPortalAssinatura() { return (state.saoroqueCargas || []).map(function (c) { return c.id + ":" + (c.atualizadoEm || 0); }).join("|") + "#" + (state.saoroqueBips || []).length + "#" + (state.entregas || []).map(function (e) { return (e.entregueEm || 0) + e.status; }).join(","); }
+function srPortalAssinatura() { return (state.saoroqueCargas || []).map(function (c) { return c.id + ":" + (c.atualizadoEm || 0); }).join("|") + "#" + (state.saoroqueBips || []).length + "#" + (state.entregas || []).map(function (e) { return (e.entregueEm || 0) + e.status + (e.ocorrencia ? "o" + (e.ocorrencia.em || 0) + (e.ocorrencia.foto ? "f" : "") : ""); }).join(","); }
 function srPortalCarregar(silencioso) {
   if (!srPortalEhCliente()) return;
   if (!silencioso) { state._srpCarregando = true; }
@@ -12973,6 +13413,7 @@ function srPortalCarregar(silencioso) {
       state.saoroqueCargas = j.cargas || []; state.saoroqueBips = j.bips || [];
       state.veiculos = j.veiculos || []; state._srpErro = ""; state._srpEm = Date.now();
       state.entregas = (j.paradas || []).map(rfEntregaParaJS);   // v615: paradas marcadas entregues
+      try { srAlertasIniciar(); srAlertasVerificar(); } catch (e) {}   // v620: alertas do gestor
       if (!silencioso || antes !== srPortalAssinatura()) render();
       else { var el = document.getElementById("srp-em"); if (el) el.textContent = srPortalHora(); }
     });
@@ -13004,14 +13445,17 @@ var SR_PARADA_MIN = 20, SR_VEL_KMH = 50;
 function srFrotaStatus(c, agora) {
   agora = agora || Date.now();
   var t = srTotais(c), et = srProgResumo(c, "t"), ca = srProgResumo(c, "c");
-  var ultC = 0; srBips().forEach(function (b) { if (b.carga === c.id && b.tipo === "c" && Number(b.em) > ultC) ultC = Number(b.em); });
+  var ultC = 0; srBipsDaCargaLista(c.id).forEach(function (b) { if (b.tipo === "c" && Number(b.em) > ultC) ultC = Number(b.em); });
   var ords = c.clientes.slice().sort(function (a, b) { return a.seq - b.seq; });
   var ent = srBipsDaCarga(c.id, "e"), pe = srParadasEntregues(c);
   var info = ords.map(function (cl) {
     var tc = srTotaisCliente(c, cl.k), quando = 0;
     if (pe[cl.k]) quando = pe[cl.k].em || 0;
     c.vols.forEach(function (v) { if (v.k === cl.k && ent[v.c] && Number(ent[v.c].em) > quando) quando = Number(ent[v.c].em); });
-    return { cl: cl, feita: tc.vols > 0 && tc.ent >= tc.vols, quando: quando };
+    var en = srEntregaDoCliente(c, cl.k), oc = srParadaOcorr(en);   // v620
+    if (oc && oc.em > quando) quando = oc.em;
+    var feita = tc.vols > 0 && tc.ent >= tc.vols;
+    return { cl: cl, feita: feita, oc: oc, res: feita || !!oc, quando: quando };
   });
   var feitas = info.filter(function (x) { return x.feita; }).length, tot = info.length;
   var r = { c: c, tot: tot, feitas: feitas, st: "", cor: "#888", ordem: 9, prev: 0, prazo: 0, atraso: 0, ult: 0, prox: "", txtPrev: "", info: info, ultQ: 0, saida: 0 };
@@ -13026,9 +13470,11 @@ function srFrotaStatus(c, agora) {
   var plano = srKmDaOrdem(c, ords.map(function (x) { return x.k; }));
   r.prazo = saida + (plano.km / SR_VEL_KMH) * 3600e3 + tot * SR_PARADA_MIN * 60e3;
   var b0 = srBaseCoord(), pos = b0, ultQ = saida;
-  info.forEach(function (x) { if (x.feita) { if (x.quando > ultQ) ultQ = x.quando; var co = srCoordCidade(x.cl.cidade, x.cl.uf); if (co) pos = co; } });
+  info.forEach(function (x) { if (x.res) { if (x.quando > ultQ) ultQ = x.quando; var co = srCoordCidade(x.cl.cidade, x.cl.uf); if (co) pos = co; } });
   r.ult = ultQ > saida ? ultQ : 0; r.ultQ = ultQ; r.saida = saida;
-  var falta = info.filter(function (x) { return !x.feita; });
+  var falta = info.filter(function (x) { return !x.res; });
+  r.ocorr = info.filter(function (x) { return x.oc; }).length;   // v620
+  r.devol = info.filter(function (x) { return x.oc && x.oc.tipo !== "parcial"; }).length;
   if (!falta.length) {
     r.prev = ultQ + (srKmEntre(pos, b0) / SR_VEL_KMH) * 3600e3;
     r.atraso = Math.max(0, r.prev - r.prazo);
@@ -13041,12 +13487,14 @@ function srFrotaStatus(c, agora) {
   km += srKmEntre(ant, b0);
   var resto = (km / SR_VEL_KMH) * 3600e3 + falta.length * SR_PARADA_MIN * 60e3;
   var limiteProx = ultQ + (primeira / SR_VEL_KMH) * 3600e3 + SR_PARADA_MIN * 60e3;
+  r.limProx = limiteProx;   // v620: hora em que ele já devia ter chegado na próxima parada
   r.prev = ultQ + resto + Math.max(0, agora - limiteProx);
   r.atraso = Math.max(0, r.prev - r.prazo);
   r.prox = falta[0].cl.cidade;
   var semEntregaMin = (agora - ultQ) / 60e3;
   if (r.atraso > 30 * 60e3) { r.st = "Atrasado"; r.cor = "#E53935"; r.ordem = 0; }
   else if (r.atraso > 0 || semEntregaMin > 90) { r.st = "Atenção"; r.cor = "#E6A100"; r.ordem = 1; }
+  else if (r.ocorr) { r.st = "Atenção"; r.cor = "#E6A100"; r.ordem = 1; }   // v620: teve ocorrência
   else { r.st = feitas ? "No prazo" : "Em trânsito"; r.cor = "#4CAF50"; r.ordem = 2; }
   r.txtPrev = hm(r.prev) + (r.atraso >= 60e3 ? " (+" + srFmtH(r.atraso / 3600e3) + ")" : "");
   return r;
@@ -13080,10 +13528,10 @@ function srFrotaGeo(r, agora) {
   agora = agora || Date.now();
   var c = r.c, cd = srBaseCoord(), pe = srParadasEntregues(c);
   var pts = (r.info || []).map(function (x, i) {
-    var m = pe[x.cl.k], co = (m && m.lat && m.lng) ? { lat: m.lat, lng: m.lng, gps: true } : srCoordCidade(x.cl.cidade, x.cl.uf);
-    return co ? { lat: co.lat, lng: co.lng, gps: !!co.gps, nome: x.cl.cidade, cli: x.cl.fant || x.cl.nome, feita: x.feita, ordem: i + 1, quando: x.quando } : null;
+    var m = pe[x.cl.k], co = (m && m.lat && m.lng) ? { lat: m.lat, lng: m.lng, gps: true } : (x.oc && x.oc.lat && x.oc.lng) ? { lat: x.oc.lat, lng: x.oc.lng, gps: true } : srCoordCidade(x.cl.cidade, x.cl.uf);
+    return co ? { lat: co.lat, lng: co.lng, gps: !!co.gps, nome: x.cl.cidade, cli: x.cl.fant || x.cl.nome, feita: x.feita, res: x.res, oc: x.oc, ordem: i + 1, quando: x.quando } : null;
   }).filter(Boolean);
-  var feitas = pts.filter(function (p) { return p.feita; }), falta = pts.filter(function (p) { return !p.feita; });
+  var feitas = pts.filter(function (p) { return p.res; }), falta = pts.filter(function (p) { return !p.res; });
   var g = { cd: cd, pts: pts, pos: { lat: cd.lat, lng: cd.lng }, de: null, para: null, noCD: true };
   if (r.ordem >= 5 && r.ordem <= 7) return g;           // ainda no CD (aguardando / etiquetando / carregando)
   if (r.ordem === 8) return g;                            // concluída e já chegou
@@ -13098,7 +13546,7 @@ function srFrotaLista(cargas, preview) {
   var agora = Date.now();
   return cargas.filter(function (c) {
     if (c.exemplo && !preview) return false;
-    var ult = 0; srBips().forEach(function (b) { if (b.carga === c.id && Number(b.em) > ult) ult = Number(b.em); });
+    var ult = 0; srBipsDaCargaLista(c.id).forEach(function (b) { if (Number(b.em) > ult) ult = Number(b.em); });
     var r0 = srProgResumo(c, "e");
     if (r0.tot && r0.ok === r0.tot && agora - ult > 12 * 3600e3) return false;
     return (agora - ult < 36 * 3600e3) || String(c.data || "") >= hojeISO();
@@ -13119,14 +13567,14 @@ function srFrotaSvg(lista, W, H, foco) {
   for (var i = 0; i < W; i += 26) g += '<line x1="' + i + '" y1="0" x2="' + i + '" y2="' + H + '" stroke="#12251c"/>';
   for (var j = 0; j < H; j += 26) g += '<line x1="0" y1="' + j + '" x2="' + W + '" y2="' + j + '" stroke="#12251c"/>';
   lista.forEach(function (r, n) {
-    var ge = geos[n], feitos = ge.pts.filter(function (p) { return p.feita; }), falta = ge.pts.filter(function (p) { return !p.feita; });
+    var ge = geos[n], feitos = ge.pts.filter(function (p) { return p.res; }), falta = ge.pts.filter(function (p) { return !p.res; });
     var l1 = [cd].concat(feitos).concat([ge.pos]).map(P).map(function (x) { return x.join(","); }).join(" ");
     var l2 = [ge.pos].concat(falta).concat([cd]).map(P).map(function (x) { return x.join(","); }).join(" ");
     g += '<polyline points="' + l2 + '" fill="none" stroke="' + r.cor + '" stroke-opacity=".45" stroke-width="' + (foco ? 3 : 2) + '" stroke-dasharray="6 5"/>'
       + '<polyline points="' + l1 + '" fill="none" stroke="' + r.cor + '" stroke-width="' + (foco ? 4 : 3) + '"/>';
     ge.pts.forEach(function (p) {
       var q = P(p);
-      g += foco ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="11" fill="' + (p.feita ? "#2E7D32" : "#222") + '" stroke="' + (p.feita ? "#4CAF50" : "#888") + '" stroke-width="2"/><text x="' + q[0] + '" y="' + (+q[1] + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + (p.feita ? "✓" : p.ordem) + '</text><text x="' + (+q[0] + 14) + '" y="' + (+q[1] + 4) + '" font-size="10.5" fill="#cfd8d3">' + esc(p.nome) + '</text>'
+      g += foco ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="11" fill="' + (p.oc && !p.feita ? "#7f1d1d" : p.feita ? "#2E7D32" : "#222") + '" stroke="' + (p.oc ? "#E53935" : p.feita ? "#4CAF50" : "#888") + '" stroke-width="2"/><text x="' + q[0] + '" y="' + (+q[1] + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + (p.oc && !p.feita ? "!" : p.feita ? "✓" : p.ordem) + '</text><text x="' + (+q[0] + 14) + '" y="' + (+q[1] + 4) + '" font-size="10.5" fill="#cfd8d3">' + esc(p.nome) + '</text>'
         : '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="3.2" fill="' + (p.feita ? r.cor : "#555") + '"/>';
     });
   });
@@ -13165,14 +13613,14 @@ function srFrotaMapaIniciar() {
     lista.forEach(function (r) {
       var ge = srFrotaGeo(r, agora);
       if (!foco && ge.noCD) return;
-      var feitos = ge.pts.filter(function (p) { return p.feita; }), falta = ge.pts.filter(function (p) { return !p.feita; });
+      var feitos = ge.pts.filter(function (p) { return p.res; }), falta = ge.pts.filter(function (p) { return !p.res; });
       var ll = function (p) { return [p.lat, p.lng]; };
       L.polyline([cd].concat(falta.length ? [ge.pos] : []).concat(falta).concat([cd]).map(ll).slice(falta.length ? 1 : 0), { color: r.cor, weight: foco ? 4 : 3, opacity: 0.5, dashArray: "7 7" }).addTo(map);
       L.polyline([cd].concat(feitos).concat([ge.pos]).map(ll), { color: r.cor, weight: foco ? 5 : 4, opacity: 0.95 }).addTo(map);
       ge.pts.forEach(function (p) {
         bounds.push(ll(p));
-        if (foco) L.marker(ll(p), { icon: L.divIcon({ className: "", iconSize: [24, 24], iconAnchor: [12, 12], html: '<div style="width:24px;height:24px;border-radius:50%;background:' + (p.feita ? "#2E7D32" : "#222") + ';border:2px solid ' + (p.feita ? "#4CAF50" : "#999") + ';color:#fff;font:800 11px sans-serif;display:flex;align-items:center;justify-content:center;">' + (p.feita ? "✓" : p.ordem) + '</div>' }) })
-          .addTo(map).bindTooltip(p.ordem + ". " + esc(p.cli || "") + " — " + esc(p.nome) + (p.feita ? (p.gps ? " · ✓ entregue (GPS)" : " · ✓ entregue") : ""));
+        if (foco) L.marker(ll(p), { icon: L.divIcon({ className: "", iconSize: [24, 24], iconAnchor: [12, 12], html: '<div style="width:24px;height:24px;border-radius:50%;background:' + (p.oc && !p.feita ? "#7f1d1d" : p.feita ? "#2E7D32" : "#222") + ';border:2px solid ' + (p.oc ? "#E53935" : p.feita ? "#4CAF50" : "#999") + ';color:#fff;font:800 11px sans-serif;display:flex;align-items:center;justify-content:center;">' + (p.oc && !p.feita ? "!" : p.feita ? "✓" : p.ordem) + '</div>' }) })
+          .addTo(map).bindTooltip(p.ordem + ". " + esc(p.cli || "") + " — " + esc(p.nome) + (p.oc ? " · ⚠ " + esc(p.oc.rot || "") : p.feita ? (p.gps ? " · ✓ entregue (GPS)" : " · ✓ entregue") : ""));
         else L.circleMarker(ll(p), { radius: 4, color: p.feita ? r.cor : "#777", fillOpacity: 1, weight: 1 }).addTo(map);
       });
       bounds.push(ll(ge.pos));
@@ -13191,7 +13639,7 @@ function srFrotaMapaIniciar() {
 /* tela do caminhão aberto: mapa da rota dele + resumo */
 function srFrotaCaminhaoHTML(c, preview) {
   var r = srFrotaStatus(c), ge = srFrotaGeo(r), hm = function (ms) { return new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
-  var agora = Date.now(), ultP = ge.pts.filter(function (p) { return p.feita; }).pop(), prox = ge.pts.filter(function (p) { return !p.feita; })[0];
+  var agora = Date.now(), ultP = ge.pts.filter(function (p) { return p.res; }).pop(), prox = ge.pts.filter(function (p) { return !p.res; })[0];
   var proxHora = 0;
   if (prox && !ge.noCD) { var a = ultP || ge.cd; proxHora = Math.max(agora, (r.ultQ || agora) + (srKmEntre(a, prox) / SR_VEL_KMH) * 3600e3); }
   var linha = function (ic, rot, txt) { return '<div style="padding:3px 0;">' + ic + ' <b>' + rot + ':</b> ' + txt + '</div>'; };
@@ -13208,9 +13656,15 @@ function srFrotaCaminhaoHTML(c, preview) {
   if (ultP) { var ha = (agora - ultP.quando) / 3600e3; h += linha("✅", "Última entrega", esc(ultP.nome) + (ultP.quando ? " · " + hm(ultP.quando) + ' <span style="color:' + (ha > 1.5 ? "#E53935" : "#888") + ';">(há ' + srFmtH(ha) + ')</span>' : "")); }
   if (prox) h += linha("➡️", "Próxima", esc(prox.cli || "") + " — " + esc(prox.nome) + (proxHora ? " · chega ~" + hm(proxHora) : ""));
   if (r.prev) h += linha("🏁", "Volta ao CD", esc(r.txtPrev));
-  h += '</div><div style="display:flex;gap:8px;margin-top:10px;">'
+  h += '</div>';
+  var ocs = (r.info || []).filter(function (x) { return x.oc; });   // v620: ocorrências
+  if (ocs.length) h += '<div style="background:#1c0d0d;border:1px solid #E53935;border-radius:10px;padding:10px 12px;margin-top:8px;font-size:13px;line-height:1.5;color:#eee;">'
+    + '<div style="color:#ff8a80;font-weight:900;margin-bottom:4px;">⚠ ' + ocs.length + ' ocorrência(s)' + (r.devol ? ' · ↩ ' + r.devol + ' parada(s) com mercadoria voltando' : '') + '</div>'
+    + ocs.map(function (x) { var en = srEntregaDoCliente(c, x.cl.k); return '<div style="padding:3px 0;border-top:1px solid #2a1515;">' + x.cl.seq + '. ' + esc(x.cl.fant || x.cl.nome) + ' — ' + esc(x.cl.cidade) + '<br>' + srOcorrSeloHTML(en, true) + '</div>'; }).join("") + '</div>';
+  h += '<div style="display:flex;gap:8px;margin-top:10px;">'
     + '<button onclick="state._srpSel=\'' + c.id + '\';state._srpCam=\'\';render()" style="flex:1;background:' + GOLD + ';color:#000;border:0;border-radius:10px;padding:11px;font-weight:900;">📦 Ver o baú em 3D</button>'
-    + '<button onclick="state._srpSel=\'' + c.id + '\';state._srpCam=\'\';state._srpAba=\'paradas\';(state._srpManual=state._srpManual||{})[\'' + c.id + '\']=true;render()" style="flex:1;background:#111;color:#ddd;border:1px solid #333;border-radius:10px;padding:11px;font-weight:800;">📋 Paradas</button></div>';
+    + '<button onclick="state._srpSel=\'' + c.id + '\';state._srpCam=\'\';state._srpAba=\'paradas\';(state._srpManual=state._srpManual||{})[\'' + c.id + '\']=true;render()" style="flex:1;background:#111;color:#ddd;border:1px solid #333;border-radius:10px;padding:11px;font-weight:800;">📋 Paradas</button></div>'
+    + '<div style="margin-top:10px;">' + srRelatorioBotaoHTML(c, "background:#111;color:#ddd;border:1px solid #333;border-radius:10px;padding:9px 12px;font-weight:800;") + '</div>';   // v620
   setTimeout(srFrotaMapaIniciar, 0);
   return h;
 }
@@ -13237,7 +13691,7 @@ function srFrotaPainelHTML(cargas, preview) {
       + '<div style="font-size:11px;color:#888;margin:6px 0;">Toque num caminhão (no mapa ou abaixo) para ver a rota dele</div>'
       + lista.map(function (r) {
         return '<div onclick="' + abre(r) + '" style="cursor:pointer;display:flex;align-items:center;gap:8px;background:#0f0f0f;border:1px solid #262626;border-left:4px solid ' + r.cor + ';border-radius:10px;padding:7px 10px;margin-bottom:6px;">'
-          + '<span style="font-size:18px;">🚚</span><div style="flex:1;min-width:0;"><b style="font-size:13px;color:#fff;">' + esc(r.c.placa || "sem placa") + '</b> <span style="color:#999;font-size:11px;">' + esc(r.c.motorista || "") + ' · ' + r.feitas + '/' + r.tot + '</span>'
+          + '<span style="font-size:18px;">🚚</span><div style="flex:1;min-width:0;"><b style="font-size:13px;color:#fff;">' + esc(r.c.placa || "sem placa") + '</b> <span style="color:#999;font-size:11px;">' + esc(r.c.motorista || "") + ' · ' + r.feitas + '/' + r.tot + (r.ocorr ? ' <b style="color:#ff8a80;">⚠' + r.ocorr + '</b>' : '') + '</span>'
           + '<div style="font-size:11px;color:#bbb;">🏁 ' + esc(r.txtPrev) + '</div></div>'
           + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:10.5px;padding:2px 7px;border-radius:20px;white-space:nowrap;">' + r.st + '</span></div>';
       }).join("");
@@ -13251,7 +13705,7 @@ function srFrotaPainelHTML(cargas, preview) {
       return '<div onclick="' + abre(r) + '" style="cursor:pointer;background:#0f0f0f;border:1px solid #262626;border-left:5px solid ' + r.cor + ';border-radius:12px;padding:10px 12px;margin-bottom:8px;">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><div><b style="font-size:15px;color:#fff;">🚚 ' + esc(c.placa || "sem placa") + '</b> <span style="color:#999;font-size:12px;">· ' + esc(c.motorista || ("carga " + srNomeCarga(c))) + '</span>' + (c.exemplo ? ' <span style="background:#7B3FA0;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px;">EXEMPLO</span>' : '') + '</div>'
         + '<span style="background:' + r.cor + ';color:#000;font-weight:800;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap;">' + r.st + '</span></div>'
-        + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:12px;color:#ccc;margin-top:6px;"><span>📦 ' + r.feitas + '/' + r.tot + ' entregas</span><span>🏁 previsão: <b style="color:#fff;">' + esc(r.txtPrev) + '</b></span></div>'
+        + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:12px;color:#ccc;margin-top:6px;"><span>📦 ' + r.feitas + '/' + r.tot + ' entregas' + (r.ocorr ? ' <b style="color:#ff8a80;">· ⚠ ' + r.ocorr + ' ocorrência(s)</b>' : '') + '</span><span>🏁 previsão: <b style="color:#fff;">' + esc(r.txtPrev) + '</b></span></div>'
         + '<div style="background:#222;border-radius:5px;height:7px;margin-top:5px;overflow:hidden;"><div style="width:' + pct + '%;height:100%;background:' + r.cor + ';"></div></div>'
         + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;color:#888;margin-top:5px;"><span>última entrega: ' + (r.ult ? "há " + srFmtH((agora - r.ult) / 3600e3) : "—") + '</span><span>próxima: ' + esc(r.prox || "—") + '</span></div></div>';
     }).join("");
@@ -13276,6 +13730,7 @@ function srPortalHTML(preview) {
   var cam = !sel && state._srpCam ? srCarga(state._srpCam) : null;   // v619: caminhão aberto no mapa
   if (cam) return h + srFrotaCaminhaoHTML(cam, preview) + '</div></div>';
   if (!sel) {
+    h += srAlertasFaixaHTML();   // v620
     h += srFrotaPainelHTML(cargas, preview);   // v618
     if (!window.__srpRecalc) window.__srpRecalc = setInterval(function () { if ((srPortalEhCliente() || state._srpPreview) && !state._srpSel && !document.hidden) render(); }, 30 * 60e3);   // v618: recálculo a cada 30 min
     h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;"><div style="font-size:18px;font-weight:800;color:' + GOLD + ';">🚚 Cargas</div><span id="srp-em" style="font-size:11px;color:#777;">' + srPortalHora() + '</span></div>';
@@ -13313,7 +13768,9 @@ function srPortalHTML(preview) {
     h += c.clientes.slice().sort(function (a, b) { return a.seq - b.seq; }).map(function (cl) {
       var vs = c.vols.filter(function (v) { return v.k === cl.k; }), nE = vs.filter(function (v) { return fe[v.c]; }).length, nC = vs.filter(function (v) { return car[v.c]; }).length, nN = vs.filter(function (v) { return ent[v.c]; }).length;
       var cor = (srBlocoDoCliente(c, cl.k) || {}).cor || "#888";
-      var st = nN === vs.length && vs.length ? '<b style="color:#4CAF50;">✅ entregue</b>' : nN ? '<b style="color:#81C784;">entregando ' + nN + '/' + vs.length + '</b>' : nC === vs.length && vs.length ? '<b style="color:#4FC3F7;">no caminhão</b>' : nC ? '<b style="color:#4FC3F7;">carregando ' + nC + '/' + vs.length + '</b>' : nE === vs.length && vs.length ? '<b style="color:#E8C46A;">🏷 etiquetado · aguardando carregar</b>' : nE ? '<b style="color:#E8C46A;">etiquetando ' + nE + '/' + vs.length + '</b>' : '<span style="color:#888;">aguardando</span>';
+      var enO = srEntregaDoCliente(c, cl.k), ocO = srParadaOcorr(enO);   // v620
+      if (ocO) nN = -1;
+      var st = nN === -1 ? srOcorrSeloHTML(enO, true) : nN === vs.length && vs.length ? '<b style="color:#4CAF50;">✅ entregue</b>' : nN ? '<b style="color:#81C784;">entregando ' + nN + '/' + vs.length + '</b>' : nC === vs.length && vs.length ? '<b style="color:#4FC3F7;">no caminhão</b>' : nC ? '<b style="color:#4FC3F7;">carregando ' + nC + '/' + vs.length + '</b>' : nE === vs.length && vs.length ? '<b style="color:#E8C46A;">🏷 etiquetado · aguardando carregar</b>' : nE ? '<b style="color:#E8C46A;">etiquetando ' + nE + '/' + vs.length + '</b>' : '<span style="color:#888;">aguardando</span>';
       return '<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #222;">'
         + '<span style="min-width:34px;text-align:center;background:' + cor + ';color:#fff;font-weight:900;border-radius:6px;padding:3px 0;">' + cl.seq + '</span>'
         + '<div style="flex:1;min-width:0;"><div style="font-weight:700;color:#fff;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(cl.fant || cl.nome) + '</div><div style="font-size:11.5px;color:#999;">' + esc(cl.cidade || "") + ' · ' + vs.length + ' vol</div></div>'
@@ -13331,7 +13788,8 @@ function srPortalPreview() { state._srpPreview = true; state._srpSel = ""; rende
 function srBlocoHTML() {
   var cargas = srCargas().slice().sort(function (a, b) { return (b.criadoEm || 0) - (a.criadoEm || 0); });
   var F = (state.config && state.config.srEtiqueta) || "100x50";
-  var h = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">'
+  var h = srAlertasFaixaHTML()   // v620: alertas de atraso / ocorrência
+    + '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">'
     + '<img src="' + srLogo() + '" style="height:58px;">'
     + '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';">Carregamento Grupo São Roque</div>'
     + '<label style="font-size:11px;color:#bbb;cursor:pointer;text-decoration:underline;">trocar logo<input type="file" accept="image/*" style="display:none;" onchange="srTrocarLogo(this)"></label>'
@@ -13391,6 +13849,8 @@ function srCardHTML(c) {
     + '<span style="font-size:12px;color:#ccc;">' + esc(c.data.split("-").reverse().join("/")) + ' · ' + t.clientes + ' clientes · ' + t.cidades + ' cidades · ' + srFmt(t.peso, 0) + ' kg · <b>' + t.vols + ' vol</b>' + (c.placa ? ' · 🚚 ' + esc(c.placa) : '') + '</span>'
     + '<span style="margin-left:auto;font-size:12px;"><b style="color:' + cor + ';">carregado ' + t.carregados + '/' + t.vols + ' (' + pc + '%)</b> · entregue ' + t.entregues + ' (' + pe + '%)</span></div>';
   if (!aberta) return h + '</div>';
+  h += '<div style="margin:-4px 14px 8px;">' + srBipsSeloHTML() + '</div>';   // v620
+  h += '<div style="margin:0 14px 10px;">' + srRelatorioBotaoHTML(c) + '</div>';   // v620: relatório da carga
   var box = 'style="background:#0B0B0B;border:1px solid #333;border-radius:10px;padding:12px;margin:0 14px 12px 14px;"';
   var tit = function (n, s) { return '<div style="font-weight:800;color:' + GOLD + ';margin-bottom:8px;">' + n + ' · ' + s + '</div>'; };
   var msg = function (tipo) {
@@ -14560,8 +15020,7 @@ function sr3dPlaca(pts, n, cor, alpha, ordem) { return { faces: [{ p: pts, n: n,
 var SR_PENDENTE = "#9C6B3E";   // marrom de papelão: volume ainda não etiquetado / não carregado
 function srFeitos(c, tipo) {
   var out = {};
-  srBips().forEach(function (b) {
-    if (b.carga !== c.id) return;
+  srBipsDaCargaLista(c.id).forEach(function (b) {   // v620: índice por carga
     if (b.tipo === tipo || (tipo === "t" && b.tipo === "c")) out[b.cod] = 1;   // carregado = etiquetado
   });
   if (tipo === "e") srEntreguesPorParada(c, out);   // v615: parada marcada entregue
@@ -16141,6 +16600,7 @@ function srCargaExemplo() {
   carga.exemplo = true;
   state.saoroqueCargas = srCargas().filter(function (x) { return x.id !== carga.id && x.pai !== carga.id; });   // v594: some com as partes também
   state.saoroqueBips = srBips().filter(function (b) { return String(b.carga).indexOf(carga.id) !== 0; });
+  srFilaAdd({ op: "delCarga", carga: carga.id });   // v620: zera os bips da carga de exemplo na tabela
   srCargas().push(carga);
   state.srCargaAberta = carga.id;
   salvar(); render();
@@ -31880,6 +32340,7 @@ function rfEntregaParaJS(r) {
     entreguePor: r.entregue_por || "",
     entregueLat: Number(r.entregue_lat) || 0,   // v619: GPS do "Entreguei"
     entregueLng: Number(r.entregue_lng) || 0,
+    ocorrencia: (r.ocorrencia && typeof r.ocorrencia === "object") ? r.ocorrencia : null,   // v620: "Não entreguei"
   };
 }
 function rfEntregaParaDB(e) {
@@ -31907,6 +32368,7 @@ function rfEntregaParaDB(e) {
     entregue_por: e.entreguePor || null,
     entregue_lat: e.entregueLat || null,   // v619
     entregue_lng: e.entregueLng || null,
+    ocorrencia: e.ocorrencia || null,   // v620
   };
 }
 function rfEntregasCarregar() {
@@ -31916,6 +32378,8 @@ function rfEntregasCarregar() {
       if (res.error) { console.warn("entregas:", res.error.message); return; }
       state.entregas = (res.data || []).map(rfEntregaParaJS)
         .sort(function (x, y) { return (x.ordem - y.ordem) || (x.criadoEm - y.criadoEm); });
+      var pend = rfEntPend();   // v620: o que foi marcado sem internet e ainda não subiu vale por cima
+      state.entregas = state.entregas.map(function (x) { return pend[x.id] ? pend[x.id].e : x; });
       render();
     });
     if (!window.__rfEntregasCanal) {
@@ -31925,13 +32389,38 @@ function rfEntregasCarregar() {
     }
   });
 }
+/* v620: parada salva SEM internet (motorista na estrada) não se perde: fica guardada no aparelho e é reenviada
+   quando a conexão volta; se a lista de paradas for recarregada antes disso, a versão guardada vale por cima. */
+var RF_ENT_PEND_LS = "rf-entregas-pendentes-v1";
+function rfEntPend() { try { return JSON.parse(localStorage.getItem(RF_ENT_PEND_LS) || "{}") || {}; } catch (e) { return {}; } }
+function rfEntPendGravar(m) { try { localStorage.setItem(RF_ENT_PEND_LS, JSON.stringify(m)); } catch (e) {} }
 function rfEntregaSalvar(e) {
+  var marca = Date.now() + Math.random();
+  var pend = rfEntPend(); pend[e.id] = { e: JSON.parse(JSON.stringify(e)), m: marca, t: pend[e.id] ? pend[e.id].t || 0 : 0 }; rfEntPendGravar(pend);
   rfGetClient().then(function (sb) {
     if (!sb) return;
-    sb.from(RF_ENTREGAS_TABELA).upsert(rfEntregaParaDB(e)).then(function (res) {
-      if (res.error) console.warn("entrega salvar:", res.error.message);
+    return sb.from(RF_ENTREGAS_TABELA).upsert(rfEntregaParaDB(e)).then(function (res) {
+      if (res.error) {   // recusado pelo banco (não é falta de internet): tenta mais algumas vezes e desiste, para não ficar preso
+        console.warn("entrega salvar:", res.error.message);
+        var p3 = rfEntPend(); if (p3[e.id]) { p3[e.id].t = (p3[e.id].t || 0) + 1; if (p3[e.id].t >= 20) delete p3[e.id]; rfEntPendGravar(p3); }
+        return;
+      }
+      var p2 = rfEntPend(); if (p2[e.id] && p2[e.id].m === marca) { delete p2[e.id]; rfEntPendGravar(p2); }
     });
+  }).catch(function (err) { console.warn("entrega salvar (fica guardada):", err && err.message); });
+}
+function rfEntregasReenviar() {
+  var pend = rfEntPend(), ids = Object.keys(pend);
+  if (!ids.length || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+  ids.forEach(function (id) {
+    var atual = (state.entregas || []).find(function (x) { return String(x.id) === String(id); });
+    rfEntregaSalvar(atual || pend[id].e);
   });
+}
+if (!window.__rfEntPendIni) {
+  window.__rfEntPendIni = true;
+  window.addEventListener("online", function () { setTimeout(function () { rfEntregasReenviar(); if (typeof rfOcFotosReenviar === "function") rfOcFotosReenviar(); }, 1500); });
+  setInterval(function () { rfEntregasReenviar(); if (typeof rfOcFotosReenviar === "function") rfOcFotosReenviar(); }, 30000);
 }
 function rfEntregaDeletar(id) {
   rfGetClient().then(function (sb) {
@@ -35618,9 +36107,10 @@ function rfCanhotosDaViagemMotorista(vg) {
    O canhoto continua sendo pedido normalmente; isso só avisa o gestor que a mercadoria saiu do baú. */
 function rfSrBotaoEntregueHTML(e) {
   if (!e || e.clienteContrato !== SR_CLIENTE) return "";
+  if (srParadaOcorr(e)) return '<div style="padding:6px 0 2px 26px;font-size:12px;">' + srOcorrSeloHTML(e, false) + ' <button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="rfOcorrenciaDesfazer(\'' + e.id + '\')">desfazer</button></div>';   // v620
   if (e.entregueEm) return '<div style="padding:6px 0 2px 26px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span style="font-size:12px;color:#4CAF50;font-weight:700;">🚚 entregue às ' + new Date(e.entregueEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + '</span>'
     + '<button class="btn-outline" style="font-size:10px;padding:2px 8px;" onclick="if(confirm(\'Desfazer a entrega desta parada?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],false)">desfazer</button></div>';
-  return '<div style="padding:6px 0 2px 26px;"><button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(e.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],true)">🚚 Entreguei esta parada</button></div>';
+  return '<div style="padding:6px 0 2px 26px;"><button class="btn-gold" style="font-size:12px;padding:6px 14px;" onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(e.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],true)">🚚 Entreguei esta parada</button> <button class="btn-outline" style="font-size:12px;padding:6px 12px;color:#ff8a80;border-color:#E53935;" onclick="rfOcorrenciaAbrir(\'' + e.id + '\')">⚠ Não entreguei</button></div>';
 }
 /* ===== v616: "MEU BAÚ" -- TELA DO MOTORISTA (Renato, 12/10/2026: "o pulo do gato: um botão onde ele abre o
    caminhão e vê o baú, assim ele também sabe quantas entregas faltam -- a mesma visão do gerente, só a parte das
@@ -35635,7 +36125,7 @@ function rfSrBotaoBauHTML(itens) {
   var vids = [];
   sr.forEach(function (e) { if (vids.indexOf(e.viagemId) < 0) vids.push(e.viagemId); });
   return vids.map(function (vid) {
-    var ps = sr.filter(function (e) { return e.viagemId === vid; }), feitas = ps.filter(srParadaEntregue).length, falta = ps.length - feitas;
+    var ps = sr.filter(function (e) { return e.viagemId === vid; }), feitas = ps.filter(srParadaResolvida).length, falta = ps.length - feitas;   // v620
     return '<button onclick="motoristaAbrirBau(\'' + vid + '\')" style="width:100%;background:' + GOLD + ';color:#000;border:0;border-radius:12px;padding:14px 12px;margin:10px 0 4px;font-size:17px;font-weight:900;box-shadow:0 0 0 3px rgba(201,162,39,.25);cursor:pointer;">🚚 ABRIR O BAÚ'
       + '<div style="font-size:12px;font-weight:700;margin-top:3px;">' + (falta ? 'faltam ' + falta + ' entrega(s) · ' + feitas + ' de ' + ps.length + ' feitas' : '✅ todas as ' + ps.length + ' entregas feitas') + '</div></button>';
   }).join("");
@@ -35676,8 +36166,9 @@ function motoristaBauHTML() {
     ? '<div style="margin-top:20px;color:#ff7a80;">Não consegui abrir o baú: ' + esc(state._motBauErro) + '</div><button style="margin-top:10px;" onclick="motoristaBauCarregar(\'' + vid + '\',false)">⟳ tentar de novo</button>'
     : '<div style="margin-top:30px;color:#aaa;text-align:center;">Abrindo o baú…</div>');
   var ents = (state.entregas || []).filter(function (e) { return String(e.viagemId) === String(vid); }).sort(function (a, b) { return a.ordem - b.ordem; });
-  var feitas = ents.filter(srParadaEntregue).length, falta = ents.length - feitas, r = srProgResumo(c, "e");
-  var prox = ents.find(function (e) { return !srParadaEntregue(e); });
+  var feitas = ents.filter(srParadaResolvida).length, falta = ents.length - feitas, r = srProgResumo(c, "e");   // v620: ocorrência também resolve a parada
+  var prox = ents.find(function (e) { return !srParadaResolvida(e); });
+  var nOc = ents.filter(function (e) { return srParadaOcorr(e) && !srParadaEntregue(e); }).length;
   var cliDe = function (e) { var nome = String(e.recebedor || "").trim().toLowerCase(); return c.clientes.find(function (cl) { return String(cl.fant || cl.nome || "").trim().toLowerCase() === nome && String(cl.cidade || "") === String(e.cidade || ""); }) || c.clientes[e.ordem - 1] || null; };
   var h = '<div style="font-size:20px;font-weight:900;margin:6px 0 12px;color:' + (falta ? GOLD : "#4CAF50") + ';">' + (falta ? 'Faltam ' + falta + ' de ' + ents.length + ' entregas' : 'Todas as ' + ents.length + ' entregas feitas') + '</div>';
   if (prox) {
@@ -35686,10 +36177,12 @@ function motoristaBauHTML() {
       + '<div style="font-size:12px;color:#8fd18f;font-weight:800;">PRÓXIMA PARADA</div>'
       + '<div style="font-size:19px;font-weight:900;margin-top:2px;">' + prox.ordem + '. ' + esc(prox.recebedor || "") + '</div>'
       + '<div style="font-size:14px;color:#ccc;margin-top:2px;">' + esc(prox.cidade || "") + ' · 📦 ' + (tc.vols - tc.ent) + ' volumes</div>'
-      + '<button onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(prox.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + prox.id + '\'],true)" style="width:100%;margin-top:12px;background:#2E7D32;color:#fff;border:0;border-radius:10px;padding:15px;font-size:18px;font-weight:900;cursor:pointer;">✔ ENTREGUEI</button></div>';
+      + '<button onclick="if(confirm(\'Confirma que ENTREGOU ' + esc(prox.recebedor || "").replace(/'/g, "") + '?\'))rfEntregaMarcarEntregue([\'' + prox.id + '\'],true)" style="width:100%;margin-top:12px;background:#2E7D32;color:#fff;border:0;border-radius:10px;padding:15px;font-size:18px;font-weight:900;cursor:pointer;">✔ ENTREGUEI</button>'
+      + '<button onclick="rfOcorrenciaAbrir(\'' + prox.id + '\')" style="width:100%;margin-top:8px;background:transparent;color:#ff8a80;border:1px solid #E53935;border-radius:10px;padding:11px;font-size:15px;font-weight:800;cursor:pointer;">⚠ Não entreguei</button></div>';
   } else {
     h += '<div style="background:#14240f;border:1px solid #2E7D32;border-radius:12px;padding:16px;margin-bottom:12px;text-align:center;">'
-      + '<div style="font-size:20px;font-weight:900;color:#4CAF50;">✅ Baú vazio</div>'
+      + (nOc ? '<div style="font-size:20px;font-weight:900;color:#E6A100;">✅ Rota concluída</div><div style="font-size:14px;color:#ff8a80;margin-top:6px;">↩ ' + nOc + ' parada(s) com ocorrência: a mercadoria volta para o CD.</div>'
+             : '<div style="font-size:20px;font-weight:900;color:#4CAF50;">✅ Baú vazio</div>')
       + '<div style="font-size:14px;color:#ddd;margin-top:6px;">Confira os canhotos e, na chegada, tire a foto do <b>KM final</b>.</div>'
       + '<button onclick="motoristaFecharBau()" style="margin-top:12px;background:' + GOLD + ';color:#000;border:0;border-radius:10px;padding:12px 20px;font-size:16px;font-weight:900;cursor:pointer;">← voltar</button></div>';
   }
@@ -35698,10 +36191,11 @@ function motoristaBauHTML() {
   var aberto = !!state._motBauLista;
   h += '<button onclick="state._motBauLista=' + (aberto ? 'false' : 'true') + ';render();" style="width:100%;margin-top:12px;background:#111;color:#ddd;border:1px solid #333;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">' + (aberto ? '▲ esconder as paradas' : '📋 ver todas as paradas (' + ents.length + ')') + '</button>';
   if (aberto) h += ents.map(function (e) {
-      var ok = srParadaEntregue(e);
-      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:14px;padding:9px 2px;border-bottom:1px solid #1a1a1a;' + (ok ? 'color:#666;' : '') + '">'
-        + '<span>' + (ok ? '✅ ' : '⬜ ') + e.ordem + '. ' + esc(e.recebedor || "") + '</span>'
-        + (ok && e.entregueEm ? '<button style="font-size:11px;padding:2px 8px;" onclick="if(confirm(\'Desfazer a entrega desta parada?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],false)">desfazer</button>' : '')
+      var ok = srParadaEntregue(e), oc = srParadaOcorr(e);
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:14px;padding:9px 2px;border-bottom:1px solid #1a1a1a;' + (ok && !oc ? 'color:#666;' : '') + '">'
+        + '<span>' + (oc ? '⚠️ ' : ok ? '✅ ' : '⬜ ') + e.ordem + '. ' + esc(e.recebedor || "") + (oc ? '<br><span style="font-size:12px;">' + srOcorrSeloHTML(e, false) + '</span>' : '') + '</span>'
+        + (oc ? '<button style="font-size:11px;padding:2px 8px;" onclick="rfOcorrenciaDesfazer(\'' + e.id + '\')">desfazer</button>'
+           : ok && e.entregueEm ? '<button style="font-size:11px;padding:2px 8px;" onclick="if(confirm(\'Desfazer a entrega desta parada?\'))rfEntregaMarcarEntregue([\'' + e.id + '\'],false)">desfazer</button>' : '')
         + '</div>';
     }).join("");
   return casca(h);
@@ -36911,7 +37405,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nV620 (12/10/2026) -- (1) BIPS DA SÃO ROQUE EM TABELA PRÓPRIA (sr_bips) e BIPAGEM SEM INTERNET: cada bip vale na hora no aparelho e entra numa fila guardada nele; se a internet cair na doca, os bips ficam guardados (selo ⏳ N bips guardados no aparelho) e sobem sozinhos quando volta. (2) NÃO ENTREGUEI: o motorista escolhe o motivo (cliente fechado/ausente, recusou, avaria, entrega parcial, endereço não encontrado, outro), tira a FOTO obrigatória e o celular grava o GPS; a rota segue para a próxima parada, mas os volumes continuam no baú e voltam para o CD (na entrega parcial conta como entregue com ressalva); o gestor vê a ocorrência em vermelho, com a foto, e o caminhão fica em Atenção. (3) RELATÓRIO DA CARGA (botão 📊 na carga e na tela do caminhão do portal, com PDF): etiquetagem e carregamento com início, fim, duração, tempo bipando sem pausas, ritmo em volumes por minuto, pausas acima de 5 min e quem bipou; da 1ª etiqueta ao caminhão carregado; saída, cada entrega com horário e tempo desde a anterior, prazo x previsão; e a média das últimas cargas reais (vai calibrar os 20 min por parada). (4) ALERTAS: com o portal ou a aba aberta, a cada minuto o sistema avisa (notificação no celular se ativada no botão 🔔, vibração e faixa vermelha no topo) quando um caminhão fica ATRASADO, passa 90 min sem entregar ou registra ocorrência; cada alerta sai uma vez. Integração com rastreador Pósitron: aguardando a Pósitron responder." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
@@ -43415,7 +43909,7 @@ revalidarSessaoAoAbrir();
   var SUPABASE_URL = "https://dpqgqgjhydrztouxscad.supabase.co";
   var SUPABASE_KEY = "sb_publishable_Scb-okYOQBfphOTs9jtxyg_B6-iG_kv";
 
-  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423; v467: medicoes; v564: campanhas
+  var CHAVES = ["lapides", "veiculos", "dividas", "viagens", "clientes", "manutencoes", "fechamentos", "frotaMes", "config", "almoxarifado", "tarifas", "oleoTrocas", "usuarios", "pagamentosMotorista", "fiscais", "suzanoCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "produtosCatalogo", "compras", "extratos", "medicoes", "campanhas"];   // v599: produtosCatalogo; v586: saoroque; v423; v467: medicoes; v564: campanhas
   /* v400 — BUG: motoristasCad tinha entrado em CHAVES_UNIAO e no MAPA_LS na
      v397, mas NAO em CHAVES, que e a lista que o download e a subida percorrem
      (linhas de baixarTudo e subirTudo). Resultado: a ficha cadastrada ou
@@ -43433,7 +43927,7 @@ revalidarSessaoAoAbrir();
   /* v418: paradasNaoVieram tambem entra por UNIAO. Quem tira a parada pode ser
      o tablet enquanto o PC esta com a caixa antiga aberta; por substituicao o
      PC devolveria a parada removida na proxima subida. */
-  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "saoroqueBips", "produtosCatalogo"];   // v423; v586; v599
+  var CHAVES_UNIAO = ["fiscais", "suzanoCargas", "mateusCargas", "motoristasCad", "paradasNaoVieram", "goiasCargas", "goiasBips", "saoroqueCargas", "produtosCatalogo"];   // v423; v586; v599
   /* v400: ficha de motorista e editada em mais de um aparelho (a recepcao
      preenche, o Renato confere). Uniao simples por id manteria SEMPRE a versao
      local e a edicao do outro aparelho nunca chegaria. Aqui vence a mais
@@ -43591,6 +44085,7 @@ revalidarSessaoAoAbrir();
   // caixa geral (painel_dados). Motorista nunca chega perto disso.
   window.rfIniciarSyncEquipe = function () {
     podeSincronizar = true;
+    try { if (typeof window.srBipsIniciar === "function") window.srBipsIniciar(); } catch (e) {}   // v620: bips da São Roque (tabela sr_bips)
     if (sbPronto) { baixarTudo(); if (!tempoRealAssinado) { tempoRealAssinado = true; assinarTempoReal(); } }
   };
   // v92: chamado no logout — impede que uma sincronização em andamento (ou
