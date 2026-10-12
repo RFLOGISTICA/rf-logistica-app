@@ -2,12 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v610)</title>
+<title>RF Logística — Painel da Frota (v611)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v610">
+<meta name="rf-versao" content="v611">
 <meta name="rf-data" content="2026-10-08">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v611 (12/10/2026): EXTRAÇÃO 100% segura -- (1) antes de extrair, cada chave é consultada na SEFAZ (rf-sefaz
+     "consultar", só leitura): cancelado/inexistente fica de fora e vai listado em NAO_ENVIAR.txt; coluna SEFAZ e botão
+     "Conferir na SEFAZ"; (2) o PDF passa a ser o DACTE/DAMDFE OFICIAL do servidor (layout do manual, QR Code, logo),
+     guardado ao lado do XML e reaproveitado; o PDF montado no aparelho fica de reserva. Cliente do documento agora
+     fica num mapa à parte (não grava campo extra nos registros fiscais). -->
 <!-- v610 (12/10/2026): DACTE e DAMDFE montados pela extração agora levam a LOGO DA RF (faixa preta no canto do
      emitente, como no timbrado) -- regra de 29/09: a logo não pode faltar nos documentos fiscais do app. -->
 <!-- v609 (12/10/2026): EXTRAÇÃO -- o ZIP saía com o XML cru (Renato: "é para sair o CT-e em PDF e a chave"). Agora
@@ -920,7 +925,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v610" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v611" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -5511,10 +5516,12 @@ function xfClienteDoDoc(d, porChave) {
   var cl = xfClientes();
   for (var i = 0; i < cl.length; i++) { var tk = xfTokens(cl[i]); if (tk.some(function (t) { return txt.indexOf(t) >= 0; })) return cl[i]; }
   if (d.tipo === "mdfe" && porChave) {
-    for (var j = 0; j < (d.ctes || []).length; j++) { var c = porChave[d.ctes[j]]; if (c && c.__cli) return c.__cli; }
+    for (var j = 0; j < (d.ctes || []).length; j++) { var c = porChave[d.ctes[j]]; if (c && XF_CLI[c.id]) return XF_CLI[c.id]; }
   }
   return "";
 }
+var XF_CLI = {};   // v611: cliente de cada documento fica num mapa à parte -- gravar no registro fiscal faria a sincronização reenviar todos
+function xfCli(d) { return (d && XF_CLI[d.id]) || ""; }
 function xfPeriodo() {
   var hoje = new Date(), m0 = hoje.getFullYear() + "-" + String(hoje.getMonth() + 1).padStart(2, "0");
   var p = state._xfPer || (state._xfPer = { modo: "mes", mes: m0, de: m0 + "-01", ate: hojeISO() });
@@ -5525,8 +5532,8 @@ function xfTipos() { return state._xfTipos || (state._xfTipos = { cte: true, mdf
 function xfDocs() {   // documentos do período já com o cliente resolvido
   var P = xfPeriodo(), todos = (rfFiscais() || []).filter(function (d) { return (d.tipo === "cte" || d.tipo === "mdfe") && !d.cancelado; });
   var porChave = {};
-  todos.forEach(function (d) { if (d.tipo === "cte") { d.__cli = xfClienteDoDoc(d); if (d.chave) porChave[d.chave] = d; } });
-  todos.forEach(function (d) { if (d.tipo === "mdfe") d.__cli = xfClienteDoDoc(d, porChave); });
+  todos.forEach(function (d) { if (d.tipo === "cte") { XF_CLI[d.id] = xfClienteDoDoc(d); if (d.chave) porChave[d.chave] = d; } });
+  todos.forEach(function (d) { if (d.tipo === "mdfe") XF_CLI[d.id] = xfClienteDoDoc(d, porChave); });
   return todos.filter(function (d) { var dt = String(d.data || "").slice(0, 10); return dt >= P.de && dt <= P.ate; });
 }
 function xfResumo(docs) {
@@ -5534,7 +5541,7 @@ function xfResumo(docs) {
   var add = function (k) { return por[k] || (por[k] = { cli: k, cte: [], mdfe: [], ciot: {} }); };
   xfClientes().forEach(add);
   docs.forEach(function (d) {
-    var g = add(d.__cli || "");
+    var g = add(xfCli(d));
     if (d.tipo === "cte") g.cte.push(d); else { g.mdfe.push(d); if (d.ciot) g.ciot[d.ciot] = 1; }
   });
   return Object.keys(por).map(function (k) { return por[k]; }).filter(function (g) { return g.cli || g.cte.length || g.mdfe.length; });
@@ -5571,7 +5578,7 @@ function xfTelaHTML() {
   var lista = cliSel ? res.filter(function (g) { return (g.cli || "__sem") === cliSel; }) : res;
   var tot = { cte: 0, v: 0, mdfe: 0, ciot: 0 };
   var th = function (t, a) { return '<th style="color:' + GOLD + ';font-weight:600;font-size:12px;padding:8px 10px;border-bottom:1px solid #333;text-align:' + (a || "left") + ';">' + t + '</th>'; };
-  h += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:14px;"><tr>' + th("Cliente") + th("CT-e", "center") + th("Valor dos CT-e", "right") + th("MDF-e", "center") + th("CIOT", "center") + th("PDF", "center") + th("") + '</tr>';
+  h += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:14px;"><tr>' + th("Cliente") + th("CT-e", "center") + th("Valor dos CT-e", "right") + th("MDF-e", "center") + th("CIOT", "center") + th("PDF", "center") + th("SEFAZ", "center") + th("") + '</tr>';
   lista.forEach(function (g) {
     var v = g.cte.reduce(function (s, d) { return s + (Number(d.valor) || 0); }, 0), nci = Object.keys(g.ciot).length, n = g.cte.length + g.mdfe.length;
     tot.cte += g.cte.length; tot.v += v; tot.mdfe += g.mdfe.length; tot.ciot += nci;
@@ -5581,16 +5588,21 @@ function xfTelaHTML() {
       + '<td style="text-align:center;' + off + '">' + g.cte.length + '</td><td style="text-align:right;' + off + '">' + (v ? fmtR(v) : "—") + '</td>'
       + '<td style="text-align:center;' + off + '">' + g.mdfe.length + '</td><td style="text-align:center;' + off + '">' + nci + '</td>'
       + '<td style="text-align:center;font-size:12.5px;">' + (n ? '<span style="color:' + (pdf === n ? "#4CAF50" : "#E67E22") + ';">PDF + chave ' + pdf + '/' + n + '</span>' : '<span style="color:#555;">sem documento no período</span>') + '</td>'
+      + '<td style="text-align:center;font-size:12px;white-space:nowrap;">' + (function () {   // v611
+          if (!n) return '<span style="color:#555;">—</span>';
+          var ds = g.cte.concat(g.mdfe), ok = ds.filter(function (d) { return d.sefaz && d.sefaz.st === "autorizado"; }).length, ruim = ds.filter(function (d) { return d.sefaz && d.sefaz.st !== "autorizado"; }).length, nc = n - ok - ruim;
+          return (ok ? '<span style="color:#4CAF50;">✓ ' + ok + '</span> ' : '') + (ruim ? '<span style="color:#E74C3C;font-weight:800;">✕ ' + ruim + ' cancel.</span> ' : '') + (nc ? '<span style="color:#999;">' + nc + ' a conferir</span>' : '');
+        })() + '</td>'
       + '<td style="text-align:right;padding:6px 10px;">' + (n ? '<button onclick="xfExtrair(\'' + esc(k).replace(/'/g, "\\'") + '\')" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:7px 14px;">⬇ Extrair</button>' : '<button disabled style="opacity:.35;border:1px solid ' + GOLD + ';color:' + GOLD + ';background:none;border-radius:8px;padding:7px 14px;">⬇ Extrair</button>') + '</td></tr>';
   });
   h += '<tr><td style="padding:10px;color:' + GOLD + ';font-weight:800;border-top:2px solid ' + GOLD + ';">TOTAL · ' + esc(P.rot) + '</td>'
     + ['cte', 'v', 'mdfe', 'ciot'].map(function (kk) { return '<td style="text-align:' + (kk === "v" ? "right" : "center") + ';color:' + GOLD + ';font-weight:800;border-top:2px solid ' + GOLD + ';">' + (kk === "v" ? (tot.v ? fmtR(tot.v) : "—") : tot[kk]) + '</td>'; }).join("")
-    + '<td style="border-top:2px solid ' + GOLD + ';"></td><td style="text-align:right;border-top:2px solid ' + GOLD + ';padding:6px 10px;">' + (tot.cte + tot.mdfe && !cliSel ? '<button onclick="xfExtrair(\'\')" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:7px 14px;">⬇ Extrair todos</button>' : '') + '</td></tr></table></div>';
+    + '<td style="border-top:2px solid ' + GOLD + ';"></td><td style="border-top:2px solid ' + GOLD + ';text-align:center;"><button onclick="xfConferirTela()" style="font-size:12px;border:1px solid #4CAF50;color:#4CAF50;background:none;border-radius:8px;padding:5px 10px;font-weight:700;white-space:nowrap;">🔎 Conferir na SEFAZ</button></td><td style="text-align:right;border-top:2px solid ' + GOLD + ';padding:6px 10px;">' + (tot.cte + tot.mdfe && !cliSel ? '<button onclick="xfExtrair(\'\')" style="background:' + GOLD + ';color:#000;font-weight:800;border:0;border-radius:8px;padding:7px 14px;">⬇ Extrair todos</button>' : '') + '</td></tr></table></div>';
   h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#aaa;">Sai um ZIP com as pastas <b>CT-e/</b> e <b>MDF-e/</b> com o <b>PDF</b> de cada documento (nome = número + chave), o <b>Chaves.txt</b> e a planilha resumo com o CIOT. '
     + '<label style="display:inline-flex;gap:5px;align-items:center;white-space:nowrap;"><input type="checkbox"' + (state._xfXml ? " checked" : "") + ' onchange="state._xfXml=this.checked"> incluir XML (contador)</label> '
     + '<button onclick="xfExtrair(state._xfCli||\'\',true)" style="font-size:12px;border:1px solid ' + GOLD + ';color:' + GOLD + ';background:none;border-radius:8px;padding:5px 10px;font-weight:700;">📊 Só a planilha</button></div>'
     + (state._xfMsg ? '<div style="margin-top:10px;font-weight:700;color:' + (/^✓/.test(state._xfMsg) ? "#4CAF50" : "#E8C46A") + ';">' + esc(state._xfMsg) + '</div>' : '')
-    + '<div style="font-size:11.5px;color:#777;margin-top:10px;line-height:1.5;">O cliente de cada documento é o contratante do frete (pela viagem vinculada ou pelo remetente/tomador do CT-e), não o destinatário da nota. Cliente sem documento guardado no app aparece com 0. Documento cancelado não entra.</div></div>';
+    + '<div style="font-size:11.5px;color:#777;margin-top:10px;line-height:1.5;">Toda extração confere cada chave na SEFAZ antes: cancelado ou inexistente fica de fora. O PDF é o DACTE/DAMDFE oficial (QR Code e logo da RF). O cliente de cada documento é o contratante do frete (pela viagem vinculada ou pelo remetente/tomador do CT-e), não o destinatário da nota. Cliente sem documento guardado no app aparece com 0. Documento cancelado não entra.</div></div>';
   return h;
 }
 /* ===== v609: DACTE / DAMDFE EM PDF GERADOS A PARTIR DO XML ===================
@@ -5768,20 +5780,92 @@ function xfDamdfePdf(jsPDF, xmlTxt) {
   return { pdf: doc.output("arraybuffer"), chave: chave, numero: xfTxt(ide, "nMDF") };
 }
 
+/* ===== v611: CONFERÊNCIA NA SEFAZ + DACTE OFICIAL DO SERVIDOR (Renato, 12/10/2026: "pode fazer assim,
+   aí fica 100% seguro") ==========================================================================
+   1) Antes de extrair, cada CT-e/MDF-e é consultado na SEFAZ pela chave (ação "consultar" da Edge Function
+      rf-sefaz, só leitura, certificado da RF). Cancelado ou inexistente NÃO entra no ZIP (vai listado em
+      NAO_ENVIAR.txt); autorizado (MDF-e encerrado também vale) entra. O resultado fica em d.sefaz; documento
+      já conferido como autorizado e emitido há mais de 8 dias não é consultado de novo (não dá mais para cancelar).
+      Se o servidor estiver em HOMOLOGAÇÃO a conferência não vale e a extração para, avisando.
+   2) O PDF passa a ser o DACTE/DAMDFE OFICIAL que o servidor já gera para os documentos emitidos pelo app
+      (layout do manual, QR Code, logo da RF -- ação "dacte"/"damdfe" com regerar): é montado a partir do XML
+      autorizado, guardado ao lado dele (fiscais/cte-CHAVE.pdf) e reaproveitado nas próximas extrações. Se o
+      servidor falhar, cai no PDF montado no aparelho (v609/v610). */
+function xfSefazSit(j) {
+  var cs = [].concat(j && j.cStats || [], j && j.cStat ? [j.cStat] : []).map(String);
+  if (cs.indexOf("101") >= 0 || cs.indexOf("102") >= 0) return "cancelado";
+  if (cs.indexOf("110") >= 0 || cs.indexOf("301") >= 0 || cs.indexOf("302") >= 0) return "denegado";
+  if (cs.some(function (c) { return ["217", "580", "731"].indexOf(c) >= 0; })) return "nao_existe";
+  if (String(j && j.cStat) === "100" || String(j && j.cStat) === "132" || cs.indexOf("100") >= 0) return "autorizado";
+  return "erro";
+}
+var XF_SIT = { autorizado: "✓ autorizado", cancelado: "✕ CANCELADO", denegado: "✕ DENEGADO", nao_existe: "✕ não consta na SEFAZ", erro: "? sem resposta" };
+function xfConferir(docs, prog) {
+  var fila = docs.filter(function (d) {
+    if (!d.chave || String(d.chave).replace(/\D/g, "").length !== 44) return false;
+    var z = d.sefaz; if (!z || z.st !== "autorizado") return true;
+    return !((Number(z.em) || 0) - Date.parse(String(d.data || "").slice(0, 10) + "T12:00:00") > 8 * 864e5);
+  });
+  var i = 0, mudou = false, parar = null;
+  var um = function () {
+    if (parar || i >= fila.length) return Promise.resolve();
+    var d = fila[i++]; if (prog) prog(i, fila.length);
+    return rfSefazChamar({ acao: "consultar", modelo: d.tipo === "mdfe" ? "mdfe" : "cte", chave: String(d.chave).replace(/\D/g, "") }).then(function (j) {
+      if (j && j.ambiente && j.ambiente !== "producao") { parar = "O servidor da SEFAZ do sistema está em HOMOLOGAÇÃO — a conferência não vale. Nada foi extraído."; return; }
+      var st = xfSefazSit(j);
+      if (st === "erro" && !(j && j.ok)) { d.sefazErro = (j && (j.erro || j.xMotivo)) || "sem resposta"; return; }
+      d.sefaz = { st: st, cStat: String((j && j.cStat) || ""), xMotivo: String((j && j.xMotivo) || "").slice(0, 120), em: Date.now() };
+      d.atualizadoEm = Date.now(); mudou = true;
+    }, function (e) { d.sefazErro = (e && e.message) || "falha"; }).then(um);
+  };
+  return um().then(function () { if (mudou) try { salvar(); } catch (e) {} if (parar) throw new Error(parar); return fila.length; });
+}
+function xfConferirTela() {
+  var docs = xfDocs(), T = xfTipos();
+  if (state._xfCli) docs = docs.filter(function (d) { return (xfCli(d) || "__sem") === state._xfCli; });
+  docs = docs.filter(function (d) { return (d.tipo === "cte" && T.cte) || (d.tipo === "mdfe" && (T.mdfe || T.ciot)); });
+  if (!docs.length) { alert("Nada para conferir nesse filtro."); return; }
+  state._xfMsg = "conferindo na SEFAZ..."; render();
+  xfConferir(docs, function (a, b) { state._xfMsg = "conferindo na SEFAZ... " + a + " de " + b; render(); }).then(function (n) {
+    var c = { autorizado: 0, outros: 0, semResp: 0 };
+    docs.forEach(function (d) { if (d.sefaz && d.sefaz.st === "autorizado") c.autorizado++; else if (d.sefaz) c.outros++; else c.semResp++; });
+    state._xfMsg = "✓ Conferência na SEFAZ: " + c.autorizado + " autorizado(s)" + (c.outros ? " · " + c.outros + " cancelado(s)/inexistente(s) — NÃO vão na extração" : "") + (c.semResp ? " · " + c.semResp + " sem resposta (tente de novo)" : "") + (n === 0 ? " (já estavam conferidos)" : "") + ".";
+    render();
+  }).catch(function (e) { state._xfMsg = (e && e.message) || "falhou a conferência"; render(); });
+}
+function xfPdfOficial(d) {   // devolve o Blob do PDF oficial (guardado ou gerado agora no servidor) ou null
+  if (d.pdfPath) return rfBaixarDoBucket(d.pdfPath);
+  if (!d.xmlPath) return Promise.resolve(null);
+  return rfSefazChamar({ acao: d.tipo === "mdfe" ? "damdfe" : "dacte", path: d.xmlPath, regerar: true }).then(function (j) {
+    if (!(j && j.ok && j.pdfPath)) return null;
+    d.pdfPath = j.pdfPath; d.atualizadoEm = Date.now();
+    return rfBaixarDoBucket(j.pdfPath);
+  }).catch(function () { return null; });
+}
 function xfExtrair(cliK, soPlanilha) {
   var P = xfPeriodo(), T = xfTipos(), docs = xfDocs();
-  if (cliK) docs = docs.filter(function (d) { return (d.__cli || "__sem") === cliK; });
+  if (cliK) docs = docs.filter(function (d) { return (xfCli(d) || "__sem") === cliK; });
   var cte = T.cte ? docs.filter(function (d) { return d.tipo === "cte"; }) : [], mdfe = (T.mdfe || T.ciot) ? docs.filter(function (d) { return d.tipo === "mdfe"; }) : [];
   if (!cte.length && !mdfe.length) { alert("Nada para extrair com esse filtro."); return; }
+  if (!state._xfConfOk) {   // v611: confere na SEFAZ primeiro; cancelado/inexistente sai da lista
+    state._xfMsg = "conferindo na SEFAZ antes de extrair..."; render();
+    xfConferir(cte.concat(mdfe), function (a, b) { state._xfMsg = "conferindo na SEFAZ antes de extrair... " + a + " de " + b; render(); })
+      .then(function () { state._xfConfOk = true; try { xfExtrair(cliK, soPlanilha); } finally { state._xfConfOk = false; } })
+      .catch(function (e) { state._xfMsg = (e && e.message) || "falhou a conferência na SEFAZ"; render(); });
+    return;
+  }
+  var barrados = cte.concat(mdfe).filter(function (d) { return d.sefaz && d.sefaz.st !== "autorizado"; });
+  cte = cte.filter(function (d) { return barrados.indexOf(d) < 0; }); mdfe = mdfe.filter(function (d) { return barrados.indexOf(d) < 0; });
+  if (!cte.length && !mdfe.length) { state._xfMsg = "Nada extraído: todos os documentos do filtro estão cancelados ou não constam na SEFAZ."; render(); return; }
   var nomeCli = cliK === "__sem" ? "Sem_cliente" : (cliK || "Todos_os_clientes");
   var base = String(nomeCli).replace(/[^\w]+/g, "_") + "_" + P.tag;
-  var aoa = [["Tipo", "Número", "Série", "Data", "Cliente", "Placa", "Motorista", "Chave", "Valor do frete", "Peso (kg)", "MDF-e", "CIOT", "XML", "PDF"]];
+  var aoa = [["Tipo", "Número", "Série", "Data", "Cliente", "Placa", "Motorista", "Chave", "Valor do frete", "Peso (kg)", "MDF-e", "CIOT", "Situação na SEFAZ", "XML", "PDF"]];
   var mdfeDoCte = {}; (rfFiscais() || []).forEach(function (m) { if (m.tipo === "mdfe") (m.ctes || []).forEach(function (c) { mdfeDoCte[c] = m; }); });
-  cte.forEach(function (d) { var m = mdfeDoCte[d.chave]; aoa.push(["CT-e", d.numero || "", d.serie || "", exDataBr(String(d.data || "").slice(0, 10)), d.__cli || "", d.placa || "", d.motorista || "", d.chave || "", Number(d.valor) || 0, Number(d.peso) || 0, m ? (m.numero || "") : "", m ? (m.ciot || "") : "", d.xmlPath ? "sim" : "não", d.pdfPath ? "sim" : "não"]); });
-  mdfe.forEach(function (d) { aoa.push(["MDF-e", d.numero || "", d.serie || "", exDataBr(String(d.data || "").slice(0, 10)), d.__cli || "", d.placa || "", d.motorista || "", d.chave || "", "", Number(d.peso) || 0, d.numero || "", T.ciot ? (d.ciot || "") : "", d.xmlPath ? "sim" : "não", d.pdfPath ? "sim" : "não"]); });
+  cte.forEach(function (d) { var m = mdfeDoCte[d.chave]; aoa.push(["CT-e", d.numero || "", d.serie || "", exDataBr(String(d.data || "").slice(0, 10)), xfCli(d), d.placa || "", d.motorista || "", d.chave || "", Number(d.valor) || 0, Number(d.peso) || 0, m ? (m.numero || "") : "", m ? (m.ciot || "") : "", d.sefaz ? XF_SIT[d.sefaz.st] : "não conferido", d.xmlPath ? "sim" : "não", d.pdfPath || d.xmlPath ? "sim" : "não"]); });
+  mdfe.forEach(function (d) { aoa.push(["MDF-e", d.numero || "", d.serie || "", exDataBr(String(d.data || "").slice(0, 10)), xfCli(d), d.placa || "", d.motorista || "", d.chave || "", "", Number(d.peso) || 0, d.numero || "", T.ciot ? (d.ciot || "") : "", d.sefaz ? XF_SIT[d.sefaz.st] : "não conferido", d.xmlPath ? "sim" : "não", d.pdfPath || d.xmlPath ? "sim" : "não"]); });
   var wbOut = function () {
     if (typeof XLSX === "undefined") return null;
-    var ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = [6, 8, 5, 11, 22, 9, 22, 46, 13, 10, 8, 16, 5, 5].map(function (w) { return { wch: w }; });
+    var ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = [6, 8, 5, 11, 22, 9, 22, 46, 13, 10, 8, 16, 18, 5, 5].map(function (w) { return { wch: w }; });
     var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Resumo"); return wb;
   };
   if (soPlanilha) { var wb0 = wbOut(); if (!wb0) { alert("A biblioteca de planilha não carregou. Recarregue a página."); return; } XLSX.writeFile(wb0, "Resumo_" + base + ".xlsx"); return; }
@@ -5798,11 +5882,10 @@ function xfExtrair(cliK, soPlanilha) {
       var xmlP = d.xmlPath ? rfBaixarDoBucket(d.xmlPath).then(function (b) { return b ? b.text() : null; }) : Promise.resolve(null);
       return xmlP.then(function (xml) {
         if (xml && comXml) zip.file(nomeArq(it) + ".xml", xml);
-        if (d.pdfPath) return rfBaixarDoBucket(d.pdfPath).then(function (b) {
+        return xfPdfOficial(d).then(function (b) {   // v611: DACTE/DAMDFE oficial (QR Code + logo) do servidor
           if (b) { zip.file(nomeArq(it) + ".pdf", b); guardados++; return; }
           return gera(xml);
         });
-        return gera(xml);
         function gera(x) {
           if (!x) { faltam.push(d); return; }
           try { var r = (it.pref === "CTe" ? xfDactePdf : xfDamdfePdf)(jsPDF, x); if (r && r.pdf) { zip.file(nomeArq(it, r.chave) + ".pdf", r.pdf); gerados++; } else faltam.push(d); }
@@ -5817,12 +5900,14 @@ function xfExtrair(cliK, soPlanilha) {
     };
     xfLogo().then(proxima).then(function () {   // v610: logo pronta antes do 1º PDF
       var wb = wbOut(); if (wb) zip.file("Resumo_" + base + ".xlsx", XLSX.write(wb, { bookType: "xlsx", type: "array" }));
-      zip.file("Chaves.txt", "Chaves de acesso - " + nomeCli + " - " + P.rot + "\n\n" + chaves.join("\n\n") + "\n");
+      zip.file("Chaves.txt", "Chaves de acesso - " + nomeCli + " - " + P.rot + " (todas conferidas na SEFAZ: autorizadas)\n\n" + chaves.join("\n\n") + "\n");
+      if (barrados.length) zip.file("NAO_ENVIAR.txt", "Documentos do periodo que NAO foram extraidos porque a SEFAZ informou que estao cancelados ou nao constam:\n\n" + barrados.map(function (d) { return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + XF_SIT[d.sefaz.st] + " (cStat " + d.sefaz.cStat + ") - " + (d.chave || ""); }).join("\n"));
+      try { salvar(); } catch (e) {}   // guarda o pdfPath dos DACTE oficiais gerados agora
       if (faltam.length) zip.file("FALTANDO.txt", "Documentos sem PDF e sem XML guardados no app (reimporte o XML no bloco fiscal):\n\n" + faltam.map(function (d) { return (d.tipo || "").toUpperCase() + " " + (d.numero || "?") + " - " + (d.data || "") + " - " + (d.placa || "") + " - " + (d.chave || ""); }).join("\n"));
       return zip.generateAsync({ type: "blob" });
     }).then(function (blob) {
       rfBaixarBlob(blob, base + ".zip");
-      state._xfMsg = "✓ " + base + ".zip gerado: " + (guardados + gerados) + " PDF (" + gerados + " montados a partir do XML) + Chaves.txt + planilha" + (comXml ? " + XML" : "") + (faltam.length ? " · " + faltam.length + " sem arquivo (lista no FALTANDO.txt)" : "") + ".";
+      state._xfMsg = "✓ " + base + ".zip gerado (conferido na SEFAZ): " + (guardados + gerados) + " PDF" + (gerados ? " (" + gerados + " montados no aparelho)" : "") + (barrados.length ? " · " + barrados.length + " cancelado(s)/inexistente(s) ficaram de fora (NAO_ENVIAR.txt)" : "") + " + Chaves.txt + planilha" + (comXml ? " + XML" : "") + (faltam.length ? " · " + faltam.length + " sem arquivo (lista no FALTANDO.txt)" : "") + ".";
       render();
     }).catch(function (e) { state._xfMsg = "falhou ao gerar: " + ((e && e.message) || "erro"); render(); });
   });
@@ -5830,7 +5915,7 @@ function xfExtrair(cliK, soPlanilha) {
 function xfContextoAssistente() {
   try {
     var P = xfPeriodo(), res = xfResumo(xfDocs());
-    return "EXTRAÇÃO DE CT-e / MDF-e / CIOT (v608, área própria no grupo VIAGENS): o usuário escolhe o período (por mês/ano ou de/até) e o cliente, e baixa um ZIP com pastas CT-e/ e MDF-e/ com o PDF de cada documento (o guardado ou, se não houver, o DACTE/DAMDFE montado a partir do XML autorizado), nome do arquivo com número e chave, Chaves.txt e a planilha resumo com o CIOT de cada MDF-e; XML só se marcar 'incluir XML (contador)'. O cliente de cada documento é o contratante do frete (viagem vinculada ou remetente/tomador do CT-e), não o destinatário. Período na tela: " + P.rot + ". "
+    return "EXTRAÇÃO DE CT-e / MDF-e / CIOT (v608, área própria no grupo VIAGENS): o usuário escolhe o período (por mês/ano ou de/até) e o cliente, e baixa um ZIP com pastas CT-e/ e MDF-e/ com o PDF de cada documento (o guardado ou, se não houver, o DACTE/DAMDFE montado a partir do XML autorizado), nome do arquivo com número e chave, Chaves.txt e a planilha resumo com o CIOT de cada MDF-e; XML só se marcar 'incluir XML (contador)'. Desde a v611 toda extração confere cada chave na SEFAZ antes (cancelado/inexistente fica de fora, listado em NAO_ENVIAR.txt) e o PDF é o DACTE/DAMDFE oficial gerado no servidor (QR Code e logo). O cliente de cada documento é o contratante do frete (viagem vinculada ou remetente/tomador do CT-e), não o destinatário. Período na tela: " + P.rot + ". "
       + res.filter(function (g) { return g.cte.length || g.mdfe.length; }).map(function (g) { return (g.cli || "Sem cliente identificado") + ": " + g.cte.length + " CT-e, " + g.mdfe.length + " MDF-e, " + Object.keys(g.ciot).length + " CIOT"; }).join("; ");
   } catch (e) { return ""; }
 }
