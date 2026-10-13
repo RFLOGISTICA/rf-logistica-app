@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v622)</title>
+<title>RF Logística — Painel da Frota (v623)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v622">
-<meta name="rf-data" content="2026-10-12">
+<meta name="rf-versao" content="v623">
+<meta name="rf-data" content="2026-10-13">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v623 (13/10/2026): CONTRATOS -- aba nova so do login master (grupo CADASTROS): anexa PDF, le o texto e reconhece a outra parte (nome + CNPJ/CPF), tipo e data; filtro por nome/CNPJ, tipo e ano; baixar um, ZIP dos filtrados e lista em Excel. Arquivos no bucket privado "contratos" e fichas na tabela public.contratos, ambos com RLS so master. Assistente informado. -->
 <!-- v622 (12/10/2026): CARGA MATEUS -- so o PESO trava a viagem (volume divergente vira aviso); volume e peso de cada cidade editaveis na tabela.
      v621 (12/10/2026): PORTAL DO GESTOR -- "CENTRAL DA FROTA". Números do dia (na rua, entregas, no prazo, atenção,
      atrasados, ocorrências), botões com as PLACAS em cima do mapa, MAPA REAL (OpenFreeMap/MapLibre: grátis, sem chave,
@@ -973,7 +974,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v622" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v623" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1568,6 +1569,7 @@ var RF_ICO_AREA = {
   motoristas: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.2"/><path d="M3.8 10.5h6M14.2 10.5h6M12 14.2V20.5"/>',
   financeiro: '<rect x="2.5" y="6.5" width="19" height="11" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/>',
   custos: '<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5H12z"/><path d="M15 3.9A8.5 8.5 0 0 1 20.1 9H15z"/>',
+  contratos: '<path d="M15 3.5H6.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M15 3.5V8h4.5M8 9h4M8 12.5h7.5"/><path d="M8 17c1-1.6 1.8-1.6 2.4 0 .5 1.2 1.2 1.2 2-.2.6-.9 1.3-.9 2 0h1.6"/>',   // v623
   pessoal: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4"/>',
   pentefino: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path d="m8.8 12.2 2.3 2.3 4.2-4.6"/>',
   dashboard: '<rect x="3.5" y="3.5" width="7.5" height="9" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="5" rx="1.5"/><rect x="13" y="10.5" width="7.5" height="10" rx="1.5"/><rect x="3.5" y="14.5" width="7.5" height="6" rx="1.5"/>',
@@ -28480,6 +28482,7 @@ var ABAS_DEF = [
   { id: "tributario", label: "🧮 Tributário", grupo: "FINANCEIRO" },   // v408
   { id: "documentos", label: "🗂️ Documentos", grupo: "CADASTROS" },
   { id: "cadmotorista", label: "🪪 Cadastro de Motorista", grupo: "CADASTROS" },   // v397
+  { id: "contratos", label: "📜 Contratos", grupo: "CADASTROS" },   // v623: só o login master
   { id: "campanhas", label: "📣 Campanhas", grupo: "MARKETING" },   // v564
   { id: "pessoal", label: "🔒 Pessoal", grupo: "PESSOAL" },   // v549: só o login master
 ];
@@ -28489,7 +28492,7 @@ var GRUPOS_DESC = {   // v542
   "VIAGENS": "Viagens, abastecimentos, status do dia e motoristas",
   "CARREGAMENTO": "Carregamento e conferência de carga por cliente",
   "FINANCEIRO": "Resultado, custos, compras, contas e conciliação",
-  "CADASTROS": "Documentos e cadastro de motoristas",
+  "CADASTROS": "Documentos, contratos e cadastro de motoristas",
   "MARKETING": "Campanhas de publicidade: fotos, artes e legendas para as redes sociais",   // v564
   "PESSOAL": "Seus ganhos e despesas pessoais — só você vê, protegido por senha",
   "ADMINISTRACAO": "Usuários e permissões",
@@ -28530,6 +28533,7 @@ var TAB_DESCRICOES = {
   pessoal: "Ganhos e despesas pessoais — só o seu login vê, criptografado com a sua senha",
   campanhas: "Posts das redes sociais: manda a foto, a IA melhora e coloca a logo RF, o sistema monta a arte e o Renato aprova",   // v564
   cadmotorista: "Ficha de cadastro do motorista no modelo aprovado pelos clientes (FO_YL_026), pronta para exportar",
+  contratos: "Cofre dos contratos: anexa o PDF, o sistema reconhece de quem é, filtra e baixa — só o seu login vê",   // v623
   usuarios: "Acessos e permissões de cada usuário",
 };
 var ABAS_SENSIVEIS = ["financeiro", "viagem", "custos", "dividas", "motoristas", "saldocaminhao", "graficos", "dashboard", "pentefino", "custoreal", "tributario"];
@@ -28647,6 +28651,7 @@ function podeVerValoresFrete() {
 function sessaoValida() { return !!(state.sessao && state.sessao.uid && state.sessao.papel); }
 function podeVerAba(id) {
   if (id === "pessoal") return ehMaster();   // v549: área pessoal só do master, nunca liberável
+  if (id === "contratos") return ehMaster();   // v623: contratos só do master, nunca liberável (protegido também no banco)
   if (ehMotorista()) return id === "abastecimento";
   if (ehCliente()) return id === "painel_cliente";
   if (id === "usuarios") return ehAdmin();
@@ -29062,7 +29067,7 @@ function criarUsuarioCampo(campo, valor) {
   state._novoUsuario[campo] = valor;
 }
 function criarUsuarioToggleModulo(abaId, checked) {
-  if (abaId === "pessoal") return;   // v549
+  if (abaId === "pessoal" || abaId === "contratos") return;   // v549 / v623
   if (!state._novoUsuario) return;
   const i = state._novoUsuario.modulos.indexOf(abaId);
   if (checked && i === -1) state._novoUsuario.modulos.push(abaId);
@@ -29177,7 +29182,7 @@ function excluirUsuarioClick(id, nome) {
   });
 }
 function toggleAbaPerfil(id, abaId, checked) {
-  if (abaId === "pessoal") return;   // v549
+  if (abaId === "pessoal" || abaId === "contratos") return;   // v549 / v623
   const p = (state._perfis || []).find((x) => String(x.id) === String(id));
   if (!p) return;
   if (!pfPodeEditar(p) || pfEhMaster(p)) { alert(pfEhMaster(p) ? "O login master sempre vê tudo." : "Só o login master altera administradores."); render(); return; }
@@ -33601,6 +33606,392 @@ function rfPdfLib() {
   });
   return window.__rfPdf;
 }
+/* ===== v623: CONTRATOS — cofre de contratos, só o login master ==============
+   Pedido do Renato (13/10/2026): "preciso de um local no sistema para guardar os
+   meus contratos! O sistema faz a leitura do PDF, reconhece de quem é o contrato
+   e assim quando eu precisar faço só um filtro e baixo, tipo os CRLV".
+   Decisões dele: só o login MASTER vê; o essencial é achar e EXPORTAR.
+
+   Segurança no BANCO, não só na tela (diferente do "valoresfrete"):
+   - arquivos no bucket PRIVADO "contratos" (separado do "documentos"), com a
+     policy "rf contratos so master" (auth.uid() = rf_master_uid());
+   - fichas na tabela public.contratos com RLS "contratos so master".
+   Outro login, mesmo admin, recebe "row-level security" se tentar ler.
+   Nada disso passa por painel_dados, então não sobe para os outros aparelhos.
+
+   Leitura do PDF: determinística, pela camada de texto (pdf.js), sem IA e sem
+   custo. Acha os CNPJ/CPF do texto, descarta o da RF e pega o nome que vem
+   antes do número da outra parte. PDF escaneado (sem texto) entra com o nome
+   do arquivo e marcado "conferir" — o Renato corrige no ✏. */
+var CT_BUCKET = "contratos";
+var CT_RF_CNPJ = "24916554000100";
+var CT_TIPOS = ["Cliente / transporte", "Fornecedor / serviço", "Motorista / agregado", "Veículo (arrendamento / cessão)", "Locação", "Seguro", "Rastreamento", "Financiamento", "Societário", "Comodato", "Outro"];
+var __ct = { carregado: false, carregando: false, lista: [], msg: "", enviando: false, editando: null, filtro: { q: "", tipo: "", ano: "" } };
+
+function ctSoDig(s) { return String(s || "").replace(/\D/g, ""); }
+function ctFmtDoc(d) {
+  d = ctSoDig(d);
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  return d;
+}
+function ctFmtData(iso) { if (!iso) return "—"; var p = String(iso).slice(0, 10).split("-"); return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : iso; }
+function ctSlug(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "contrato"; }
+function ctNomeArquivoSaida(c) {
+  var ext = (String(c.nome_arquivo || "").match(/\.([a-z0-9]{2,4})$/i) || [, "pdf"])[1].toLowerCase();
+  var partes = ["Contrato", c.parte || "sem nome", c.tipo || "", c.data_contrato ? ctFmtData(c.data_contrato).replace(/\//g, "-") : ""].filter(Boolean);
+  return partes.join(" - ").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 150) + "." + ext;
+}
+
+/* ---- leitura do texto do PDF (todas as páginas até 6 + a última) ---- */
+function ctExtrairTexto(blob) {
+  return new Promise(function (resolve) {
+    if (!window.pdfjsLib) { resolve(""); return; }
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      blob.arrayBuffer().then(function (buf) { return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise; }).then(function (doc) {
+        var pags = [];
+        for (var i = 1; i <= Math.min(doc.numPages, 6); i++) pags.push(i);
+        if (doc.numPages > 6) pags.push(doc.numPages);
+        return Promise.all(pags.map(function (n) {
+          return doc.getPage(n).then(function (pg) {
+            return pg.getTextContent().then(function (tc) {
+              var linhas = {}, ordem = [];
+              tc.items.forEach(function (it) {
+                var y = Math.round((it.transform && it.transform[5]) || 0);
+                if (!linhas[y]) { linhas[y] = []; ordem.push(y); }
+                linhas[y].push({ x: (it.transform && it.transform[4]) || 0, s: it.str });
+              });
+              ordem.sort(function (a, b) { return b - a; });
+              return ordem.map(function (y) { return linhas[y].sort(function (a, b) { return a.x - b.x; }).map(function (o) { return o.s; }).join(" "); }).join("\n");
+            });
+          });
+        })).then(function (t) { resolve(t.join("\n")); });
+      }).catch(function () { resolve(""); });
+    } catch (e) { resolve(""); }
+  });
+}
+
+/* ---- reconhecimento: de quem é o contrato, tipo e data ----
+   Testado contra contratos reais da RF (Suzano, motorista autônomo, arrendamento
+   e cessão de posse da Endicon). Regras: descarta o CNPJ da RF e o CPF de quem
+   assina POR ela (representante/sócio); o nome é o começo da cláusula que
+   qualifica a parte, até a primeira vírgula. */
+var CT_MESES = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+var CT_RF_CPF_SOCIO = "01311919503";
+var CT_ROTULOS = "contratante|contratad[oa]|locador[a]?|locat[aá]ri[oa]|arrendador[a]?|arrendat[aá]ri[oa]|comodante|comodat[aá]ri[oa]|cedente|cession[aá]ri[oa]|segurador[a]?|segurad[oa]|outorgante|outorgad[oa]|prestador[a]?|tomador[a]?";
+function ctEhRF(n) { return /\br\.?\s*f\.?\s*log[ií]stic|^e?rf\s+log/i.test(String(n || "")); }
+function ctLimparNome(s) {
+  s = String(s || "").replace(/\s+/g, " ").trim();
+  var rot = new RegExp("(?:^|(?<=[\\s(]))(?:nome completo|raz[aã]o social|nome empresarial|nome|das partes|de um lado|de outro lado|e,? de outro|" + CT_ROTULOS + ")(?:\\s*\\([^)]{0,40}\\))?\\s*[:\\-–,]?\\s*", "gi");
+  var m, fim = -1; while ((m = rot.exec(s))) { if (m.index + m[0].length < s.length - 2) fim = m.index + m[0].length; }
+  if (fim > 0) s = s.slice(fim);
+  s = s.split(/,|\s(?:pessoa jur[ií]dica|inscrit[oa]|com sede|brasileir[oa]|sociedade an[oô]nima|portador[a]?|neste ato|doravante|estabelecid[oa]|situad[oa]|residente|domiciliad[oa]|cnpj|cpf|rg)\b/i)[0];
+  s = s.replace(/^[\s"'“”\-–:;.()]+|[\s"'“”\-–:;()]+$/g, "").replace(/^(a|o|à|ao|pelo|pela)\s+/i, "").trim();
+  if (s.length < 3 || /^\d+$/.test(s) || /^(as partes|partes|empresa)$/i.test(s)) return "";
+  return s.slice(0, 90);
+}
+function ctTipoPorTexto(x) {
+  x = String(x || "").toLowerCase();
+  if (/ap[oó]lice|contrato de seguro/.test(x)) return "Seguro";
+  if (/rastread|rastreament|telemetria/.test(x)) return "Rastreamento";
+  if (/financiamento|c[eé]dula de cr[eé]dito|aliena[cç][aã]o fiduci[aá]ria em garantia/.test(x)) return "Financiamento";
+  if (/contrato social|altera[cç][aã]o contratual/.test(x)) return "Societário";
+  if (/arrendamento|cess[aã]o de posse|cess[aã]o de uso/.test(x)) return "Veículo (arrendamento / cessão)";
+  if (/comodato/.test(x)) return "Comodato";
+  if (/loca[cç][aã]o|aluguel/.test(x)) return "Locação";
+  if (/motorista|aut[oô]nomo|agregad/.test(x)) return "Motorista / agregado";
+  if (/transporte|frete|middle mile|operador log|log[ií]stic|distribui[cç]/.test(x)) return "transporte";
+  if (/presta[cç][aã]o de servi[cç]os|assessoria|marketing|consultoria|fornecimento/.test(x)) return "Fornecedor / serviço";
+  return "";
+}
+function ctPapelRF(plano) {   // a RF é contratante ou contratada? papel mais perto do CNPJ da RF
+  var re = /24\.?916\.?554\/?0001-?00/g, m;
+  while ((m = re.exec(plano))) {
+    var ini = Math.max(0, m.index - 500), jan = plano.slice(ini, m.index + 500), centro = m.index - ini;
+    var rp = /contratante|contratad[ao]/gi, r, melhor = null;
+    while ((r = rp.exec(jan))) { var d = Math.abs(r.index - centro); if (!melhor || d < melhor.d) melhor = { d: d, p: r[0].toLowerCase() }; }
+    if (melhor) return melhor.p.indexOf("contratante") === 0 ? "contratante" : "contratada";
+  }
+  return "";
+}
+function ctReconhecer(texto, nomeArquivo) {
+  var t = String(texto || "").replace(/ /g, " ");
+  var plano = t.replace(/\n/g, " ").replace(/\s+/g, " ");
+  var res = { parte: "", documento: "", tipo: "Outro", data_contrato: null, lido: false };
+  if (plano.replace(/\s/g, "").length < 80) return res;   // sem camada de texto (escaneado)
+
+  // 1) CNPJ/CPF da outra parte, com o nome que abre a cláusula dela
+  var re = /(?:CNPJ|C\.N\.P\.J\.?|CPF|C\.P\.F\.?)(?:\/MF)?(?:\s*\/\s*(?:IE|RG)[^0-9]{0,30})?\s*(?:sob\s+(?:o\s+)?)?(?:n[º°o.]*\s*)?:?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})/gi;
+  var achados = [], m;
+  while ((m = re.exec(plano))) {
+    var doc = ctSoDig(m[1]);
+    if (doc.slice(0, 8) === CT_RF_CNPJ.slice(0, 8) || doc === CT_RF_CPF_SOCIO) continue;
+    var antes = plano.slice(Math.max(0, m.index - 450), m.index);
+    // CPF de quem assina pela parte (representante, sócio, testemunha, certificado digital) não é a parte —
+    // a não ser que, depois dessa palavra, já tenha começado a qualificação de outra parte.
+    var cauda = antes.slice(-170), iRep = -1, iRot = -1, mm;
+    var rxRep = /representant|representad|s[oó]ci[oa]|administrador|procurador|testemunha|assinado (?:digitalmente|de forma digital)/gi;
+    var rxRot = new RegExp("nome completo|raz[aã]o social|" + CT_ROTULOS, "gi");
+    while ((mm = rxRep.exec(cauda))) iRep = mm.index;
+    while ((mm = rxRot.exec(cauda))) iRot = mm.index;
+    if (iRep > -1 && iRep > iRot) continue;
+    var corte = -1, rc = /;|[a-zà-ú0-9)”"]\.\s|\s[–-]\s/g, x;
+    while ((x = rc.exec(antes))) corte = x.index + x[0].length;
+    var nome = ctLimparNome(corte > 0 ? antes.slice(corte) : antes);
+    if (ctEhRF(nome)) continue;
+    achados.push({ doc: doc, nome: nome });
+  }
+  // rótulo explícito ("CEDENTE: XYZ", "CONTRATADO ... Nome completo XYZ")
+  var porRotulo = "", rr = new RegExp("(?:" + CT_ROTULOS + ")\\s*:\\s*([^\\n]{3,140})", "gi"), rm;
+  while ((rm = rr.exec(t))) { var n2 = ctLimparNome(rm[1]); if (n2 && !ctEhRF(n2)) { porRotulo = n2; break; } }
+  var melhor = achados.find(function (a) { return a.nome; }) || achados[0] || null;
+  if (melhor) { res.documento = melhor.doc; res.parte = melhor.nome || porRotulo; }
+  else res.parte = porRotulo;
+
+  // 2) tipo: pelo título; se o título não diz, pelo começo do texto
+  var mt = plano.slice(0, 2500).match(/(?:contrato|instrumento|ap[oó]lice|termo)[^.;]{0,170}/i);
+  var tipo = ctTipoPorTexto(mt ? mt[0] : "") || ctTipoPorTexto(plano.slice(0, 1500));
+  if (tipo === "transporte") { var papel = ctPapelRF(plano); tipo = papel === "contratante" ? "Fornecedor / serviço" : "Cliente / transporte"; }
+  res.tipo = tipo || "Outro";
+
+  // 3) data: a última por extenso; senão "Data: dd/mm/aaaa"; senão a última dd/mm/aaaa do fim
+  var datas = [], dm, rx1 = /(\d{1,2})\s*º?\s+de\s+(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})/gi;
+  while ((dm = rx1.exec(plano))) datas.push({ d: +dm[1], m: CT_MESES[dm[2].toLowerCase().replace("ç", "c")], a: +dm[3] });
+  if (!datas.length) {
+    var rx2 = /\b(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(20\d{2})\b/g, fimTxt = plano.slice(-3000);
+    var rd = /data\s*:?\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(20\d{2})/i.exec(plano);
+    if (rd) datas.push({ d: +rd[1], m: +rd[2], a: +rd[3] });
+    else while ((dm = rx2.exec(fimTxt))) datas.push({ d: +dm[1], m: +dm[2], a: +dm[3] });
+  }
+  if (!datas.length) {   // assinatura digital: "Data: 2026.02.06 11:40"
+    var rs = /data\s*:?\s*(20\d{2})\.(\d{2})\.(\d{2})/i.exec(plano);
+    if (rs) datas.push({ d: +rs[3], m: +rs[2], a: +rs[1] });
+  }
+  datas = datas.filter(function (q) { return q.m >= 1 && q.m <= 12 && q.d >= 1 && q.d <= 31 && q.a >= 1990 && q.a <= 2100; });
+  if (datas.length) { var u = datas[datas.length - 1]; res.data_contrato = u.a + "-" + String(u.m).padStart(2, "0") + "-" + String(u.d).padStart(2, "0"); }
+  res.lido = !!res.parte;
+  return res;
+}
+
+/* ---- banco ---- */
+function ctCarregar(forcar) {
+  if (!ehMaster()) return;
+  if (__ct.carregando || (__ct.carregado && !forcar)) return;
+  __ct.carregando = true;
+  rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão com o servidor");
+    return sb.from("contratos").select("*").order("criado_em", { ascending: false });
+  }).then(function (r) {
+    if (r.error) throw new Error(r.error.message);
+    __ct.lista = r.data || []; __ct.carregado = true; __ct.carregando = false; __ct.msg = ""; render();
+  }).catch(function (e) { __ct.carregando = false; __ct.carregado = true; __ct.msg = "✖ " + (e.message || e); render(); });
+}
+function ctHash(blob) {
+  return blob.arrayBuffer().then(function (b) { return crypto.subtle.digest("SHA-256", b); })
+    .then(function (h) { return Array.from(new Uint8Array(h)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join(""); })
+    .catch(function () { return ""; });
+}
+function ctEnviar(input) {
+  if (!ehMaster()) return;
+  var arquivos = Array.prototype.slice.call((input && input.files) || []);
+  if (!arquivos.length) return;
+  __ct.enviando = true;
+  var ok = 0, rep = 0, erros = [], conferir = 0;
+  function st(s) { __ct.msg = s; render(); }
+  var seq = Promise.resolve();
+  arquivos.forEach(function (file, idx) {
+    seq = seq.then(function () {
+      st("⏳ " + (idx + 1) + "/" + arquivos.length + " — lendo " + file.name + "...");
+      return rfDocsPreparar(file, st).then(function (prep) {
+        var blob = prep.blob;
+        return ctHash(blob).then(function (hash) {
+          if (hash && __ct.lista.some(function (c) { return c.hash === hash; })) { rep++; return; }
+          var lerTexto = prep.ct === "application/pdf" ? ctExtrairTexto(blob) : Promise.resolve("");
+          return lerTexto.then(function (texto) {
+            var rec = ctReconhecer(texto, file.name);
+            if (!rec.lido) conferir++;
+            var base = rec.parte || file.name.replace(/\.[^.]+$/, "");
+            var caminho = new Date().getFullYear() + "/" + Date.now() + "-" + ctSlug(base) + "." + (prep.ext || "pdf");
+            return rfGetClient().then(function (sb) {
+              if (!sb) throw new Error("sem conexão");
+              return sb.storage.from(CT_BUCKET).upload(caminho, blob, { contentType: prep.ct || "application/pdf", upsert: false }).then(function (up) {
+                if (up.error) throw new Error(up.error.message);
+                var linha = { caminho: caminho, nome_arquivo: file.name, parte: rec.parte || base, documento: rec.documento || null, tipo: rec.tipo || "Outro", data_contrato: rec.data_contrato, tamanho: blob.size, lido_auto: rec.lido, hash: hash || null };
+                return sb.from("contratos").insert(linha).select().single().then(function (ins) {
+                  if (ins.error) { sb.storage.from(CT_BUCKET).remove([caminho]); throw new Error(ins.error.message); }
+                  __ct.lista.unshift(ins.data); ok++;
+                });
+              });
+            });
+          });
+        });
+      }).catch(function (e) { erros.push(file.name + ": " + (e.message || e)); });
+    });
+  });
+  seq.then(function () {
+    __ct.enviando = false;
+    if (input) input.value = "";
+    var partes = [];
+    if (ok) partes.push("✔ " + ok + " contrato(s) guardado(s)");
+    if (rep) partes.push(rep + " já estava(m) no cofre (mesmo arquivo)");
+    if (conferir) partes.push("⚠ " + conferir + " sem texto legível — confira o nome no ✏");
+    if (erros.length) partes.push("✖ " + erros.join(" | "));
+    __ct.msg = partes.join(" · ");
+    render();
+  });
+}
+function ctBaixarBlob(c) {
+  return rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    return sb.storage.from(CT_BUCKET).download(c.caminho).then(function (r) { if (r.error) throw new Error(r.error.message); return r.data; });
+  });
+}
+function ctBaixar(id) {
+  var c = __ct.lista.find(function (x) { return x.id === id; }); if (!c) return;
+  __ct.msg = "⏳ baixando " + (c.parte || c.nome_arquivo) + "..."; render();
+  ctBaixarBlob(c).then(function (b) { rfBaixarBlob(b, ctNomeArquivoSaida(c)); __ct.msg = ""; render(); })
+    .catch(function (e) { __ct.msg = "✖ " + (e.message || e); render(); });
+}
+function ctFiltrados() {
+  var f = __ct.filtro, q = String(f.q || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim(), qd = ctSoDig(f.q);
+  return __ct.lista.filter(function (c) {
+    if (f.tipo && c.tipo !== f.tipo) return false;
+    if (f.ano && String(c.data_contrato || "").slice(0, 4) !== f.ano) return false;
+    if (!q) return true;
+    var alvo = [c.parte, c.tipo, c.nome_arquivo, c.observacao, ctFmtDoc(c.documento)].join(" ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    return alvo.indexOf(q) !== -1 || (qd.length >= 4 && String(c.documento || "").indexOf(qd) !== -1);
+  });
+}
+function ctSetFiltro(campo, valor) { __ct.filtro[campo] = valor; render(); var el = document.getElementById("ct-busca"); if (campo === "q" && el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }
+function ctExportarZip() {
+  var lista = ctFiltrados();
+  if (!lista.length) { alert("Nenhum contrato no filtro."); return; }
+  if (lista.length === 1) { ctBaixar(lista[0].id); return; }
+  __ct.msg = "⏳ montando o ZIP com " + lista.length + " contratos..."; render();
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) throw new Error("não consegui carregar o compactador (verifique a internet)");
+    var zip = new JSZip(), usados = {}, falhas = [], feitos = 0;
+    var seq = Promise.resolve();
+    lista.forEach(function (c) {
+      seq = seq.then(function () {
+        return ctBaixarBlob(c).then(function (b) {
+          var nome = ctNomeArquivoSaida(c);
+          if (usados[nome]) nome = nome.replace(/(\.[^.]+)$/, " (" + (++usados[nome]) + ")$1"); else usados[nome] = 1;
+          zip.file(nome, b); feitos++;
+          __ct.msg = "⏳ " + feitos + "/" + lista.length + " no ZIP..."; render();
+        }).catch(function () { falhas.push(c.parte || c.nome_arquivo); });
+      });
+    });
+    return seq.then(function () { return zip.generateAsync({ type: "blob" }); }).then(function (blob) {
+      var hoje = new Date().toISOString().slice(0, 10);
+      rfBaixarBlob(blob, "Contratos RF " + hoje + ".zip");
+      __ct.msg = "✔ ZIP com " + feitos + " contrato(s)" + (falhas.length ? " · ✖ não baixou: " + falhas.join(", ") : "");
+      render();
+    });
+  }).catch(function (e) { __ct.msg = "✖ " + (e.message || e); render(); });
+}
+function ctExportarLista() {
+  var lista = ctFiltrados();
+  if (!lista.length) { alert("Nenhum contrato no filtro."); return; }
+  if (!window.XLSX) { alert("Planilha indisponível (verifique a internet)."); return; }
+  var linhas = lista.map(function (c) { return { "Parte": c.parte || "", "CNPJ/CPF": ctFmtDoc(c.documento), "Tipo": c.tipo || "", "Data": ctFmtData(c.data_contrato), "Arquivo original": c.nome_arquivo, "Observação": c.observacao || "", "Guardado em": ctFmtData(String(c.criado_em || "").slice(0, 10)) }; });
+  var ws = XLSX.utils.json_to_sheet(linhas), wb = XLSX.utils.book_new();
+  ws["!cols"] = [{ wch: 40 }, { wch: 20 }, { wch: 22 }, { wch: 12 }, { wch: 40 }, { wch: 40 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, ws, "Contratos");
+  XLSX.writeFile(wb, "Contratos RF " + new Date().toISOString().slice(0, 10) + ".xlsx");
+}
+function ctEditar(id) { __ct.editando = __ct.editando === id ? null : id; render(); }
+function ctSalvarEdicao(id) {
+  var c = __ct.lista.find(function (x) { return x.id === id; }); if (!c) return;
+  function v(k) { var el = document.getElementById("ct-ed-" + k); return el ? el.value : ""; }
+  var dados = { parte: v("parte").trim() || c.parte, documento: ctSoDig(v("documento")) || null, tipo: v("tipo") || "Outro", data_contrato: v("data") || null, observacao: v("obs").trim() || null, atualizado_em: new Date().toISOString() };
+  __ct.msg = "⏳ salvando..."; render();
+  rfGetClient().then(function (sb) { return sb.from("contratos").update(dados).eq("id", id).select().single(); })
+    .then(function (r) { if (r.error) throw new Error(r.error.message); Object.assign(c, r.data); __ct.editando = null; __ct.msg = "✔ salvo"; render(); })
+    .catch(function (e) { __ct.msg = "✖ " + (e.message || e); render(); });
+}
+function ctExcluir(id) {
+  var c = __ct.lista.find(function (x) { return x.id === id; }); if (!c) return;
+  if (!confirm("Excluir o contrato de " + (c.parte || c.nome_arquivo) + "?\nO arquivo sai do cofre e não volta.")) return;
+  rfGetClient().then(function (sb) {
+    return sb.storage.from(CT_BUCKET).remove([c.caminho]).then(function () { return sb.from("contratos").delete().eq("id", id); });
+  }).then(function (r) {
+    if (r && r.error) throw new Error(r.error.message);
+    __ct.lista = __ct.lista.filter(function (x) { return x.id !== id; }); __ct.msg = "✔ excluído"; render();
+  }).catch(function (e) { __ct.msg = "✖ " + (e.message || e); render(); });
+}
+
+/* ---- tela ---- */
+function contratosHTML() {
+  if (!ehMaster()) return '<div style="padding:30px;color:#999;">Área restrita.</div>';
+  if (!__ct.carregado) { setTimeout(function () { ctCarregar(); }, 0); }
+  var f = __ct.filtro, lista = ctFiltrados();
+  var anos = Array.from(new Set(__ct.lista.map(function (c) { return String(c.data_contrato || "").slice(0, 4); }).filter(Boolean))).sort().reverse();
+  var tiposUsados = CT_TIPOS.filter(function (t) { return __ct.lista.some(function (c) { return c.tipo === t; }); });
+  var inp = "background:#111;border:1px solid #333;color:#eee;border-radius:8px;padding:9px 10px;font-size:14px;";
+  var btn = "background:#1A1A1A;border:1px solid #333;color:#eee;border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer;";
+  var btnOuro = "background:" + GOLD + ";border:none;color:#000;font-weight:800;border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer;";
+  var msgCor = /^✖/.test(__ct.msg) ? "#ff6b6b" : (/^⚠/.test(__ct.msg) ? "#f0b429" : "#9fd39f");
+
+  var linhas = lista.map(function (c) {
+    var ed = __ct.editando === c.id;
+    var selo = c.lido_auto ? "" : ' <span title="O PDF não tinha texto legível: confira o nome" style="color:#f0b429;font-size:11px;">⚠ conferir</span>';
+    var h = '<div style="border:1px solid #2A2A2A;border-radius:10px;padding:12px;margin-bottom:8px;background:#0E0E0E;">'
+      + '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;">'
+      + '<div style="min-width:0;flex:1 1 260px;">'
+      + '<div style="font-weight:800;color:#fff;font-size:15px;word-break:break-word;">' + esc(c.parte || "(sem nome)") + selo + '</div>'
+      + '<div style="color:#999;font-size:12px;margin-top:3px;">' + esc(c.tipo || "Outro") + (c.documento ? " · " + esc(ctFmtDoc(c.documento)) : "") + " · " + esc(ctFmtData(c.data_contrato)) + '</div>'
+      + '<div style="color:#666;font-size:11px;margin-top:3px;word-break:break-all;">📄 ' + esc(c.nome_arquivo) + (c.observacao ? " · " + esc(c.observacao) : "") + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+      + '<button style="' + btnOuro + 'padding:8px 12px;font-size:13px;" onclick="ctBaixar(\'' + c.id + '\')">⬇ Baixar</button>'
+      + '<button style="' + btn + '" onclick="ctEditar(\'' + c.id + '\')">✏</button>'
+      + '<button style="' + btn + 'color:#ff6b6b;" onclick="ctExcluir(\'' + c.id + '\')">🗑</button>'
+      + '</div></div>';
+    if (ed) {
+      h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:10px;">'
+        + '<label style="font-size:11px;color:#999;">Parte<input id="ct-ed-parte" style="' + inp + 'width:100%;box-sizing:border-box;" value="' + esc(c.parte || "") + '"></label>'
+        + '<label style="font-size:11px;color:#999;">CNPJ/CPF<input id="ct-ed-documento" style="' + inp + 'width:100%;box-sizing:border-box;" value="' + esc(ctFmtDoc(c.documento)) + '"></label>'
+        + '<label style="font-size:11px;color:#999;">Tipo<select id="ct-ed-tipo" style="' + inp + 'width:100%;box-sizing:border-box;">' + CT_TIPOS.map(function (t) { return '<option' + (t === c.tipo ? " selected" : "") + '>' + esc(t) + '</option>'; }).join("") + '</select></label>'
+        + '<label style="font-size:11px;color:#999;">Data<input id="ct-ed-data" type="date" style="' + inp + 'width:100%;box-sizing:border-box;" value="' + esc(String(c.data_contrato || "").slice(0, 10)) + '"></label>'
+        + '<label style="font-size:11px;color:#999;grid-column:1/-1;">Observação<input id="ct-ed-obs" style="' + inp + 'width:100%;box-sizing:border-box;" value="' + esc(c.observacao || "") + '"></label>'
+        + '</div><div style="margin-top:8px;display:flex;gap:6px;"><button style="' + btnOuro + 'padding:8px 12px;font-size:13px;" onclick="ctSalvarEdicao(\'' + c.id + '\')">Salvar</button><button style="' + btn + '" onclick="ctEditar(\'' + c.id + '\')">Cancelar</button></div>';
+    }
+    return h + '</div>';
+  }).join("");
+
+  return '<div style="max-width:1100px;margin:0 auto;padding:16px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+    + '<div><div style="font-size:20px;font-weight:800;color:' + GOLD + ';">📜 Contratos</div>'
+    + '<div style="font-size:12px;color:#888;margin-top:3px;">🔒 Só o seu login vê. Anexe o PDF: o sistema lê e reconhece de quem é o contrato.</div></div>'
+    + '<label style="' + btnOuro + 'display:inline-block;' + (__ct.enviando ? "opacity:.6;pointer-events:none;" : "") + '">' + (__ct.enviando ? "⏳ Enviando..." : "＋ Anexar contratos (PDF)")
+    + '<input type="file" accept="application/pdf,image/*" multiple style="display:none;" onchange="ctEnviar(this)"></label>'
+    + '</div>'
+    + (__ct.msg ? '<div style="background:#111;border:1px solid #2A2A2A;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:' + msgCor + ';">' + esc(__ct.msg) + '</div>' : "")
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+    + '<input id="ct-busca" style="' + inp + 'flex:1 1 240px;min-width:0;" placeholder="🔎 Buscar por nome, CNPJ/CPF, arquivo..." value="' + esc(f.q) + '" oninput="ctSetFiltro(\'q\', this.value)">'
+    + '<select style="' + inp + '" onchange="ctSetFiltro(\'tipo\', this.value)"><option value="">Todos os tipos</option>' + tiposUsados.map(function (t) { return '<option' + (t === f.tipo ? " selected" : "") + '>' + esc(t) + '</option>'; }).join("") + '</select>'
+    + '<select style="' + inp + '" onchange="ctSetFiltro(\'ano\', this.value)"><option value="">Todos os anos</option>' + anos.map(function (a) { return '<option' + (a === f.ano ? " selected" : "") + '>' + a + '</option>'; }).join("") + '</select>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">'
+    + '<span style="color:#999;font-size:13px;flex:1 1 auto;">' + (__ct.carregando && !__ct.carregado ? "carregando..." : lista.length + " de " + __ct.lista.length + " contrato(s)") + '</span>'
+    + '<button style="' + btn + '" onclick="ctExportarZip()">⬇ Baixar filtrados (ZIP)</button>'
+    + '<button style="' + btn + '" onclick="ctExportarLista()">⬇ Lista em Excel</button>'
+    + '<button style="' + btn + '" onclick="ctCarregar(true)">↻</button>'
+    + '</div>'
+    + (lista.length ? linhas : '<div style="text-align:center;color:#777;padding:40px 10px;border:1px dashed #333;border-radius:10px;">' + (__ct.lista.length ? "Nenhum contrato neste filtro." : "Nenhum contrato guardado ainda. Toque em <b>＋ Anexar contratos</b> e escolha um ou vários PDFs.") + '</div>')
+    + '</div>';
+}
+/* contexto do assistente (regra permanente): só o master recebe, e só o que já foi carregado */
+function ctContextoAssistente() {
+  if (!ehMaster()) return "";
+  var cab = "CONTRATOS (v623, aba Contratos no grupo CADASTROS, so o login master ve -- protegido no banco, nenhum outro login le): cofre dos contratos da RF. Anexar: botao '+ Anexar contratos (PDF)', aceita varios de uma vez; o sistema le o texto do PDF e reconhece a outra parte (nome e CNPJ/CPF, ignora o da RF), o tipo e a data. PDF escaneado sem texto entra com o nome do arquivo e o selo 'conferir' -- corrigir no lapis. Filtros: busca (nome, CNPJ/CPF, arquivo), tipo e ano. Exportar: 'Baixar' em cada contrato, 'Baixar filtrados (ZIP)' para todos os do filtro e 'Lista em Excel'. Arquivo repetido (mesmo conteudo) e recusado. O assistente NAO baixa contrato pela ferramenta baixar_arquivo -- oriente a abrir a aba Contratos e usar o filtro.";
+  if (!__ct.carregado) return cab + " A lista ainda nao foi carregada nesta sessao (carrega ao abrir a aba).";
+  var l = __ct.lista.slice(0, 120).map(function (c) { return "- " + (c.parte || c.nome_arquivo) + " | " + (c.tipo || "Outro") + " | " + ctFmtData(c.data_contrato) + (c.documento && String(c.documento).length === 14 ? " | CNPJ " + ctFmtDoc(c.documento) : ""); }).join("\n");
+  return cab + "\nContratos guardados (" + __ct.lista.length + "):\n" + (l || "(nenhum)");
+}
+
 function rfBaixarBlob(blob, nome) {
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
@@ -37965,6 +38356,7 @@ ${bloco529}
 ${bloco530}
 ${blocoLogos}
 ${blocoPessoal}
+${ctContextoAssistente()}
 ${bloco542}
 ${blocoPenteFino}
 ${blocoCampanhas}
@@ -41767,7 +42159,7 @@ function renderTabela() {
         <div style="margin-bottom:12px;">
           <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas liberadas (ignorado se papel = motorista ou cliente)</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
-            ${ABAS_DEF.filter((a) => a.id !== "pessoal").map((a) => `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#bbb;">
+            ${ABAS_DEF.filter((a) => a.id !== "pessoal" && a.id !== "contratos").map((a) => `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#bbb;">
               <input type="checkbox" onchange="criarUsuarioToggleModulo('${a.id}',this.checked)"> ${esc(a.label)}
             </label>`).join("")}
           </div>
@@ -41835,7 +42227,7 @@ function renderTabela() {
           ${master ? `<div style="margin-top:10px;color:#999;font-size:12px;">🛡️ Login master: vê todas as abas, sempre. Não pode ser desativado, rebaixado nem excluído.</div>` : p.papel === "admin" ? `<div style="margin-top:10px;border-top:1px solid #222;padding-top:10px;">
             <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#fff;"><input type="checkbox" ${rest ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','_restrito',this.checked)"> <b>Limitar as abas deste administrador</b></label>
             <div style="font-size:11.5px;color:#999;margin:4px 0 8px;">${rest ? "Ele só vê as abas marcadas abaixo (continua com os poderes de admin dentro delas)." : "Desmarcado: vê todas as abas, como admin."}</div>
-            ${rest ? `<div style="display:flex;flex-wrap:wrap;gap:10px 18px;">${ABAS_DEF.filter((a) => a.id !== "pessoal").map((a) => {
+            ${rest ? `<div style="display:flex;flex-wrap:wrap;gap:10px 18px;">${ABAS_DEF.filter((a) => a.id !== "pessoal" && a.id !== "contratos").map((a) => {
                 const marcado = Array.isArray(p.modulos) && p.modulos.indexOf(a.id) !== -1;
                 return `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${marcado ? "#fff" : "#888"};"><input type="checkbox" ${marcado ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','${a.id}',this.checked)"> ${esc(a.label)}</label>`;
               }).join("")}</div>` : ""}
@@ -41854,7 +42246,7 @@ function renderTabela() {
           <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
             <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas que este usuário pode ver</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
-              ${ABAS_DEF.filter((a) => a.id !== "pessoal").map((a) => {
+              ${ABAS_DEF.filter((a) => a.id !== "pessoal" && a.id !== "contratos").map((a) => {
                 const marcado = Array.isArray(p.modulos) && p.modulos.indexOf(a.id) !== -1;
                 const sens = ABAS_SENSIVEIS.indexOf(a.id) !== -1;
                 return `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${marcado ? "#fff" : "#888"};">
@@ -43344,6 +43736,10 @@ function renderTabela() {
 
   if (state.aba === "pessoal") {   // v549
     wrap.innerHTML = pessoalHTML();
+  }
+
+  if (state.aba === "contratos") {   // v623
+    wrap.innerHTML = contratosHTML();
   }
 
   if (state.aba === "campanhas") {   // v564
