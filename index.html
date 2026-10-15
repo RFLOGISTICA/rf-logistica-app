@@ -2,12 +2,13 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v629)</title>
+<title>RF Logística — Painel da Frota (v630)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v629">
+<meta name="rf-versao" content="v630">
 <meta name="rf-data" content="2026-10-15">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v630 (15/10/2026): CT-e DE SUBCONTRATACAO com DESTINATARIO PESSOA FISICA (CPF). O CT-e da JDL as vezes vai para pessoa fisica (ex.: CT-e 1.206.819, Leilton, CPF) e o app so aceitava CNPJ ("Falta: CNPJ do destinatario"). Agora aceita CPF: le o nome e a cidade do DACTE (IA ou XML), mostra os campos para conferir em "ver / corrigir os dados lidos" e manda para a rf-sefaz v15, que monta <dest><CPF> com a cidade pelo codigo IBGE. -->
 <!-- v629 (15/10/2026): SAO ROQUE -- botao "zerar bips" da carga (so master) saiu de dentro da Preparacao e fica sempre visivel ao lado do Relatorio da carga, em qualquer etapa e posto do aparelho. -->
 <!-- v628 (15/10/2026): SAO ROQUE -- carga separada em ETAPAS com cor propria: preparacao, 1 Etiquetagem (doca, roxo), 2 Carregamento (bau, laranja), Documentos (CT-e/CIOT/MDF-e + liberar rota, cinza) e 3 Entrega (rua, verde); faixa de 4 cores no cartao da carga; so a etapa da vez aberta, proximas com cadeado (master abre); cada aparelho escolhe o posto: tudo, so doca ou so bau. -->
 <!-- v627 (14/10/2026): SAO ROQUE -- rodape da etiqueta 10x15 com espaco entre o codigo e o texto da carga; botao "zerar bips" da carga (so master) para repetir teste; cartao da carga em PASSO A PASSO (so o passo da vez aberto, os outros recolhidos, avanca sozinho); carregamento TRAVADO na ordem do bau (caixa de outra parada e recusada com PARE dizendo a parada dela e a da vez; botao pular parada). -->
@@ -980,7 +981,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v629" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v630" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -25838,6 +25839,7 @@ function mdContextoAssistente() {
       + "\nROTA JDL PELO PDF DA RF (v567/v568, aba própria 🧭 Rota JDL no grupo Carregamento): a JDL passa as cidades, o Claude gera um PDF no padrão da roteirização da Suzano (ordem otimizada saindo e voltando a Feira de Santana, KM de cada trecho, rodagem urbana de 15 km por cidade, frete = R$ 4,80 por KM RODADO (Toco e 3/4; estimado na criação, recalculado sozinho pelo KM real do hodômetro). v569: placa, motorista e data escolhidos em lista na aba antes de anexar o PDF, e trocáveis em lista em cada rota) com o bloco #RFROT1 (cliente=Mercante/JDL;km=). Importa na aba 🧭 Rota JDL (lista as rotas importadas, com liberar para o motorista e excluir), na aba Viagens, caixa Mercante/JDL ('🧭 Rota JDL pelo PDF da RF'), ou no mesmo botão da roteirização Suzano: vira a viagem prevista com KM estimado, frete por KM, dias = KM/650 arredondado para cima, sem ajudante, e uma entrega por cidade. O KM real do hodômetro substitui a estimativa. v570: na aba Viagens não existe mais o botão de anexar foto do hodômetro (KM saída/chegada); a foto vem do motorista e lá aparece só o botão ver quando existir. A malha de cidades do cálculo agora tem todos os municípios da Bahia e do Nordeste (fora da BA, no formato 'Cidade - UF')."
       + "\nTRAVA DE EXCLUSAO EM MASSA (v563, 05/10/2026): incidente -- em 03/10 um aparelho marcou 653 itens como apagados de uma vez e em 05/10 sumiram 178 viagens, 30 compras, 337 manutencoes e 5 clientes; tudo foi restaurado do backup horario do banco. As compras lancadas em 05/10 foram renumeradas de 33 a 48 (continuando as antigas, que vao ate a 32). Agora o sistema nao deixa um salvar ou uma sincronizacao apagar mais de 10 itens e mais de 30% de uma lista de uma vez; se acontecer, ignora e registra no log."
       + "\nCT-e DE SUBCONTRATAÇÃO POR VIAGEM (v562, JT/Mateus): na aba Viagens, caixa JT/Mateus, o quadro '📄 CT-e de subcontratação — por viagem' lista cada viagem do mês com a situação: sem CT-e (vermelho), CT-e emitido aguardando o pagamento no extrato (laranja) ou CONSOLIDADA (verde, CT-e + pagamento). '+ emitir CT-e' abre o mesmo fluxo da JDL, mas para UMA viagem: anexar o CT-e que a JT emitiu daquela viagem (PDF, foto ou XML) → Conferir → testar (homologação) → ⚡ Emitir na SEFAZ, sempre com confirmação do Renato. O valor padrão é o valor da viagem (ou 'outro'); tomador vazio = a transportadora que emitiu o CT-e de referência (a JT). Autorizado, o sistema dá baixa sozinho: a viagem fica FATURADA com o nº do CT-e (selo na coluna Pago?) e vira CONSOLIDADA quando o pagamento estiver no extrato. Cancelar o CT-e desfaz a baixa. Viagens JT sem CT-e agora: " + (function () { try { return (state.viagens || []).filter(function (v) { return v.cliente === "JT/Mateus" && String(v.data || "") >= "2026-09-21" && !subVgCteOk(v); }).map(function (v) { return String(v.data).slice(0, 10) + " " + v.placa + " " + fmtR(v.valorViagem); }).join("; ") || "nenhuma"; } catch (e) { return "?"; } })() + "."
+      + "\nCT-e DE SUBCONTRATAÇÃO — DESTINATÁRIO PESSOA FÍSICA (v630): quando o CT-e da contratante (ex.: JDL) vai para pessoa física, o destinatário tem CPF (11 números) e não CNPJ. O app aceita: lê nome e cidade do DACTE e mostra os campos 'Nome do destinatário', 'Cidade do destino', 'UF' e 'Cód. IBGE' em 'ver / corrigir os dados lidos'. Se aparecer 'Falta: nome/cidade do destinatário', é só preencher ali. Antes da v630 dava 'Falta ou está errado: CNPJ do destinatário'. Uma medição pode ter vários CT-e de subcontratação: emite um, o botão '+ emitir' volta e emite o próximo (ex.: Mês 10.1 da JDL, um por recibo, com a opção 'outro' no valor)."
       + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
       + mdSubContexto()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
@@ -26381,7 +26383,7 @@ function subObsPadrao(md) {
 }
 function subAbrir(medId) {
   var md = subAcha(medId); if (!md) return;
-  state._sub = { id: medId, chaveAnt: "", remCnpj: "", remIe: "", destCnpj: "", destIe: "", tomCnpj: "", tomIe: "", valorOutro: "", lidoResumo: "",
+  state._sub = { id: medId, chaveAnt: "", remCnpj: "", remIe: "", destCnpj: "", destIe: "", destNome: "", destCidade: "", destUF: "", destCMun: "", tomCnpj: "", tomIe: "", valorOutro: "", lidoResumo: "",
     nfes: "", valorCarga: "", peso: "", volumes: "", produto: "", cfop: "5360", base: "bruto", obs: subObsPadrao(md), previa: null, msg: "" };
   render();
 }
@@ -26392,6 +26394,11 @@ function subAddNf(v) { var s = state._sub; if (!s) return; var novas = subChaves
 function subAplicarLido(d) {
   var s = state._sub; if (!s) return;
   s.chaveAnt = d.chave || ""; s.remCnpj = d.remCnpj || ""; s.remIe = d.remIe || ""; s.destCnpj = d.destCnpj || ""; s.destIe = d.destIe || "";
+  // v630: destinatario pessoa fisica (CPF) -- o CT-e precisa do nome e da cidade, que nao existem em consulta publica
+  s.destNome = d.destNome || ""; s.destUF = String(d.destUF || "").toUpperCase().slice(0, 2);
+  var mDest = String(d.destino || "").match(/(\d{7})\s*$/); s.destCMun = subDig(d.destCMun || (mDest ? mDest[1] : "")).slice(0, 7);
+  s.destCidade = d.destCidade || String(d.destino || "").replace(/\s*-\s*\d{7}\s*$/, "").replace(/\s*-\s*[A-Z]{2}\s*$/, "").trim();
+  if (!s.destUF) { var mUf = String(d.destino || "").match(/-\s*([A-Z]{2})\b/); s.destUF = mUf ? mUf[1] : "BA"; }
   // tomador: quem contratou a RF é quem emitiu o CT-e de referência (ex.: JDL) -- não o tomador do CT-e deles
   s.tomCnpj = ""; s.tomIe = d.emitIe || "";
   s.nfes = (d.nfes || []).join("\n"); s.valorCarga = d.valorCarga ? String(d.valorCarga).replace(".", ",") : "";
@@ -26414,7 +26421,8 @@ function subLerXml(txt) {
   var emit = bl("emit"), rem = bl("rem"), dest = bl("dest");
   var peso = 0, vol = 0;
   Array.prototype.forEach.call(x.getElementsByTagName("infQ"), function (n) { var u = q("cUnid", n), v = Number(q("qCarga", n)) || 0; if (u === "01" && !peso) peso = v; if (u === "03" && !vol) vol = v; });
-  return { chave: chave, emitNome: q("xNome", emit), emitIe: q("IE", emit), remCnpj: q("CNPJ", rem), remIe: q("IE", rem), destCnpj: q("CNPJ", dest), destIe: q("IE", dest),
+  return { chave: chave, emitNome: q("xNome", emit), emitIe: q("IE", emit), remCnpj: q("CNPJ", rem), remIe: q("IE", rem), destCnpj: q("CNPJ", dest) || q("CPF", dest), destIe: q("IE", dest),
+    destNome: q("xNome", dest), destCidade: q("xMun", dest), destUF: q("UF", dest), destCMun: q("cMun", dest),
     nfes: Array.prototype.map.call(x.getElementsByTagName("infNFe"), function (n) { return subDig(q("chave", n)); }).filter(function (c) { return c.length === 44; }),
     valorCarga: Number(q("vCarga")) || 0, peso: peso, volumes: vol, produto: q("proPred"), origem: q("xMunIni"), destino: q("xMunFim") };
 }
@@ -26447,7 +26455,7 @@ function subLerRef(input) {
       if (j.erroIA && !qrs.length) throw new Error(j.erroIA);
       var nf = (j.nfes || []).map(function (n) { return n.chave; });
       return { chave: qrs[0] || j.chave, chaveDoQr: !!qrs[0], erroIA: j.erroIA || "", qtdDocs: Number(j.qtdDocumentos) || 0, nfFaltando: j.nfFaltando || [], emitNome: (j.emitente || {}).nome, emitIe: (j.emitente || {}).ie, remCnpj: (j.remetente || {}).cnpj, remIe: (j.remetente || {}).ie,
-        destCnpj: (j.destinatario || {}).cnpj, destIe: (j.destinatario || {}).ie, nfes: nf, nfesRuins: (j.nfes || []).filter(function (n) { return !n.ok; }).length,
+        destCnpj: (j.destinatario || {}).cnpj, destIe: (j.destinatario || {}).ie, destNome: (j.destinatario || {}).nome, destCidade: (j.destinatario || {}).cidade, destUF: (j.destinatario || {}).uf, nfes: nf, nfesRuins: (j.nfes || []).filter(function (n) { return !n.ok; }).length,
         valorCarga: j.valorCarga, peso: j.peso, volumes: j.volumes, produto: j.produto, origem: j.origem, destino: j.destino };
     });
   p.then(function (d) {
@@ -26463,15 +26471,24 @@ function subSet(k, v, re) { if (state._sub) { state._sub[k] = v; if (k !== "prev
 function subCorpo(s, md) {
   var valor = s.base === "liquido" ? subLiq(md) : s.base === "outro" ? ccNum(s.valorOutro) : subBruto(md);   // v562
   return { chaveAnt: subDig(s.chaveAnt), remCnpj: subDig(s.remCnpj), remIe: subDig(s.remIe), destCnpj: subDig(s.destCnpj), destIe: subDig(s.destIe),
+    destNome: String(s.destNome || "").trim(), destCidade: String(s.destCidade || "").trim(), destUF: String(s.destUF || "").trim(), destCMun: subDig(s.destCMun),
     tomCnpj: subDig(s.tomCnpj), tomIe: subDig(s.tomIe), nfes: subChavesDoTexto(s.nfes).filter(subChaveOk), valorFrete: Math.round(valor * 100) / 100,
     valorCarga: ccNum(s.valorCarga), peso: subNum3(s.peso), volumes: ccNum(s.volumes), produto: String(s.produto || "").trim(), cfop: s.cfop, obs: String(s.obs || "").trim() };
 }
+function subCpfOk(c) { var d = subDig(c); if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+  var dv = function (n) { var t = 0; for (var i = 0; i < n; i++) t += Number(d[i]) * (n + 1 - i); var r = (t * 10) % 11; return r === 10 ? 0 : r; };
+  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]); }
 function subValidar(s) {
   var e = [];
   if (!subChaveOk(s.chaveAnt)) e.push("A chave do CT-e da contratante precisa ter 44 números e estar certa (confira no DACTE deles).");
   else if (subDig(s.chaveAnt).slice(20, 22) !== "57") e.push("A chave informada não é de CT-e (modelo 57).");
   if (subDig(s.remCnpj).length !== 14) e.push("CNPJ do remetente.");
-  if (subDig(s.destCnpj).length !== 14) e.push("CNPJ do destinatário.");
+  var dDoc = subDig(s.destCnpj);
+  if (dDoc.length === 11) {   // v630: destinatário pessoa física
+    if (!subCpfOk(dDoc)) e.push("CPF do destinatário com dígito errado.");
+    if (!String(s.destNome || "").trim()) e.push("Nome do destinatário (pessoa física) — abra 'ver / corrigir os dados lidos'.");
+    if (subDig(s.destCMun).length !== 7 && !String(s.destCidade || "").trim()) e.push("Cidade do destinatário — abra 'ver / corrigir os dados lidos'.");
+  } else if (dDoc.length !== 14) e.push("CNPJ ou CPF do destinatário.");
   var nf = subChavesDoTexto(s.nfes);
   if (!nf.filter(subChaveOk).length) e.push("Nenhuma chave de NF-e válida — abra 'ver / corrigir os dados lidos' e cole as chaves do DACTE.");
   if (!(ccNum(s.valorCarga) > 0)) e.push("Valor da carga — abra 'ver / corrigir os dados lidos' e preencha.");
@@ -26633,7 +26650,8 @@ function subBlocoHTML(md) {
       // demais dados lidos: escondidos, só para corrigir se a leitura errar
       h += '<details style="margin-top:8px;"' + (s.abrirDados ? " open" : "") + '><summary style="display:inline-block;font-size:12px;color:#4FC3F7;cursor:pointer;border:1px solid #4FC3F7;border-radius:6px;padding:3px 10px;">✏ ver / corrigir os dados lidos do CT-e</summary>'
         + lab("Chave do CT-e da contratante") + '<input ' + inp + 'width:100%;font-family:monospace;" value="' + esc(s.chaveAnt) + '" oninput="subSet(\'chaveAnt\',this.value)">'
-        + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("remCnpj", "CNPJ do remetente", 160) + campo("remIe", "IE do remetente", 100) + campo("destCnpj", "CNPJ do destinatário", 160) + campo("destIe", "IE do destinatário", 100) + campo("tomIe", "IE do tomador", 100) + '</div>'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("remCnpj", "CNPJ do remetente", 160) + campo("remIe", "IE do remetente", 100) + campo("destCnpj", "CNPJ ou CPF do destinatário", 160) + campo("destIe", "IE do destinatário", 100) + campo("tomIe", "IE do tomador", 100) + '</div>'
+        + (subDig(s.destCnpj).length === 11 ? '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("destNome", "Nome do destinatário (pessoa física)", 240) + campo("destCidade", "Cidade do destino", 160) + campo("destUF", "UF", 50) + campo("destCMun", "Cód. IBGE (opcional)", 110) + '</div>' : "")
         + lab("Chaves das NF-e (" + subChavesDoTexto(s.nfes).length + ")") + '<textarea ' + inp + 'width:100%;height:50px;font-family:monospace;" oninput="subSet(\'nfes\',this.value)">' + esc(s.nfes) + '</textarea>'
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + campo("valorCarga", "Valor da carga (R$)", 110) + campo("peso", "Peso (kg)", 90) + campo("volumes", "Volumes", 70) + campo("produto", "Produto", 200) + '</div>'
         + '<div>' + lab("CFOP") + '<select ' + inp + '" onchange="subSet(\'cfop\',this.value)">' + SUB_CFOP.map(function (o) { return '<option value="' + o[0] + '"' + (s.cfop === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") + '</select></div>'
