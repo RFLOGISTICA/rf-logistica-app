@@ -8,7 +8,7 @@
 <meta name="rf-versao" content="v633">
 <meta name="rf-data" content="2026-10-16">
 <meta name="rf-cliente" content="RF Logística">
-<!-- v633 (16/10/2026): ABA VIAGENS -- voltou o botao "📎 anexar foto" no KM SAIDA e no KM CHEGADA quando a viagem ainda nao tem a foto (a funcao rfKmUpload existia mas nenhum botao chamava). A IA le o KM da foto e preenche o campo. -->
+<!-- v633 (16/10/2026): COMPRAS -- a trava de documento repetido recusava OS de OUTRO caminhao so por ter o mesmo item e valor (OS 2984 do QDE8C12 x compra 21, OS 3024 do QDG7I41, DN Eletrica, diagnostico R$ 250). Agora nao e repetido quando o no da OS e diferente ou quando a placa e diferente. Mesmo no de OS continua barrando. -->
 <!-- v632 (15/10/2026): CT-e DE SUBCONTRATACAO -- botoes "Enviar todos" (compartilha todos os DACTE de uma vez, com as chaves e o total no texto) e "Baixar todos (ZIP)" (DACTE + XML de todos + CHAVES.txt) no cabecalho do bloco, quando ha 2 ou mais CT-e validos. Mostra tambem a contagem e a soma dos validos (cancelados nao entram). Pedido do Renato depois de emitir os 7 CT-e da Mes 10.1 da JDL. -->
 <!-- v631 (15/10/2026): CT-e DE SUBCONTRATACAO sem depender da BrasilAPI. Em 15/10 a consulta publica de CNPJ (BrasilAPI) caiu (503) e o CT-e 1.210.237 da JDL parou em "municipio sem codigo IBGE para o CNPJ 46736813000145". Agora o app manda tambem nome/cidade/codigo IBGE do remetente, do destinatario e o nome da contratante lidos do DACTE, e a rf-sefaz v16 usa esses dados quando a consulta de CNPJ falha. -->
 <!-- v630 (15/10/2026): CT-e DE SUBCONTRATACAO com DESTINATARIO PESSOA FISICA (CPF). O CT-e da JDL as vezes vai para pessoa fisica (ex.: CT-e 1.206.819, Leilton, CPF) e o app so aceitava CNPJ ("Falta: CNPJ do destinatario"). Agora aceita CPF: le o nome e a cidade do DACTE (IA ou XML), mostra os campos para conferir em "ver / corrigir os dados lidos" e manda para a rf-sefaz v15, que monta <dest><CPF> com a cidade pelo codigo IBGE. -->
@@ -22136,6 +22136,7 @@ function ccItensSig(itens) {
   if (!Array.isArray(itens) || !itens.length) return "";
   return itens.map(function (i) { return ccNormNome(i.descricao) + "=" + (Math.round((Number(i.valor) || 0) * 100)); }).sort().join("|");
 }
+function ccPlacaCmp(p) { return String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/1/g, "I").replace(/0/g, "O"); }   // v633: IA às vezes lê I como 1 (QDG7141)
 function ccAcharDuplicada(novo, ignorarId) {
   var achou = null;
   ccLista().forEach(function (c) {
@@ -22145,6 +22146,12 @@ function ccAcharDuplicada(novo, ignorarId) {
     if (!ccFornIgual({ cnpj: d.cnpj, nome: d.fornecedor || c.fornecedor }, { cnpj: novo.cnpj, nome: novo.nome })) return;
     var nums = [ccDocNum(c.os && c.os.numero), ccDocNum(d.numero)].concat((c.orcamentos || []).map(function (o) { return ccDocNum(o.numero); })).filter(Boolean);
     if (novo.num && nums.indexOf(novo.num) !== -1) { achou = { c: c, motivo: "o mesmo nº de OS/orçamento (" + novo.num + ")" }; return; }
+    /* v633 — Renato, 16/10/2026: OS 2984 do QDE8C12 (DN Elétrica, diagnóstico R$ 250) foi recusada como
+       repetida da compra nº 21 (OS 3024, QDG7I41) só por ter o mesmo item e valor. Serviço igual em
+       OUTRO caminhão ou com OUTRO nº de OS não é documento repetido. */
+    if (novo.num && nums.length && nums.indexOf(novo.num) === -1) return;
+    var pc = ccPlacaCmp(c.placa || d.placa), pn = ccPlacaCmp(novo.placa);
+    if (pc && pn && pc !== pn) return;
     var tot = Number(d.total) || Number(c.valor) || 0;
     if (novo.total > 0 && Math.abs(tot - novo.total) < 0.05) {
       if (novo.itens && novo.itens === ccItensSig(c.itens)) { achou = { c: c, motivo: "os mesmos itens e o mesmo valor (" + fmtR(tot) + ")" }; return; }
@@ -22162,7 +22169,7 @@ function ccDupMsg(dup) {
 function ccNovoDocInfo() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
   var j = state._ccLido || {};
-  return { cnpj: j.cnpj || "", nome: j.fornecedor || g("cc-forn"), num: ccDocNum(g("cc-nos") || j.numero), total: Number(j.total) || ccNum(g("cc-valor")) || 0, data: j.data || "", itens: ccItensSig(j.itens) };
+  return { cnpj: j.cnpj || "", nome: j.fornecedor || g("cc-forn"), num: ccDocNum(g("cc-nos") || j.numero), total: Number(j.total) || ccNum(g("cc-valor")) || 0, data: j.data || "", itens: ccItensSig(j.itens), placa: g("cc-placa") || j.placa || "" };
 }
 /* reserva no banco a impressão digital dos arquivos; {dup, dono} se alguém já usou */
 function ccDocReservar(files, ref, contexto, placa) {
@@ -25842,7 +25849,7 @@ function mdContextoAssistente() {
       + "\nROTA JDL PELO PDF DA RF (v567/v568, aba própria 🧭 Rota JDL no grupo Carregamento): a JDL passa as cidades, o Claude gera um PDF no padrão da roteirização da Suzano (ordem otimizada saindo e voltando a Feira de Santana, KM de cada trecho, rodagem urbana de 15 km por cidade, frete = R$ 4,80 por KM RODADO (Toco e 3/4; estimado na criação, recalculado sozinho pelo KM real do hodômetro). v569: placa, motorista e data escolhidos em lista na aba antes de anexar o PDF, e trocáveis em lista em cada rota) com o bloco #RFROT1 (cliente=Mercante/JDL;km=). Importa na aba 🧭 Rota JDL (lista as rotas importadas, com liberar para o motorista e excluir), na aba Viagens, caixa Mercante/JDL ('🧭 Rota JDL pelo PDF da RF'), ou no mesmo botão da roteirização Suzano: vira a viagem prevista com KM estimado, frete por KM, dias = KM/650 arredondado para cima, sem ajudante, e uma entrega por cidade. O KM real do hodômetro substitui a estimativa. v570: na aba Viagens não existe mais o botão de anexar foto do hodômetro (KM saída/chegada); a foto vem do motorista e lá aparece só o botão ver quando existir. A malha de cidades do cálculo agora tem todos os municípios da Bahia e do Nordeste (fora da BA, no formato 'Cidade - UF')."
       + "\nTRAVA DE EXCLUSAO EM MASSA (v563, 05/10/2026): incidente -- em 03/10 um aparelho marcou 653 itens como apagados de uma vez e em 05/10 sumiram 178 viagens, 30 compras, 337 manutencoes e 5 clientes; tudo foi restaurado do backup horario do banco. As compras lancadas em 05/10 foram renumeradas de 33 a 48 (continuando as antigas, que vao ate a 32). Agora o sistema nao deixa um salvar ou uma sincronizacao apagar mais de 10 itens e mais de 30% de uma lista de uma vez; se acontecer, ignora e registra no log."
       + "\nCT-e DE SUBCONTRATAÇÃO POR VIAGEM (v562, JT/Mateus): na aba Viagens, caixa JT/Mateus, o quadro '📄 CT-e de subcontratação — por viagem' lista cada viagem do mês com a situação: sem CT-e (vermelho), CT-e emitido aguardando o pagamento no extrato (laranja) ou CONSOLIDADA (verde, CT-e + pagamento). '+ emitir CT-e' abre o mesmo fluxo da JDL, mas para UMA viagem: anexar o CT-e que a JT emitiu daquela viagem (PDF, foto ou XML) → Conferir → testar (homologação) → ⚡ Emitir na SEFAZ, sempre com confirmação do Renato. O valor padrão é o valor da viagem (ou 'outro'); tomador vazio = a transportadora que emitiu o CT-e de referência (a JT). Autorizado, o sistema dá baixa sozinho: a viagem fica FATURADA com o nº do CT-e (selo na coluna Pago?) e vira CONSOLIDADA quando o pagamento estiver no extrato. Cancelar o CT-e desfaz a baixa. Viagens JT sem CT-e agora: " + (function () { try { return (state.viagens || []).filter(function (v) { return v.cliente === "JT/Mateus" && String(v.data || "") >= "2026-09-21" && !subVgCteOk(v); }).map(function (v) { return String(v.data).slice(0, 10) + " " + v.placa + " " + fmtR(v.valorViagem); }).join("; ") || "nenhuma"; } catch (e) { return "?"; } })() + "."
-      + "\nCT-e DE SUBCONTRATAÇÃO — DESTINATÁRIO PESSOA FÍSICA (v630): quando o CT-e da contratante (ex.: JDL) vai para pessoa física, o destinatário tem CPF (11 números) e não CNPJ. O app aceita: lê nome e cidade do DACTE e mostra os campos 'Nome do destinatário', 'Cidade do destino', 'UF' e 'Cód. IBGE' em 'ver / corrigir os dados lidos'. Se aparecer 'Falta: nome/cidade do destinatário', é só preencher ali. Antes da v630 dava 'Falta ou está errado: CNPJ do destinatário'. v631: se a consulta pública de CNPJ (BrasilAPI) estiver fora do ar, o emissor usa a cidade e o código IBGE lidos do próprio DACTE da contratante, e não para mais com 'município sem código IBGE para o CNPJ'. FOTO DE KM PELA EQUIPE (v633): na aba Viagens, quando a viagem ainda não tem foto do KM de saída ou de chegada, aparece o botão '📎 anexar foto' embaixo do campo; a equipe anexa a foto do hodômetro e a IA lê e preenche o KM sozinha. Com foto já anexada, aparecem '📷 ver' e '✕' (remover). Uma medição pode ter vários CT-e de subcontratação (v632: no cabeçalho do bloco aparecem '📤 Enviar todos' e '⬇ Baixar todos (ZIP)', com a contagem e a soma só dos válidos; o botão de cada linha continua para enviar um de cada vez): emite um, o botão '+ emitir' volta e emite o próximo (ex.: Mês 10.1 da JDL, um por recibo, com a opção 'outro' no valor)."
+      + "\nCT-e DE SUBCONTRATAÇÃO — DESTINATÁRIO PESSOA FÍSICA (v630): quando o CT-e da contratante (ex.: JDL) vai para pessoa física, o destinatário tem CPF (11 números) e não CNPJ. O app aceita: lê nome e cidade do DACTE e mostra os campos 'Nome do destinatário', 'Cidade do destino', 'UF' e 'Cód. IBGE' em 'ver / corrigir os dados lidos'. Se aparecer 'Falta: nome/cidade do destinatário', é só preencher ali. Antes da v630 dava 'Falta ou está errado: CNPJ do destinatário'. v631: se a consulta pública de CNPJ (BrasilAPI) estiver fora do ar, o emissor usa a cidade e o código IBGE lidos do próprio DACTE da contratante, e não para mais com 'município sem código IBGE para o CNPJ'. COMPRAS — DOCUMENTO REPETIDO (v633): o aviso 'ESTE DOCUMENTO JÁ FOI LANÇADO' só aparece se for o mesmo nº de OS/orçamento do mesmo fornecedor, ou o mesmo item e valor no MESMO caminhão. Serviço igual (ex.: diagnóstico R$ 250 da DN Elétrica) em outro caminhão ou com outra OS é lançado normalmente. Uma medição pode ter vários CT-e de subcontratação (v632: no cabeçalho do bloco aparecem '📤 Enviar todos' e '⬇ Baixar todos (ZIP)', com a contagem e a soma só dos válidos; o botão de cada linha continua para enviar um de cada vez): emite um, o botão '+ emitir' volta e emite o próximo (ex.: Mês 10.1 da JDL, um por recibo, com a opção 'outro' no valor)."
       + "\nCT-e DE SUBCONTRATAÇÃO (v470): no card de cada medição há o bloco '📄 CT-e de subcontratação da medição'. A contratante (ex.: JDL) emite CT-e, MDF-e e CIOT de cada viagem e manda UMA chave de CT-e dela; a RF emite o seu CT-e de subcontratação (tipo de serviço subcontratação, tomador = contratante) referenciando essa chave, com remetente/destinatário e NF-e do CT-e dela, o valor da medição (frete bruto por padrão, ou líquido) e as viagens na observação. Não averba. Passos: preencher a chave, os CNPJs, as NF-e e o valor da carga → Conferir (puxa nomes e endereços da Receita) → Emitir na SEFAZ. Tem teste em homologação e cancelamento em até 7 dias. CFOP padrão 5360 (subcontratação dentro da BA; 6360 para outro estado), definido em 29/09 com base na Resposta à Consulta SEFAZ-SP 18537/2018; emitir um CT-e para várias viagens é uma decisão fiscal do Renato, o certo seria um por viagem."
       + mdSubContexto()
       + "\nTARIFAS COM PRAZO (acordos temporários, valem pela data de saída da viagem):\n" + (tt.length ? tt.join("\n") : "(nenhuma)");
@@ -43374,7 +43381,7 @@ function renderTabela() {
               <div style="margin-top:3px;">
                 ${v.fotoKmSaida
                   ? `<button class="btn-outline" style="font-size:9px;padding:2px 6px;" onclick="rfKmVer('${v.fotoKmSaida}')">📷 ver</button> <button class="btn-del" style="font-size:11px;padding:0 4px;" onclick="rfKmExcluir('${v.id}','saida')" title="Remover foto">✕</button>`
-                  : `<label class="btn-outline" style="font-size:9px;padding:2px 6px;cursor:pointer;display:inline-block;" title="Anexar a foto do hodômetro (a IA lê o KM sozinha)">📎 anexar foto<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="rfKmUpload(this,'${v.id}','saida')"></label>`}
+                  : ""}
               </div>
             </td>
             <td style="min-width:130px;">
@@ -43382,7 +43389,7 @@ function renderTabela() {
               <div style="margin-top:3px;">
                 ${v.fotoKmChegada
                   ? `<button class="btn-outline" style="font-size:9px;padding:2px 6px;" onclick="rfKmVer('${v.fotoKmChegada}')">📷 ver</button> <button class="btn-del" style="font-size:11px;padding:0 4px;" onclick="rfKmExcluir('${v.id}','chegada')" title="Remover foto">✕</button>`
-                  : `<label class="btn-outline" style="font-size:9px;padding:2px 6px;cursor:pointer;display:inline-block;" title="Anexar a foto do hodômetro (a IA lê o KM sozinha)">📎 anexar foto<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="rfKmUpload(this,'${v.id}','chegada')"></label>`}
+                  : ""}
               </div>
             </td>
             <td>
