@@ -17,12 +17,13 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v635)</title>
+<title>RF Logística — Painel da Frota (v636)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v635">
+<meta name="rf-versao" content="v636">
 <meta name="rf-data" content="2026-10-17">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v636 (17/10/2026): USUARIOS -- o abrir/fechar de cada login voltou a funcionar. A funcao se chamava pfAbrir, o mesmo nome da funcao que abre a area Pessoal (v549), que a sobrescrevia; agora e usrAbrirLogin. Nada mais mudou. -->
 <!-- v635 (17/10/2026): TRAVA DE REPOSITORIO -- se este index for publicado no endereco do Rodavia 360, a tela trava com aviso e nada roda. USUARIOS -- "Trocar minha senha" e "Resetar senha" abrem uma janela propria (senha + repetir + mostrar). O window.prompt era bloqueado no Chrome do tablet e o botao nao fazia nada. Nada mais mudou. -->
 <!-- v634 (16/10/2026): COMPRAS -- envio que caiu no meio (Failed to fetch) deixava a impressao digital do arquivo reservada para uma compra que nao existe, e a 2a tentativa dava "ESTE ARQUIVO JA FOI USADO". Agora reserva orfa (compra inexistente, mais de 2 min) e apagada sozinha e o envio segue. -->
 <!-- v633 (16/10/2026): COMPRAS -- a trava de documento repetido recusava OS de OUTRO caminhao so por ter o mesmo item e valor (OS 2984 do QDE8C12 x compra 21, OS 3024 do QDG7I41, DN Eletrica, diagnostico R$ 250). Agora nao e repetido quando o no da OS e diferente ou quando a placa e diferente. Mesmo no de OS continua barrando. -->
@@ -1001,7 +1002,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v635" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v636" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -29491,7 +29492,7 @@ function criarUsuarioSalvar() {
 }
 
 function pfPodeEditar(p) { return ehMaster() || !(pfEhMaster(p) || p.papel === "admin"); }   // v503
-function pfAbrir(id) { state._pfAberto = state._pfAberto || {}; state._pfAberto[id] = !state._pfAberto[id]; render(); }
+function usrAbrirLogin(id) { state._pfAberto = state._pfAberto || {}; state._pfAberto[id] = !state._pfAberto[id]; render(); }   // nome próprio: antes era pfAbrir, e a função pfAbrir da área Pessoal (v549) a sobrescrevia -- o abrir/fechar de cada login não fazia nada
 function atualizarPerfilCampo(id, campo, valor) {
   const p = (state._perfis || []).find((x) => String(x.id) === String(id));
   if (!p) return;
@@ -42663,7 +42664,7 @@ function renderTabela() {
         const resumo = master ? "vê tudo · controla os administradores" : p.papel === "admin" ? (rest ? nAbas + " aba(s) liberada(s)" : "todas as abas") : p.papel === "motorista" ? "placa " + (p.placa_motorista || "—") : p.papel === "cliente" ? (p.cliente_nome || "sem cliente") : nAbas + " aba(s)";
         return `
         <div style="border:1px solid ${master ? GOLD : aberto ? "#3a3a3a" : "#2A2A2A"};border-radius:10px;margin-bottom:8px;background:#0E0E0E;${p.ativo ? "" : "opacity:.6;"}">
-          <div onclick="pfAbrir('${p.id}')" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;">
+          <div onclick="usrAbrirLogin('${p.id}')" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;">
             <span style="color:#777;font-size:12px;width:12px;">${aberto ? "▾" : "▸"}</span>
             <b style="color:#fff;font-size:14px;min-width:120px;">${esc(p.nome || "(sem nome)")}</b>
             ${master ? `<span style="font-size:10px;font-weight:900;color:#000;background:${GOLD};border-radius:4px;padding:1px 7px;">🛡️ MASTER</span>` : ""}
@@ -42671,7 +42672,7 @@ function renderTabela() {
             <span style="font-size:12px;color:#999;">${esc(p.email || "")}</span>
             <span style="font-size:11.5px;color:#bbb;">${esc(resumo)}</span>
             <span style="margin-left:auto;font-size:11px;color:${p.ativo ? "#66BB6A" : "#E57373"};">${p.ativo ? "● ativo" : "● desativado"}</span>
-            <button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="event.stopPropagation();pfAbrir('${p.id}')">${aberto ? "fechar" : "abrir"}</button>
+            <button class="btn-outline" style="font-size:11px;padding:3px 10px;" onclick="event.stopPropagation();usrAbrirLogin('${p.id}')">${aberto ? "fechar" : "abrir"}</button>
           </div>
           ${!aberto ? "" : !pode ? `<div style="padding:0 14px 12px;color:#999;font-size:12px;">🔒 ${master ? "Este é o login master: só ele mesmo altera." : "Administrador: só o login master altera."}</div>` : `
         <div style="padding:4px 14px 14px;border-top:1px solid #1d1d1d;">
