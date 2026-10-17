@@ -2,12 +2,28 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>RF Logística — Painel da Frota (v634)</title>
+<script>
+/* TRAVA DE REPOSITÓRIO (17/10/2026): este index.html é do RF LOGÍSTICA (RFL). Se for publicado no lugar do
+   Rodavia 360 (RDV), a tela para aqui com um aviso e NADA do sistema roda (não conecta em banco nenhum). */
+(function () {
+  try {
+    if (location.pathname.indexOf('/rodavia360') === 0 || /rodavia360\.com\.br$/i.test(location.hostname)) {
+      document.write('<div style="position:fixed;inset:0;background:#7f0000;color:#fff;font:600 20px Arial,sans-serif;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;z-index:999999;">'
+        + '<div>⚠ ARQUIVO NO LUGAR ERRADO<br><br>Este index.html é do <b>RF LOGÍSTICA (RFL)</b>,<br>mas foi publicado no endereço do <b>Rodavia 360 (RDV)</b>.<br><br>'
+        + 'Suba o index.html certo no repositório.<br><span style="font-size:15px;font-weight:400;">O sistema foi travado para não misturar os dados.</span></div></div>');
+      if (window.stop) window.stop();
+      throw new Error("index no repositorio errado");
+    }
+  } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
+})();
+</script>
+<title>RF Logística — Painel da Frota (v635)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v634">
-<meta name="rf-data" content="2026-10-16">
+<meta name="rf-versao" content="v635">
+<meta name="rf-data" content="2026-10-17">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v635 (17/10/2026): TRAVA DE REPOSITORIO -- se este index for publicado no endereco do Rodavia 360, a tela trava com aviso e nada roda. USUARIOS -- "Trocar minha senha" e "Resetar senha" abrem uma janela propria (senha + repetir + mostrar). O window.prompt era bloqueado no Chrome do tablet e o botao nao fazia nada. Nada mais mudou. -->
 <!-- v634 (16/10/2026): COMPRAS -- envio que caiu no meio (Failed to fetch) deixava a impressao digital do arquivo reservada para uma compra que nao existe, e a 2a tentativa dava "ESTE ARQUIVO JA FOI USADO". Agora reserva orfa (compra inexistente, mais de 2 min) e apagada sozinha e o envio segue. -->
 <!-- v633 (16/10/2026): COMPRAS -- a trava de documento repetido recusava OS de OUTRO caminhao so por ter o mesmo item e valor (OS 2984 do QDE8C12 x compra 21, OS 3024 do QDG7I41, DN Eletrica, diagnostico R$ 250). Agora nao e repetido quando o no da OS e diferente ou quando a placa e diferente. Mesmo no de OS continua barrando. -->
 <!-- v632 (15/10/2026): CT-e DE SUBCONTRATACAO -- botoes "Enviar todos" (compartilha todos os DACTE de uma vez, com as chaves e o total no texto) e "Baixar todos (ZIP)" (DACTE + XML de todos + CHAVES.txt) no cabecalho do bloco, quando ha 2 ou mais CT-e validos. Mostra tambem a contagem e a soma dos validos (cancelados nao entram). Pedido do Renato depois de emitir os 7 CT-e da Mes 10.1 da JDL. -->
@@ -985,7 +1001,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v634" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v635" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -29499,9 +29515,38 @@ function resetarSenhaClick(id, nome) {
   var pR = (state._perfis || []).find(function (x) { return String(x.id) === String(id); });
   if (pR && !pfPodeEditar(pR) && String(id) !== String((state.sessao || {}).uid)) { alert("Só o login master reseta a senha de um administrador."); return; }
   var euMesmo = String(id) === String((state.sessao || {}).uid);   // v551
-  var novaSenha = window.prompt(euMesmo ? "Sua nova senha de login (mínimo 6 caracteres) — ela aparece aqui enquanto você digita:" : "Nova senha pra \"" + (nome || id) + "\" (mínimo 6 caracteres):", "");
-  if (novaSenha === null) return; // cancelou
-  novaSenha = novaSenha.trim();
+  // janela própria no lugar do window.prompt: no Chrome do tablet o prompt era bloqueado sem aviso e o botão "não fazia nada"
+  rfPedirSenhaNova(euMesmo ? "Sua nova senha de login" : "Nova senha para \"" + (nome || id) + "\"", function (novaSenha) {
+    resetarSenhaEnviar(id, nome, euMesmo, novaSenha);
+  });
+}
+function rfPedirSenhaNova(titulo, ok) {
+  var velho = document.getElementById("rf-senha-modal"); if (velho) velho.remove();
+  var fundo = document.createElement("div");
+  fundo.id = "rf-senha-modal";
+  fundo.style.cssText = "position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px;";
+  fundo.innerHTML = '<div style="background:#111;border:1px solid #D4A017;border-radius:14px;padding:20px;width:min(420px,100%);font-family:inherit;color:#fff;">'
+    + '<div style="font-size:17px;font-weight:800;margin-bottom:12px;">🔑 ' + esc(titulo) + '</div>'
+    + '<input id="rf-senha-1" type="password" autocomplete="new-password" placeholder="Nova senha (mínimo 6 caracteres)" style="width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #444;background:#000;color:#fff;font-size:16px;margin-bottom:8px;">'
+    + '<input id="rf-senha-2" type="password" autocomplete="new-password" placeholder="Repita a nova senha" style="width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #444;background:#000;color:#fff;font-size:16px;">'
+    + '<label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#bbb;margin:10px 0;"><input type="checkbox" id="rf-senha-ver"> mostrar senha</label>'
+    + '<div id="rf-senha-erro" style="color:#E57373;font-size:13px;min-height:18px;"></div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">'
+    + '<button type="button" class="btn-outline" id="rf-senha-cancelar">Cancelar</button>'
+    + '<button type="button" class="btn-gold" id="rf-senha-salvar">Salvar senha</button></div></div>';
+  document.body.appendChild(fundo);
+  var a = document.getElementById("rf-senha-1"), b = document.getElementById("rf-senha-2"), er = document.getElementById("rf-senha-erro");
+  document.getElementById("rf-senha-ver").onchange = function () { a.type = b.type = this.checked ? "text" : "password"; };
+  document.getElementById("rf-senha-cancelar").onclick = function () { fundo.remove(); };
+  document.getElementById("rf-senha-salvar").onclick = function () {
+    var v = String(a.value || "").trim();
+    if (v.length < 6) { er.textContent = "A senha precisa ter pelo menos 6 caracteres."; return; }
+    if (v !== String(b.value || "").trim()) { er.textContent = "As duas senhas não são iguais."; return; }
+    fundo.remove(); ok(v);
+  };
+  setTimeout(function () { try { a.focus(); } catch (e) { } }, 50);
+}
+function resetarSenhaEnviar(id, nome, euMesmo, novaSenha) {
   if (novaSenha.length < 6) { alert("A senha precisa ter pelo menos 6 caracteres."); return; }
   rfGetClient().then(function (sb) {
     if (!sb) { alert("Sem conexao com o servidor."); return; }
