@@ -17,12 +17,13 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v639)</title>
+<title>RF Logística — Painel da Frota (v640)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v639">
+<meta name="rf-versao" content="v640">
 <meta name="rf-data" content="2026-10-17">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v640 (17/10/2026): LOGISTICA REVERSA -- GATILHO do monitoramento = FIM DA BIPAGEM DO CARREGAMENTO (Renato: "assim que acabou a bipagem a viagem está pronta"). Carga 100% bipada (São Roque, Goiás ou Suzano) entra sozinha em "Viagens em monitoramento" com todas as paradas; a Suzano casa com as paradas pelas NFs. Se a rota do motorista ainda não foi criada, as paradas vêm da própria carga. Saiu o gatilho por KM de saída/primeira entrega. -->
 <!-- v639 (17/10/2026): LOGISTICA REVERSA LIGADA AO CARREGAMENTO -- toda viagem que sai (carregamento 100% bipado, KM de saída ou primeira entrega) entra sozinha em "Viagens em monitoramento" na área Logística Reversa: valor da carga, entregue, a entregar e retorno, status de cada parada (Suzano, Goiás, São Roque ou rota comum); quando o motorista aperta um dos 3 botões a parada fica vermelha e abre o fluxo reverso ("ver fluxo"). Assistente recebe as viagens monitoradas. -->
 <!-- v638 (17/10/2026): LOGISTICA REVERSA -- o quadro da tela inicial ficou com o ícone repetido no nome e a descrição comprida; agora "Logística Reversa" com descrição curta (grupo Viagens). -->
 <!-- v637 (17/10/2026): LOGISTICA REVERSA -- (1) MOTORISTA: "⚠ Não entreguei" em TODA parada (antes só na São Roque) com 3 botões grandes: Cliente recusou / Produto com avaria (foto obrigatória; pode dizer que só uma parte voltou) / Endereço não encontrado; hora e GPS automáticos. Parada que voltou inteira fica resolvida sem canhoto. (2) ALERTA na hora para o gestor com o valor que está voltando. (3) ÁREA "Logística Reversa" (grupo Viagens): caixa não realizado, frete não faturado, custo do retorno, parado no almoxarifado (dias), prejuízo definitivo, taxa de retorno; impacto por carga (previsto x entregue x retorno, por motivo); causa por motivo/cliente/motorista/cidade; lista com filtros e busca; Excel. (4) ENTRADA NO ALMOXARIFADO POR BIP (chave da NF-e, etiqueta do volume ou nº da NF) com "volta ao mesmo cliente / outro destino"; destino, saída, entregue, valores, anotação, desfazer. (5) HISTÓRICO PERMANENTE na tabela reversa_eventos (só acrescenta). Valores das notas vêm do espelho, do CT-e (rateado) ou da carga 3D; o gestor corrige. Assistente alimentado (revContextoAssistente). -->
@@ -1005,7 +1006,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v639" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v640" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -33629,67 +33630,89 @@ function revExcel() {
 }
 
 /* ---------- 9) MONITORAMENTO AUTOMÁTICO DAS VIAGENS ----------
-   Renato: "a logística reversa tem que falar com algum carregamento, não pode ficar solta: assim que o caminhão do
-   cliente que carregou sair, essa viagem já entra automático; se tiver algum retorno ela já monitora e mostra todos os
-   status; assim que o motorista acionar qualquer botão, a reversa entra em cena e inicia o fluxo reverso".
-   Saída do caminhão = carregamento 100% bipado (carga 3D), foto/KM de saída da viagem, ou a primeira parada resolvida. */
-var REV_ORIGENS = [["saoroqueCargas", function () { return typeof SR_CLIENTE !== "undefined" ? SR_CLIENTE : "Carregamento"; }], ["goiasCargas", function () { return "Carregamento Goiás"; }], ["suzanoCargas", function () { return "Carregamento Suzano"; }]];
-function revCargaDaViagem(vid) {
-  for (var i = 0; i < REV_ORIGENS.length; i++) {
-    var arr = state[REV_ORIGENS[i][0]] || [];
-    var c = arr.find(function (x) { return x && String(x.viagemId || "") === String(vid); });
-    if (c) return { c: c, arr: REV_ORIGENS[i][0], rot: REV_ORIGENS[i][1]() + (c.numcar ? " · carga " + c.numcar : "") };
-  }
-  return null;
+   Renato: "a logística reversa tem que falar com algum carregamento, não pode ficar solta"; e o GATILHO (17/10/2026):
+   "não é quando a viagem entra que a viagem inicia, e sim quando termina de bipar a carga para carregamento; assim que
+   acabou a bipagem a viagem está pronta". Então: carregamento 100% bipado (Carregamento 3D / São Roque, Goiás ou
+   Suzano) = a viagem entra sozinha no monitoramento, com todas as paradas. Se o motorista apertar qualquer um dos 3
+   botões, a reversa entra em cena e começa o fluxo reverso daquela parada. */
+function revNfsDaCarga(arr, c) {
+  var out = [];
+  var add = function (x) { x = revNum(x); if (x && out.indexOf(x) < 0) out.push(x); };
+  if (arr === "suzanoCargas") (c.espelhos || []).forEach(function (e) { add(e.nfe); (e.notas || []).forEach(function (n) { add(n.nfe); }); });
+  else (c.clientes || []).forEach(function (cl) { (cl.nfs || []).forEach(add); });
+  return out;
 }
-function revViagemInfo(vid, ents) {
-  var vg = (state.viagens || []).find(function (x) { return String(x.id) === String(vid); }) || null;
-  var cg = revCargaDaViagem(vid);
-  ents = ents.slice().sort(function (a, b) { return (Number(a.ordem) || 0) - (Number(b.ordem) || 0); });
-  var e0 = ents[0] || {};
-  var saiu = false, saidaEm = 0, como = "";
-  if (cg && cg.arr === "saoroqueCargas" && typeof srProgResumo === "function") {
-    var ca = srProgResumo(cg.c, "c");
-    if (ca.tot && ca.ok >= ca.tot) { saiu = true; como = "carregamento 100% bipado"; (state.saoroqueBips || []).forEach(function (b) { if (b.carga === cg.c.id && b.tipo === "c" && Number(b.em) > saidaEm) saidaEm = Number(b.em); }); }
-  }
-  if (!saiu && vg && (Number(vg.kmSaida) > 0 || vg.fotoKmSaida)) { saiu = true; como = "KM de saída registrado"; }
-  var pend = 0, ent = 0, ret = 0, vPrev = 0, vEnt = 0, vRet = 0, vPend = 0, primeira = 0, itens = [];
+function revCargasBipadas() {
+  var out = [], maxEm = function (l) { var m = 0; l.forEach(function (x) { if (Number(x) > m) m = Number(x); }); return m; };
+  (state.saoroqueCargas || []).forEach(function (c) {
+    if (!c || !(c.vols || []).length) return;
+    var car = {}; (state.saoroqueBips || []).forEach(function (b) { if (b.carga === c.id && b.tipo === "c") car[b.cod] = Number(b.em) || 0; });
+    if (!c.vols.every(function (v) { return car[v.c]; })) return;
+    out.push({ arr: "saoroqueCargas", c: c, saidaEm: maxEm(Object.keys(car).map(function (k) { return car[k]; })), rot: (typeof SR_CLIENTE !== "undefined" ? SR_CLIENTE : "Carregamento") + (c.numcar ? " · carga " + c.numcar : "") });
+  });
+  (state.goiasCargas || []).forEach(function (c) {
+    if (!c || !(c.vols || []).length) return;
+    var car = {}; (state.goiasBips || []).forEach(function (b) { if (b.carga === c.id && b.tipo === "c") car[b.cod] = Number(b.em) || 0; });
+    if (!c.vols.every(function (v) { return car[v.c]; })) return;
+    out.push({ arr: "goiasCargas", c: c, saidaEm: maxEm(Object.keys(car).map(function (k) { return car[k]; })), rot: "Carregamento Goiás" + (c.numcar ? " · carga " + c.numcar : "") });
+  });
+  (state.suzanoCargas || []).forEach(function (c) {
+    var esp = 0, car = 0, ems = [];
+    (c.espelhos || []).forEach(function (e) { esp += Number(e.qtdVolumes) || 0; (e.etiquetas || []).forEach(function (x) { if (x.carregadoEm) { car += Number(x.qtd) || 1; ems.push(x.carregadoEm); } }); });
+    if (!esp || car < esp) return;
+    out.push({ arr: "suzanoCargas", c: c, saidaEm: maxEm(ems), rot: "Carregamento Suzano · " + String(c.data || "").split("-").reverse().join("/") });
+  });
+  return out;
+}
+function revMonitorInfo(m) {
+  var c = m.c, nfsCarga = revNfsDaCarga(m.arr, c);
+  var ents = (state.entregas || []).filter(function (e) {
+    if (e.origem === "cte") return false;
+    if (c.viagemId && String(e.viagemId) === String(c.viagemId)) return true;
+    if (m.arr === "suzanoCargas" && nfsCarga.length) return revNfsDaParada(e).some(function (nf) { return nfsCarga.indexOf(nf) >= 0; }) && (!c.placa || !e.placa || e.placa === c.placa);
+    return false;
+  }).sort(function (a, b) { return (Number(a.ordem) || 0) - (Number(b.ordem) || 0); });
+  var vg = c.viagemId ? (state.viagens || []).find(function (x) { return String(x.id) === String(c.viagemId); }) : null;
+  var pend = 0, ent = 0, ret = 0, vPrev = 0, vEnt = 0, vRet = 0, vPend = 0, itens = [];
   var paradas = ents.map(function (e) {
     var v = revValorParada(e).merc, st, it = null;
     if (e.ocorrencia && e.ocorrencia.tipo) {
       it = revItem(e); st = it.parcial ? "parcial" : "retorno"; ret++; vRet += it.merc; itens.push(it);
       if (it.parcial) { ent++; vEnt += Math.max(0, v - it.merc); }
-      if (!primeira || e.ocorrencia.em < primeira) primeira = e.ocorrencia.em;
-    } else if (e.entregueEm || entregaConcluidaCanhotos(e)) {
-      st = "entregue"; ent++; vEnt += v; var q = e.entregueEm || e.concluidaEm || 0; if (q && (!primeira || q < primeira)) primeira = q;
-    } else { st = "pendente"; pend++; vPend += v; }
+    } else if (e.entregueEm || entregaConcluidaCanhotos(e)) { st = "entregue"; ent++; vEnt += v; }
+    else { st = "pendente"; pend++; vPend += v; }
     vPrev += v;
     return { e: e, st: st, v: v, it: it };
   });
-  if (cg && Array.isArray(cg.c.clientes)) { var tc = cg.c.clientes.reduce(function (a, cl) { return a + (Number(cl.valor) || 0); }, 0); if (tc > vPrev) { vPend += tc - vPrev; vPrev = tc; } }
-  if (!saiu && primeira) { saiu = true; como = "primeira entrega registrada"; }
-  if (!saidaEm) saidaEm = primeira || (vg && vg.criadoEm) || e0.criadoEm || 0;
+  var semRota = !ents.length;
+  if (semRota) {   // carregou mas a rota do motorista ainda não foi criada: as paradas saem da própria carga
+    var lista = m.arr === "suzanoCargas"
+      ? (function () { var g = {}, o = []; (c.espelhos || []).forEach(function (e) { var k = (e.cliente || "") + "|" + (e.cidade || ""); if (!g[k]) { g[k] = { recebedor: e.cliente, cidade: e.cidade, v: 0 }; o.push(g[k]); } g[k].v += Number(e.valorMercadoria) || 0; }); return o; })()
+      : (c.clientes || []).slice().sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); }).map(function (cl) { return { recebedor: cl.fant || cl.nome, cidade: cl.cidade, v: Number(cl.valor) || 0 }; });
+    paradas = lista.map(function (x, i) { pend++; vPend += x.v; vPrev += x.v; return { e: { ordem: i + 1, recebedor: x.recebedor, cidade: x.cidade }, st: "pendente", v: x.v, it: null }; });
+  }
+  var tc = m.arr === "suzanoCargas" ? (c.espelhos || []).reduce(function (a, e) { return a + (Number(e.valorMercadoria) || 0); }, 0) : (c.clientes || []).reduce(function (a, cl) { return a + (Number(cl.valor) || 0); }, 0);
+  if (tc > vPrev) { vPend += tc - vPrev; vPrev = tc; }
   var abertoRet = itens.some(function (it) { return it.aberto; });
   var status, cor;
-  if (pend) { status = ret ? "Em rota — com retorno" : "Em rota"; cor = ret ? "#FF9800" : "#42A5F5"; }
+  if (pend) { status = ret ? "Em rota — com retorno" : (semRota ? "Carregado — rota do motorista ainda não criada" : "Em rota"); cor = ret ? "#FF9800" : "#42A5F5"; }
   else if (ret) { status = abertoRet ? "Fluxo reverso em andamento" : "Concluída — retorno resolvido"; cor = abertoRet ? "#E53935" : "#4CAF50"; }
   else { status = "Concluída — 100% entregue"; cor = "#4CAF50"; }
-  return { vid: vid, vg: vg, cg: cg, e0: e0, paradas: paradas, itens: itens, pend: pend, ent: ent, ret: ret, vPrev: vPrev, vEnt: vEnt, vRet: vRet, vPend: vPend,
-    saiu: saiu, saidaEm: saidaEm, como: como, status: status, cor: cor, aberta: pend > 0 || abertoRet,
-    placa: (cg && cg.c.placa) || (vg && vg.placa) || e0.placa || "", motorista: (cg && cg.c.motorista) || (vg && vg.motoristaNaEpoca) || e0.motoristaNome || "" };
+  var e0 = ents[0] || {};
+  return { vid: m.arr + ":" + c.id, cg: { rot: m.rot }, e0: e0, paradas: paradas, itens: itens, pend: pend, ent: ent, ret: ret, vPrev: vPrev, vEnt: vEnt, vRet: vRet, vPend: vPend,
+    saiu: true, saidaEm: m.saidaEm, como: "bipagem do carregamento concluída", status: status, cor: cor, aberta: pend > 0 || abertoRet,
+    placa: c.placa || (vg && vg.placa) || e0.placa || "", motorista: c.motorista || (vg && vg.motoristaNaEpoca) || e0.motoristaNome || "" };
 }
 function revViagens() {
-  var g = {};
-  (state.entregas || []).forEach(function (e) { if (!e.viagemId || e.origem === "cte") return; (g[e.viagemId] = g[e.viagemId] || []).push(e); });
-  return Object.keys(g).map(function (vid) { return revViagemInfo(vid, g[vid]); })
-    .filter(function (x) { return x.saiu && (x.aberta || revPeriodoOk(x.saidaEm)); })
+  return revCargasBipadas().map(revMonitorInfo)
+    .filter(function (x) { return x.aberta || revPeriodoOk(x.saidaEm); })
     .sort(function (a, b) { return (b.aberta - a.aberta) || (b.saidaEm - a.saidaEm); });
 }
 function revMonitorHTML() {
   var vs = revViagens();
   var abertas = vs.filter(function (x) { return x.aberta; }).length;
-  var h = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin:6px 0 8px;"><div style="font-size:15px;font-weight:900;color:#fff;">🛰️ Viagens em monitoramento <span style="font-size:12px;color:#999;font-weight:600;">— toda carga que sai entra aqui sozinha</span></div><span style="font-size:12px;color:#ccc;">' + abertas + ' em andamento · ' + (vs.length - abertas) + ' concluída(s) no período</span></div>';
-  if (!vs.length) return h + '<div style="color:#888;font-size:13px;padding:14px;text-align:center;border:1px dashed #333;border-radius:10px;margin-bottom:14px;">Nenhuma viagem saiu no período. Quando o carregamento terminar (ou o motorista registrar o KM de saída), a viagem aparece aqui com todas as paradas.</div>';
+  var h = '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin:6px 0 8px;"><div style="font-size:15px;font-weight:900;color:#fff;">🛰️ Viagens em monitoramento <span style="font-size:12px;color:#999;font-weight:600;">— entra sozinha quando termina a bipagem do carregamento</span></div><span style="font-size:12px;color:#ccc;">' + abertas + ' em andamento · ' + (vs.length - abertas) + ' concluída(s) no período</span></div>';
+  if (!vs.length) return h + '<div style="color:#888;font-size:13px;padding:14px;text-align:center;border:1px dashed #333;border-radius:10px;margin-bottom:14px;">Nenhuma carga pronta no período. Assim que a bipagem do carregamento termina, a viagem entra aqui sozinha, com todas as paradas.</div>';
   vs.slice(0, 30).forEach(function (x) {
     var ab = state._revVgAberta === x.vid;
     var base = x.vPrev || 0, pE = base ? x.vEnt / base * 100 : 0, pR = base ? x.vRet / base * 100 : 0;
@@ -33697,7 +33720,7 @@ function revMonitorHTML() {
     h += '<div style="background:#111;border:1px solid #2a2a2a;border-left:4px solid ' + x.cor + ';border-radius:12px;padding:12px;margin-bottom:8px;">'
       + '<div onclick="state._revVgAberta=state._revVgAberta===\'' + x.vid + '\'?null:\'' + x.vid + '\';render()" style="cursor:pointer;">'
       + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b style="color:#fff;font-size:14px;">🚚 ' + esc(x.placa || "sem placa") + ' · ' + esc(x.motorista || "") + '</b><b style="color:' + x.cor + ';font-size:13px;">● ' + esc(x.status) + '</b></div>'
-      + '<div style="font-size:12px;color:#999;margin-top:2px;">' + esc(x.cg ? x.cg.rot : "Rota " + String(x.e0.dataPrevista || "").split("-").reverse().join("/")) + ' · saiu ' + revDataHora(x.saidaEm) + (x.como ? ' (' + esc(x.como) + ')' : '') + '</div>'
+      + '<div style="font-size:12px;color:#999;margin-top:2px;">' + esc(x.cg ? x.cg.rot : "Rota " + String(x.e0.dataPrevista || "").split("-").reverse().join("/")) + ' · carregamento bipado ' + revDataHora(x.saidaEm) + '</div>'
       + '<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin:8px 0 6px;background:#2b2b2b;"><div style="width:' + pE.toFixed(1) + '%;background:#2E7D32;"></div><div style="width:' + pR.toFixed(1) + '%;background:#E53935;"></div></div>'
       + '<div style="font-size:12px;color:#ccc;">' + (base ? '<b style="color:#fff;">' + fmtR(base) + '</b> na carga · ' : '') + '✅ ' + x.ent + ' entregue(s)' + (base ? ' ' + fmtR(x.vEnt) : '') + ' · 🚚 ' + x.pend + ' a entregar' + (base && x.vPend ? ' ' + fmtR(x.vPend) : '') + ' · <b style="color:' + (x.ret ? "#ff8a80" : "#8fd18f") + ';">↩️ ' + x.ret + ' retorno(s)' + (x.ret && base ? ' ' + fmtR(x.vRet) : '') + '</b></div>'
       + '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:7px;">' + x.paradas.map(function (p) {
@@ -33727,7 +33750,7 @@ function revContextoAssistente() {
     var s = function (x, f) { return x.reduce(function (a, it) { return a + (Number(f(it)) || 0); }, 0); };
     var t = "LOGISTICA REVERSA (aba \"Logística Reversa\"): o motorista toca em \"Não entreguei\" e escolhe entre 3 botões (Cliente recusou, Produto com avaria -- foto obrigatória e pode dizer que só uma parte voltou --, Endereço não encontrado); hora e GPS vão juntos e a mercadoria da parada entra em reversa na hora, com alerta para o gestor. Na base, a entrada no almoxarifado é por BIP (chave da NF-e, etiqueta do volume ou número da NF); no primeiro bip o sistema pergunta se volta ao mesmo cliente ou vai para outro destino (outro cliente, devolver ao embarcador ou descarte). Depois: saiu para entrega (placa) e entregue. Cada passo fica no histórico permanente (nada se apaga; desfazer também fica registrado). Valores: mercadoria = soma das notas da parada (espelho, CT-e rateado ou carga 3D; o gestor corrige em \"valores\"); frete não faturado = frete das paradas que voltaram; custo do retorno = estimado pelo frete da parada; prejuízo definitivo = descarte. Parada que voltou inteira não precisa de canhoto (a prova é a ocorrência).\n";
     t += "Situação agora: " + ab.length + " retorno(s) em aberto, caixa não realizado " + fmtR(s(ab, function (it) { return it.merc; })) + ", frete não faturado " + fmtR(s(ab, function (it) { return it.frete; })) + ", parado no almoxarifado " + fmtR(s(l.filter(function (it) { return it.noAlmox; }), function (it) { return it.merc; })) + ".\n";
-    var vs = revViagens(); t += "Viagens em monitoramento (entram sozinhas quando o caminhão sai: carregamento 100% bipado, KM de saída ou primeira entrega): " + vs.length + ".\n";
+    var vs = revViagens(); t += "Viagens em monitoramento (entram sozinhas quando termina a bipagem do carregamento -- Carregamento 3D, Goiás ou Suzano): " + vs.length + ".\n";
     vs.slice(0, 20).forEach(function (x) { t += "- " + (x.placa || "") + " " + (x.motorista || "") + " | " + (x.cg ? x.cg.rot : "rota") + " | saiu " + revDataHora(x.saidaEm) + " | " + x.status + " | carga " + fmtR(x.vPrev) + ", entregue " + fmtR(x.vEnt) + ", retorno " + fmtR(x.vRet) + ", a entregar " + x.pend + "\n"; });
     l.slice(0, 40).forEach(function (it) { t += "- " + revDataHora(it.oc.em) + " | " + (it.e.recebedor || "") + " (" + (it.e.cidade || "") + ") | NF " + (revNfsDaParada(it.e).join(",") || "-") + " | " + (it.e.placa || "") + " " + (it.e.motoristaNome || "") + " | " + (REV_MOTIVOS[it.motivo] || it.oc.rot || "") + " | " + fmtR(it.merc) + " | " + it.etapa + "\n"; });
     return t;
