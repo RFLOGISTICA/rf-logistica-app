@@ -17,12 +17,13 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v637)</title>
+<title>RF Logística — Painel da Frota (v638)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v637">
+<meta name="rf-versao" content="v638">
 <meta name="rf-data" content="2026-10-17">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v638 (17/10/2026): LOGISTICA REVERSA -- o quadro da tela inicial ficou com o ícone repetido no nome e a descrição comprida; agora "Logística Reversa" com descrição curta (grupo Viagens). -->
 <!-- v637 (17/10/2026): LOGISTICA REVERSA -- (1) MOTORISTA: "⚠ Não entreguei" em TODA parada (antes só na São Roque) com 3 botões grandes: Cliente recusou / Produto com avaria (foto obrigatória; pode dizer que só uma parte voltou) / Endereço não encontrado; hora e GPS automáticos. Parada que voltou inteira fica resolvida sem canhoto. (2) ALERTA na hora para o gestor com o valor que está voltando. (3) ÁREA "Logística Reversa" (grupo Viagens): caixa não realizado, frete não faturado, custo do retorno, parado no almoxarifado (dias), prejuízo definitivo, taxa de retorno; impacto por carga (previsto x entregue x retorno, por motivo); causa por motivo/cliente/motorista/cidade; lista com filtros e busca; Excel. (4) ENTRADA NO ALMOXARIFADO POR BIP (chave da NF-e, etiqueta do volume ou nº da NF) com "volta ao mesmo cliente / outro destino"; destino, saída, entregue, valores, anotação, desfazer. (5) HISTÓRICO PERMANENTE na tabela reversa_eventos (só acrescenta). Valores das notas vêm do espelho, do CT-e (rateado) ou da carga 3D; o gestor corrige. Assistente alimentado (revContextoAssistente). -->
 <!-- v636 (17/10/2026): USUARIOS -- o abrir/fechar de cada login voltou a funcionar. A funcao se chamava pfAbrir, o mesmo nome da funcao que abre a area Pessoal (v549), que a sobrescrevia; agora e usrAbrirLogin. Nada mais mudou. -->
 <!-- v635 (17/10/2026): TRAVA DE REPOSITORIO -- se este index for publicado no endereco do Rodavia 360, a tela trava com aviso e nada roda. USUARIOS -- "Trocar minha senha" e "Resetar senha" abrem uma janela propria (senha + repetir + mostrar). O window.prompt era bloqueado no Chrome do tablet e o botao nao fazia nada. Nada mais mudou. -->
@@ -1003,7 +1004,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v637" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v638" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -28841,7 +28842,7 @@ var ABAS_DEF = [
   { id: "viagem", label: "🛣️ Viagens", grupo: "VIAGENS" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "VIAGENS" },
   { id: "statusdia", label: "📍 Status do Dia", grupo: "VIAGENS" },
-  { id: "reversa", label: "↩️ Logística Reversa", grupo: "VIAGENS" },   // logística reversa (17/10/2026)
+  { id: "reversa", label: "🔄 Logística Reversa", grupo: "VIAGENS" },   // logística reversa (17/10/2026)
   { id: "docsviagem", label: "📁 Documentos da Viagem", grupo: "VIAGENS" },   // v435
   { id: "extracaofiscal", label: "📦 Extração CT-e / MDF-e / CIOT", grupo: "VIAGENS" },   // v608
   { id: "motoristas", label: "Motoristas 💰", grupo: "VIAGENS" },
@@ -28899,7 +28900,7 @@ var TAB_DESCRICOES = {
   docsviagem: "Todos os documentos de cada viagem num lugar só: envio de CT-e e MDF-e na saída, pacote completo com canhotos no fim, busca de canhoto por NF e links para a Suzano",
   goiascarga: "Operação Goiás Atacado: importa o arquivo da carga, imprime uma etiqueta por volume, bipa o carregamento e a entrega e cria a rota do motorista",
   saoroquecarga: "Operação Grupo São Roque: importa a carga, monta o baú por parada (mapa da doca), imprime etiqueta com a zona do baú, bipa carregamento e entrega e cria a rota do motorista",
-  reversa: "Logística reversa: o que voltou (recusa, avaria, endereço não encontrado), o impacto no caixa e no frete, a entrada por bip no almoxarifado e o histórico até a reentrega",
+  reversa: "O que voltou, o impacto no caixa, a entrada por bip e o histórico até a reentrega",
   statusdia: "Status diário das viagens em andamento: entregas feitas, situação e observações — atualizado pela carteira e pelo motorista",
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
