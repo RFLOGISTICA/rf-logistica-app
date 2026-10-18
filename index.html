@@ -17,12 +17,13 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v640)</title>
+<title>RF Logística — Painel da Frota (v641)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v640">
-<meta name="rf-data" content="2026-10-17">
+<meta name="rf-versao" content="v641">
+<meta name="rf-data" content="2026-10-18">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v641 (18/10/2026): FRACIONADO -- ferramenta nova de carga fracionada (coleta em vários clientes e entrega na mesma viagem). Aba "📦 Fracionado" no grupo CARREGAMENTO para a equipe (pedidos, roteirização com ocupação em peso e m³, trava de prejuízo, decisão sair/esperar/voltar à base, rota, etiqueta 10x15 com QR por volume e romaneio) e módulo "📦 Fracionado" no portal do cliente (o cliente vê o que comprou: marcar o módulo no login dele em Usuários). Pedido com leitura da NF-e por XML, PDF (DANFE) ou foto. Dados no banco em tabelas próprias (frc_config, frc_pedidos, frc_rotas, bucket frc-notas) com RLS. Assistente alimentado (bloco do Fracionado). -->
 <!-- v640 (17/10/2026): LOGISTICA REVERSA -- GATILHO do monitoramento = FIM DA BIPAGEM DO CARREGAMENTO (Renato: "assim que acabou a bipagem a viagem está pronta"). Carga 100% bipada (São Roque, Goiás ou Suzano) entra sozinha em "Viagens em monitoramento" com todas as paradas; a Suzano casa com as paradas pelas NFs. Se a rota do motorista ainda não foi criada, as paradas vêm da própria carga. Saiu o gatilho por KM de saída/primeira entrega. -->
 <!-- v639 (17/10/2026): LOGISTICA REVERSA LIGADA AO CARREGAMENTO -- toda viagem que sai (carregamento 100% bipado, KM de saída ou primeira entrega) entra sozinha em "Viagens em monitoramento" na área Logística Reversa: valor da carga, entregue, a entregar e retorno, status de cada parada (Suzano, Goiás, São Roque ou rota comum); quando o motorista aperta um dos 3 botões a parada fica vermelha e abre o fluxo reverso ("ver fluxo"). Assistente recebe as viagens monitoradas. -->
 <!-- v638 (17/10/2026): LOGISTICA REVERSA -- o quadro da tela inicial ficou com o ícone repetido no nome e a descrição comprida; agora "Logística Reversa" com descrição curta (grupo Viagens). -->
@@ -1006,7 +1007,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v640" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v641" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -28854,6 +28855,7 @@ var ABAS_DEF = [
   { id: "cargamateus", label: "🗺️ Carga Mateus", grupo: "CARREGAMENTO" },   // v372
   { id: "rotajdl", label: "🧭 Rota JDL", grupo: "CARREGAMENTO" },   // v568
   { id: "conferencia", label: "📦 Conferência de Carga", grupo: "CARREGAMENTO" },
+  { id: "fracionado", label: "📦 Fracionado", grupo: "CARREGAMENTO" },   // v641: carga fracionada
   { id: "dashboard", label: "📊 Dashboard", grupo: "FINANCEIRO" },   // v541
   { id: "pentefino", label: "🛡️ Pente-fino", grupo: "FINANCEIRO" },   // v545
   { id: "financeiro", label: "💵 Financeiro", grupo: "FINANCEIRO" },
@@ -28887,6 +28889,7 @@ function grupoDaAba(id) { var a = ABAS_DEF.find(function (x) { return x.id === i
 var TAB_DESCRICOES = {
   frota: "Cadastro e status de cada caminhão da frota",
   cargamateus: "Importa o PDF da carga da Mateus e estima KM, custo e margem da rota",
+  fracionado: "Carga fracionada: pedidos dos clientes com a nota, rota de coleta e entrega no mesmo caminhão, trava de prejuízo e etiqueta por volume",   // v641
   rotajdl: "Rotas da JDL: importa o PDF da RF com as cidades e cria a viagem com KM estimado e frete por KM",   // v568
   manutencao: "Vencimentos de documentos, seguro e revisões",
   mtcustos: "Lançamento de manutenções e custos por veículo",
@@ -38505,7 +38508,8 @@ function render() {
       setTimeout(function () { try { sr3dIniciar(); } catch (e) {} }, 0);
       return;
     }
-    if (root0) root0.innerHTML = painelClienteHTML();
+    if (root0) root0.innerHTML = frcClienteTemModulo() ? frcPortalClienteHTML() : painelClienteHTML();   // v641: módulo Fracionado (o cliente vê o que comprou)
+    if (frcClienteTemModulo() && FRC.cliView === "novo") setTimeout(function () { try { frcResumo(); } catch (e) {} }, 0);
     return;
   }
   if (state._srpPreview) {   // v613: pré-visualização do portal do gestor (equipe)
@@ -38773,6 +38777,680 @@ function rfArrastarParaRolar() {
   window.addEventListener("blur", soltar);
 }
 try { rfArrastarParaRolar(); } catch (e) { console.error("[arrastar]", e); }
+
+/* ===================================================================================
+   v641 — 📦 FRACIONADO (carga fracionada: coleta em vários clientes, entrega na mesma
+   viagem). Pedido de Renato em 18/10/2026, desenho aprovado em 3 telas (portal do
+   cliente, roteirização, etiqueta).
+   - Ferramenta DO SISTEMA (não é sistema à parte): aba "fracionado" para a equipe e
+     módulo "fracionado" no portal do cliente — o cliente só vê se o módulo estiver
+     marcado no login dele (o cliente vê o que comprou).
+   - Dados no banco da RF, em tabelas próprias: frc_config (1 linha), frc_pedidos,
+     frc_rotas; notas no bucket frc-notas. RLS: equipe = admin ou user com a aba
+     marcada; cliente = papel cliente com o módulo e só os pedidos do cliente_nome dele.
+   - Custos pelas MESMAS premissas do app (mtCusto: diesel/km·l do tipo, motorista,
+     ajudante, alimentação, manutenção, ADM e imposto). Capacidade em kg = cargaUtilT
+     do cadastro da frota; m³ do baú fica em frc_config.veiculos (por placa).
+   - Distância: linha reta entre cidades × fator estrada (1,30), igual ao resto do app.
+   =================================================================================== */
+var FRC = { cfg: null, pedidos: [], rotas: [], carregado: false, carregando: false, erro: "",
+  view: "pedidos", sel: null, placa: "", voltar: true, decisao: null, plano: null, filtro: "abertos",
+  cliView: "novo", arquivo: null, lido: null, mapa: null, camada: null };
+var FRC_STATUS = { aguardando: "Aguardando rota", espera: "Em espera", na_rota: "Na rota", coletado: "Coletado", entregue: "Entregue", cancelado: "Cancelado" };
+var FRC_STATUS_COR = { aguardando: ["#2a2410", "#E8C46A"], espera: ["#2a1212", "#f08a8a"], na_rota: ["#10261a", "#7fd99a"], coletado: ["#10261a", "#7fd99a"], entregue: ["#102033", "#8fc0ff"], cancelado: ["#2a1212", "#f08a8a"] };
+var FRC_M3_PADRAO = { "VAN": 8, "VUC": 14, "3/4": 22, "TOCO": 40, "TRUCK": 50 };
+var FRC_CIDADES = {
+ 'feira de santana':[-12.2664,-38.9663],'salvador':[-12.9714,-38.5014],'santo estevao':[-12.4303,-39.2511],'sao goncalo dos campos':[-12.4331,-38.9667],
+ 'amelia rodrigues':[-12.3914,-38.7564],'conceicao do jacuipe':[-12.3267,-38.7686],'serrinha':[-11.6644,-39.0075],'conceicao do coite':[-11.5636,-39.2828],
+ 'riachao do jacuipe':[-11.8067,-39.3822],'ipira':[-12.1583,-39.7364],'alagoinhas':[-12.1356,-38.4192],'santo amaro':[-12.5467,-38.7119],
+ 'cachoeira':[-12.6181,-38.9558],'sao felix':[-12.61,-38.9719],'cruz das almas':[-12.6697,-39.1019],'santo antonio de jesus':[-12.9692,-39.2614],
+ 'antonio cardoso':[-12.4347,-39.1192],'anguera':[-12.1461,-39.2461],'tanquinho':[-11.9781,-39.1036],'santa barbara':[-11.9561,-38.9719],
+ 'irara':[-12.0503,-38.7633],'coracao de maria':[-12.2331,-38.7486],'teodoro sampaio':[-12.2953,-38.6353],'candeias':[-12.6689,-38.5508],
+ 'simoes filho':[-12.7867,-38.4039],'camacari':[-12.6975,-38.3242],'lauro de freitas':[-12.8944,-38.3272],'dias d avila':[-12.6125,-38.2969],
+ 'pojuca':[-12.4303,-38.3308],'catu':[-12.3531,-38.3789],'mata de sao joao':[-12.5306,-38.2994],'entre rios':[-11.9419,-38.0844],
+ 'inhambupe':[-11.7842,-38.355],'araci':[-11.3328,-38.9583],'valente':[-11.4119,-39.4617],'santaluz':[-11.2558,-39.3747],
+ 'retirolandia':[-11.4931,-39.4239],'queimadas':[-10.9783,-39.6264],'itaberaba':[-12.5275,-40.3069],'rafael jambeiro':[-12.4053,-39.5006],
+ 'castro alves':[-12.7656,-39.4283],'mundo novo':[-11.8589,-40.4719],'baixa grande':[-11.9586,-40.1694],'jacobina':[-11.1806,-40.5117],
+ 'senhor do bonfim':[-10.4614,-40.1897],'capim grosso':[-11.3797,-40.0128],'juazeiro':[-9.4116,-40.4986],'pe de serra':[-11.8331,-39.6114],
+ 'nova fatima':[-11.6036,-39.6297],'gaviao':[-11.4694,-39.7808],'ichu':[-11.7472,-39.1919],'candeal':[-11.8039,-39.12],'lamarao':[-11.7744,-38.8869],
+ 'agua fria':[-11.8628,-38.7631],'biritinga':[-11.6075,-38.805],'barrocas':[-11.5272,-39.0778],'teofilandia':[-11.4828,-38.9917],
+ 'tucano':[-10.9631,-38.7869],'ribeira do pombal':[-10.8344,-38.5358],'euclides da cunha':[-10.5078,-39.0156],'cicero dantas':[-10.5997,-38.3797],
+ 'esplanada':[-11.7942,-37.9447],'sapeacu':[-12.7244,-39.1817],'muritiba':[-12.6253,-38.9933],'governador mangabeira':[-12.6003,-39.0447],
+ 'conceicao da feira':[-12.5072,-38.9997],'sao sebastiao do passe':[-12.5128,-38.4906],'saude':[-10.9428,-40.4153],'filadelfia':[-10.7417,-40.1428],
+ 'maragogipe':[-12.7761,-38.9186],'nazare':[-13.0353,-39.0144],'valenca':[-13.3706,-39.0731],'jequie':[-13.8578,-40.0836],'vitoria da conquista':[-14.8615,-40.8442],
+ 'ilheus':[-14.7889,-39.0494],'itabuna':[-14.7856,-39.2803],'aracaju':[-10.9472,-37.0731],'petrolina':[-9.3986,-40.5008],'paulo afonso':[-9.4064,-38.2147],
+ 'aramari':[-12.0886,-38.4969],'aracas':[-12.2203,-38.2028],'itanagra':[-12.2617,-38.0436]
+};
+function frcNorm(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
+function frcCidadeChave(c) { return frcNorm(String(c || "").split("/")[0].split(" - ")[0]); }
+function frcGeo(cidade) {
+  var k = frcCidadeChave(cidade);
+  if (!k) return Promise.resolve(null);
+  if (FRC_CIDADES[k]) return Promise.resolve(FRC_CIDADES[k]);
+  var cache = {}; try { cache = JSON.parse(localStorage.getItem("rf-frc-geo-v1") || "{}"); } catch (e) {}
+  if (cache[k]) return Promise.resolve(cache[k]);
+  return fetch("https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=1&q=" + encodeURIComponent(String(cidade) + ", Brasil"))
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j[0]) return null;
+      var v = [Number(j[0].lat), Number(j[0].lon)]; cache[k] = v;
+      try { localStorage.setItem("rf-frc-geo-v1", JSON.stringify(cache)); } catch (e) {}
+      return v;
+    }).catch(function () { return null; });
+}
+function frcHav(a, b) { if (!a || !b) return 0; var R = 6371, t = function (x) { return x * Math.PI / 180; }; var dLa = t(b[0] - a[0]), dLo = t(b[1] - a[1]);
+  var h = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(t(a[0])) * Math.cos(t(b[0])) * Math.sin(dLo / 2) * Math.sin(dLo / 2); return 2 * R * Math.asin(Math.sqrt(h)); }
+function frcN(v) { if (v == null || v === "") return 0; if (typeof v === "number") return v; var s = String(v).trim(); if (s.indexOf(",") >= 0) s = s.replace(/\./g, "").replace(",", "."); var n = parseFloat(s); return isNaN(n) ? 0 : n; }
+function frcFmt(v, d) { d = d == null ? 1 : d; return (v == null || isNaN(v)) ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+function frcR(v) { return (v == null || isNaN(v)) ? "—" : "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function frcHoje() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function frcSt(s) { var c = FRC_STATUS_COR[s] || ["#222", "#bbb"]; return '<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;white-space:nowrap;background:' + c[0] + ';color:' + c[1] + ';">' + esc(FRC_STATUS[s] || s) + '</span>'; }
+function frcToast(t) { try { var el = document.getElementById("frc-toast"); if (!el) { el = document.createElement("div"); el.id = "frc-toast"; el.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1d1909;border:1px solid " + GOLD + ";color:" + GOLD + ";padding:10px 16px;border-radius:8px;z-index:9999;font-size:14px;"; document.body.appendChild(el); } el.textContent = t; el.style.display = "block"; clearTimeout(frcToast._t); frcToast._t = setTimeout(function () { el.style.display = "none"; }, 3500); } catch (e) {} }
+function frcClienteTemModulo() { return ehCliente() && !!state.sessao && Array.isArray(state.sessao.modulos) && state.sessao.modulos.indexOf("fracionado") !== -1 && !!state.sessao.cliente_nome; }
+function frcEhEquipe() { return !ehCliente() && !ehMotorista() && podeVerAba("fracionado"); }
+
+/* ---------- carga dos dados ---------- */
+function frcCarregar(forca) {
+  if (FRC.carregando || (FRC.carregado && !forca)) return;
+  FRC.carregando = true;
+  rfGetClient().then(function (sb) {
+    if (!sb) { FRC.carregando = false; FRC.erro = "sem conexão"; render(); return; }
+    var qPed = sb.from("frc_pedidos").select("*").order("criado_em", { ascending: false }).limit(3000);
+    if (ehCliente()) qPed = qPed.eq("cliente_nome", state.sessao.cliente_nome);
+    var ps = [sb.from("frc_config").select("*").eq("id", 1).maybeSingle(), qPed];
+    if (frcEhEquipe()) ps.push(sb.from("frc_rotas").select("*").order("criado_em", { ascending: false }).limit(300));
+    return Promise.all(ps).then(function (r) {
+      FRC.carregando = false;
+      var erro = r.map(function (x) { return x && x.error && x.error.message; }).filter(Boolean)[0];
+      if (erro) { FRC.erro = erro; console.warn("fracionado:", erro); render(); return; }
+      FRC.cfg = r[0].data || {}; if (!FRC.cfg.veiculos) FRC.cfg.veiculos = {};
+      FRC.pedidos = r[1].data || []; FRC.rotas = r[2] ? (r[2].data || []) : [];
+      FRC.carregado = true; FRC.erro = ""; render();
+    });
+  }).catch(function (e) { FRC.carregando = false; FRC.erro = (e && e.message) || "falha"; render(); });
+}
+function frcCfg() { return FRC.cfg || { fator_cubagem: 300, fator_estrada: 1.3, raio_km: 100, ocupacao_min: 70, frete_min: 0, frete_kg: 0, base_lat: -12.2664, base_lng: -38.9663, base_cidade: "Feira de Santana/BA", veiculos: {} }; }
+function frcTabelaDefinida() { var c = frcCfg(); return !!(frcN(c.frete_kg) || frcN(c.frete_min)); }
+function frcPesoTaxado(p) { return Math.max(frcN(p.peso_kg), frcN(p.m3) * (frcN(frcCfg().fator_cubagem) || 300)); }
+function frcFrete(p) { var c = frcCfg(); if (!frcTabelaDefinida()) return null; return Math.max(frcN(c.frete_min), frcPesoTaxado(p) * frcN(c.frete_kg)); }
+
+/* ---------- frota (do cadastro do app) ---------- */
+function frcFrota() {
+  var vm = frcCfg().veiculos || {};
+  return (state.veiculos || []).filter(function (v) { return v.placa && String(v.statusOp || "") !== "Fora de operação" && (Number(v.cargaUtilT) || 0) > 0; })
+    .map(function (v) {
+      var tipo = String(v.tipo || "Toco"); var m3 = frcN(vm[v.placa]);
+      return { placa: v.placa, tipo: tipo, capKg: (Number(v.cargaUtilT) || 0) * 1000, capM3: m3 || FRC_M3_PADRAO[tipo.toUpperCase()] || 30, m3Estimado: !m3, motorista: v.motorista || "", statusOp: v.statusOp || "" };
+    }).sort(function (a, b) { return a.capKg - b.capKg; });
+}
+function frcCustoKm(tipo) {
+  var cfg = state.config || {}; var diesel = Number(cfg.precoDiesel) || 7;
+  var kml = tipo === "3/4" ? (Number(cfg.kml34) || 5) : (Number(cfg.kmlToco) || 3.5);
+  return diesel / kml + (Number(cfg.manutencaoKm) || 0.15) + 0.12;
+}
+
+/* ---------- leitura da nota ---------- */
+function frcLerXML(txt) {
+  var d = new DOMParser().parseFromString(txt, "text/xml");
+  var g = function (sel, root) { var el = (root || d).getElementsByTagName(sel)[0]; return el ? el.textContent.trim() : ""; };
+  var inf = d.getElementsByTagName("infNFe")[0]; if (!inf) throw new Error("o XML não é de NF-e");
+  var dest = d.getElementsByTagName("dest")[0], emit = d.getElementsByTagName("emit")[0];
+  var ed = dest && dest.getElementsByTagName("enderDest")[0], ee = emit && emit.getElementsByTagName("enderEmit")[0];
+  var vols = 0, peso = 0;
+  Array.prototype.forEach.call(d.getElementsByTagName("vol"), function (v) { vols += frcN(g("qVol", v)); peso += frcN(g("pesoB", v)) || frcN(g("pesoL", v)); });
+  return { nf_chave: (inf.getAttribute("Id") || "").replace(/^NFe/, ""), nf_numero: g("nNF"), valor_nf: frcN(g("vNF")),
+    dest_nome: dest ? g("xNome", dest) : "", dest_endereco: ed ? [g("xLgr", ed), g("nro", ed), g("xBairro", ed)].filter(Boolean).join(", ") : "",
+    dest_cidade: ed ? g("xMun", ed) + "/" + g("UF", ed) : "",
+    coleta_endereco: ee ? [g("xLgr", ee), g("nro", ee), g("xBairro", ee)].filter(Boolean).join(", ") : "", coleta_cidade: ee ? g("xMun", ee) + "/" + g("UF", ee) : "",
+    volumes: vols || null, peso_kg: peso || null };
+}
+function frcLerPDF(buf) {
+  if (!window.pdfjsLib) return Promise.reject(new Error("leitor de PDF não carregou"));
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  return pdfjsLib.getDocument({ data: buf }).promise.then(function (pdf) {
+    var pgs = []; for (var i = 1; i <= Math.min(pdf.numPages, 2); i++) pgs.push(pdf.getPage(i).then(function (pg) { return pg.getTextContent(); }));
+    return Promise.all(pgs);
+  }).then(function (tcs) {
+    var itens = []; tcs.forEach(function (tc) { tc.items.forEach(function (x) { var s = String(x.str || "").trim(); if (s) itens.push(s); }); });
+    var txt = itens.join(" "), out = {};
+    var ch = txt.replace(/(\d)\s+(?=\d)/g, "$1").match(/\d{44}/); if (ch) { out.nf_chave = ch[0]; out.nf_numero = String(parseInt(ch[0].slice(25, 34), 10)); }
+    var depois = function (rot, re, max) { var i = itens.findIndex(function (s) { return frcNorm(s).indexOf(frcNorm(rot)) >= 0; }); if (i < 0) return null;
+      for (var j = i; j < Math.min(itens.length, i + (max || 8)); j++) { var m = itens[j].match(re); if (m && !(j === i && frcNorm(itens[j]) === frcNorm(rot))) return m[0]; } return null; };
+    out.valor_nf = frcN(depois("VALOR TOTAL DA NOTA", /\d{1,3}(\.\d{3})*,\d{2}/, 12));
+    out.peso_kg = frcN(depois("PESO BRUTO", /\d{1,3}(\.\d{3})*,\d{1,4}|\d+(\.\d+)?/, 10));
+    var q = depois("QUANTIDADE", /^\d+$/, 10); if (q) out.volumes = Number(q);
+    var iN = itens.findIndex(function (s) { return frcNorm(s).indexOf("nome razao social") >= 0; });
+    if (iN >= 0) out.dest_nome = itens[iN + 1] || "";
+    var UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ");
+    var iM = itens.findIndex(function (s, k) { return k > iN && frcNorm(s).indexOf("municipio") === 0; });
+    if (iM >= 0) { var mun = itens[iM + 1] || ""; var uf = itens.slice(iM + 1, iM + 8).find(function (s) { return UFS.indexOf(s.trim()) >= 0; }) || "BA"; out.dest_cidade = mun ? mun + "/" + uf : ""; }
+    var iE = itens.findIndex(function (s, k) { return k > iN && frcNorm(s).indexOf("endereco") === 0; });
+    if (iE >= 0) out.dest_endereco = itens[iE + 1] || "";
+    return out;
+  });
+}
+function frcLerFoto(f) {
+  return new Promise(function (resolve, reject) {
+    if (typeof rfLerFotoIA !== "function") { reject(new Error("leitura de foto indisponível")); return; }
+    var manda = function (blob) { rfLerFotoIA("danfe", blob, function (j, porque) {
+      if (!j || !(j.chave || j.nfe)) { reject(new Error(porque || "não reconheci a foto como NF-e")); return; }
+      resolve({ nf_chave: String(j.chave || "").replace(/\D/g, ""), nf_numero: j.nfe || "", dest_nome: j.cliente || "", dest_endereco: j.endereco || "", dest_cidade: j.cidade || "",
+        volumes: Math.round(Number(j.qtdVolumes) || 0) || null, peso_kg: Number(j.peso) || null, valor_nf: Number(j.valorMercadoria) || null });
+    }); };
+    if (typeof rfComprimirImagem === "function") rfComprimirImagem(f, 2600, 1200000).then(manda).catch(function () { manda(f); }); else manda(f);
+  });
+}
+
+/* ---------- formulário do pedido (cliente e equipe usam o mesmo) ---------- */
+function frcFormPedidoHTML(remetente, coletaPadrao) {
+  var c = coletaPadrao || {};
+  var inp = function (id, ph, val, extra) { return '<input id="frc-f-' + id + '" placeholder="' + esc(ph || "") + '" value="' + esc(val || "") + '" ' + (extra || "") + ' style="width:100%;">'; };
+  var lb = function (t) { return '<div style="font-size:12px;color:#999;margin:8px 0 3px;">' + t + '</div>'; };
+  var tit = function (t) { return '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;margin:16px 0 4px;">' + t + '</div>'; };
+  var col = function (html, span) { return '<div style="flex:' + (span || 1) + ' 1 180px;min-width:0;">' + html + '</div>'; };
+  return '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">'
+    + '<div style="flex:1.6 1 420px;min-width:0;border:1px solid #2A2A2A;border-radius:12px;padding:16px;background:#121212;">'
+    + (remetente ? '<div style="font-size:13px;color:#ccc;margin-bottom:6px;">Remetente: <b style="color:#fff;">' + esc(remetente) + '</b></div>' : "")
+    + tit("1 · NOTA FISCAL")
+    + '<div id="frc-drop" onclick="document.getElementById(\'frc-arq\').click()" style="border:2px dashed #6b5420;border-radius:12px;padding:18px;text-align:center;background:#14110a;cursor:pointer;">📄 Toque para anexar a <b style="color:' + GOLD + ';">NF-e</b><div style="margin-top:8px;font-size:12px;color:#bbb;">XML · PDF (DANFE) · Foto da nota</div>'
+    + '<input type="file" id="frc-arq" accept=".xml,.pdf,image/*" style="display:none" onchange="frcArquivo(this.files[0])"></div><div id="frc-arq-msg"></div>'
+    + tit("2 · COLETA")
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + col(lb("Endereço") + inp("coleta_endereco", "", c.coleta_endereco), 2) + col(lb("Cidade/UF") + inp("coleta_cidade", "Ex: Santo Estêvão/BA", c.coleta_cidade)) + col(lb("Janela de coleta") + inp("janela", "Ex: hoje 08h–12h")) + '</div>'
+    + tit("3 · ENTREGA")
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + col(lb("Destinatário") + inp("dest_nome")) + col(lb("Endereço") + inp("dest_endereco")) + col(lb("Cidade/UF") + inp("dest_cidade", "Ex: Serrinha/BA")) + '</div>'
+    + tit("4 · MERCADORIA")
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + col(lb("Tipo de mercadoria") + inp("tipo_mercadoria", "Ex: caixas · alimentos secos")) + col(lb("Volumes") + inp("volumes", "", "1", 'inputmode="numeric" oninput="frcResumo()"'))
+    + col(lb("Peso total (kg)") + inp("peso_kg", "", "", 'inputmode="decimal" oninput="frcResumo()"')) + col(lb("Valor da nota (R$)") + inp("valor_nf", "", "", 'inputmode="decimal"')) + '</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + col(lb("Medida por volume (m)") + inp("med", "C × L × A — ex: 0,40 x 0,30 x 0,30", "", 'oninput="frcResumo()"')) + col(lb("ou volume total (m³)") + inp("m3", "", "", 'inputmode="decimal" oninput="frcResumo()"'))
+    + col(lb("NF nº") + inp("nf_numero")) + col(lb("Chave da NF-e") + inp("nf_chave")) + '</div>'
+    + lb("Observação") + '<textarea id="frc-f-obs" rows="2" placeholder="Ex: frágil, não empilhar" style="width:100%;background:#0b0b0b;color:#eee;border:1px solid #333;border-radius:8px;padding:8px;font-family:inherit;"></textarea>'
+    + '<button class="btn" style="width:100%;margin-top:14px;padding:12px;font-weight:800;" id="frc-enviar" onclick="frcEnviarPedido()">ENVIAR PEDIDO</button><div id="frc-env-msg"></div>'
+    + '</div><div style="flex:1 1 280px;min-width:0;"><div id="frc-resumo" style="border:1px solid #2A2A2A;border-radius:12px;padding:16px;background:#121212;"></div></div></div>';
+}
+function frcArquivo(f) {
+  if (!f) return; FRC.arquivo = f; FRC.lido = null;
+  var box = document.getElementById("frc-arq-msg"); var nome = String(f.name || "").toLowerCase();
+  var msg = function (cls, t) { var cor = cls === "ok" ? ["#0f1a10", "#24502a", "#a8e0ae"] : cls === "warn" ? ["#1d170a", "#5a4614", "#f1d58a"] : ["#1f0f0f", "#5a2323", "#f3a3a3"]; return '<div style="border-radius:8px;padding:9px 12px;font-size:13px;margin-top:8px;background:' + cor[0] + ';border:1px solid ' + cor[1] + ';color:' + cor[2] + ';">' + t + '</div>'; };
+  if (box) box.innerHTML = msg("warn", "Lendo a nota…");
+  var tipo = nome.endsWith(".xml") ? "XML" : nome.endsWith(".pdf") ? "DANFE" : "foto";
+  var p = tipo === "XML" ? f.text().then(frcLerXML) : tipo === "DANFE" ? f.arrayBuffer().then(function (b) { return frcLerPDF(new Uint8Array(b)); }) : frcLerFoto(f);
+  p.then(function (dados) {
+    FRC.lido = dados; var campos = [];
+    Object.keys(dados).forEach(function (k) {
+      var v = dados[k]; if (v == null || v === "" || v === 0) return;
+      var el = document.getElementById("frc-f-" + k); if (!el) return;
+      if ((k === "coleta_endereco" || k === "coleta_cidade") && el.value) return;
+      el.value = k === "valor_nf" ? Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : k === "peso_kg" ? Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 3 }) : v;
+      if (k.indexOf("coleta") !== 0) campos.push(k);
+    });
+    var nomes = { dest_nome: "destinatário", dest_cidade: "cidade", dest_endereco: "endereço", peso_kg: "peso", volumes: "volumes", valor_nf: "valor", nf_numero: "número", nf_chave: "chave" };
+    var faltam = ["dest_nome", "dest_cidade", "peso_kg", "volumes"].filter(function (k) { var e = document.getElementById("frc-f-" + k); return e && !e.value; });
+    if (box) box.innerHTML = msg("ok", "✔ " + tipo + " " + esc(dados.nf_numero || "") + " lida — " + (campos.map(function (k) { return nomes[k] || k; }).join(", ") || "nenhum campo") + " preenchido(s). Confira abaixo.")
+      + (faltam.length ? msg("warn", "Não consegui ler: " + faltam.map(function (k) { return nomes[k]; }).join(", ") + ". Preencha à mão.") : "");
+    frcResumo();
+  }).catch(function (e) { if (box) box.innerHTML = msg("err", "Não consegui ler a nota (" + esc((e && e.message) || "erro") + "). Ela vai anexada mesmo assim — preencha os campos."); });
+}
+function frcVal(id) { var e = document.getElementById("frc-f-" + id); return e ? String(e.value || "").trim() : ""; }
+function frcM3Form() {
+  var m3 = frcN(frcVal("m3")); if (m3) return m3;
+  var med = frcVal("med").split(/x|×|\*/i).map(frcN).filter(Boolean);
+  return med.length === 3 ? med[0] * med[1] * med[2] * Math.max(1, frcN(frcVal("volumes"))) : 0;
+}
+function frcResumo() {
+  var el = document.getElementById("frc-resumo"); if (!el) return;
+  var p = { peso_kg: frcN(frcVal("peso_kg")), m3: frcM3Form() }; var fc = frcN(frcCfg().fator_cubagem) || 300;
+  var cub = p.m3 * fc, tax = frcPesoTaxado(p), fr = (p.peso_kg || p.m3) ? frcFrete(p) : null;
+  var k = function (a, b, cor) { return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:' + (cor || "#aaa") + ';margin-top:6px;"><span>' + a + '</span><b style="color:' + (cor || "#fff") + ';">' + b + '</b></div>'; };
+  el.innerHTML = '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;">RESUMO DO PEDIDO</div>'
+    + k("Peso real", frcFmt(p.peso_kg, 0) + " kg") + k("Volume", frcFmt(p.m3, 2) + " m³") + k("Peso cubado (×" + fc + ")", frcFmt(cub, 0) + " kg")
+    + k("Cobrado por", frcFmt(tax, 0) + " kg (" + (tax > p.peso_kg ? "peso cubado" : "peso real") + ")", GOLD)
+    + '<div style="border-top:1px solid #2a2a2a;margin:12px 0;"></div><div style="font-size:13px;color:#aaa;">Frete estimado</div>'
+    + '<div style="font-size:26px;font-weight:800;color:' + GOLD + ';">' + (fr == null ? "R$ —" : frcR(fr)) + '</div>'
+    + '<div style="font-size:11px;color:#777;margin-top:4px;">' + (fr == null ? "Tabela de frete em definição pela RF" : "Valor estimado — confirmado na roteirização") + '</div>';
+}
+function frcEnviarPedido() {
+  var remetente = ehCliente() ? state.sessao.cliente_nome : (document.getElementById("frc-rem") || {}).value;
+  var msgEl = document.getElementById("frc-env-msg");
+  var erro = function (t) { if (msgEl) msgEl.innerHTML = '<div style="border-radius:8px;padding:9px 12px;font-size:13px;margin-top:8px;background:#1f0f0f;border:1px solid #5a2323;color:#f3a3a3;">' + t + '</div>'; };
+  var p = { cliente_nome: remetente, coleta_endereco: frcVal("coleta_endereco"), coleta_cidade: frcVal("coleta_cidade"), janela: frcVal("janela"),
+    dest_nome: frcVal("dest_nome"), dest_endereco: frcVal("dest_endereco"), dest_cidade: frcVal("dest_cidade"), tipo_mercadoria: frcVal("tipo_mercadoria"),
+    volumes: Math.max(1, parseInt(frcVal("volumes"), 10) || 1), peso_kg: frcN(frcVal("peso_kg")), m3: frcM3Form(), valor_nf: frcN(frcVal("valor_nf")) || null,
+    nf_numero: frcVal("nf_numero"), nf_chave: frcVal("nf_chave").replace(/\D/g, ""), obs: (document.getElementById("frc-f-obs") || {}).value || "" };
+  var falta = []; if (!p.cliente_nome) falta.push("remetente"); if (!p.coleta_cidade) falta.push("cidade da coleta"); if (!p.dest_nome) falta.push("destinatário");
+  if (!p.dest_cidade) falta.push("cidade da entrega"); if (!p.peso_kg) falta.push("peso"); if (!p.m3) falta.push("medidas ou m³");
+  if (falta.length) { erro("Falta: " + falta.join(", ") + "."); return; }
+  var bt = document.getElementById("frc-enviar"); if (bt) { bt.disabled = true; bt.textContent = "enviando…"; }
+  p.frete_estimado = frcFrete(p);
+  Promise.all([frcGeo(p.coleta_cidade), frcGeo(p.dest_cidade), rfGetClient()]).then(function (r) {
+    if (r[0]) { p.coleta_lat = r[0][0]; p.coleta_lng = r[0][1]; } if (r[1]) { p.dest_lat = r[1][0]; p.dest_lng = r[1][1]; }
+    var sb = r[2]; if (!sb) throw new Error("sem conexão");
+    var sobe = Promise.resolve();
+    if (FRC.arquivo) {
+      var ext = (String(FRC.arquivo.name).split(".").pop() || "bin").toLowerCase();
+      var path = rfMd5Hex(p.cliente_nome) + "/" + Date.now() + "." + ext;
+      sobe = sb.storage.from("frc-notas").upload(path, FRC.arquivo, { upsert: false, contentType: FRC.arquivo.type || undefined }).then(function (u) { if (u.error) throw new Error("a nota não subiu: " + u.error.message); p.arquivo_path = path; p.arquivo_tipo = ext; });
+    }
+    return sobe.then(function () { return sb.from("frc_pedidos").insert(p).select().single(); });
+  }).then(function (res) {
+    if (res.error) throw new Error(res.error.message);
+    FRC.pedidos.unshift(res.data); FRC.arquivo = null; FRC.lido = null;
+    frcToast("Pedido #" + res.data.numero + " enviado");
+    if (ehCliente()) FRC.cliView = "meus"; else FRC.view = "pedidos";
+    var m = document.getElementById("frc-modal"); if (m) m.remove();
+    render();
+  }).catch(function (e) { if (bt) { bt.disabled = false; bt.textContent = "ENVIAR PEDIDO"; } erro(esc((e && e.message) || "falha ao enviar")); });
+}
+/* md5 hex (para o nome da pasta do cliente no bucket — a política do banco usa md5(cliente_nome)) */
+function rfMd5Hex(str) {
+  function rh(n) { var s = "", j; for (j = 0; j <= 3; j++) s += ((n >> (j * 8 + 4)) & 0x0F).toString(16) + ((n >> (j * 8)) & 0x0F).toString(16); return s; }
+  function ad(x, y) { var l = (x & 0xFFFF) + (y & 0xFFFF); var m = (x >> 16) + (y >> 16) + (l >> 16); return (m << 16) | (l & 0xFFFF); }
+  function rl(n, c) { return (n << c) | (n >>> (32 - c)); }
+  function cm(q, a, b, x, s, t) { return ad(rl(ad(ad(a, q), ad(x, t)), s), b); }
+  function ff(a, b, c, d, x, s, t) { return cm((b & c) | ((~b) & d), a, b, x, s, t); }
+  function gg(a, b, c, d, x, s, t) { return cm((b & d) | (c & (~d)), a, b, x, s, t); }
+  function hh(a, b, c, d, x, s, t) { return cm(b ^ c ^ d, a, b, x, s, t); }
+  function ii(a, b, c, d, x, s, t) { return cm(c ^ (b | (~d)), a, b, x, s, t); }
+  var u = unescape(encodeURIComponent(String(str))); var n = ((u.length + 8) >> 6) + 1, x = new Array(n * 16), i;
+  for (i = 0; i < n * 16; i++) x[i] = 0; for (i = 0; i < u.length; i++) x[i >> 2] |= u.charCodeAt(i) << ((i % 4) * 8);
+  x[i >> 2] |= 0x80 << ((i % 4) * 8); x[n * 16 - 2] = u.length * 8;
+  var a = 1732584193, b = -271733879, c = -1732584194, d = 271733878;
+  for (i = 0; i < x.length; i += 16) { var oa = a, ob = b, oc = c, od = d;
+    a = ff(a, b, c, d, x[i], 7, -680876936); d = ff(d, a, b, c, x[i + 1], 12, -389564586); c = ff(c, d, a, b, x[i + 2], 17, 606105819); b = ff(b, c, d, a, x[i + 3], 22, -1044525330);
+    a = ff(a, b, c, d, x[i + 4], 7, -176418897); d = ff(d, a, b, c, x[i + 5], 12, 1200080426); c = ff(c, d, a, b, x[i + 6], 17, -1473231341); b = ff(b, c, d, a, x[i + 7], 22, -45705983);
+    a = ff(a, b, c, d, x[i + 8], 7, 1770035416); d = ff(d, a, b, c, x[i + 9], 12, -1958414417); c = ff(c, d, a, b, x[i + 10], 17, -42063); b = ff(b, c, d, a, x[i + 11], 22, -1990404162);
+    a = ff(a, b, c, d, x[i + 12], 7, 1804603682); d = ff(d, a, b, c, x[i + 13], 12, -40341101); c = ff(c, d, a, b, x[i + 14], 17, -1502002290); b = ff(b, c, d, a, x[i + 15], 22, 1236535329);
+    a = gg(a, b, c, d, x[i + 1], 5, -165796510); d = gg(d, a, b, c, x[i + 6], 9, -1069501632); c = gg(c, d, a, b, x[i + 11], 14, 643717713); b = gg(b, c, d, a, x[i], 20, -373897302);
+    a = gg(a, b, c, d, x[i + 5], 5, -701558691); d = gg(d, a, b, c, x[i + 10], 9, 38016083); c = gg(c, d, a, b, x[i + 15], 14, -660478335); b = gg(b, c, d, a, x[i + 4], 20, -405537848);
+    a = gg(a, b, c, d, x[i + 9], 5, 568446438); d = gg(d, a, b, c, x[i + 14], 9, -1019803690); c = gg(c, d, a, b, x[i + 3], 14, -187363961); b = gg(b, c, d, a, x[i + 8], 20, 1163531501);
+    a = gg(a, b, c, d, x[i + 13], 5, -1444681467); d = gg(d, a, b, c, x[i + 2], 9, -51403784); c = gg(c, d, a, b, x[i + 7], 14, 1735328473); b = gg(b, c, d, a, x[i + 12], 20, -1926607734);
+    a = hh(a, b, c, d, x[i + 5], 4, -378558); d = hh(d, a, b, c, x[i + 8], 11, -2022574463); c = hh(c, d, a, b, x[i + 11], 16, 1839030562); b = hh(b, c, d, a, x[i + 14], 23, -35309556);
+    a = hh(a, b, c, d, x[i + 1], 4, -1530992060); d = hh(d, a, b, c, x[i + 4], 11, 1272893353); c = hh(c, d, a, b, x[i + 7], 16, -155497632); b = hh(b, c, d, a, x[i + 10], 23, -1094730640);
+    a = hh(a, b, c, d, x[i + 13], 4, 681279174); d = hh(d, a, b, c, x[i], 11, -358537222); c = hh(c, d, a, b, x[i + 3], 16, -722521979); b = hh(b, c, d, a, x[i + 6], 23, 76029189);
+    a = hh(a, b, c, d, x[i + 9], 4, -640364487); d = hh(d, a, b, c, x[i + 12], 11, -421815835); c = hh(c, d, a, b, x[i + 15], 16, 530742520); b = hh(b, c, d, a, x[i + 2], 23, -995338651);
+    a = ii(a, b, c, d, x[i], 6, -198630844); d = ii(d, a, b, c, x[i + 7], 10, 1126891415); c = ii(c, d, a, b, x[i + 14], 15, -1416354905); b = ii(b, c, d, a, x[i + 5], 21, -57434055);
+    a = ii(a, b, c, d, x[i + 12], 6, 1700485571); d = ii(d, a, b, c, x[i + 3], 10, -1894986606); c = ii(c, d, a, b, x[i + 10], 15, -1051523); b = ii(b, c, d, a, x[i + 1], 21, -2054922799);
+    a = ii(a, b, c, d, x[i + 8], 6, 1873313359); d = ii(d, a, b, c, x[i + 15], 10, -30611744); c = ii(c, d, a, b, x[i + 6], 15, -1560198380); b = ii(b, c, d, a, x[i + 13], 21, 1309151649);
+    a = ii(a, b, c, d, x[i + 4], 6, -145523070); d = ii(d, a, b, c, x[i + 11], 10, -1120210379); c = ii(c, d, a, b, x[i + 2], 15, 718787259); b = ii(b, c, d, a, x[i + 9], 21, -343485551);
+    a = ad(a, oa); b = ad(b, ob); c = ad(c, oc); d = ad(d, od); }
+  return rh(a) + rh(b) + rh(c) + rh(d);
+}
+function frcVerNota(path) {
+  rfGetClient().then(function (sb) { if (!sb) return; return sb.storage.from("frc-notas").createSignedUrl(path, 600).then(function (r) { if (r.data && r.data.signedUrl) window.open(r.data.signedUrl, "_blank"); else alert("Não consegui abrir a nota."); }); });
+}
+
+/* ---------- tabela de pedidos ---------- */
+function frcTabelaPedidos(lista, equipe) {
+  if (!lista.length) return '<div style="text-align:center;color:#777;padding:24px;border:1px dashed #333;border-radius:10px;">Nenhum pedido.</div>';
+  var th = function (t, r) { return '<th style="text-align:' + (r ? "right" : "left") + ';color:#888;font-weight:600;font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:8px 6px;border-bottom:1px solid #2a2a2a;white-space:nowrap;">' + t + '</th>'; };
+  var td = function (t, r) { return '<td style="padding:9px 6px;border-bottom:1px solid #1f1f1f;vertical-align:top;' + (r ? "text-align:right;" : "") + '">' + t + '</td>'; };
+  return '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><tr>' + th("#") + (equipe ? th("Remetente") : "") + th("Coleta") + th("Destino") + th("Vol", 1) + th("Kg", 1) + th("m³", 1) + (equipe ? th("Frete", 1) : "") + th("Status") + th("") + '</tr>'
+    + lista.map(function (p) {
+      return '<tr>' + td(p.numero) + (equipe ? td(esc(p.cliente_nome)) : "") + td(esc(p.coleta_cidade)) + td(esc(p.dest_nome) + '<div style="color:#888;">' + esc(p.dest_cidade) + '</div>')
+        + td(p.volumes, 1) + td(frcFmt(p.peso_kg, 0), 1) + td(frcFmt(p.m3, 2), 1) + (equipe ? td(frcR(p.frete_estimado), 1) : "")
+        + td(frcSt(p.status) + (p.motivo_espera ? '<div style="color:#999;font-size:11px;max-width:230px;margin-top:3px;">' + esc(p.motivo_espera) + '</div>' : ""))
+        + td((p.arquivo_path ? '<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="frcVerNota(\'' + esc(p.arquivo_path) + '\')">nota</button> ' : "")
+          + (equipe ? '<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="frcEditarPedido(\'' + p.id + '\')">editar</button>' : "")) + '</tr>';
+    }).join("") + '</table></div>';
+}
+
+/* ---------- PORTAL DO CLIENTE ---------- */
+function frcPortalClienteHTML() {
+  if (!FRC.carregado) frcCarregar();
+  var nome = (state.sessao && (state.sessao.nome || state.sessao.email)) || "cliente", cli = state.sessao.cliente_nome || "";
+  var aba = FRC.cliView || "novo";
+  var bt = function (id, t) { return '<button onclick="FRC.cliView=\'' + id + '\';render();" style="background:' + (aba === id ? "#1d1909" : "none") + ';color:' + (aba === id ? GOLD : "#bbb") + ';border:0;border-radius:8px;padding:9px 14px;font-weight:' + (aba === id ? 800 : 500) + ';cursor:pointer;font-size:14px;">' + t + '</button>'; };
+  var topo = '<div style="border-bottom:2px solid ' + GOLD + ';padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#000;">'
+    + '<div><div style="font-size:21px;font-weight:800;color:#fff;">RF Logística</div><div style="font-size:11px;color:' + GOLD + ';letter-spacing:2px;font-weight:700;">PORTAL DO CLIENTE — ' + esc(cli) + '</div></div>'
+    + '<div style="display:flex;gap:4px;flex-wrap:wrap;">' + bt("novo", "📦 Novo pedido") + bt("meus", "📋 Meus pedidos") + bt("viagens", "🚛 Viagens") + '</div>'
+    + '<button class="btn-outline" onclick="logout()">Sair</button></div>';
+  if (aba === "viagens") {
+    if (!state._viagensCliente && typeof clienteCarregarViagens === "function" && !state._carregandoViagensCliente) { try { clienteCarregarViagens(); } catch (e) {} }
+    return topo + painelClienteHTML().replace(/^[\s\S]*?<\/div>\s*<div style="padding:18px 24px 6px;">/, '<div style="padding:18px 24px 6px;">');
+  }
+  var corpo;
+  if (FRC.erro) corpo = '<div style="color:#f3a3a3;padding:20px;">Não consegui carregar: ' + esc(FRC.erro) + '</div>';
+  else if (!FRC.carregado) corpo = '<div style="color:#777;padding:30px;text-align:center;">Carregando…</div>';
+  else if (aba === "meus") corpo = '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:10px;">📋 Meus pedidos</div>' + frcTabelaPedidos(FRC.pedidos, false);
+  else {
+    var ult = FRC.pedidos[0] || {};
+    corpo = '<div style="font-size:20px;font-weight:800;color:#fff;">Novo pedido de coleta</div><div style="font-size:13px;color:#999;margin:2px 0 14px;">Olá, ' + esc(nome) + '. Anexe a nota (XML, PDF ou foto) — o sistema preenche os dados. Confira antes de enviar.</div>'
+      + frcFormPedidoHTML("", { coleta_endereco: ult.coleta_endereco, coleta_cidade: ult.coleta_cidade });
+  }
+  return topo + '<div style="padding:18px 20px 40px;">' + corpo + '</div>';
+}
+
+/* ---------- ABA DA EQUIPE ---------- */
+function frcTelaHTML() {
+  if (!FRC.carregado) frcCarregar();
+  var v = FRC.view || "pedidos";
+  var bt = function (id, t) { return '<button onclick="FRC.view=\'' + id + '\';render();" style="background:' + (v === id ? "#1d1909" : "none") + ';color:' + (v === id ? GOLD : "#bbb") + ';border:1px solid ' + (v === id ? GOLD : "#333") + ';border-radius:8px;padding:8px 14px;font-weight:' + (v === id ? 800 : 500) + ';cursor:pointer;">' + t + '</button>'; };
+  var abertos = FRC.pedidos.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; }).length;
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;"><div style="font-size:20px;font-weight:800;color:' + GOLD + ';">📦 Fracionado</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + bt("pedidos", "Pedidos" + (abertos ? " (" + abertos + ")" : "")) + bt("roteirizar", "Roteirizar") + bt("rotas", "Rotas") + (ehAdmin() ? bt("config", "Configuração") : "") + '</div></div>'
+    + '<div style="font-size:12px;color:#999;margin-bottom:14px;">Carga fracionada: cada cliente lança o pedido com a nota, o sistema monta a rota de coleta e entrega no mesmo caminhão, segura o que dá prejuízo e gera uma etiqueta por volume.</div>';
+  if (FRC.erro) return h + '<div style="color:#f3a3a3;">Não consegui carregar: ' + esc(FRC.erro) + ' <button class="btn-outline" onclick="FRC.erro=\'\';frcCarregar(true)">tentar de novo</button></div>';
+  if (!FRC.carregado) return h + '<div style="color:#777;padding:30px;text-align:center;">Carregando…</div>';
+  if (v === "roteirizar") return h + frcRotHTML();
+  if (v === "rotas") return h + frcRotasHTML();
+  if (v === "config") return h + frcConfigHTML();
+  var l = FRC.pedidos;
+  if (FRC.filtro === "abertos") l = l.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; });
+  else if (FRC.filtro === "na_rota") l = l.filter(function (p) { return p.status === "na_rota" || p.status === "coletado"; });
+  return h + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">'
+    + '<select onchange="FRC.filtro=this.value;render();" style="width:auto;">' + [["abertos", "Aguardando + espera"], ["na_rota", "Na rota"], ["todos", "Todos"]].map(function (o) { return '<option value="' + o[0] + '"' + (FRC.filtro === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select>'
+    + '<button class="btn" onclick="frcLancarPedido()">+ Lançar pedido</button><button class="btn-outline" onclick="frcCarregar(true)">↻ Atualizar</button>'
+    + (frcTabelaDefinida() ? "" : '<span style="font-size:12px;color:#f1d58a;">⚠ tabela de frete não definida (Configuração)</span>') + '</div>' + frcTabelaPedidos(l, true);
+}
+function frcModal(html) {
+  var m = document.getElementById("frc-modal"); if (m) m.remove();
+  m = document.createElement("div"); m.id = "frc-modal";
+  m.style.cssText = "position:fixed;inset:0;background:#000c;z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;";
+  m.innerHTML = '<div style="background:#151515;border:1px solid #2a2a2a;border-radius:12px;padding:18px;max-width:1100px;width:100%;margin:auto;">' + html + '</div>';
+  m.onclick = function (e) { if (e.target === m) m.remove(); };
+  document.body.appendChild(m); return m;
+}
+function frcLancarPedido() {
+  var nomes = (state.clientes || []).slice().sort();
+  frcModal('<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><div style="font-size:19px;font-weight:800;color:#fff;">Lançar pedido por um cliente</div><button class="btn-outline" onclick="document.getElementById(\'frc-modal\').remove()">Fechar</button></div>'
+    + '<div style="font-size:12px;color:#999;margin:4px 0 10px;">Para quando o cliente manda a nota por WhatsApp ou e-mail.</div>'
+    + '<div style="font-size:12px;color:#999;margin-bottom:3px;">Remetente (cliente do cadastro)</div><input id="frc-rem" list="frc-rem-l" placeholder="Nome do cliente" style="width:100%;max-width:420px;"><datalist id="frc-rem-l">' + nomes.map(function (n) { return '<option value="' + esc(n) + '">'; }).join("") + '</datalist>'
+    + '<div style="margin-top:6px;">' + frcFormPedidoHTML("", {}) + '</div>');
+  FRC.arquivo = null; frcResumo();
+}
+function frcEditarPedido(id) {
+  var p = FRC.pedidos.find(function (x) { return x.id === id; }); if (!p) return;
+  var inp = function (id2, lab, val) { return '<label style="display:block;font-size:12px;color:#999;margin-top:8px;">' + lab + '<input id="frc-e-' + id2 + '" value="' + esc(val == null ? "" : val) + '" style="width:100%;margin-top:3px;"></label>'; };
+  frcModal('<div style="max-width:560px;margin:auto;"><div style="font-size:19px;font-weight:800;color:#fff;">Pedido #' + p.numero + ' · ' + esc(p.cliente_nome) + '</div>'
+    + '<label style="display:block;font-size:12px;color:#999;margin-top:10px;">Status<select id="frc-e-status" style="width:100%;margin-top:3px;">' + Object.keys(FRC_STATUS).map(function (k) { return '<option value="' + k + '"' + (p.status === k ? " selected" : "") + '>' + FRC_STATUS[k] + '</option>'; }).join("") + '</select></label>'
+    + inp("frete", "Frete (R$)", p.frete_estimado) + inp("peso", "Peso (kg)", p.peso_kg) + inp("m3", "m³", p.m3) + inp("vol", "Volumes", p.volumes) + inp("cc", "Cidade da coleta", p.coleta_cidade) + inp("cd", "Cidade da entrega", p.dest_cidade)
+    + '<div style="display:flex;gap:8px;margin-top:14px;"><button class="btn" onclick="frcSalvarEdicao(\'' + id + '\')">Salvar</button><button class="btn-outline" onclick="document.getElementById(\'frc-modal\').remove()">Fechar</button></div></div>');
+}
+function frcSalvarEdicao(id) {
+  var p = FRC.pedidos.find(function (x) { return x.id === id; }); if (!p) return;
+  var g = function (k) { return (document.getElementById("frc-e-" + k) || {}).value; };
+  var up = { status: g("status"), frete_estimado: g("frete") === "" ? null : frcN(g("frete")), peso_kg: frcN(g("peso")), m3: frcN(g("m3")), volumes: Math.max(1, parseInt(g("vol"), 10) || 1), coleta_cidade: g("cc"), dest_cidade: g("cd") };
+  if (up.status === "aguardando") { up.motivo_espera = null; up.rota_id = null; }
+  Promise.all([up.coleta_cidade !== p.coleta_cidade ? frcGeo(up.coleta_cidade) : null, up.dest_cidade !== p.dest_cidade ? frcGeo(up.dest_cidade) : null, rfGetClient()]).then(function (r) {
+    if (r[0]) { up.coleta_lat = r[0][0]; up.coleta_lng = r[0][1]; } if (r[1]) { up.dest_lat = r[1][0]; up.dest_lng = r[1][1]; }
+    return r[2].from("frc_pedidos").update(up).eq("id", id);
+  }).then(function (res) {
+    if (res && res.error) { alert(res.error.message); return; }
+    Object.assign(p, up); var m = document.getElementById("frc-modal"); if (m) m.remove(); frcToast("Pedido salvo"); render();
+  });
+}
+
+/* ---------- ROTEIRIZAÇÃO ---------- */
+function frcKmRota(base, peds, fator, voltar) {
+  var pos = base, km = 0, seqC = [], seqE = [], rest = peds.slice();
+  while (rest.length) { rest.sort(function (a, b) { return frcHav(pos, a._c) - frcHav(pos, b._c); }); var n = rest.shift(); km += frcHav(pos, n._c); pos = n._c; seqC.push(n); }
+  rest = peds.slice();
+  while (rest.length) { rest.sort(function (a, b) { return frcHav(pos, a._d) - frcHav(pos, b._d); }); var e = rest.shift(); km += frcHav(pos, e._d); pos = e._d; seqE.push(e); }
+  if (voltar && peds.length) km += frcHav(pos, base);
+  return { km: km * fator, seqC: seqC, seqE: seqE };
+}
+function frcPlanejar(veic, candidatos, voltar) {
+  var c = frcCfg(), base = [Number(c.base_lat) || -12.2664, Number(c.base_lng) || -38.9663], fator = frcN(c.fator_estrada) || 1.3, raio = frcN(c.raio_km) || 100;
+  var ckm = frcCustoKm(veic.tipo);
+  return Promise.all(candidatos.map(function (p) {
+    return Promise.all([p.coleta_lat != null ? [p.coleta_lat, p.coleta_lng] : frcGeo(p.coleta_cidade), p.dest_lat != null ? [p.dest_lat, p.dest_lng] : frcGeo(p.dest_cidade)]).then(function (g) { p._c = g[0]; p._d = g[1]; return p; });
+  })).then(function () {
+    var fora = [], semGeo = [], cand = [];
+    candidatos.forEach(function (p) {
+      if (!p._c || !p._d) { semGeo.push(p); return; }
+      var dist = frcHav(base, p._c) * fator;
+      if (dist > raio) { fora.push({ p: p, motivo: "Coleta a " + frcFmt(dist, 0) + " km da base — fora do raio de " + raio + " km" }); return; }
+      p._fr = frcFrete(p); cand.push(p);
+    });
+    cand.sort(function (a, b) { return frcHav(base, a._c) - frcHav(base, b._c); });
+    var kg = 0, m3 = 0, dentro = [], semEspaco = [];
+    cand.forEach(function (p) { if (kg + frcN(p.peso_kg) <= veic.capKg && m3 + frcN(p.m3) <= veic.capM3) { dentro.push(p); kg += frcN(p.peso_kg); m3 += frcN(p.m3); } else semEspaco.push({ p: p, motivo: "Não coube no " + veic.tipo + " " + veic.placa + " (peso ou m³)" }); });
+    var prejuizo = [];
+    if (frcTabelaDefinida()) {
+      for (var guard = 0; guard < 25 && dentro.length > 1; guard++) {
+        var tot = frcKmRota(base, dentro, fator, voltar).km, pior = null;
+        dentro.forEach(function (p) { var sem = frcKmRota(base, dentro.filter(function (x) { return x !== p; }), fator, voltar).km; var cd = (tot - sem) * ckm; var saldo = (p._fr || 0) - cd; if (saldo < 0 && (!pior || saldo < pior.saldo)) pior = { p: p, saldo: saldo, cd: cd, km: tot - sem }; });
+        if (!pior) break;
+        dentro.splice(dentro.indexOf(pior.p), 1);
+        prejuizo.push({ p: pior.p, motivo: "Frete " + frcR(pior.p._fr) + " não cobre o desvio de " + frcFmt(pior.km, 0) + " km (custo " + frcR(pior.cd) + ")" });
+      }
+    }
+    var r = frcKmRota(base, dentro, fator, voltar);
+    kg = dentro.reduce(function (s, p) { return s + frcN(p.peso_kg); }, 0); m3 = dentro.reduce(function (s, p) { return s + frcN(p.m3); }, 0);
+    var frete = dentro.reduce(function (s, p) { return s + (p._fr || 0); }, 0);
+    var custo = dentro.length ? mtCusto(r.km, 1, frete, veic.tipo) : null;
+    var ocKg = kg / veic.capKg * 100, ocM3 = m3 / veic.capM3 * 100;
+    var extraBase = 0;
+    if (r.seqC.length && r.seqE.length) { var u = r.seqC[r.seqC.length - 1]._c, pr = r.seqE[0]._d; extraBase = (frcHav(u, base) + frcHav(base, pr) - frcHav(u, pr)) * fator * ckm; }
+    return { veic: veic, base: base, dentro: dentro, fora: fora, semGeo: semGeo, semEspaco: semEspaco, prejuizo: prejuizo, km: r.km, seqC: r.seqC, seqE: r.seqE, kg: kg, m3: m3,
+      ocKg: ocKg, ocM3: ocM3, ocup: Math.max(ocKg, ocM3), frete: frete, custo: custo, custoTotal: custo ? custo.total : 0, margem: frete - (custo ? custo.total : 0), extraBase: extraBase, voltar: voltar };
+  });
+}
+function frcRotHTML() {
+  var frota = frcFrota();
+  if (!frota.length) return '<div style="color:#999;padding:20px;border:1px dashed #333;border-radius:10px;">Nenhum caminhão com carga útil cadastrada na aba Frota.</div>';
+  var abertos = FRC.pedidos.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; }).slice().reverse();
+  if (!FRC.sel) FRC.sel = {}; abertos.forEach(function (p) { if (FRC.sel[p.id] === undefined) FRC.sel[p.id] = p.status === "aguardando"; });
+  if (!FRC.placa || !frota.some(function (x) { return x.placa === FRC.placa; })) FRC.placa = (frota.find(function (x) { return x.tipo === "3/4"; }) || frota[0]).placa;
+  var veic = frota.find(function (x) { return x.placa === FRC.placa; });
+  var th = function (t, r) { return '<th style="text-align:' + (r ? "right" : "left") + ';color:#888;font-weight:600;font-size:11px;text-transform:uppercase;padding:7px 6px;border-bottom:1px solid #2a2a2a;">' + t + '</th>'; };
+  var td = function (t, r) { return '<td style="padding:8px 6px;border-bottom:1px solid #1f1f1f;' + (r ? "text-align:right;" : "") + '">' + t + '</td>'; };
+  setTimeout(frcCalcular, 0);
+  return '<div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">'
+    + '<label style="display:inline-flex;gap:6px;align-items:center;font-size:13px;color:#ccc;white-space:nowrap;"><input type="checkbox" ' + (FRC.voltar ? "checked" : "") + ' onchange="FRC.voltar=this.checked;frcCalcular()"> contar volta à base</label>'
+    + '<select onchange="FRC.placa=this.value;FRC.decisao=null;frcCalcular()" style="width:auto;max-width:100%;">' + frota.map(function (x) { return '<option value="' + esc(x.placa) + '"' + (x.placa === FRC.placa ? " selected" : "") + '>' + esc(x.placa) + ' · ' + esc(x.tipo) + ' · ' + frcFmt(x.capKg, 0) + ' kg / ' + frcFmt(x.capM3, 0) + ' m³' + (x.m3Estimado ? " (m³ estimado)" : "") + ' · ' + esc(x.statusOp) + '</option>'; }).join("") + '</select></div>'
+    + (frcTabelaDefinida() ? "" : '<div style="border-radius:8px;padding:9px 12px;font-size:13px;margin-bottom:10px;background:#1d170a;border:1px solid #5a4614;color:#f1d58a;">⚠ A tabela de frete ainda não foi definida (Configuração). Sem ela a <b>trava de prejuízo fica desligada</b> e a margem não é calculada.</div>')
+    + '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1.5 1 460px;min-width:0;">'
+    + '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:14px;background:#121212;"><div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;margin-bottom:6px;">PEDIDOS AGUARDANDO · ' + abertos.length + '</div>'
+    + (abertos.length ? '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><tr>' + th("") + th("#") + th("Remetente") + th("Coleta") + th("Destino") + th("Kg", 1) + th("m³", 1) + th("Situação") + '</tr>'
+      + abertos.map(function (p) { return '<tr>' + td('<input type="checkbox" ' + (FRC.sel[p.id] ? "checked" : "") + ' onchange="FRC.sel[\'' + p.id + '\']=this.checked;frcCalcular()">') + td(p.numero) + td(esc(p.cliente_nome)) + td(esc(p.coleta_cidade)) + td(esc(p.dest_cidade)) + td(frcFmt(p.peso_kg, 0), 1) + td(frcFmt(p.m3, 2), 1) + td('<span id="frc-sit-' + p.id + '">' + frcSt(p.status) + '</span>') + '</tr>'; }).join("") + '</table></div>'
+      : '<div style="color:#777;">Nenhum pedido aguardando.</div>')
+    + '<div id="frc-avisos"></div></div><div id="frc-ocup" style="border:1px solid #2A2A2A;border-radius:12px;padding:14px;background:#121212;margin-top:14px;"></div></div>'
+    + '<div style="flex:1 1 380px;min-width:0;"><div id="frc-mapa" style="height:360px;border-radius:10px;border:1px solid #23272b;background:#0c0f12;"></div>'
+    + '<div id="frc-decisao" style="border:1px solid #2A2A2A;border-radius:12px;padding:14px;background:#121212;margin-top:14px;"></div></div></div>';
+}
+function frcCalcular() {
+  if (!document.getElementById("frc-ocup")) return;
+  var veic = frcFrota().find(function (x) { return x.placa === FRC.placa; }); if (!veic) return;
+  var cand = FRC.pedidos.filter(function (p) { return (p.status === "aguardando" || p.status === "espera") && FRC.sel && FRC.sel[p.id]; });
+  frcPlanejar(veic, cand, FRC.voltar).then(function (pl) {
+    FRC.plano = pl;
+    var tudo = FRC.pedidos.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; });
+    var fora = pl.prejuizo.concat(pl.fora, pl.semEspaco);
+    tudo.forEach(function (p) { var el = document.getElementById("frc-sit-" + p.id); if (!el) return;
+      var h = frcSt(p.status);
+      if (pl.dentro.indexOf(p) >= 0) h = frcSt("na_rota");
+      var f = fora.find(function (x) { return x.p === p; }); if (f) h = '<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#2a1212;color:#f08a8a;">' + (pl.prejuizo.indexOf(f) >= 0 ? "Prejuízo" : "Fica de fora") + '</span>';
+      if (pl.semGeo.indexOf(p) >= 0) h = '<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#2a1212;color:#f08a8a;">Cidade?</span>';
+      el.innerHTML = h; });
+    var av = document.getElementById("frc-avisos");
+    if (av) av.innerHTML = fora.map(function (x) { return '<div style="border-radius:8px;padding:7px 10px;font-size:12.5px;margin-top:8px;background:#1f0f0f;border:1px solid #5a2323;color:#f3a3a3;">#' + x.p.numero + ' ' + esc(x.p.cliente_nome) + ': ' + esc(x.motivo) + '. Fica em espera.</div>'; }).join("")
+      + pl.semGeo.map(function (p) { return '<div style="border-radius:8px;padding:7px 10px;font-size:12.5px;margin-top:8px;background:#1d170a;border:1px solid #5a4614;color:#f1d58a;">#' + p.numero + ': não encontrei a cidade "' + esc(p.coleta_cidade) + '" ou "' + esc(p.dest_cidade) + '". Corrija no pedido.</div>'; }).join("");
+    var min = frcN(frcCfg().ocupacao_min) || 70, v = pl.veic;
+    var bar = function (pct) { return '<div style="height:12px;background:#222;border-radius:6px;overflow:hidden;margin:5px 0 2px;"><i style="display:block;height:100%;width:' + Math.min(100, pct) + '%;background:linear-gradient(90deg,#B8860B,#E8C46A);"></i></div>'; };
+    var k = function (a, b) { return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:#aaa;margin-top:6px;"><span>' + a + '</span><b style="color:#fff;">' + b + '</b></div>'; };
+    document.getElementById("frc-ocup").innerHTML = '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;">OCUPAÇÃO · ' + esc(v.tipo) + ' ' + esc(v.placa) + '</div>'
+      + k("Peso", frcFmt(pl.kg, 0) + " / " + frcFmt(v.capKg, 0) + " kg · " + frcFmt(pl.ocKg, 0) + "%") + bar(pl.ocKg)
+      + k("Volume", frcFmt(pl.m3, 2) + " / " + frcFmt(v.capM3, 0) + " m³" + (v.m3Estimado ? " (estimado)" : "") + " · " + frcFmt(pl.ocM3, 0) + "%") + bar(pl.ocM3)
+      + '<div style="font-size:12.5px;margin-top:8px;color:' + (pl.ocup >= min ? GOLD : "#f08a8a") + ';">Ocupação de ' + frcFmt(pl.ocup, 0) + '% (' + (pl.ocKg >= pl.ocM3 ? "peso" : "volume") + ') — ' + (pl.ocup >= min ? "atingiu o" : "abaixo do") + ' mínimo de ' + min + '% para sair</div>'
+      + k("Distância estimada", frcFmt(pl.km, 0) + " km" + (pl.voltar ? " (com volta)" : ""))
+      + k("Paradas", pl.seqC.length + " coletas · " + pl.seqE.length + " entregas")
+      + (pl.custo ? k("Custo da viagem (premissas do app)", frcR(pl.custoTotal)) : "");
+    frcDesenharMapa(pl); frcDecisaoHTML(pl);
+  });
+}
+function frcDesenharMapa(pl) {
+  srLeafletCarregar(function (ok) {
+    var el = document.getElementById("frc-mapa"); if (!el) return;
+    if (!ok) { el.innerHTML = '<div style="color:#777;padding:20px;">Mapa indisponível sem internet.</div>'; return; }
+    if (!FRC.mapa || FRC.mapa._container !== el) { try { if (FRC.mapa) FRC.mapa.remove(); } catch (e) {} FRC.mapa = L.map(el).setView(pl.base, 8);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(FRC.mapa); FRC.camada = L.layerGroup().addTo(FRC.mapa); }
+    FRC.camada.clearLayers();
+    var ico = function (cor, quad) { return L.divIcon({ className: "", html: '<div style="width:14px;height:14px;background:' + cor + ';border:2px solid #000;' + (quad ? "" : "border-radius:50%") + '"></div>', iconSize: [14, 14] }); };
+    var c = frcCfg();
+    L.marker(pl.base, { icon: ico("#E8C46A") }).bindTooltip("Base · " + esc(c.base_cidade || "")).addTo(FRC.camada);
+    L.circle(pl.base, { radius: (frcN(c.raio_km) / (frcN(c.fator_estrada) || 1.3)) * 1000, color: "#E8C46A", weight: 1, dashArray: "5 6", fill: false }).addTo(FRC.camada);
+    var linha = [pl.base].concat(pl.seqC.map(function (p) { return p._c; }), pl.seqE.map(function (p) { return p._d; })); if (pl.voltar && pl.dentro.length) linha.push(pl.base);
+    if (pl.dentro.length) L.polyline(linha, { color: "#E8C46A", weight: 3 }).addTo(FRC.camada);
+    pl.seqC.forEach(function (p, i) { L.marker(p._c, { icon: ico("#7fd99a") }).bindTooltip("Coleta " + (i + 1) + " · #" + p.numero + " · " + esc(p.cliente_nome) + " · " + esc(p.coleta_cidade)).addTo(FRC.camada); });
+    pl.seqE.forEach(function (p, i) { L.marker(p._d, { icon: ico("#5aa0ff", 1) }).bindTooltip("Entrega " + (i + 1) + " · #" + p.numero + " · " + esc(p.dest_nome) + " · " + esc(p.dest_cidade)).addTo(FRC.camada); });
+    var esp = pl.prejuizo.concat(pl.fora, pl.semEspaco);
+    esp.forEach(function (x) { if (x.p._c) { L.marker(x.p._c, { icon: ico("#f08a8a") }).bindTooltip("#" + x.p.numero + " em espera").addTo(FRC.camada); L.polyline([pl.base, x.p._c], { color: "#f08a8a", weight: 2, dashArray: "4 6" }).addTo(FRC.camada); } });
+    var todos = linha.concat(esp.map(function (x) { return x.p._c; }).filter(Boolean));
+    if (todos.length > 1) FRC.mapa.fitBounds(L.latLngBounds(todos).pad(0.15));
+    setTimeout(function () { try { FRC.mapa.invalidateSize(); } catch (e) {} }, 60);
+  });
+}
+function frcDecisaoHTML(pl) {
+  var el = document.getElementById("frc-decisao"); if (!el) return;
+  var min = frcN(frcCfg().ocupacao_min) || 70, tab = frcTabelaDefinida(), pode = pl.dentro.length > 0;
+  var rec = !pode ? null : (pl.ocup >= min && (!tab || pl.margem >= 0)) ? "sair" : "esperar";
+  if (!FRC.decisao || !pode) FRC.decisao = rec;
+  var fin = tab ? "frete " + frcR(pl.frete) + " · custo " + frcR(pl.custoTotal) + ' · <span style="color:' + (pl.margem >= 0 ? "#7fd99a" : "#f08a8a") + ';">margem ' + frcR(pl.margem) + '</span>' : "custo estimado " + frcR(pl.custoTotal) + " · frete a definir";
+  var opt = function (id, t, txt) { var r = rec === id, s = FRC.decisao === id; return '<div onclick="FRC.decisao=\'' + id + '\';frcDecisaoHTML(FRC.plano)" style="flex:1 1 170px;cursor:pointer;border:1px solid ' + (r ? GOLD : "#2e2e2e") + ';' + (r ? "background:#16130a;" : "") + (s ? "outline:2px solid " + GOLD + ";" : "") + 'border-radius:10px;padding:11px;font-size:12.5px;color:#bbb;"><b style="display:block;font-size:14px;color:#fff;margin-bottom:4px;">' + (r ? "✔ " : "") + t + '</b>' + txt + '</div>'; };
+  el.innerHTML = '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;margin-bottom:8px;">DECISÃO DE SAÍDA</div>'
+    + (!pode ? '<div style="color:#777;">Marque pedidos que caibam no veículo para montar a rota.</div>' :
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + opt("sair", "Sair agora", "Ocupação de " + frcFmt(pl.ocup, 0) + "% · " + fin)
+      + opt("esperar", "Esperar pedidos", (pl.ocup < min ? "Falta " + frcFmt(min - pl.ocup, 0) + "% para o mínimo." : "Tentar encher mais o caminhão.") + " Os pedidos continuam aguardando.")
+      + opt("base", "Voltar à base", "Coleta hoje, consolida na base e entrega depois · +" + frcR(pl.extraBase) + " de deslocamento") + '</div>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;"><label style="flex:1 1 200px;font-size:12px;color:#999;">Motorista<input id="frc-mot" value="' + esc(pl.veic.motorista || "") + '" style="width:100%;margin-top:3px;"></label>'
+      + '<label style="flex:0 1 170px;font-size:12px;color:#999;">Data<input id="frc-data" type="date" value="' + frcHoje() + '" style="width:100%;margin-top:3px;"></label></div>'
+      + '<button class="btn" style="width:100%;margin-top:12px;padding:12px;font-weight:800;" ' + (FRC.decisao === "esperar" ? "disabled" : "") + ' id="frc-aprovar" onclick="frcAprovar()">APROVAR ROTA E GERAR ETIQUETAS</button>'
+      + (FRC.decisao === "esperar" ? '<div style="font-size:12px;color:#777;margin-top:6px;">Com "esperar", nada é gravado — os pedidos seguem aguardando.</div>' : ""));
+}
+function frcAprovar() {
+  var pl = FRC.plano; if (!pl || !pl.dentro.length) return;
+  var bt = document.getElementById("frc-aprovar"); if (bt) { bt.disabled = true; bt.textContent = "gravando…"; }
+  var data = (document.getElementById("frc-data") || {}).value || frcHoje();
+  var mot = (document.getElementById("frc-mot") || {}).value || "";
+  var doDia = FRC.rotas.filter(function (r) { return r.data === data; }).length;
+  var codigo = "FR-" + data.slice(8, 10) + data.slice(5, 7) + "-" + String(doDia + 1).padStart(2, "0");
+  var paradas = pl.seqC.map(function (p, i) { return { tipo: "coleta", ordem: i + 1, pedido_id: p.id, numero: p.numero, cidade: p.coleta_cidade, endereco: p.coleta_endereco || "", nome: p.cliente_nome }; })
+    .concat(pl.seqE.map(function (p, i) { return { tipo: "entrega", ordem: pl.seqC.length + i + 1, pedido_id: p.id, numero: p.numero, cidade: p.dest_cidade, endereco: p.dest_endereco || "", nome: p.dest_nome }; }));
+  var rota = { codigo: codigo, data: data, placa: pl.veic.placa, tipo: pl.veic.tipo, motorista: mot, status: "aprovada", decisao: FRC.decisao, paradas: paradas,
+    km_total: Math.round(pl.km), custo: Math.round(pl.custoTotal * 100) / 100, frete: Math.round(pl.frete * 100) / 100, peso_kg: pl.kg, m3: Math.round(pl.m3 * 1000) / 1000, criado_por: state.sessao.uid };
+  rfGetClient().then(function (sb) {
+    return sb.from("frc_rotas").insert(rota).select().single().then(function (r) {
+      if (r.error) throw new Error(r.error.message);
+      var R = r.data;
+      var ups = pl.dentro.map(function (p) { var u = { status: "na_rota", rota_id: R.id, motivo_espera: null }; if (p._fr != null) u.frete_estimado = Math.round(p._fr * 100) / 100; Object.assign(p, u); return sb.from("frc_pedidos").update(u).eq("id", p.id); })
+        .concat(pl.prejuizo.concat(pl.fora, pl.semEspaco).map(function (x) { var u = { status: "espera", motivo_espera: x.motivo }; Object.assign(x.p, u); return sb.from("frc_pedidos").update(u).eq("id", x.p.id); }));
+      return Promise.all(ups).then(function () { return R; });
+    });
+  }).then(function (R) {
+    FRC.rotas.unshift(R); FRC.sel = null; FRC.decisao = null; FRC.view = "rotas";
+    frcToast("Rota " + R.codigo + " aprovada"); render(); frcEtiquetas(R.id);
+  }).catch(function (e) { alert("Não consegui gravar a rota: " + ((e && e.message) || "erro")); if (bt) { bt.disabled = false; bt.textContent = "APROVAR ROTA E GERAR ETIQUETAS"; } });
+}
+
+/* ---------- ROTAS, ETIQUETAS, ROMANEIO ---------- */
+function frcRotasHTML() {
+  if (!FRC.rotas.length) return '<div style="text-align:center;color:#777;padding:30px;border:1px dashed #333;border-radius:10px;">Nenhuma rota aprovada ainda.</div>';
+  return FRC.rotas.map(function (r) {
+    var ps = FRC.pedidos.filter(function (p) { return p.rota_id === r.id; }); var ent = ps.filter(function (p) { return p.status === "entregue"; }).length;
+    return '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:14px;background:#121212;margin-bottom:12px;"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
+      + '<div><b style="font-size:16px;color:' + GOLD + ';">' + esc(r.codigo) + '</b> <span style="font-size:11px;padding:2px 7px;border-radius:9px;background:#222;color:#bbb;">' + esc(r.data) + '</span> <span style="font-size:11px;padding:2px 7px;border-radius:9px;background:#222;color:#bbb;">' + esc(r.decisao || "") + '</span>'
+      + '<div style="color:#999;font-size:12.5px;margin-top:4px;">' + esc(r.placa || "") + ' ' + esc(r.tipo || "") + ' · ' + esc(r.motorista || "sem motorista") + ' · ' + frcFmt(r.km_total, 0) + ' km · ' + frcFmt(r.peso_kg, 0) + ' kg · ' + frcFmt(r.m3, 2) + ' m³ · frete ' + frcR(r.frete) + ' · custo ' + frcR(r.custo) + '</div></div>'
+      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span style="color:#999;font-size:12px;">' + ent + '/' + ps.length + ' entregues</span><button class="btn-outline" onclick="frcEtiquetas(\'' + r.id + '\')">🏷 Etiquetas</button><button class="btn-outline" onclick="frcRomaneio(\'' + r.id + '\')">📋 Romaneio</button></div></div>'
+      + '<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:13px;">'
+      + (r.paradas || []).map(function (s) { var p = ps.find(function (x) { return x.id === s.pedido_id; }) || {};
+        var prox = s.tipo === "coleta" ? (p.status === "na_rota" ? "coletado" : null) : (p.status === "coletado" ? "entregue" : null);
+        return '<tr><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;width:36px;">' + s.ordem + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">' + (s.tipo === "coleta" ? "🟢 Coleta" : "🟦 Entrega") + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">#' + s.numero + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">' + esc(s.nome) + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">' + esc(s.cidade) + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">' + (p.status ? frcSt(p.status) : "") + '</td><td style="padding:7px 6px;border-bottom:1px solid #1f1f1f;">' + (prox ? '<button class="btn-outline" style="font-size:11px;padding:3px 8px;" onclick="frcBaixa(\'' + p.id + '\',\'' + prox + '\')">marcar ' + prox + '</button>' : "") + '</td></tr>'; }).join("")
+      + '</table></div></div>';
+  }).join("");
+}
+function frcBaixa(id, st) { var p = FRC.pedidos.find(function (x) { return x.id === id; }); rfGetClient().then(function (sb) { return sb.from("frc_pedidos").update({ status: st }).eq("id", id); }).then(function (r) { if (r && r.error) { alert(r.error.message); return; } if (p) p.status = st; frcToast("Atualizado"); render(); }); }
+function frcQrCarregar(cb) {
+  if (window.qrcode) { cb(true); return; }
+  var s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js";
+  s.onload = function () { cb(!!window.qrcode); }; s.onerror = function () { cb(false); }; document.head.appendChild(s);
+}
+function frcEtiquetasHTML(r) {
+  var ps = FRC.pedidos.filter(function (p) { return p.rota_id === r.id; }); var ord = {};
+  (r.paradas || []).filter(function (s) { return s.tipo === "entrega"; }).forEach(function (s, i) { ord[s.pedido_id] = i + 1; });
+  var qr = function (t) { try { var q = qrcode(0, "M"); q.addData(t); q.make(); return q.createDataURL(4, 0); } catch (e) { return ""; } };
+  var h = "";
+  ps.sort(function (a, b) { return (ord[a.id] || 0) - (ord[b.id] || 0); }).forEach(function (p) {
+    for (var v = 1; v <= p.volumes; v++) {
+      var vv = String(v).padStart(2, "0") + " / " + String(p.volumes).padStart(2, "0"), src = window.qrcode ? qr("FRC|" + p.numero + "|" + v + "|" + p.volumes + "|" + r.codigo) : "";
+      h += '<div class="frc-etq" style="width:100mm;height:150mm;box-sizing:border-box;background:#fff;color:#000;font-family:Arial,sans-serif;padding:6mm;display:flex;flex-direction:column;page-break-after:always;margin:0 auto 6mm;border:1px solid #ccc;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:3mm;"><b style="font-size:17pt;">RF LOGÍSTICA</b><span style="background:#000;color:#E8C46A;font-weight:800;padding:1mm 2.5mm;font-size:10pt;">FRACIONADO</span></div>'
+        + '<div style="display:flex;gap:4mm;margin-top:4mm;"><div style="width:38mm;height:38mm;">' + (src ? '<img src="' + src + '" style="width:100%;height:100%;image-rendering:pixelated;">' : '<div style="border:1px solid #000;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:9pt;">' + esc(p.numero + "-" + v) + '</div>') + '</div>'
+        + '<div style="font-size:11pt;line-height:1.5;"><b style="font-size:22pt;display:block;">#' + p.numero + '</b>Volume <b>' + vv + '</b><br>Rota <b>' + esc(r.codigo) + '</b><br>Entrega <b>' + (ord[p.id] || "—") + '</b></div></div>'
+        + '<div style="margin-top:4mm;font-size:10pt;">DE <b>' + esc(p.cliente_nome) + '</b> · ' + esc(p.coleta_cidade) + '</div>'
+        + '<div style="margin-top:3mm;background:#000;color:#fff;padding:3mm;font-size:13pt;"><small style="color:#E8C46A;font-size:8pt;display:block;">PARA</small><b>' + esc(p.dest_nome) + '</b><div>' + esc(p.dest_endereco || "") + '</div><div style="font-size:17pt;font-weight:800;margin-top:1mm;">' + esc(String(p.dest_cidade || "").toUpperCase()) + '</div></div>'
+        + '<div style="margin-top:auto;font-size:8.5pt;color:#333;border-top:1px solid #000;padding-top:2mm;">NF ' + esc(p.nf_numero || "—") + ' · ' + frcFmt(p.peso_kg, 0) + ' kg · ' + esc(p.tipo_mercadoria || "") + (p.obs ? " · " + esc(p.obs) : "") + '</div></div>';
+    }
+  });
+  return { html: h, n: ps.reduce(function (s, p) { return s + (p.volumes || 0); }, 0) };
+}
+function frcEtiquetas(rotaId) {
+  var r = FRC.rotas.find(function (x) { return x.id === rotaId; }); if (!r) return;
+  frcQrCarregar(function () {
+    var e = frcEtiquetasHTML(r);
+    var m = frcModal('<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><div><div style="font-size:19px;font-weight:800;color:#fff;">Etiquetas · ' + esc(r.codigo) + '</div><div style="font-size:12px;color:#999;">' + e.n + ' etiquetas (uma por volume), 10 × 15 cm, na ordem de entrega.</div></div>'
+      + '<div style="display:flex;gap:8px;"><button class="btn" onclick="frcImprimirEtiquetas(\'' + rotaId + '\')">🖨 Imprimir</button><button class="btn-outline" onclick="document.getElementById(\'frc-modal\').remove()">Fechar</button></div></div>'
+      + '<div style="max-height:62vh;overflow:auto;background:#222;padding:10px;border-radius:8px;margin-top:12px;">' + e.html + '</div>');
+  });
+}
+function frcImprimirEtiquetas(rotaId) {
+  var r = FRC.rotas.find(function (x) { return x.id === rotaId; }); if (!r) return;
+  var e = frcEtiquetasHTML(r); var w = window.open("", "_blank"); if (!w) { alert("Libere pop-ups do site para imprimir."); return; }
+  w.document.write('<html><head><meta charset="utf-8"><title>Etiquetas ' + esc(r.codigo) + '</title><style>@page{size:100mm 150mm;margin:0}body{margin:0}.frc-etq{border:0!important;margin:0!important}</style></head><body>' + e.html + '<script>setTimeout(function(){window.print()},400)<\/script></body></html>');
+  w.document.close();
+}
+function frcRomaneio(rotaId) {
+  var r = FRC.rotas.find(function (x) { return x.id === rotaId; }); if (!r) return;
+  var ps = FRC.pedidos.filter(function (p) { return p.rota_id === r.id; });
+  var w = window.open("", "_blank"); if (!w) { alert("Libere pop-ups do site para imprimir."); return; }
+  w.document.write('<html><head><meta charset="utf-8"><title>Romaneio ' + esc(r.codigo) + '</title><style>body{font-family:Arial;padding:18px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:5px;font-size:11.5px;text-align:left}h1{font-size:18px}</style></head><body>'
+    + '<h1>RF Logística — Romaneio Fracionado ' + esc(r.codigo) + ' — ' + esc(r.data) + '</h1><p>Veículo ' + esc(r.placa || "") + ' ' + esc(r.tipo || "") + ' · Motorista ' + esc(r.motorista || "") + ' · ' + frcFmt(r.km_total, 0) + ' km · ' + frcFmt(r.peso_kg, 0) + ' kg · ' + frcFmt(r.m3, 2) + ' m³</p>'
+    + '<table><tr><th>Ordem</th><th>Tipo</th><th>Pedido</th><th>Nome</th><th>Endereço</th><th>Cidade</th><th>Vol</th><th>Kg</th><th>NF</th><th>Assinatura</th></tr>'
+    + (r.paradas || []).map(function (s) { var p = ps.find(function (x) { return x.id === s.pedido_id; }) || {}; return '<tr><td>' + s.ordem + '</td><td>' + s.tipo + '</td><td>' + s.numero + '</td><td>' + esc(s.nome) + '</td><td>' + esc(s.endereco || "") + '</td><td>' + esc(s.cidade) + '</td><td>' + (p.volumes || "") + '</td><td>' + frcFmt(p.peso_kg, 0) + '</td><td>' + esc(p.nf_numero || "") + '</td><td style="width:110px"></td></tr>'; }).join("")
+    + '</table><p style="font-size:10px;color:#666;">RFL ' + RF_SISTEMA.versao + '</p><script>setTimeout(function(){window.print()},300)<\/script></body></html>');
+  w.document.close();
+}
+
+/* ---------- CONFIGURAÇÃO (só admin) ---------- */
+function frcConfigHTML() {
+  var c = frcCfg(), vm = c.veiculos || {};
+  var inp = function (id, lab, val, aj) { return '<label style="flex:1 1 200px;font-size:12px;color:#999;">' + lab + '<input id="frc-c-' + id + '" value="' + esc(val == null ? "" : val) + '" style="width:100%;margin-top:3px;">' + (aj ? '<span style="font-size:11px;color:#777;">' + aj + '</span>' : "") + '</label>'; };
+  var frota = (state.veiculos || []).filter(function (v) { return v.placa && (Number(v.cargaUtilT) || 0) > 0; });
+  return '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:16px;background:#121212;"><div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;">OPERAÇÃO</div>'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;">' + inp("base", "Cidade da base", c.base_cidade) + inp("raio", "Raio máximo de coleta (km)", c.raio_km) + inp("oc", "Ocupação mínima para sair (%)", c.ocupacao_min)
+    + inp("cub", "Fator de cubagem (kg/m³)", c.fator_cubagem, "Rodoviário padrão: 300") + inp("fe", "Fator estrada (linha reta → km)", c.fator_estrada, "O app usa 1,30") + '</div>'
+    + '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;margin-top:16px;">TABELA DE FRETE PROVISÓRIA</div>'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;">' + inp("fmin", "Frete mínimo por pedido (R$)", c.frete_min) + inp("fkg", "R$ por kg taxado", c.frete_kg, "Kg taxado = o maior entre peso real e peso cubado") + '</div>'
+    + '<div style="font-size:12px;color:#777;margin-top:6px;">A tabela definitiva por faixa de peso e m³ entra numa próxima versão. Deixe 0 para desligar o cálculo de frete e a trava de prejuízo.</div>'
+    + '<div style="font-size:11px;letter-spacing:1.4px;color:' + GOLD + ';font-weight:700;margin-top:16px;">M³ DO BAÚ POR CAMINHÃO</div><div style="font-size:12px;color:#777;margin:2px 0 6px;">O peso vem da carga útil da aba Frota. O m³ é o baú por dentro (C × L × A). Sem valor, usa a estimativa do tipo (3/4 = 22, Toco = 40).</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;">' + frota.map(function (v) { return '<label style="flex:0 1 150px;font-size:12px;color:#bbb;">' + esc(v.placa) + ' <span style="color:#777;">' + esc(v.tipo || "") + ' · ' + frcFmt(v.cargaUtilT, 1) + ' t</span><input class="frc-c-m3" data-placa="' + esc(v.placa) + '" value="' + esc(vm[v.placa] || "") + '" placeholder="' + (FRC_M3_PADRAO[String(v.tipo || "").toUpperCase()] || 30) + '" style="width:100%;margin-top:3px;"></label>'; }).join("") + '</div>'
+    + '<button class="btn" style="margin-top:16px;" onclick="frcSalvarConfig()">Salvar configuração</button></div>'
+    + '<div style="border:1px solid #2A2A2A;border-radius:12px;padding:14px;background:#121212;margin-top:14px;font-size:13px;color:#bbb;"><b style="color:' + GOLD + ';">Login do cliente no portal:</b> em <b>Usuários</b>, crie o login com papel <b>cliente</b>, escolha o cliente vinculado e marque o módulo <b>📦 Fracionado</b>. Ele passa a ver "Novo pedido" e "Meus pedidos" no portal, e só os pedidos dele.</div>';
+}
+function frcSalvarConfig() {
+  var g = function (k) { return (document.getElementById("frc-c-" + k) || {}).value; };
+  var vm = {}; Array.prototype.forEach.call(document.querySelectorAll(".frc-c-m3"), function (el) { var n = frcN(el.value); if (n) vm[el.getAttribute("data-placa")] = n; });
+  var up = { base_cidade: g("base"), raio_km: frcN(g("raio")) || 100, ocupacao_min: frcN(g("oc")) || 70, fator_cubagem: frcN(g("cub")) || 300, fator_estrada: frcN(g("fe")) || 1.3, frete_min: frcN(g("fmin")), frete_kg: frcN(g("fkg")), veiculos: vm, atualizado_em: new Date().toISOString() };
+  frcGeo(up.base_cidade).then(function (geo) { if (geo) { up.base_lat = geo[0]; up.base_lng = geo[1]; } return rfGetClient(); }).then(function (sb) { return sb.from("frc_config").update(up).eq("id", 1); })
+    .then(function (r) { if (r && r.error) { alert(r.error.message); return; } Object.assign(FRC.cfg, up); frcToast("Configuração salva"); render(); });
+}
+
+/* ---------- ASSISTENTE (regra permanente: toda versão alimenta o assistente) ---------- */
+function frcBlocoAssistente() {
+  if (!podeVerAba("fracionado")) return "";
+  var regra = 'COMO FUNCIONA O FRACIONADO (aba "📦 Fracionado", v641): carga fracionada = coletar em vários clientes (remetentes) e entregar na mesma viagem. '
+    + 'O cliente com login no portal e o módulo "fracionado" marcado em Usuários lança o pedido anexando a NF-e (XML, PDF da DANFE ou foto — a foto é lida pela mesma IA da DANFE); a equipe também lança pelo botão "+ Lançar pedido". '
+    + 'Cada pedido tem coleta, destinatário, volumes, peso e m³. Peso taxado = o maior entre o peso real e o peso cubado (m³ × fator de cubagem, padrão 300 kg/m³). '
+    + 'Na roteirização a equipe escolhe o caminhão (peso = carga útil da aba Frota; m³ do baú em Configuração do Fracionado, estimado 3/4 = 22 e Toco = 40 quando não informado) e o sistema monta coletas e depois entregas por vizinho mais próximo, saindo da base (Feira de Santana). '
+    + 'Fica em espera: coleta fora do raio (padrão 100 km de estrada), pedido que não cabe em peso ou m³ e, quando a tabela de frete está definida, o pedido cujo frete não paga o desvio que ele causa na rota (TRAVA DE PREJUÍZO, custo por km = diesel ÷ km/l do tipo + manutenção + pneus). '
+    + 'O custo da viagem usa as mesmas premissas do app (mtCusto). Decisão de saída: sair agora (ocupação acima do mínimo, padrão 70%, e margem positiva), esperar pedidos, ou voltar à base. '
+    + 'Aprovar a rota grava a rota (código FR-ddmm-nn), muda os pedidos para "na rota" e gera uma etiqueta 10×15 por volume com QR, remetente, destinatário em destaque e a ordem da entrega, mais o romaneio. A baixa de coleta e entrega é feita na aba Rotas do Fracionado. '
+    + 'A tabela de frete ainda é PROVISÓRIA (frete mínimo + R$ por kg taxado); a tabela definitiva por peso e m³ será definida depois com Renato. Distância é estimada em linha reta × 1,30.';
+  if (!FRC.carregado) return regra + " (dados do Fracionado ainda não carregados nesta sessão)";
+  var c = frcCfg(), abertos = FRC.pedidos.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; });
+  var linhas = abertos.slice(0, 40).map(function (p) { return "- #" + p.numero + " " + p.cliente_nome + ": " + p.coleta_cidade + " → " + p.dest_nome + " (" + p.dest_cidade + "), " + p.volumes + " vol, " + frcFmt(p.peso_kg, 0) + " kg, " + frcFmt(p.m3, 2) + " m³, status " + (FRC_STATUS[p.status] || p.status) + (p.motivo_espera ? " — motivo: " + p.motivo_espera : ""); }).join("\n");
+  var rotas = FRC.rotas.slice(0, 10).map(function (r) { var ps = FRC.pedidos.filter(function (p) { return p.rota_id === r.id; }); return "- Rota " + r.codigo + " (" + r.data + ", " + (r.placa || "") + " " + (r.tipo || "") + ", motorista " + (r.motorista || "não definido") + "): " + ps.length + " pedidos, " + frcFmt(r.km_total, 0) + " km, frete " + frcR(r.frete) + ", custo " + frcR(r.custo) + ", entregues " + ps.filter(function (p) { return p.status === "entregue"; }).length + "/" + ps.length; }).join("\n");
+  return regra + "\nCONFIGURAÇÃO: raio " + c.raio_km + " km, ocupação mínima " + c.ocupacao_min + "%, cubagem " + c.fator_cubagem + " kg/m³, tabela de frete " + (frcTabelaDefinida() ? "mínimo " + frcR(c.frete_min) + " + " + frcR(c.frete_kg) + "/kg taxado" : "NÃO DEFINIDA (trava de prejuízo desligada)")
+    + "\nPEDIDOS EM ABERTO (" + abertos.length + "):\n" + (linhas || "(nenhum)") + "\nROTAS RECENTES:\n" + (rotas || "(nenhuma)");
+}
 
 function gerarContextoAssistente() {
   // v369: REGRA FIXA de a quem pertence a rota. Alimentado aqui conforme a
@@ -39764,6 +40442,7 @@ ${blocoRegraKm}
 ${blocoSuzano}
 ${blocoGoias}
 ${blocoSaoRoque}
+${frcBlocoAssistente()}
 ${blocoMateus}
 
 Motoristas — quanto cada motorista de viagem gerou, quanto já recebeu (pagamentos e vales) e o saldo em aberto. Motorista CLT não entra nesta conta:
@@ -43437,7 +44116,9 @@ function renderTabela() {
               </select>
             </div>
             ${!p.cliente_nome ? `<div style="color:#C0392B;font-size:11px;">⚠ sem cliente vinculado — login não vai ver nenhuma viagem</div>` : ""}
-          </div><div style="margin-top:6px;color:#999;font-size:12px;">Cliente só vê as próprias viagens (vinculadas ao nome acima), buscadas direto no banco de forma isolada — nunca os dados de outros clientes.</div>` : `
+          </div><div style="margin-top:6px;color:#999;font-size:12px;">Cliente só vê as próprias viagens (vinculadas ao nome acima), buscadas direto no banco de forma isolada — nunca os dados de outros clientes.</div>
+          <div style="margin-top:10px;border-top:1px solid #222;padding-top:10px;"><div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:6px;">Módulos que este cliente contratou</div>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:${(p.modulos || []).indexOf("fracionado") !== -1 ? "#fff" : "#888"};"><input type="checkbox" ${(p.modulos || []).indexOf("fracionado") !== -1 ? "checked" : ""} onchange="toggleAbaPerfil('${p.id}','fracionado',this.checked)"> 📦 Fracionado — lança pedidos de coleta com a nota e acompanha a entrega</label></div>` : `
           <div style="margin-top:12px;border-top:1px solid #222;padding-top:10px;">
             <div style="font-size:12px;font-weight:700;color:${GOLD};margin-bottom:8px;">Abas que este usuário pode ver</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px 18px;">
@@ -44561,6 +45242,10 @@ function renderTabela() {
   }
   if (state.aba === "reversa") {   // logística reversa
     wrap.innerHTML = revTelaHTML();
+    return;
+  }
+  if (state.aba === "fracionado") {   // v641
+    wrap.innerHTML = frcTelaHTML();
     return;
   }
   if (state.aba === "medicoes") {   // v467
