@@ -17,12 +17,13 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v641)</title>
+<title>RF Logística — Painel da Frota (v642)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v641">
+<meta name="rf-versao" content="v642">
 <meta name="rf-data" content="2026-10-18">
 <meta name="rf-cliente" content="RF Logística">
+<!-- v642 (18/10/2026): FRACIONADO -- logo própria (opção B "rota que junta": três coletas que viram uma viagem, grafite e dourado) no cabeçalho da aba, no portal do cliente, no selo da etiqueta e no romaneio. -->
 <!-- v641 (18/10/2026): FRACIONADO -- ferramenta nova de carga fracionada (coleta em vários clientes e entrega na mesma viagem). Aba "📦 Fracionado" no grupo CARREGAMENTO para a equipe (pedidos, roteirização com ocupação em peso e m³, trava de prejuízo, decisão sair/esperar/voltar à base, rota, etiqueta 10x15 com QR por volume e romaneio) e módulo "📦 Fracionado" no portal do cliente (o cliente vê o que comprou: marcar o módulo no login dele em Usuários). Pedido com leitura da NF-e por XML, PDF (DANFE) ou foto. Dados no banco em tabelas próprias (frc_config, frc_pedidos, frc_rotas, bucket frc-notas) com RLS. Assistente alimentado (bloco do Fracionado). -->
 <!-- v640 (17/10/2026): LOGISTICA REVERSA -- GATILHO do monitoramento = FIM DA BIPAGEM DO CARREGAMENTO (Renato: "assim que acabou a bipagem a viagem está pronta"). Carga 100% bipada (São Roque, Goiás ou Suzano) entra sozinha em "Viagens em monitoramento" com todas as paradas; a Suzano casa com as paradas pelas NFs. Se a rota do motorista ainda não foi criada, as paradas vêm da própria carga. Saiu o gatilho por KM de saída/primeira entrega. -->
 <!-- v639 (17/10/2026): LOGISTICA REVERSA LIGADA AO CARREGAMENTO -- toda viagem que sai (carregamento 100% bipado, KM de saída ou primeira entrega) entra sozinha em "Viagens em monitoramento" na área Logística Reversa: valor da carga, entregue, a entregar e retorno, status de cada parada (Suzano, Goiás, São Roque ou rota comum); quando o motorista aperta um dos 3 botões a parada fica vermelha e abre o fluxo reverso ("ver fluxo"). Assistente recebe as viagens monitoradas. -->
@@ -1007,7 +1008,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v641" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v642" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -38848,6 +38849,29 @@ function frcToast(t) { try { var el = document.getElementById("frc-toast"); if (
 function frcClienteTemModulo() { return ehCliente() && !!state.sessao && Array.isArray(state.sessao.modulos) && state.sessao.modulos.indexOf("fracionado") !== -1 && !!state.sessao.cliente_nome; }
 function frcEhEquipe() { return !ehCliente() && !ehMotorista() && podeVerAba("fracionado"); }
 
+
+/* v642 — logo do Fracionado (opção B "rota que junta", escolhida por Renato em 18/10/2026):
+   três coletas que se juntam numa linha só e entram no caminhão. modo "escuro" = colorida (tela),
+   "claro" = preto (etiqueta e romaneio), "icone" = só o desenho. */
+function frcIconeSVG(cor1, cor2, cor3, alt) {
+  return '<svg viewBox="0 0 140 100" height="' + (alt || 40) + '" style="display:block;flex:none;" aria-hidden="true">'
+    + '<path d="M10,14 C45,14 45,50 78,50" fill="none" stroke="' + cor2 + '" stroke-width="7" stroke-linecap="round"/>'
+    + '<path d="M10,50 L78,50" stroke="' + cor2 + '" stroke-width="7" stroke-linecap="round"/>'
+    + '<path d="M10,86 C45,86 45,50 78,50" fill="none" stroke="' + cor2 + '" stroke-width="7" stroke-linecap="round"/>'
+    + '<path d="M78,50 L86,50" stroke="' + cor1 + '" stroke-width="9" stroke-linecap="round"/>'
+    + '<circle cx="10" cy="14" r="10" fill="' + cor1 + '"/><circle cx="10" cy="50" r="10" fill="' + cor1 + '"/><circle cx="10" cy="86" r="10" fill="' + cor1 + '"/>'
+    + '<rect x="86" y="24" width="30" height="52" rx="4" fill="' + cor3 + '"/><polygon points="116,32 116,68 132,68 132,46 125,32" fill="' + cor1 + '"/></svg>';
+}
+function frcLogoHTML(modo, alt) {
+  alt = alt || 46;
+  var claro = modo === "claro";
+  var c1 = claro ? "#111" : "#E8C46A", c2 = claro ? "#111" : "#C9CCD1", c3 = claro ? "#111" : "#D4A017";
+  return '<div style="display:inline-flex;align-items:center;gap:' + Math.round(alt * 0.28) + 'px;line-height:1;">' + frcIconeSVG(c1, c2, c3, alt)
+    + '<div><div style="font-family:Inter,Arial,sans-serif;font-weight:900;font-size:' + Math.round(alt * 0.72) + 'px;color:' + (claro ? "#111" : "#fff") + ';letter-spacing:-0.5px;">Fracionado</div>'
+    + (modo === "escuro" ? '<div style="font-family:Inter,Arial,sans-serif;font-weight:700;font-size:' + Math.max(9, Math.round(alt * 0.2)) + 'px;color:#E8C46A;letter-spacing:' + Math.max(2, Math.round(alt * 0.07)) + 'px;margin-top:' + Math.round(alt * 0.1) + 'px;">VÁRIAS COLETAS · UMA VIAGEM</div>' : "")
+    + '</div></div>';
+}
+
 /* ---------- carga dos dados ---------- */
 function frcCarregar(forca) {
   if (FRC.carregando || (FRC.carregado && !forca)) return;
@@ -39100,7 +39124,7 @@ function frcPortalClienteHTML() {
   var bt = function (id, t) { return '<button onclick="FRC.cliView=\'' + id + '\';render();" style="background:' + (aba === id ? "#1d1909" : "none") + ';color:' + (aba === id ? GOLD : "#bbb") + ';border:0;border-radius:8px;padding:9px 14px;font-weight:' + (aba === id ? 800 : 500) + ';cursor:pointer;font-size:14px;">' + t + '</button>'; };
   var topo = '<div style="border-bottom:2px solid ' + GOLD + ';padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:#000;">'
     + '<div><div style="font-size:21px;font-weight:800;color:#fff;">RF Logística</div><div style="font-size:11px;color:' + GOLD + ';letter-spacing:2px;font-weight:700;">PORTAL DO CLIENTE — ' + esc(cli) + '</div></div>'
-    + '<div style="display:flex;gap:4px;flex-wrap:wrap;">' + bt("novo", "📦 Novo pedido") + bt("meus", "📋 Meus pedidos") + bt("viagens", "🚛 Viagens") + '</div>'
+    + frcLogoHTML("escuro", 38) + '<div style="display:flex;gap:4px;flex-wrap:wrap;">' + bt("novo", "Novo pedido") + bt("meus", "Meus pedidos") + bt("viagens", "🚛 Viagens") + '</div>'
     + '<button class="btn-outline" onclick="logout()">Sair</button></div>';
   if (aba === "viagens") {
     if (!state._viagensCliente && typeof clienteCarregarViagens === "function" && !state._carregandoViagensCliente) { try { clienteCarregarViagens(); } catch (e) {} }
@@ -39109,7 +39133,7 @@ function frcPortalClienteHTML() {
   var corpo;
   if (FRC.erro) corpo = '<div style="color:#f3a3a3;padding:20px;">Não consegui carregar: ' + esc(FRC.erro) + '</div>';
   else if (!FRC.carregado) corpo = '<div style="color:#777;padding:30px;text-align:center;">Carregando…</div>';
-  else if (aba === "meus") corpo = '<div style="font-size:20px;font-weight:800;color:' + GOLD + ';margin-bottom:10px;">📋 Meus pedidos</div>' + frcTabelaPedidos(FRC.pedidos, false);
+  else if (aba === "meus") corpo = '<div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:10px;">Meus pedidos</div>' + frcTabelaPedidos(FRC.pedidos, false);
   else {
     var ult = FRC.pedidos[0] || {};
     corpo = '<div style="font-size:20px;font-weight:800;color:#fff;">Novo pedido de coleta</div><div style="font-size:13px;color:#999;margin:2px 0 14px;">Olá, ' + esc(nome) + '. Anexe a nota (XML, PDF ou foto) — o sistema preenche os dados. Confira antes de enviar.</div>'
@@ -39124,7 +39148,7 @@ function frcTelaHTML() {
   var v = FRC.view || "pedidos";
   var bt = function (id, t) { return '<button onclick="FRC.view=\'' + id + '\';render();" style="background:' + (v === id ? "#1d1909" : "none") + ';color:' + (v === id ? GOLD : "#bbb") + ';border:1px solid ' + (v === id ? GOLD : "#333") + ';border-radius:8px;padding:8px 14px;font-weight:' + (v === id ? 800 : 500) + ';cursor:pointer;">' + t + '</button>'; };
   var abertos = FRC.pedidos.filter(function (p) { return p.status === "aguardando" || p.status === "espera"; }).length;
-  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;"><div style="font-size:20px;font-weight:800;color:' + GOLD + ';">📦 Fracionado</div>'
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:10px;">' + frcLogoHTML("escuro", 50)
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + bt("pedidos", "Pedidos" + (abertos ? " (" + abertos + ")" : "")) + bt("roteirizar", "Roteirizar") + bt("rotas", "Rotas") + (ehAdmin() ? bt("config", "Configuração") : "") + '</div></div>'
     + '<div style="font-size:12px;color:#999;margin-bottom:14px;">Carga fracionada: cada cliente lança o pedido com a nota, o sistema monta a rota de coleta e entrega no mesmo caminhão, segura o que dá prejuízo e gera uma etiqueta por volume.</div>';
   if (FRC.erro) return h + '<div style="color:#f3a3a3;">Não consegui carregar: ' + esc(FRC.erro) + ' <button class="btn-outline" onclick="FRC.erro=\'\';frcCarregar(true)">tentar de novo</button></div>';
@@ -39372,7 +39396,7 @@ function frcEtiquetasHTML(r) {
     for (var v = 1; v <= p.volumes; v++) {
       var vv = String(v).padStart(2, "0") + " / " + String(p.volumes).padStart(2, "0"), src = window.qrcode ? qr("FRC|" + p.numero + "|" + v + "|" + p.volumes + "|" + r.codigo) : "";
       h += '<div class="frc-etq" style="width:100mm;height:150mm;box-sizing:border-box;background:#fff;color:#000;font-family:Arial,sans-serif;padding:6mm;display:flex;flex-direction:column;page-break-after:always;margin:0 auto 6mm;border:1px solid #ccc;">'
-        + '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #000;padding-bottom:3mm;"><b style="font-size:17pt;">RF LOGÍSTICA</b><span style="background:#000;color:#E8C46A;font-weight:800;padding:1mm 2.5mm;font-size:10pt;">FRACIONADO</span></div>'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:3mm;border-bottom:3px solid #000;padding-bottom:3mm;"><b style="font-size:17pt;">RF LOGÍSTICA</b><span style="display:inline-flex;align-items:center;gap:1.5mm;flex:none;background:#000;color:#E8C46A;font-weight:800;padding:1mm 2.5mm;font-size:10pt;">' + frcIconeSVG("#E8C46A", "#fff", "#E8C46A", 14) + 'FRACIONADO</span></div>'
         + '<div style="display:flex;gap:4mm;margin-top:4mm;"><div style="width:38mm;height:38mm;">' + (src ? '<img src="' + src + '" style="width:100%;height:100%;image-rendering:pixelated;">' : '<div style="border:1px solid #000;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:9pt;">' + esc(p.numero + "-" + v) + '</div>') + '</div>'
         + '<div style="font-size:11pt;line-height:1.5;"><b style="font-size:22pt;display:block;">#' + p.numero + '</b>Volume <b>' + vv + '</b><br>Rota <b>' + esc(r.codigo) + '</b><br>Entrega <b>' + (ord[p.id] || "—") + '</b></div></div>'
         + '<div style="margin-top:4mm;font-size:10pt;">DE <b>' + esc(p.cliente_nome) + '</b> · ' + esc(p.coleta_cidade) + '</div>'
@@ -39402,7 +39426,7 @@ function frcRomaneio(rotaId) {
   var ps = FRC.pedidos.filter(function (p) { return p.rota_id === r.id; });
   var w = window.open("", "_blank"); if (!w) { alert("Libere pop-ups do site para imprimir."); return; }
   w.document.write('<html><head><meta charset="utf-8"><title>Romaneio ' + esc(r.codigo) + '</title><style>body{font-family:Arial;padding:18px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:5px;font-size:11.5px;text-align:left}h1{font-size:18px}</style></head><body>'
-    + '<h1>RF Logística — Romaneio Fracionado ' + esc(r.codigo) + ' — ' + esc(r.data) + '</h1><p>Veículo ' + esc(r.placa || "") + ' ' + esc(r.tipo || "") + ' · Motorista ' + esc(r.motorista || "") + ' · ' + frcFmt(r.km_total, 0) + ' km · ' + frcFmt(r.peso_kg, 0) + ' kg · ' + frcFmt(r.m3, 2) + ' m³</p>'
+    + '<div style="margin-bottom:8px;">' + frcLogoHTML("claro", 34) + '</div><h1>RF Logística — Romaneio Fracionado ' + esc(r.codigo) + ' — ' + esc(r.data) + '</h1><p>Veículo ' + esc(r.placa || "") + ' ' + esc(r.tipo || "") + ' · Motorista ' + esc(r.motorista || "") + ' · ' + frcFmt(r.km_total, 0) + ' km · ' + frcFmt(r.peso_kg, 0) + ' kg · ' + frcFmt(r.m3, 2) + ' m³</p>'
     + '<table><tr><th>Ordem</th><th>Tipo</th><th>Pedido</th><th>Nome</th><th>Endereço</th><th>Cidade</th><th>Vol</th><th>Kg</th><th>NF</th><th>Assinatura</th></tr>'
     + (r.paradas || []).map(function (s) { var p = ps.find(function (x) { return x.id === s.pedido_id; }) || {}; return '<tr><td>' + s.ordem + '</td><td>' + s.tipo + '</td><td>' + s.numero + '</td><td>' + esc(s.nome) + '</td><td>' + esc(s.endereco || "") + '</td><td>' + esc(s.cidade) + '</td><td>' + (p.volumes || "") + '</td><td>' + frcFmt(p.peso_kg, 0) + '</td><td>' + esc(p.nf_numero || "") + '</td><td style="width:110px"></td></tr>'; }).join("")
     + '</table><p style="font-size:10px;color:#666;">RFL ' + RF_SISTEMA.versao + '</p><script>setTimeout(function(){window.print()},300)<\/script></body></html>');
