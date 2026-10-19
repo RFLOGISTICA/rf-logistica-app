@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v653)</title>
+<title>RF Logística — Painel da Frota (v654)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v653">
+<meta name="rf-versao" content="v654">
+<!-- v654 (19/10/2026): TORRE DE CONTROLE -- o fundo do mapa nao aparecia (o mapa escuro sumia no tablet). Agora abre no mapa de RUAS claro (OpenStreetMap), com botao para SATELITE (Esri, imagem aerea com nomes das cidades) e ESCURO; se um fundo falhar, volta sozinho para Ruas. Ajuste de tamanho do mapa repetido para o tablet. -->
 <!-- v653 (19/10/2026): TORRE DE CONTROLE -- aba nova "🛰️ Torre de Controle" (grupo Viagens): mapa com os caminhoes do rastreador Sascar, iniciar monitoramento (destino por busca ou toque no mapa, prazo opcional), rota pelo OSRM x1,25 (caminhao), viagens com km/tempo que faltam, chegada prevista x prazo, alertas (parado >10 min, velocidade >80, sem sinal, fora da rota, atraso, chegada) e configuracao da Z-API/grupo de WhatsApp. Robo torre-monitor no servidor a cada 2 min manda a situacao de cada caminhao a cada 10 min no grupo. Tabelas torre_config/torre_viagens/torre_eventos (admin ou modulo "torre"). Assistente e diagnostico alimentados. -->
 <!-- v652 (19/10/2026): ETIQUETA 10x15 -- numero da PARADA bem maior (pedido dos motoristas) e codigo de barras menor (56 mm), para o leitor ler de perto tambem. -->
 <!-- v651 (19/10/2026): BIPAGEM -- bipar o mesmo codigo varias vezes nao "para de ler" mais (a janela de leitura dupla ficou em 0,5 s e nao estica); repetido mostra faixa amarela na hora; vigia devolve o cursor ao campo de bipar a cada 0,4 s. -->
@@ -1019,7 +1020,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v653" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v654" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -39852,7 +39853,7 @@ function torreTelaHTML() {
     + '#torre-raiz .tc-ev{border-bottom:1px solid #1d1d1d;padding:7px 0;font-size:12.5px}#torre-raiz .tc-ev:last-child{border-bottom:0}'
     + '#torre-raiz label.tc-l{display:block;font-size:11.5px;color:#aaa;margin:8px 0 3px}#torre-raiz input,#torre-raiz select{max-width:100%}'
     + '#torre-raiz .tc-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}#torre-raiz .tc-btns button{font-size:12px;padding:5px 9px}'
-    + '#torre-mapa{height:440px;border-radius:12px;border:1px solid #2a2a2a;background:#0b0b0b}'
+    + '#torre-mapa{height:440px;border-radius:12px;border:1px solid #2a2a2a;background:#dfe6ea;overflow:hidden}#torre-mapa .leaflet-control-layers{font-size:12px;color:#222}'
     + '.torre-cam{position:relative;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;border:3px solid;background:#111;box-shadow:0 0 0 2px #000}'
     + '.torre-cam span{position:absolute;top:-17px;left:50%;transform:translateX(-50%);background:#000;color:#fff;font:800 9.5px sans-serif;border:1px solid;border-radius:4px;padding:0 4px;white-space:nowrap}'
     + '</style>';
@@ -40090,11 +40091,28 @@ function torreMapaIniciar() {
     try { if (TORRE.mapa) { TORRE.vista = { c: TORRE.mapa.getCenter(), z: TORRE.mapa.getZoom() }; TORRE.mapa.remove(); } } catch (e) {}
     var L = window.L, map = L.map(el, { zoomControl: true, attributionControl: true });
     TORRE.mapa = map; TORRE.camada = L.layerGroup().addTo(map);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: "© OpenStreetMap · © CARTO" }).addTo(map);
+    /* v654: fundo do mapa claro (ruas) por padrão + satélite — o escuro da v653 sumia no tablet ("a imagem por baixo não saiu").
+       Se o servidor de um fundo falhar, cai sozinho para o mapa de ruas do OpenStreetMap. */
+    var fundos = {
+      "🗺️ Ruas": L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "© OpenStreetMap" }),
+      "🛰️ Satélite": L.layerGroup([
+        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagens © Esri" }),
+        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19 })]),
+      "🌙 Escuro": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 19, subdomains: "abcd", attribution: "© OpenStreetMap · © CARTO" }),
+    };
+    var nomeFundo = fundos[TORRE.fundo] ? TORRE.fundo : "🗺️ Ruas";
+    fundos[nomeFundo].addTo(map);
+    L.control.layers(fundos, null, { position: "topright", collapsed: false }).addTo(map);
+    map.on("baselayerchange", function (e) { TORRE.fundo = e.name; });
+    var falhas = 0;
+    Object.keys(fundos).forEach(function (k) {
+      var camadas = fundos[k].getLayers ? fundos[k].getLayers() : [fundos[k]];
+      camadas.forEach(function (t) { t.on("tileerror", function () { if (++falhas === 8 && k !== "🗺️ Ruas") { try { map.removeLayer(fundos[k]); fundos["🗺️ Ruas"].addTo(map); TORRE.fundo = "🗺️ Ruas"; } catch (e) {} } }); });
+    });
     map.on("click", function (ev) { if (TORRE.escolhendoNoMapa && TORRE.form) torreDestinoNoMapa(ev.latlng.lat, ev.latlng.lng); });
     if (TORRE.vista) map.setView(TORRE.vista.c, TORRE.vista.z); else torreMapaEnquadrar();
     torreMapaAtualizar();
-    setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 200);
+    [200, 800, 2000].forEach(function (ms) { setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, ms); });   // tablet: tamanho só fica certo depois do layout
   });
 }
 function torreMapaEnquadrar() {
@@ -40204,9 +40222,9 @@ function torreContextoAssistente() {
   if (!torrePode()) return "";
   if (!TORRE.carregado) { try { torreCarregar(true); } catch (e) {} }
   var c = TORRE.cfg || {};
-  var t = "TORRE DE CONTROLE (v653, 19/10/2026, aba '🛰️ Torre de Controle' no grupo Viagens; acesso: admin ou quem tem o modulo 'torre' marcado em Usuarios): "
+  var t = "TORRE DE CONTROLE (v653/v654, 19/10/2026, aba '🛰️ Torre de Controle' no grupo Viagens; acesso: admin ou quem tem o modulo 'torre' marcado em Usuarios): "
     + "acompanha em tempo real os caminhoes com rastreador Sascar (a posicao chega a cada 2 min). COMO USAR: quando o caminhao sai, a equipe toca 'Iniciar monitoramento', escolhe o caminhao, o destino (busca por endereco ou toque no mapa) e, se quiser, o prazo; "
-    + "o robo (torre-monitor, roda a cada 2 min no servidor) calcula a rota pelo OSRM com o tempo multiplicado por " + (c.fator_tempo || 1.25) + " (tempo de caminhao), avisa a saida no grupo de WhatsApp e passa a mandar a SITUACAO de cada caminhao a cada " + (c.intervalo_status_min || 10) + " min (onde esta, velocidade, km e tempo que faltam, chegada prevista x prazo). "
+    + "o robo (torre-monitor, roda a cada 2 min no servidor) calcula a mapa abre no fundo de RUAS e tem os botoes Satelite e Escuro no canto do mapa (v654); rota pelo OSRM com o tempo multiplicado por " + (c.fator_tempo || 1.25) + " (tempo de caminhao), avisa a saida no grupo de WhatsApp e passa a mandar a SITUACAO de cada caminhao a cada " + (c.intervalo_status_min || 10) + " min (onde esta, velocidade, km e tempo que faltam, chegada prevista x prazo). "
     + "ALERTAS automaticos: parado mais de " + (c.parada_min || 10) + " min no trajeto (fora da origem e do destino), velocidade acima de " + (c.vel_max || 80) + " km/h (no maximo 1 aviso a cada 15 min), sem sinal do rastreador por " + (c.sem_sinal_min || 20) + " min, saida da rota (mais de " + (c.desvio_km || 2) + " km da rota em 2 leituras seguidas; ai a previsao passa a ser recalculada da posicao atual), atraso (chegada prevista passa do prazo; ate " + (c.atencao_min || 15) + " min e Atencao, acima disso Atrasado), e chegada (dentro de " + (c.chegada_raio_km || 0.8) + " km do destino a viagem fecha sozinha). "
     + "Sem prazo informado, o prazo e o horario previsto na saida. Botoes na viagem: Recalcular rota, Chegou (fecha avisando o grupo) e Encerrar. ⚙ Configuracao: parametros acima, Z-API (instancia, token e Client-Token -- o token fica guardado num lugar que o app nao le), escolher o grupo e mandar mensagem de teste. "
     + "Caminhoes com Sascar hoje: QDN8J44 e QEN6J82; o PKO3F40 instala em 22/10. A Posítron ainda nao esta integrada. "
