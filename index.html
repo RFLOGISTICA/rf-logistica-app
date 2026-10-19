@@ -17,10 +17,12 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v648)</title>
+<title>RF Logística — Painel da Frota (v650)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v648">
+<meta name="rf-versao" content="v650">
+<!-- v650 (19/10/2026): BIPAGEM SEM TRAVAR -- o campo de bipar nao perde mais o cursor quando a tela se atualiza; leitura fora do campo e captada e entregue no ultimo campo de bipar; aviso de PARE virou faixa vermelha + apito (o alert prendia o leitor); leitura dupla do mesmo codigo em 1,2 s e ignorada. -->
+<!-- v649 (19/10/2026): SAO ROQUE -- ETIQUETAGEM PELA CAIXA: na doca bipa o codigo do FABRICANTE da caixa (EAN/DUN) e sai na hora a proxima etiqueta daquele produto, na ordem do carregamento; produto fora da carga ou ja todo etiquetado apita e nao imprime; codigo novo pergunta uma vez o produto e grava. -->
 <!-- v648 (19/10/2026): CAMPANHAS -- caixinha do LinkedIn (página RF Logística Transportadora) junto com Instagram, Facebook e Google; sai pelo robô via Metricool. -->
 <!-- v647 (18/10/2026): TELA INICIAL -- ícones novos em Dashboard, Gráficos, Pessoal e Usuários. -->
 <!-- v646 (18/10/2026): TELA INICIAL -- cartões deitados com o ícone grande à esquerda, título, descrição e seta dourada (igual à imagem aprovada). -->
@@ -1014,7 +1016,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v648" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v650" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -13275,6 +13277,183 @@ function srBipar(cargaId, tipo, codigo, kEsperado) {
     return { ok: true, msg: "✓ etiqueta colada · " + dono.fant + " — volume " + vol.n + "/" + vol.tot + " · cliente " + et + "/" + tc.vols, vol: vol }; }
   return { ok: true, msg: "✓ " + dono.fant + " — volume " + vol.n + "/" + vol.tot + " · cliente " + (tipo === "e" ? tc.ent : tc.car) + "/" + tc.vols, vol: vol };
 }
+/* v649 (19/10/2026) — ETIQUETAGEM PELA CAIXA (combinado em 09/10 e 14/10/2026):
+   o conferente bipa o CÓDIGO DO FABRICANTE da caixa (EAN-13 ou DUN-14) e o sistema
+   imprime NA HORA a próxima etiqueta pendente daquele produto, na ordem do
+   carregamento aprovado (última parada primeiro). Assim nunca sai etiqueta de sabão
+   para caixa de biscoito. Produto fora da carga ou já todo etiquetado: apita e não
+   imprime. Código desconhecido: pergunta UMA vez qual é o produto e grava
+   (state.config.srCodAprendido), sem depender do XML. EAN-13 e DUN-14 do mesmo
+   produto casam pela base de 12 dígitos (srGtinBase). As etiquetas impressas ficam
+   em c.etqCx {codigoVolume: quando}; a confirmação de "colada" continua sendo bipar
+   a etiqueta RF (passo 2). */
+function srGtinBase(cod) {
+  var d = String(cod || "").replace(/\D/g, "");
+  if (d.length < 8 || d.length > 14) return "";
+  d = ("00000000000000" + d).slice(-14);
+  return d.slice(1, 13);
+}
+function srDescNorm(t) { return String(t || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
+function srCodAprendidos() { if (!state.config) state.config = {}; if (!state.config.srCodAprendido || typeof state.config.srCodAprendido !== "object") state.config.srCodAprendido = {}; return state.config.srCodAprendido; }
+function srApito(erro) {
+  try { if (navigator.vibrate) navigator.vibrate(erro ? [300, 120, 300] : 80); } catch (e) {}
+  try {
+    var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+    var ctx = srApito._ctx || (srApito._ctx = new A());
+    var tocar = function (f, ini, dur) { var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = f; o.type = "square"; g.gain.value = 0.08; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + ini); o.stop(ctx.currentTime + ini + dur); };
+    if (erro) { tocar(320, 0, 0.25); tocar(320, 0.35, 0.25); } else tocar(1200, 0, 0.08);
+  } catch (e) {}
+}
+function srVolsOrdemCarga(c) {   // ordem de carregamento: última parada primeiro, dentro do cliente 1..N
+  var out = [];
+  c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; }).forEach(function (cl) { c.vols.forEach(function (v) { if (v.k === cl.k) out.push(v); }); });
+  return out;
+}
+function srVolDoProduto(v, base) {
+  if (!base) return false;
+  if (v.e && srGtinBase(v.e) === base) return true;
+  var apr = srCodAprendidos()[base];
+  return !!(apr && srDescNorm(v.d) === apr);
+}
+function srCaixaBipar(cargaId, codigo) {
+  var c = srCarga(cargaId); if (!c) return { ok: false, msg: "Carga não encontrada." };
+  var cod = String(codigo || "").trim().replace(/\s/g, "");
+  if (!cod) return { ok: false, msg: "Código vazio." };
+  if (c.vols.some(function (v) { return v.c === cod; })) return { ok: false, msg: "Esse código é de uma ETIQUETA RF (já impressa). Aqui bipe o código do FABRICANTE, que vem impresso no papelão da caixa. Para confirmar etiqueta colada, use o campo 2 logo abaixo." };
+  var base = srGtinBase(cod);
+  if (!base) return { ok: false, msg: "Não reconheci este código como código de produto (EAN/DUN). Confira se bipou o código certo da caixa." };
+  var ordem = srVolsOrdemCarga(c);
+  var doProd = ordem.filter(function (v) { return v.t === "CX" && srVolDoProduto(v, base); });
+  if (!doProd.length) {
+    // código ainda não conhecido: pergunta uma vez qual é o produto (só entre os desta carga que faltam etiquetar)
+    var fe0 = srFeitos(c, "t"), fc0 = srFeitos(c, "c"), cx0 = c.etqCx || {}, porDesc = {}, lista = [];
+    ordem.forEach(function (v) { if (v.t !== "CX" || fe0[v.c] || fc0[v.c] || cx0[v.c]) return; var n = srDescNorm(v.d); if (!porDesc[n]) { porDesc[n] = { d: v.d, n: 0 }; lista.push(n); } porDesc[n].n++; });
+    if (!lista.length) { srApito(true); return { ok: false, msg: "⚠ Este produto não é desta carga — todas as caixas desta carga já estão etiquetadas. Separe esta caixa." }; }
+    // a carga pode ter centenas de produtos: primeiro filtra por parte do nome, depois escolhe o número
+    var vis = lista, escolha = null;
+    for (var tent = 0; tent < 4 && !escolha; tent++) {
+      var txt = vis.slice(0, 30).map(function (n, i) { return (i + 1) + ") " + porDesc[n].d + "  (" + porDesc[n].n + " cx)"; }).join("\n");
+      var r = prompt("Código " + cod + " ainda não cadastrado (só desta vez).\n\nDigite o NÚMERO do produto desta caixa" + (vis.length > 30 ? ", ou PARTE DO NOME para filtrar (ex.: sabao)" : "") + ". Vazio = a caixa não é desta carga.\n\n" + txt + (vis.length > 30 ? "\n… (mostrando 30 de " + vis.length + ")" : ""));
+      if (r === null || !String(r).trim()) break;
+      var i = parseInt(r, 10);
+      if (/^\d+$/.test(String(r).trim()) && i >= 1 && i <= Math.min(vis.length, 30)) { escolha = vis[i - 1]; break; }
+      var fil = srDescNorm(r).split(" ").filter(Boolean);
+      var nv = lista.filter(function (n) { return fil.every(function (t) { return n.indexOf(t) >= 0; }); });
+      if (nv.length) vis = nv; else alert("Nenhum produto desta carga com \"" + r + "\". Tente outra palavra.");
+    }
+    if (!escolha) { srApito(true); return { ok: false, msg: "⚠ PARE. Produto não reconhecido nesta carga — nada impresso. Separe esta caixa." }; }
+    srCodAprendidos()[base] = escolha;
+    salvar();
+    doProd = ordem.filter(function (v) { return v.t === "CX" && srVolDoProduto(v, base); });
+  }
+  var fe = srFeitos(c, "t"), fc = srFeitos(c, "c"); if (!c.etqCx) c.etqCx = {};
+  var pend = doProd.filter(function (v) { return !fe[v.c] && !fc[v.c] && !c.etqCx[v.c]; });
+  if (!pend.length) {
+    var soImpressas = doProd.filter(function (v) { return !fe[v.c] && !fc[v.c]; });
+    if (soImpressas.length && confirm("Todas as " + doProd.length + " etiqueta(s) de " + doProd[0].d + " já foram IMPRESSAS, mas " + soImpressas.length + " ainda não foram bipadas como coladas.\n\nReimprimir a próxima (" + srCliente(c, soImpressas[0].k).fant + ", VOL " + soImpressas[0].n + "/" + soImpressas[0].tot + ")?")) {
+      srImprimirEtiquetas(c.id, null, null, [soImpressas[0].c]);
+      return { ok: true, msg: "🖨 reimpressa: " + srCliente(c, soImpressas[0].k).fant + " — VOL " + soImpressas[0].n + "/" + soImpressas[0].tot + " (" + soImpressas[0].d + ")" };
+    }
+    srApito(true);
+    return { ok: false, msg: "⚠ PARE. Todas as " + doProd.length + " caixa(s) de " + doProd[0].d + " desta carga já têm etiqueta. Esta caixa está SOBRANDO — separe e confira." };
+  }
+  var v = pend[0], dono = srCliente(c, v.k);
+  c.etqCx[v.c] = Date.now(); c.atualizadoEm = Date.now(); salvar();
+  srApito(false);
+  srImprimirEtiquetas(c.id, null, null, [v.c]);
+  return { ok: true, msg: "🖨 Etiqueta impressa: PARADA " + dono.seq + " — " + dono.fant + " · VOL " + v.n + "/" + v.tot + " (" + v.d + "). Cole NESTA caixa. Faltam " + (pend.length - 1) + " deste produto." };
+}
+function srCaixaCampo(cargaId) {
+  var el = document.getElementById("sr-bip-x"); if (!el) return;
+  var r = srCaixaBipar(cargaId, el.value);
+  el.value = "";
+  state.srMsg = { txt: r.msg, ok: r.ok, tipo: "x" };
+  SRBIP.foco = "sr-bip-x";   // v650
+  if (!r.ok && /PARE/.test(r.msg)) srAvisoForte(r.msg);   // v650
+  render();
+  var el2 = document.getElementById("sr-bip-x"); if (el2) el2.focus();
+}
+/* v650 (19/10/2026) — BIPAGEM SEM TRAVAR. Renato testou o leitor Elgin no notebook e achou: "bipando em
+   sequência às vezes não lê, tenho que bipar duas ou três vezes, às vezes tenho que apertar o botão bipar para
+   continuar, e se insisto no mesmo código ele trava". Causas: (a) a tela se redesenha sozinha (bip chegando pelo
+   tempo real, sincronização) e o campo de bipar perdia o cursor -- o leitor "digitava" no nada; (b) o aviso de PARE
+   era um alert(): a janela prendia o teclado e o Enter do próximo bip só fechava a janela. Correções: o campo de
+   bipar mantém o cursor depois de qualquer redesenho (e o que já foi digitado); se o cursor sair do campo, o
+   sistema capta a leitura do leitor na página inteira e entrega no último campo de bipar usado; o aviso de PARE
+   virou uma faixa vermelha na tela + apito, sem travar; leitura repetida do mesmo código em menos de 1,2 s é
+   ignorada (leitor que lê duas vezes). */
+var SRBIP = { foco: "", buf: "", bufT: 0, ult: "", ultEm: 0 };
+function srAvisoForte(txt) {
+  try {
+    var d = document.getElementById("sr-aviso-forte");
+    if (!d) { d = document.createElement("div"); d.id = "sr-aviso-forte"; document.body.appendChild(d); }
+    d.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:100000;background:#C62828;color:#fff;font:800 20px Arial,sans-serif;padding:16px 18px;text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.5);pointer-events:none;";
+    d.textContent = txt;
+    clearTimeout(SRBIP.tAviso);
+    SRBIP.tAviso = setTimeout(function () { var x = document.getElementById("sr-aviso-forte"); if (x) x.remove(); }, 4500);
+  } catch (e) {}
+}
+function srBipCampoAlvo() {
+  var el = SRBIP.foco ? document.getElementById(SRBIP.foco) : null;
+  if (el && el.offsetParent !== null) return el;
+  var vis = Array.prototype.filter.call(document.querySelectorAll('input[id^="sr-bip-"]'), function (x) { return x.offsetParent !== null; });
+  return vis.length === 1 ? vis[0] : null;
+}
+function srBipRepetido(cod) {   // o mesmo código lido de novo em menos de 1,2 s = leitura dupla do leitor
+  var agora = Date.now(), rep = cod && cod === SRBIP.ult && agora - SRBIP.ultEm < 1200;
+  SRBIP.ult = cod; SRBIP.ultEm = agora;
+  return rep;
+}
+if (!window.__srBipGuard) {
+  window.__srBipGuard = true;
+  document.addEventListener("focusin", function (e) { var t = e.target; if (t && t.id && /^sr-bip-/.test(t.id)) SRBIP.foco = t.id; }, true);
+  // Enter no campo: descarta a leitura dupla antes do handler do campo
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    if (t && t.id && /^sr-bip-/.test(t.id)) {
+      if (e.key === "Enter" && srBipRepetido(String(t.value || "").trim())) { t.value = ""; e.preventDefault(); e.stopImmediatePropagation(); }
+      return;
+    }
+    // cursor fora do campo: capta o que o leitor "digita" e entrega no campo de bipar
+    var tag = t && t.tagName ? t.tagName.toUpperCase() : "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    var alvo = srBipCampoAlvo(); if (!alvo) return;
+    var agora = Date.now();
+    if (agora - SRBIP.bufT > 400) SRBIP.buf = "";
+    SRBIP.bufT = agora;
+    if (e.key === "Enter") {
+      var cod = SRBIP.buf.trim(); SRBIP.buf = "";
+      if (cod.length < 4) return;
+      e.preventDefault();
+      if (srBipRepetido(cod)) return;
+      alvo.value = cod;
+      try { alvo.focus({ preventScroll: true }); } catch (x) { alvo.focus(); }
+      if (typeof alvo.onkeydown === "function") alvo.onkeydown({ key: "Enter", target: alvo, preventDefault: function () {} });
+      return;
+    }
+    if (e.key && e.key.length === 1) { SRBIP.buf += e.key; e.preventDefault(); }
+  }, true);
+  // a tela se redesenha sozinha: o campo de bipar volta com o cursor e com o que já tinha sido digitado
+  window.addEventListener("load", function () {
+    if (typeof render !== "function" || render.__srBip) return;
+    var orig = render;
+    var w = function () {
+      var a = document.activeElement, id = a && a.id && /^sr-bip-/.test(a.id) ? a.id : "", val = id ? a.value : "";
+      var r = orig.apply(this, arguments);
+      if (id) {
+        var el = document.getElementById(id);
+        if (el && document.activeElement !== el) {
+          if (val && !el.value) el.value = val;
+          try { el.focus({ preventScroll: true }); } catch (x) { el.focus(); }
+        }
+      }
+      return r;
+    };
+    w.__srBip = true;
+    render = w;
+  });
+}
 function srBiparCampo(cargaId, tipo, inputId) {
   var el = document.getElementById(inputId);
   if (!el) return;
@@ -13283,7 +13462,9 @@ function srBiparCampo(cargaId, tipo, inputId) {
   var r = srBipar(cargaId, tipo, el.value, k);
   el.value = "";
   state.srMsg = { txt: r.msg, ok: r.ok, tipo: tipo };
-  if (!r.ok && /PARE|OUTRA carga/.test(r.msg)) alert(r.msg);
+  SRBIP.foco = inputId;   // v650
+  srApito(!r.ok);
+  if (!r.ok && /PARE|OUTRA carga/.test(r.msg)) srAvisoForte(r.msg);   // v650: aviso na tela, sem alert() (o alert prendia o leitor)
   render();
   var el2 = document.getElementById(inputId);
   if (el2) el2.focus();
@@ -13311,7 +13492,7 @@ function srLerCamera(cargaId, tipo, inputId) {
   fechar.onclick = parar;
   navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (s) {
     v.srcObject = s; v.play();
-    var det = new window.BarcodeDetector({ formats: ["code_128", "ean_13", "itf", "code_39"] });
+    var det = new window.BarcodeDetector({ formats: ["code_128", "ean_13", "ean_8", "itf", "code_39"] });
     var laco = function () {
       if (!document.body.contains(box)) return;
       det.detect(v).then(function (cods) {
@@ -13385,7 +13566,7 @@ function srSetEtiquetaFormato(v) { if (!state.config) state.config = {}; state.c
    do fracionado leva a faixa "FRACIONADO" em preto pra se destacar mesmo que
    saia no rolo errado. grupo: "cx" | "fr" | vazio (tudo). */
 function srEhFracionado(v) { return v.t === "MIU" || v.t === "SOL"; }
-function srImprimirEtiquetas(cargaId, k, grupo) {
+function srImprimirEtiquetas(cargaId, k, grupo, soCods) {   // v649: soCods = imprimir só estes volumes, sem perguntar (etiquetagem pela caixa)
   var c = srCarga(cargaId); if (!c) return;
   if (!c.etqImpEm) { c.etqImpEm = Date.now(); try { salvar(); } catch (e) {} }   // v627: passo 2 concluído, segue para a etiquetagem
   var nParadas = c.clientes.length;
@@ -13402,11 +13583,12 @@ function srImprimirEtiquetas(cargaId, k, grupo) {
   }); });
   if (!lista.length) { alert("Nada para imprimir."); return; }
   var rolo = grupo === "fr" ? "\n\n🟨 COLOQUE O ROLO AMARELO na impressora (fracionados)." : grupo === "cx" ? "\n\n⬜ Use o rolo BRANCO (caixas fechadas)." : "";
-  if (!confirm("Imprimir " + lista.length + " etiqueta(s) da carga " + c.numcar + (k ? " — só " + (srCliente(c, k).fant || "") : "") + "?\n\nSaem na ordem de CARREGAMENTO: última parada primeiro." + rolo)) return;
+  if (soCods && soCods.length) { lista = lista.filter(function (x) { return soCods.indexOf(x.v.c) >= 0; }); if (!lista.length) { alert("Etiqueta não encontrada para imprimir."); return; } }   // v649
+  if (!(soCods && soCods.length) && !confirm("Imprimir " + lista.length + " etiqueta(s) da carga " + c.numcar + (k ? " — só " + (srCliente(c, k).fant || "") : "") + "?\n\nSaem na ordem de CARREGAMENTO: última parada primeiro." + rolo)) return;
   var F = srEtiquetaFormato(), alto = F.h >= 75;
   var blocos = {}, mont = null; try { mont = srMontagem(c); mont.blocos.forEach(function (b) { (b.membros || [b.k]).forEach(function (k) { if (!blocos[k]) blocos[k] = b; }); }); } catch (e) {}   // v586; v587: palete
   c.etqImpressas = Date.now(); salvar();
-  var w = window.open("", "_blank");
+  var w = window.open("", soCods && soCods.length ? "srEtqCaixa" : "_blank");
   if (!w) { alert("O navegador bloqueou a janela de impressão. Libere pop-ups para este site."); return; }
   var grande = F.h >= 150;   // v625: layout proprio para o rolo 10x15 (100x150 mm)
   var html = lista.map(function (x) {
@@ -14288,6 +14470,13 @@ function srDocaHTML(c, msg) {
   return '<div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">'
     + '<div style="font-weight:800;margin-bottom:6px;">🏷 Conferir etiquetagem na doca <span style="font-weight:700;color:' + cor + ';">' + r.ok + '/' + r.tot + ' (' + r.pct + '%)</span></div>'
     + '<div style="background:#222;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:' + r.pct + '%;background:' + cor + ';"></div></div>'
+    + '<div style="border:2px solid #7E57C2;background:#1a1426;border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
+    + '<div style="font-weight:800;color:#B39DDB;margin-bottom:4px;">1º · Bipe a CAIXA (código do fabricante no papelão) — sai a etiqueta dela</div>'
+    + '<div style="font-size:11px;color:#bbb;margin-bottom:6px;">O sistema imprime a próxima etiqueta daquele produto, na ordem do carregamento. Produto que não é desta carga ou que já foi todo etiquetado: apita e não imprime.</div>'
+    + '<input id="sr-bip-x" placeholder="bipe o código da caixa" onkeydown="if(event.key===\'Enter\')srCaixaCampo(\'' + c.id + '\')" style="font-size:16px;padding:8px;width:230px;"> '
+    + '<button onclick="srCaixaCampo(\'' + c.id + '\')">🖨 imprimir etiqueta</button>' + msg("x")
+    + '<div style="font-size:11px;color:#888;margin-top:6px;">Etiquetas impressas pela caixa: ' + Object.keys(c.etqCx || {}).length + '</div></div>'
+    + '<div style="font-weight:700;font-size:13px;margin-bottom:4px;">2º · Bipe a etiqueta já colada (confirma)</div>'
     + '<input id="sr-bip-t" placeholder="bipe a etiqueta já colada" onkeydown="if(event.key===\'Enter\')srBiparCampo(\'' + c.id + '\',\'t\',\'sr-bip-t\')" style="font-size:16px;padding:8px;width:230px;"> '
     + '<button onclick="srBiparCampo(\'' + c.id + '\',\'t\',\'sr-bip-t\')">✔ bipar</button> '
     + '<button onclick="srLerCamera(\'' + c.id + '\',\'t\',\'sr-bip-t\')">📷 câmera</button>' + msg("t")
@@ -40063,7 +40252,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nV620 (12/10/2026) -- (1) BIPS DA SÃO ROQUE EM TABELA PRÓPRIA (sr_bips) e BIPAGEM SEM INTERNET: cada bip vale na hora no aparelho e entra numa fila guardada nele; se a internet cair na doca, os bips ficam guardados (selo ⏳ N bips guardados no aparelho) e sobem sozinhos quando volta. (2) NÃO ENTREGUEI: o motorista escolhe o motivo (cliente fechado/ausente, recusou, avaria, entrega parcial, endereço não encontrado, outro), tira a FOTO obrigatória e o celular grava o GPS; a rota segue para a próxima parada, mas os volumes continuam no baú e voltam para o CD (na entrega parcial conta como entregue com ressalva); o gestor vê a ocorrência em vermelho, com a foto, e o caminhão fica em Atenção. (3) RELATÓRIO DA CARGA (botão 📊 na carga e na tela do caminhão do portal, com PDF): etiquetagem e carregamento com início, fim, duração, tempo bipando sem pausas, ritmo em volumes por minuto, pausas acima de 5 min e quem bipou; da 1ª etiqueta ao caminhão carregado; saída, cada entrega com horário e tempo desde a anterior, prazo x previsão; e a média das últimas cargas reais (vai calibrar os 20 min por parada). (4) ALERTAS: com o portal ou a aba aberta, a cada minuto o sistema avisa (notificação no celular se ativada no botão 🔔, vibração e faixa vermelha no topo) quando um caminhão fica ATRASADO, passa 90 min sem entregar ou registra ocorrência; cada alerta sai uma vez. Integração com rastreador Pósitron: aguardando a Pósitron responder." + "\nCENTRAL DA FROTA (v621): o portal do gestor abre na Central da frota: números do dia (na rua, entregas feitas/total, no prazo, atenção, atrasados, ocorrências); uma fila de botões com as PLACAS em cima do mapa (Todos ou uma placa); o MAPA de ruas real (OpenFreeMap, gratuito, sem chave; botão mapa claro/escuro) com todos os caminhões ao mesmo tempo, cada um com a cor própria da rota e um anel na cor do status, linha cheia no trecho feito e tracejada no que falta, e o CD com quantos caminhões estão lá; tocando numa placa (no botão ou no mapa) abre a FICHA da viagem: placa, tipo, motorista, carga, status/atraso, botões Ligar e WhatsApp para o motorista (celular da ficha de cadastro), Baú 3D e PDF do relatório, entregas/volumes/hora de volta, linha do tempo (etiquetagem, carregamento, saída, última entrega, próxima, volta ao CD) e cada parada com horário e ocorrência; e a lista dos ÚLTIMOS ACONTECIMENTOS do dia. O Google Maps foi descartado por custo (Renato não quer onerar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nBIPAGEM SEM TRAVAR (v650, 19/10/2026): o campo de bipar mantém o cursor mesmo quando a tela se atualiza sozinha; se o cursor sair do campo, o sistema capta a leitura do leitor na página e entrega no último campo de bipar usado (não precisa mais clicar em bipar); o aviso de PARE é uma faixa vermelha no topo com apito (antes era uma janela que prendia o leitor); o mesmo código lido duas vezes em menos de 1,2 s é ignorado. Se o leitor apitar e nada aparecer, confira se ele está conectado (Bluetooth) ao aparelho." + "\nETIQUETAGEM PELA CAIXA (v649, 19/10/2026): na etapa 1 (doca) o conferente primeiro bipa o CÓDIGO DO FABRICANTE da caixa (EAN-13/DUN-14, impresso no papelão) no campo 1º; o sistema imprime na hora a PRÓXIMA etiqueta pendente daquele produto, na ordem do carregamento (última parada primeiro) — assim nunca se cola etiqueta de um produto em outro. Produto fora da carga ou já todo etiquetado: apita, vibra e não imprime (caixa sobrando). Código nunca visto: o sistema pergunta uma vez qual é o produto e grava para as próximas (não depende do XML). Depois de colar, o conferente bipa a etiqueta RF no campo 2º para confirmar colada. Leitor usado no piloto: Elgin BR240-BT (Bluetooth no notebook, funciona como teclado e dá Enter sozinho)." + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nV620 (12/10/2026) -- (1) BIPS DA SÃO ROQUE EM TABELA PRÓPRIA (sr_bips) e BIPAGEM SEM INTERNET: cada bip vale na hora no aparelho e entra numa fila guardada nele; se a internet cair na doca, os bips ficam guardados (selo ⏳ N bips guardados no aparelho) e sobem sozinhos quando volta. (2) NÃO ENTREGUEI: o motorista escolhe o motivo (cliente fechado/ausente, recusou, avaria, entrega parcial, endereço não encontrado, outro), tira a FOTO obrigatória e o celular grava o GPS; a rota segue para a próxima parada, mas os volumes continuam no baú e voltam para o CD (na entrega parcial conta como entregue com ressalva); o gestor vê a ocorrência em vermelho, com a foto, e o caminhão fica em Atenção. (3) RELATÓRIO DA CARGA (botão 📊 na carga e na tela do caminhão do portal, com PDF): etiquetagem e carregamento com início, fim, duração, tempo bipando sem pausas, ritmo em volumes por minuto, pausas acima de 5 min e quem bipou; da 1ª etiqueta ao caminhão carregado; saída, cada entrega com horário e tempo desde a anterior, prazo x previsão; e a média das últimas cargas reais (vai calibrar os 20 min por parada). (4) ALERTAS: com o portal ou a aba aberta, a cada minuto o sistema avisa (notificação no celular se ativada no botão 🔔, vibração e faixa vermelha no topo) quando um caminhão fica ATRASADO, passa 90 min sem entregar ou registra ocorrência; cada alerta sai uma vez. Integração com rastreador Pósitron: aguardando a Pósitron responder." + "\nCENTRAL DA FROTA (v621): o portal do gestor abre na Central da frota: números do dia (na rua, entregas feitas/total, no prazo, atenção, atrasados, ocorrências); uma fila de botões com as PLACAS em cima do mapa (Todos ou uma placa); o MAPA de ruas real (OpenFreeMap, gratuito, sem chave; botão mapa claro/escuro) com todos os caminhões ao mesmo tempo, cada um com a cor própria da rota e um anel na cor do status, linha cheia no trecho feito e tracejada no que falta, e o CD com quantos caminhões estão lá; tocando numa placa (no botão ou no mapa) abre a FICHA da viagem: placa, tipo, motorista, carga, status/atraso, botões Ligar e WhatsApp para o motorista (celular da ficha de cadastro), Baú 3D e PDF do relatório, entregas/volumes/hora de volta, linha do tempo (etiquetagem, carregamento, saída, última entrega, próxima, volta ao CD) e cada parada com horário e ocorrência; e a lista dos ÚLTIMOS ACONTECIMENTOS do dia. O Google Maps foi descartado por custo (Renato não quer onerar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
