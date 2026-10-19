@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v652)</title>
+<title>RF Logística — Painel da Frota (v653)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v652">
+<meta name="rf-versao" content="v653">
+<!-- v653 (19/10/2026): TORRE DE CONTROLE -- aba nova "🛰️ Torre de Controle" (grupo Viagens): mapa com os caminhoes do rastreador Sascar, iniciar monitoramento (destino por busca ou toque no mapa, prazo opcional), rota pelo OSRM x1,25 (caminhao), viagens com km/tempo que faltam, chegada prevista x prazo, alertas (parado >10 min, velocidade >80, sem sinal, fora da rota, atraso, chegada) e configuracao da Z-API/grupo de WhatsApp. Robo torre-monitor no servidor a cada 2 min manda a situacao de cada caminhao a cada 10 min no grupo. Tabelas torre_config/torre_viagens/torre_eventos (admin ou modulo "torre"). Assistente e diagnostico alimentados. -->
 <!-- v652 (19/10/2026): ETIQUETA 10x15 -- numero da PARADA bem maior (pedido dos motoristas) e codigo de barras menor (56 mm), para o leitor ler de perto tambem. -->
 <!-- v651 (19/10/2026): BIPAGEM -- bipar o mesmo codigo varias vezes nao "para de ler" mais (a janela de leitura dupla ficou em 0,5 s e nao estica); repetido mostra faixa amarela na hora; vigia devolve o cursor ao campo de bipar a cada 0,4 s. -->
 <!-- v650 (19/10/2026): BIPAGEM SEM TRAVAR -- o campo de bipar nao perde mais o cursor quando a tela se atualiza; leitura fora do campo e captada e entregue no ultimo campo de bipar; aviso de PARE virou faixa vermelha + apito (o alert prendia o leitor); leitura dupla do mesmo codigo em 1,2 s e ignorada. -->
@@ -1018,7 +1019,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v652" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v653" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -1598,6 +1599,7 @@ function rfLogoDaAbaHTML(id) {
    selo preto, cantos arredondados), e o emoji sai do título dessas caixas,
    porque o ícone já cumpre o papel. As caixas com logo de cliente não mudam. */
 var RF_ICO_AREA = {
+  torre: '<path d="M5 19l4.5-4.5"/><path d="M6.8 8.8l8.4 8.4a6 6 0 0 1-8.4-8.4z"/><path d="M13.5 3.5a7 7 0 0 1 7 7"/><path d="M13.5 6.8a3.7 3.7 0 0 1 3.7 3.7"/><path d="M4 21h6"/>',   // v653 Torre de Controle
   reversa: '<path d="M3 9.5 12 5l9 4.5v8L12 22l-9-4.5z"/><path d="M3 9.5 12 14l9-4.5M12 14v8"/><path d="M8.5 3.2A6 6 0 0 1 17 4.5"/><path d="M17.4 2.2l-.4 2.5-2.5-.3"/>',
   frota: '<path d="M2.5 7h11v9h-11z"/><path d="M13.5 10h4l3 3.2V16h-7"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="16.5" cy="17.5" r="1.8"/>',
   manutencao: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 12.5v2.7l1.8 1.1"/>',
@@ -29064,6 +29066,7 @@ var ABAS_DEF = [
   { id: "viagem", label: "🛣️ Viagens", grupo: "VIAGENS" },   // v212: era "Despesas de Viagem"; v225: ícone padronizado
   { id: "abastecimento", label: "⛽ Abastecimento", grupo: "VIAGENS" },
   { id: "statusdia", label: "📍 Status do Dia", grupo: "VIAGENS" },
+  { id: "torre", label: "🛰️ Torre de Controle", grupo: "VIAGENS" },   // v653: rastreador Sascar em tempo real + alertas no WhatsApp
   { id: "reversa", label: "🔄 Logística Reversa", grupo: "VIAGENS" },   // logística reversa (17/10/2026)
   { id: "docsviagem", label: "📁 Documentos da Viagem", grupo: "VIAGENS" },   // v435
   { id: "extracaofiscal", label: "📦 Extração CT-e / MDF-e / CIOT", grupo: "VIAGENS" },   // v608
@@ -29096,7 +29099,7 @@ var ABAS_DEF = [
 var GRUPOS_DESC = {   // v542
   "FROTA": "Caminhões e alocação por cliente",
   "MANUTENÇÃO": "Vencimentos, manutenções, óleo e estoque de peças",
-  "VIAGENS": "Viagens, abastecimentos, status do dia e motoristas",
+  "VIAGENS": "Viagens, abastecimentos, status do dia, torre de controle e motoristas",
   "CARREGAMENTO": "Carregamento e conferência de carga por cliente",
   "FINANCEIRO": "Resultado, custos, compras, contas e conciliação",
   "CADASTROS": "Documentos, contratos e cadastro de motoristas",
@@ -29126,6 +29129,7 @@ var TAB_DESCRICOES = {
   saoroquecarga: "Operação Grupo São Roque: importa a carga, monta o baú por parada (mapa da doca), imprime etiqueta com a zona do baú, bipa carregamento e entrega e cria a rota do motorista",
   reversa: "O que voltou, o impacto no caixa, a entrada por bip e o histórico até a reentrega",
   statusdia: "Status diário das viagens em andamento: entregas feitas, situação e observações — atualizado pela carteira e pelo motorista",
+  torre: "Caminhões no mapa em tempo real pelo rastreador: rota, previsão de chegada x prazo e alertas no grupo de WhatsApp",   // v653
   motoristas: "Pagamentos e saldo de cada motorista",
   financeiro: "Resultado financeiro do mês ativo",
   custos: "Análise de custos por categoria",
@@ -39741,6 +39745,511 @@ function frcBlocoAssistente() {
     + "\nPEDIDOS EM ABERTO (" + abertos.length + "):\n" + (linhas || "(nenhum)") + "\nROTAS RECENTES:\n" + (rotas || "(nenhuma)");
 }
 
+/* ===== v653 (19/10/2026): 🛰️ TORRE DE CONTROLE =========================================================
+   Pedido do Renato: o caminhão sai para o destino X e o sistema calcula a rota (km, tempo e previsão de
+   chegada); monitora o atraso em relação ao prazo; a cada 10 min manda uma mensagem por caminhão com a
+   situação da viagem; avisa parado > 10 min no trajeto, velocidade > 80 km/h, falta de sinal, saída da
+   rota e chegada. As mensagens vão para um grupo comum de WhatsApp pela Z-API (chip só do robô).
+   - Posição: Sascar (Edge Function sascar-sync a cada 2 min -> rastreio_ultima / rastreio_posicoes).
+   - Robô: Edge Function torre-monitor a cada 2 min (pg_cron "torre-monitor"), rota pelo OSRM com o tempo
+     multiplicado pelo fator de caminhão (1,25). Ela também atende o app: iniciar, encerrar, recalcular,
+     testar_whatsapp, listar_grupos.
+   - Banco: torre_config (1 linha), torre_viagens, torre_eventos — RLS: admin ou módulo "torre"
+     (função torre_pode). O token da Z-API fica em torre_segredo, que o app NUNCA lê; grava pela RPC
+     torre_salvar_zapi (só admin) e o app só sabe se está configurado (torre_zapi_ok).
+   - Mapa: Leaflet (mesmo carregador do portal São Roque, srLeafletCarregar) com mapa escuro da CARTO. */
+var TORRE = { carregado: false, carregando: false, erro: "", cfg: null, viagens: [], eventos: [], ultima: [], log: [], zapiOk: false,
+  sel: "", form: null, cfgAberta: false, cfgEd: null, verStatus: false, grupos: null, aviso: "", mapa: null, camada: null, vista: null,
+  escolhendoNoMapa: false, busca: null, previa: null, ultCarga: 0, ocupado: "" };
+var TORRE_SIT = { no_prazo: { t: "No prazo", c: "#2ecc71", i: "🟢" }, atencao: { t: "Atenção", c: "#F2C94C", i: "🟡" }, atrasado: { t: "Atrasado", c: "#E53935", i: "🔴" } };
+var TORRE_EV = { inicio: "🚚", status: "🛰️", parado: "⏸️", retomou: "▶️", velocidade: "🚨", sem_sinal: "📵", sinal_voltou: "📶", fora_rota: "↪️",
+  voltou_rota: "✅", chegada: "🏁", atraso: "⏰", no_prazo: "🟢", encerrada: "⏹️", recalculo: "🔁" };
+var TORRE_EV_NOME = { inicio: "Saída monitorada", status: "Situação", parado: "Parado", retomou: "Retomou", velocidade: "Velocidade", sem_sinal: "Sem sinal",
+  sinal_voltou: "Sinal voltou", fora_rota: "Saiu da rota", voltou_rota: "Voltou à rota", chegada: "Chegada", atraso: "Atraso", no_prazo: "Voltou ao prazo",
+  encerrada: "Encerrada", recalculo: "Rota recalculada" };
+
+function torrePode() { try { return !!state.sessao && podeVerAba("torre"); } catch (e) { return false; } }
+function torreHora(d) { if (!d) return "—"; var x = new Date(d); return isNaN(x) ? "—" : x.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
+function torreDataHora(d) {
+  if (!d) return "—"; var x = new Date(d); if (isNaN(x)) return "—";
+  return (new Date().toDateString() === x.toDateString() ? "" : x.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " ") + torreHora(x);
+}
+function torreDur(min) { if (min == null || !isFinite(min)) return "—"; min = Math.max(0, Math.round(min)); if (min < 60) return min + " min"; var h = Math.floor(min / 60), m = min % 60; return h + "h" + (m < 10 ? "0" : "") + m; }
+function torreKm(n) { if (n == null || n === "" || !isFinite(n)) return "—"; n = Number(n); return (n < 10 ? n.toFixed(1).replace(".", ",") : Math.round(n).toLocaleString("pt-BR")) + " km"; }
+function torreHa(d) { if (!d) return "sem posição"; var m = (Date.now() - new Date(d).getTime()) / 60000; return m < 1.5 ? "agora" : "há " + torreDur(m); }
+function torreEhTeste(x) { return !x || x.fonte === "teste" || /^TST/.test(x.placa || "") || /TESTE automatico/.test(x.obs || ""); }
+function torreAtivas() { return (TORRE.viagens || []).filter(function (v) { return v.status === "ativa"; }); }
+function torreViagemDaPlaca(p) { return torreAtivas().find(function (v) { return v.placa === p; }) || null; }
+function torreMotoristaDaPlaca(p) { var v = (state.veiculos || []).find(function (x) { return String(x.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === p; }); return v ? (v.motorista || "") : ""; }
+function torreSb(fn) { return rfGetClient().then(function (sb) { if (!sb) throw new Error("sem conexão com o banco"); return fn(sb); }); }
+function torreInvoke(body) {
+  return torreSb(function (sb) { return sb.functions.invoke("torre-monitor", { body: body }); }).then(function (r) {
+    if (r && r.error) {
+      var m = r.error.message || String(r.error);
+      try { if (r.error.context && r.error.context.json) return r.error.context.json().then(function (j) { throw new Error((j && j.erro) || m); }); } catch (e) {}
+      throw new Error(m);
+    }
+    if (r && r.data && r.data.erro) throw new Error(r.data.erro);
+    return r ? r.data : null;
+  });
+}
+
+/* ---------- carga ---------- */
+function torreCarregar(silencioso) {
+  if (!torrePode() || TORRE.carregando) return Promise.resolve();
+  TORRE.carregando = true;
+  var desde = new Date(Date.now() - 3 * 864e5).toISOString();
+  var COLS = "id,placa,motorista,cliente,viagem_ref,origem_nome,origem_lat,origem_lng,destino_nome,destino_lat,destino_lng,prazo,saida_em,rota_km,rota_min,rota_fonte,previsto_em,eta,km_restante,min_restante,atraso_min,situacao,status,ultima_lat,ultima_lng,ultima_pos_em,ultima_vel,ultima_ignicao,ultima_cidade,ultima_uf,ultima_rua,parado_desde,alerta_parado,alerta_sinal,fora_rota,chegou_em,encerrada_em,obs,criado_em";
+  return torreSb(function (sb) {
+    return Promise.all([
+      sb.from("torre_config").select("*").eq("id", 1).maybeSingle(),
+      sb.from("torre_viagens").select(COLS + ",rota_geom").eq("status", "ativa").order("saida_em", { ascending: false }),
+      sb.from("torre_viagens").select(COLS).neq("status", "ativa").gte("encerrada_em", desde).order("encerrada_em", { ascending: false }).limit(40),
+      sb.from("torre_eventos").select("id,viagem_id,placa,tipo,msg,lat,lng,enviado,envio_erro,em").gte("em", desde).order("em", { ascending: false }).limit(300),
+      sb.from("rastreio_ultima").select("placa,fonte,data_pacote,lat,lng,velocidade,ignicao,gps,cidade,uf,rua"),
+      sb.rpc("torre_zapi_ok"),
+      sb.from("integracao_log").select("fonte,ok,msg,em").in("fonte", ["sascar", "torre"]).order("em", { ascending: false }).limit(15),
+    ]);
+  }).then(function (r) {
+    var falha = [r[0], r[1], r[2], r[3], r[4]].find(function (x) { return x && x.error; });
+    if (falha) throw new Error(falha.error.message);
+    TORRE.cfg = r[0].data || {};
+    TORRE.viagens = (r[1].data || []).concat(r[2].data || []).filter(function (v) { return !torreEhTeste(v); });
+    TORRE.eventos = (r[3].data || []).filter(function (e) { return !/^TST/.test(e.placa || ""); });
+    TORRE.ultima = (r[4].data || []).filter(function (u) { return !torreEhTeste(u); }).sort(function (a, b) { return a.placa < b.placa ? -1 : 1; });
+    TORRE.zapiOk = !!(r[5] && r[5].data);
+    TORRE.log = (r[6] && r[6].data) || [];
+    TORRE.carregado = true; TORRE.erro = ""; TORRE.ultCarga = Date.now();
+  }).catch(function (e) {
+    TORRE.erro = String((e && e.message) || e);
+    if (/relation .* does not exist|torre_/.test(TORRE.erro)) TORRE.erro = "As tabelas da Torre ainda não existem no banco (" + TORRE.erro + ").";
+  }).then(function () {
+    TORRE.carregando = false;
+    if (state.aba === "torre" && !state._telaInicial) { if (!document.getElementById("torre-raiz")) render(); else torreAtualizarTela(); }
+  });
+}
+/* a aba aberta atualiza a cada 30 s; fora dela, a cada 2 min (para o assistente e o diagnóstico) */
+if (!window.__torreTimer) window.__torreTimer = setInterval(function () {
+  try {
+    if (!torrePode() || document.hidden) return;
+    var naAba = state.aba === "torre" && !state._telaInicial;
+    if (naAba || Date.now() - TORRE.ultCarga > 120000) torreCarregar(true);
+  } catch (e) {}
+}, 30000);
+
+/* ---------- tela ---------- */
+function torreTelaHTML() {
+  if (!TORRE.carregado && !TORRE.carregando) torreCarregar();
+  var cfg = TORRE.cfg || {};
+  var st = '<style>'
+    + '#torre-raiz{color:#eee}#torre-raiz .tc-card{background:#0E0E0E;border:1px solid #2a2a2a;border-radius:12px;padding:12px 14px}'
+    + '#torre-raiz .tc-kpi{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}'
+    + '#torre-raiz .tc-k{background:#0E0E0E;border:1px solid #2a2a2a;border-radius:10px;padding:8px 10px}#torre-raiz .tc-k b{display:block;font-size:22px}#torre-raiz .tc-k span{font-size:11.5px;color:#9a9a9a}'
+    + '#torre-raiz .tc-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px;margin-top:12px}'
+    + '@media(max-width:900px){#torre-raiz .tc-grid{grid-template-columns:1fr}}'
+    + '#torre-raiz .tc-pill{display:inline-flex;align-items:center;gap:5px;border-radius:20px;padding:2px 9px;font-size:11.5px;font-weight:700;border:1px solid}'
+    + '#torre-raiz .tc-bar{height:7px;background:#222;border-radius:5px;overflow:hidden;margin:7px 0 4px}#torre-raiz .tc-bar i{display:block;height:100%;background:' + GOLD + '}'
+    + '#torre-raiz .tc-ev{border-bottom:1px solid #1d1d1d;padding:7px 0;font-size:12.5px}#torre-raiz .tc-ev:last-child{border-bottom:0}'
+    + '#torre-raiz label.tc-l{display:block;font-size:11.5px;color:#aaa;margin:8px 0 3px}#torre-raiz input,#torre-raiz select{max-width:100%}'
+    + '#torre-raiz .tc-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}#torre-raiz .tc-btns button{font-size:12px;padding:5px 9px}'
+    + '#torre-mapa{height:440px;border-radius:12px;border:1px solid #2a2a2a;background:#0b0b0b}'
+    + '.torre-cam{position:relative;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;border:3px solid;background:#111;box-shadow:0 0 0 2px #000}'
+    + '.torre-cam span{position:absolute;top:-17px;left:50%;transform:translateX(-50%);background:#000;color:#fff;font:800 9.5px sans-serif;border:1px solid;border-radius:4px;padding:0 4px;white-space:nowrap}'
+    + '</style>';
+  var cab = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between;margin-bottom:10px;">'
+    + '<div><div style="font-size:20px;font-weight:800;color:' + GOLD + ';">🛰️ Torre de Controle</div>'
+    + '<div style="font-size:12px;color:#9a9a9a;">Rastreador Sascar · posição a cada 2 min · rota pelo OSRM (tempo de caminhão ×' + String(cfg.fator_tempo || 1.25).replace(".", ",") + ')</div></div>'
+    + '<div class="tc-btns" style="margin:0;">'
+    + '<button class="btn" onclick="torreAbrirForm()">▶ Iniciar monitoramento</button>'
+    + '<button class="btn-outline" onclick="torreAbrirCfg()">⚙ Configuração</button>'
+    + '<button class="btn-outline" onclick="torreCarregar()">↻ Atualizar</button></div></div>';
+  return st + '<div id="torre-raiz">' + cab
+    + '<div id="torre-aviso">' + torreAvisoHTML() + '</div>'
+    + '<div id="torre-form">' + torreFormHTML() + '</div>'
+    + '<div id="torre-cfg">' + torreCfgHTML() + '</div>'
+    + '<div id="torre-kpis">' + torreKpisHTML() + '</div>'
+    + '<div class="tc-grid"><div><div id="torre-mapa"></div><div id="torre-frota" style="margin-top:10px;">' + torreFrotaHTML() + '</div></div>'
+    + '<div><div id="torre-viagens">' + torreViagensHTML() + '</div></div></div>'
+    + '<div class="tc-card" style="margin-top:12px;"><div id="torre-eventos">' + torreEventosHTML() + '</div></div>'
+    + '</div>';
+}
+function torreAtualizarTela() {
+  var set = function (id, h) { var el = document.getElementById(id); if (el) el.innerHTML = h; };
+  set("torre-aviso", torreAvisoHTML()); set("torre-kpis", torreKpisHTML()); set("torre-frota", torreFrotaHTML());
+  set("torre-viagens", torreViagensHTML()); set("torre-eventos", torreEventosHTML());
+  torreMapaAtualizar();
+}
+function torreAvisoHTML() {
+  var cfg = TORRE.cfg || {}, a = [];
+  if (TORRE.erro) a.push('<div style="color:#E53935;">⚠ ' + esc(TORRE.erro) + '</div>');
+  if (!TORRE.carregado && !TORRE.erro) a.push('<div style="color:#aaa;">Carregando a Torre…</div>');
+  if (TORRE.carregado) {
+    if (cfg.ativo === false) a.push('<div style="color:#F2C94C;">⏸ O robô da Torre está DESLIGADO na configuração — nada é monitorado nem enviado.</div>');
+    if (!cfg.whatsapp_ativo || !TORRE.zapiOk || !cfg.zapi_grupo) a.push('<div style="color:#F2C94C;">📵 WhatsApp ainda não ligado (' + (!TORRE.zapiOk ? "falta configurar a Z-API" : !cfg.zapi_grupo ? "falta escolher o grupo" : "envio desligado") + '). Os alertas ficam registrados aqui na tela; abra ⚙ Configuração quando o chip do robô estiver no grupo.</div>');
+    var ls = TORRE.log.find(function (l) { return l.fonte === "sascar"; });
+    if (ls && (Date.now() - new Date(ls.em).getTime() > 10 * 60000 || !ls.ok)) a.push('<div style="color:#E53935;">⚠ A integração Sascar ' + (ls.ok ? "não roda desde " + torreDataHora(ls.em) : "deu erro: " + esc(ls.msg)) + '.</div>');
+  }
+  if (TORRE.aviso) a.push('<div style="color:#2ecc71;">' + esc(TORRE.aviso) + '</div>');
+  return a.length ? '<div class="tc-card" style="margin-bottom:10px;font-size:12.5px;display:grid;gap:4px;">' + a.join("") + '</div>' : "";
+}
+function torreKpisHTML() {
+  var at = torreAtivas(), hoje = new Date().toDateString();
+  var n = function (s) { return at.filter(function (v) { return v.situacao === s; }).length; };
+  var alertas = (TORRE.eventos || []).filter(function (e) { return e.tipo !== "status" && e.tipo !== "inicio" && new Date(e.em).toDateString() === hoje; }).length;
+  var k = function (v, t, c) { return '<div class="tc-k"><b style="color:' + (c || "#fff") + ';">' + v + '</b><span>' + t + '</span></div>'; };
+  return '<div class="tc-kpi">' + k(at.length, "Em monitoramento", GOLD) + k(n("no_prazo"), "No prazo", "#2ecc71") + k(n("atencao"), "Atenção", "#F2C94C")
+    + k(n("atrasado"), "Atrasados", "#E53935") + k(at.filter(function (v) { return v.alerta_parado || v.alerta_sinal || v.fora_rota; }).length, "Com alerta aberto", "#ff8a65")
+    + k(alertas, "Alertas hoje") + k((TORRE.ultima || []).length, "Caminhões com rastreador") + '</div>';
+}
+function torreFrotaHTML() {
+  var u = TORRE.ultima || [];
+  if (!u.length) return '<div style="font-size:12px;color:#888;">Nenhum caminhão com rastreador Sascar enviando posição ainda.</div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + u.map(function (x) {
+    var v = torreViagemDaPlaca(x.placa), s = v ? (TORRE_SIT[v.situacao] || TORRE_SIT.no_prazo) : null, velho = Date.now() - new Date(x.data_pacote).getTime() > 30 * 60000;
+    return '<button class="btn-outline" style="font-size:12px;padding:5px 9px;border-color:' + (TORRE.sel === x.placa ? GOLD : s ? s.c : "#444") + ';" onclick="torreFoco(\'' + esc(x.placa) + '\')">'
+      + '🚚 <b>' + esc(x.placa) + '</b> · ' + (x.velocidade || 0) + ' km/h' + (x.ignicao === 0 ? ' · ign. off' : '') + ' · <span style="color:' + (velho ? "#E53935" : "#9a9a9a") + ';">' + torreHa(x.data_pacote) + '</span>'
+      + (v ? ' · <span style="color:' + s.c + ';">' + s.t + '</span>' : ' · <span style="color:#777;">livre</span>') + '</button>';
+  }).join("") + '</div>';
+}
+function torreViagemCard(v) {
+  var ativa = v.status === "ativa", s = TORRE_SIT[v.situacao] || TORRE_SIT.no_prazo, agora = Date.now();
+  var total = Number(v.rota_km || 0), feito = Math.max(0, total - Number(v.km_restante || 0)), pct = v.status === "concluida" ? 100 : total > 0 ? Math.min(100, feito / total * 100) : 0;
+  var prazo = v.prazo || v.previsto_em, flags = [];
+  if (ativa) {
+    if (v.alerta_parado && v.parado_desde) flags.push('⏸️ parado há ' + torreDur((agora - new Date(v.parado_desde).getTime()) / 60000));
+    if (v.alerta_sinal) flags.push('📵 sem sinal ' + torreHa(v.ultima_pos_em));
+    if (v.fora_rota) flags.push('↪️ fora da rota');
+  }
+  var stat = !ativa ? (v.status === "concluida" ? '🏁 Chegou ' + torreDataHora(v.chegou_em || v.encerrada_em) : '⏹️ Encerrada ' + torreDataHora(v.encerrada_em)) : "";
+  var dif = Math.round(Number(v.atraso_min || 0));
+  return '<div class="tc-card" style="margin-bottom:8px;border-color:' + (TORRE.sel === v.placa && ativa ? GOLD : "#2a2a2a") + ';' + (ativa ? '' : 'opacity:.75;') + '">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'
+    + '<div><b style="font-size:15px;cursor:pointer;" onclick="torreFoco(\'' + esc(v.placa) + '\')">🚚 ' + esc(v.placa) + '</b>' + (v.motorista ? ' <span style="color:#bbb;">· ' + esc(v.motorista) + '</span>' : '') + (v.cliente ? ' <span style="color:#888;">· ' + esc(v.cliente) + '</span>' : '')
+    + '<div style="font-size:12.5px;color:#cfcfcf;margin-top:2px;">' + esc(v.origem_nome || "Origem") + ' → <b>' + esc(v.destino_nome) + '</b></div></div>'
+    + '<span class="tc-pill" style="color:' + s.c + ';border-color:' + s.c + ';">' + s.i + ' ' + s.t + (dif > 0 ? ' +' + torreDur(dif) : dif < 0 ? ' (folga ' + torreDur(-dif) + ')' : '') + '</span></div>'
+    + '<div class="tc-bar"><i style="width:' + pct.toFixed(0) + '%;background:' + s.c + ';"></i></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#bdbdbd;">'
+    + (ativa ? '<span>Faltam <b style="color:#fff;">' + torreKm(v.km_restante) + '</b> · ~' + torreDur(v.min_restante) + '</span>' : '<span>' + stat + '</span>')
+    + '<span>Rota ' + torreKm(v.rota_km) + ' · ' + torreDur(v.rota_min) + (v.rota_fonte === "estimada" ? ' (estimada)' : '') + '</span>'
+    + '<span>Saiu ' + torreDataHora(v.saida_em) + '</span>'
+    + (ativa ? '<span>Chegada prevista <b style="color:#fff;">' + torreDataHora(v.eta) + '</b></span>' : '')
+    + '<span>Prazo ' + torreDataHora(prazo) + (v.prazo ? '' : ' (o da rota)') + '</span></div>'
+    + (ativa ? '<div style="font-size:12px;color:#9a9a9a;margin-top:4px;">📍 ' + esc([v.ultima_rua, [v.ultima_cidade, v.ultima_uf].filter(Boolean).join("/")].filter(Boolean).join(", ") || "—") + ' · ' + (v.ultima_vel != null ? v.ultima_vel + ' km/h · ' : '') + torreHa(v.ultima_pos_em) + '</div>' : '')
+    + (flags.length ? '<div style="font-size:12.5px;color:#ff8a65;margin-top:4px;font-weight:700;">' + flags.join(" · ") + '</div>' : '')
+    + (ativa ? '<div class="tc-btns">'
+      + '<button class="btn-outline" onclick="torreFoco(\'' + esc(v.placa) + '\')">🗺️ Ver no mapa</button>'
+      + (v.ultima_lat != null ? '<a class="btn-outline" style="font-size:12px;padding:5px 9px;text-decoration:none;" target="_blank" rel="noopener" href="https://maps.google.com/?q=' + v.ultima_lat + ',' + v.ultima_lng + '">📍 Google Maps</a>' : '')
+      + '<button class="btn-outline" ' + (TORRE.ocupado ? 'disabled' : '') + ' onclick="torreRecalcular(\'' + v.id + '\')">🔁 Recalcular rota</button>'
+      + '<button class="btn-outline" ' + (TORRE.ocupado ? 'disabled' : '') + ' onclick="torreEncerrar(\'' + v.id + '\',true)">🏁 Chegou</button>'
+      + '<button class="btn-outline-gray" ' + (TORRE.ocupado ? 'disabled' : '') + ' onclick="torreEncerrar(\'' + v.id + '\',false)">⏹ Encerrar</button></div>' : '')
+    + '</div>';
+}
+function torreViagensHTML() {
+  var at = torreAtivas(), fim = (TORRE.viagens || []).filter(function (v) { return v.status !== "ativa"; });
+  var ord = { atrasado: 0, atencao: 1, no_prazo: 2 };
+  at.sort(function (a, b) { return (ord[a.situacao] || 2) - (ord[b.situacao] || 2) || String(a.eta).localeCompare(String(b.eta)); });
+  return '<div style="font-weight:800;color:' + GOLD + ';margin-bottom:6px;">Viagens em monitoramento (' + at.length + ')</div>'
+    + (at.length ? at.map(torreViagemCard).join("") : '<div class="tc-card" style="font-size:12.5px;color:#aaa;">Nenhuma viagem sendo monitorada. Toque em <b>▶ Iniciar monitoramento</b> quando o caminhão sair.</div>')
+    + (fim.length ? '<div style="font-weight:700;color:#aaa;margin:12px 0 6px;font-size:12.5px;">Encerradas nos últimos 3 dias (' + fim.length + ')</div>' + fim.slice(0, 12).map(torreViagemCard).join("") : '');
+}
+function torreEventosHTML() {
+  var ev = (TORRE.eventos || []).filter(function (e) { return TORRE.verStatus || e.tipo !== "status"; });
+  if (TORRE.sel) ev = ev.filter(function (e) { return e.placa === TORRE.sel; });
+  var linhas = ev.slice(0, 120).map(function (e) {
+    var t = String(e.msg || "").replace(/\*/g, "").split("\n"), l1 = t.shift() || "";
+    var w = e.enviado ? '<span style="color:#2ecc71;" title="Enviado ao grupo">WhatsApp ✓</span>' : '<span style="color:#777;" title="' + esc(e.envio_erro || "") + '">não enviado</span>';
+    return '<div class="tc-ev"><div style="display:flex;justify-content:space-between;gap:8px;"><span><b style="color:#fff;">' + torreDataHora(e.em) + '</b> ' + (TORRE_EV[e.tipo] || "•") + ' ' + esc(l1.replace(/^\S+\s/, "")) + '</span><span style="font-size:11px;">' + w + '</span></div>'
+      + (t.length ? '<div style="color:#9a9a9a;white-space:pre-line;margin-top:2px;">' + esc(t.filter(function (x) { return !/^🗺️/.test(x); }).join("\n")) + '</div>' : '')
+      + (e.lat != null && e.tipo !== "status" ? '<a style="font-size:11.5px;color:' + GOLD + ';" target="_blank" rel="noopener" href="https://maps.google.com/?q=' + e.lat + ',' + e.lng + '">ver o local</a>' : '') + '</div>';
+  }).join("");
+  return '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">'
+    + '<div style="font-weight:800;color:' + GOLD + ';">Alertas e mensagens' + (TORRE.sel ? ' — ' + esc(TORRE.sel) + ' <a style="font-size:12px;color:#aaa;cursor:pointer;" onclick="torreFoco(\'\')">(ver todos)</a>' : '') + '</div>'
+    + '<label style="font-size:12px;color:#bbb;display:inline-flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" ' + (TORRE.verStatus ? "checked" : "") + ' onchange="TORRE.verStatus=this.checked;torreAtualizarTela()"> mostrar as mensagens de situação (a cada ' + ((TORRE.cfg || {}).intervalo_status_min || 10) + ' min)</label></div>'
+    + (linhas || '<div style="font-size:12.5px;color:#888;">Nada nos últimos 3 dias.</div>');
+}
+
+/* ---------- formulário: iniciar monitoramento ---------- */
+function torreAbrirForm(placa) {
+  var p = placa || (TORRE.ultima.find(function (u) { return !torreViagemDaPlaca(u.placa); }) || {}).placa || "";
+  TORRE.form = { placa: p, motorista: torreMotoristaDaPlaca(p), cliente: "", destino_txt: "", destino_nome: "", destino_lat: null, destino_lng: null, prazo: "", obs: "" };
+  TORRE.busca = null; TORRE.previa = null; TORRE.escolhendoNoMapa = false;
+  var el = document.getElementById("torre-form"); if (el) { el.innerHTML = torreFormHTML(); el.scrollIntoView({ behavior: "smooth", block: "start" }); } else render();
+}
+function torreFormHTML() {
+  var f = TORRE.form; if (!f) return "";
+  var opts = (TORRE.ultima || []).map(function (u) {
+    var ja = torreViagemDaPlaca(u.placa);
+    return '<option value="' + esc(u.placa) + '" ' + (f.placa === u.placa ? "selected" : "") + (ja ? " disabled" : "") + '>' + esc(u.placa) + ' — ' + esc([u.cidade, u.uf].filter(Boolean).join("/") || "sem endereço") + ' · ' + torreHa(u.data_pacote) + (ja ? " (já monitorado)" : "") + '</option>';
+  }).join("");
+  var clientes = (state.clientes || []).map(function (c) { return '<option value="' + esc(c) + '">'; }).join("");
+  var pv = TORRE.previa;
+  return '<div class="tc-card" style="margin-bottom:12px;border-color:' + GOLD + ';">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="color:' + GOLD + ';font-size:15px;">▶ Iniciar monitoramento</b><button class="btn-outline-gray" onclick="TORRE.form=null;TORRE.previa=null;TORRE.escolhendoNoMapa=false;document.getElementById(\'torre-form\').innerHTML=\'\';torreMapaAtualizar()">Fechar</button></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 12px;">'
+    + '<div><label class="tc-l">Caminhão (com rastreador)</label><select style="width:100%;" onchange="TORRE.form.placa=this.value;TORRE.form.motorista=torreMotoristaDaPlaca(this.value);var m=document.getElementById(\'torre-f-mot\');if(m)m.value=TORRE.form.motorista;torrePrevia()">' + (opts || '<option value="">nenhum caminhão com Sascar</option>') + '</select></div>'
+    + '<div><label class="tc-l">Motorista</label><input id="torre-f-mot" style="width:100%;" value="' + esc(f.motorista) + '" oninput="TORRE.form.motorista=this.value"></div>'
+    + '<div><label class="tc-l">Cliente (opcional)</label><input list="torre-cli" style="width:100%;" value="' + esc(f.cliente) + '" oninput="TORRE.form.cliente=this.value"><datalist id="torre-cli">' + clientes + '</datalist></div>'
+    + '<div><label class="tc-l">Prazo de chegada (opcional)</label><input type="datetime-local" style="width:100%;" value="' + esc(f.prazo) + '" onchange="TORRE.form.prazo=this.value;torrePrevia()"></div>'
+    + '</div>'
+    + '<label class="tc-l">Destino (endereço ou cidade)</label>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="torre-f-dest" style="flex:1;min-width:200px;" placeholder="Ex.: CD Suzano, Simões Filho BA" value="' + esc(f.destino_txt) + '" oninput="TORRE.form.destino_txt=this.value" onkeydown="if(event.key===\'Enter\')torreBuscarDestino()">'
+    + '<button class="btn-outline" onclick="torreBuscarDestino()">🔎 Buscar</button>'
+    + '<button class="btn-outline" style="' + (TORRE.escolhendoNoMapa ? "border-color:" + GOLD + ";color:" + GOLD + ";" : "") + '" onclick="TORRE.escolhendoNoMapa=!TORRE.escolhendoNoMapa;document.getElementById(\'torre-form\').innerHTML=torreFormHTML()">📍 ' + (TORRE.escolhendoNoMapa ? "Toque no mapa…" : "Escolher no mapa") + '</button></div>'
+    + (TORRE.busca ? '<div style="margin-top:6px;display:grid;gap:4px;">' + (TORRE.busca.length ? TORRE.busca.map(function (b, i) { return '<button class="btn-outline-gray" style="text-align:left;font-size:12px;" onclick="torreEscolherBusca(' + i + ')">📍 ' + esc(b.nome) + '</button>'; }).join("") : '<div style="font-size:12px;color:#E53935;">Nada encontrado. Tente com a cidade e a UF, ou escolha no mapa.</div>') + '</div>' : '')
+    + (f.destino_lat != null ? '<div style="margin-top:8px;font-size:12.5px;">🏁 Destino: <b>' + esc(f.destino_nome) + '</b> <span style="color:#888;">(' + Number(f.destino_lat).toFixed(5) + ', ' + Number(f.destino_lng).toFixed(5) + ')</span></div>' : '')
+    + (pv ? '<div style="margin-top:6px;font-size:13px;color:' + (pv.erro ? "#E53935" : "#fff") + ';">' + (pv.erro ? "⚠ " + esc(pv.erro) : '🛣️ Prévia: <b>' + torreKm(pv.km) + '</b> · ~<b>' + torreDur(pv.min) + '</b> de caminhão · chegada prevista <b>' + torreDataHora(Date.now() + pv.min * 60000) + '</b>'
+      + (f.prazo ? (function () { var d = (Date.now() + pv.min * 60000 - new Date(f.prazo).getTime()) / 60000; return d > 0 ? ' · <span style="color:#E53935;">' + torreDur(d) + ' além do prazo</span>' : ' · <span style="color:#2ecc71;">folga de ' + torreDur(-d) + '</span>'; })() : '')) + '</div>' : '')
+    + '<label class="tc-l">Observação (opcional)</label><input style="width:100%;" value="' + esc(f.obs) + '" oninput="TORRE.form.obs=this.value">'
+    + '<div class="tc-btns"><button class="btn" ' + (TORRE.ocupado ? "disabled" : "") + ' onclick="torreIniciar()">' + (TORRE.ocupado === "iniciar" ? "Calculando a rota…" : "🚚 Iniciar e avisar o grupo") + '</button></div>'
+    + '<div style="font-size:11.5px;color:#888;margin-top:6px;">A origem é a posição atual do rastreador. O robô calcula a rota, manda a saída no grupo e, depois, a situação a cada ' + ((TORRE.cfg || {}).intervalo_status_min || 10) + ' min até a chegada.</div>'
+    + '</div>';
+}
+function torreBuscarDestino() {
+  var q = String((TORRE.form || {}).destino_txt || "").trim(); if (!q) return;
+  TORRE.busca = [];
+  fetch("https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=6&addressdetails=0&q=" + encodeURIComponent(q))
+    .then(function (r) { return r.json(); }).then(function (j) {
+      TORRE.busca = (j || []).map(function (x) { return { nome: String(x.display_name || "").split(", ").slice(0, 4).join(", "), lat: Number(x.lat), lng: Number(x.lon) }; });
+    }).catch(function () { TORRE.busca = []; }).then(function () { var el = document.getElementById("torre-form"); if (el) el.innerHTML = torreFormHTML(); });
+}
+function torreEscolherBusca(i) {
+  var b = (TORRE.busca || [])[i]; if (!b || !TORRE.form) return;
+  TORRE.form.destino_nome = b.nome; TORRE.form.destino_lat = b.lat; TORRE.form.destino_lng = b.lng; TORRE.busca = null;
+  torrePrevia();
+}
+function torreDestinoNoMapa(lat, lng) {
+  if (!TORRE.form) return;
+  var txt = String(TORRE.form.destino_txt || "").trim();
+  TORRE.form.destino_nome = txt || ("Ponto no mapa " + lat.toFixed(4) + ", " + lng.toFixed(4));
+  TORRE.form.destino_lat = lat; TORRE.form.destino_lng = lng; TORRE.escolhendoNoMapa = false;
+  torrePrevia();
+}
+/* prévia da rota no próprio navegador (OSRM público) — o número que vale é o que o robô calcula ao iniciar */
+function torrePrevia() {
+  var f = TORRE.form, el = function () { var e = document.getElementById("torre-form"); if (e) e.innerHTML = torreFormHTML(); };
+  if (!f || f.destino_lat == null) { el(); return; }
+  var u = (TORRE.ultima || []).find(function (x) { return x.placa === f.placa; }), cfg = TORRE.cfg || {};
+  var o = u ? [u.lat, u.lng] : [cfg.base_lat, cfg.base_lng];
+  TORRE.previa = null; el(); torreMapaAtualizar();
+  fetch("https://router.project-osrm.org/route/v1/driving/" + o[1] + "," + o[0] + ";" + f.destino_lng + "," + f.destino_lat + "?overview=simplified&geometries=geojson")
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error("rota não encontrada");
+      var rt = j.routes[0];
+      TORRE.previa = { km: rt.distance / 1000, min: rt.duration / 60 * (Number(cfg.fator_tempo) || 1.25), geom: rt.geometry.coordinates.map(function (c) { return [c[1], c[0]]; }) };
+    }).catch(function (e) { TORRE.previa = { erro: "Não consegui calcular a prévia (" + e.message + "). O robô tenta de novo ao iniciar." }; })
+    .then(function () { el(); torreMapaAtualizar(); });
+}
+function torreIniciar() {
+  var f = TORRE.form; if (!f || TORRE.ocupado) return;
+  if (!f.placa) { alert("Escolha o caminhão."); return; }
+  if (f.destino_lat == null) { alert("Escolha o destino: busque pelo endereço ou toque em 'Escolher no mapa'."); return; }
+  TORRE.ocupado = "iniciar"; var el = document.getElementById("torre-form"); if (el) el.innerHTML = torreFormHTML();
+  torreInvoke({ acao: "iniciar", placa: f.placa, motorista: f.motorista, cliente: f.cliente, destino_nome: f.destino_nome, destino_lat: f.destino_lat, destino_lng: f.destino_lng,
+    prazo: f.prazo ? new Date(f.prazo).toISOString() : null, obs: f.obs })
+    .then(function (r) {
+      var v = r && r.viagem;
+      TORRE.aviso = "✔ Monitoramento iniciado: " + f.placa + " → " + f.destino_nome + (v ? " · " + torreKm(v.rota_km) + " · ~" + torreDur(v.rota_min) + " · chegada prevista " + torreDataHora(v.eta) : "");
+      TORRE.sel = f.placa; TORRE.form = null; TORRE.previa = null;
+      setTimeout(function () { TORRE.aviso = ""; }, 60000);
+      return torreCarregar();
+    }).catch(function (e) { alert("Não foi possível iniciar: " + e.message); })
+    .then(function () { TORRE.ocupado = ""; var el2 = document.getElementById("torre-form"); if (el2) el2.innerHTML = torreFormHTML(); torreAtualizarTela(); });
+}
+function torreEncerrar(id, chegou) {
+  var v = TORRE.viagens.find(function (x) { return x.id === id; }); if (!v) return;
+  var motivo = "";
+  if (chegou) { if (!confirm("Confirmar que o " + v.placa + " chegou em " + v.destino_nome + "? O monitoramento termina e o grupo é avisado.")) return; }
+  else { motivo = prompt("Encerrar o monitoramento do " + v.placa + " sem chegada. Motivo (opcional):", ""); if (motivo === null) return; }
+  TORRE.ocupado = "encerrar"; torreAtualizarTela();
+  torreInvoke({ acao: "encerrar", viagem_id: id, chegou: !!chegou, motivo: motivo }).then(function () { return torreCarregar(); })
+    .catch(function (e) { alert("Não foi possível encerrar: " + e.message); }).then(function () { TORRE.ocupado = ""; torreAtualizarTela(); });
+}
+function torreRecalcular(id) {
+  TORRE.ocupado = "recalcular"; torreAtualizarTela();
+  torreInvoke({ acao: "recalcular", viagem_id: id }).then(function (r) { TORRE.aviso = "🔁 Rota recalculada: faltam " + torreKm(r.km_restante) + " · ~" + torreDur(r.min_restante); return torreCarregar(); })
+    .catch(function (e) { alert("Não foi possível recalcular: " + e.message); }).then(function () { TORRE.ocupado = ""; torreAtualizarTela(); });
+}
+function torreFoco(placa) {
+  TORRE.sel = placa || "";
+  torreAtualizarTela();
+  var m = TORRE.mapa; if (!m || !placa) return;
+  var v = torreViagemDaPlaca(placa), u = (TORRE.ultima || []).find(function (x) { return x.placa === placa; });
+  try {
+    if (v && v.rota_geom && v.rota_geom.length > 1) m.fitBounds(v.rota_geom.concat(u ? [[u.lat, u.lng]] : []), { padding: [30, 30] });
+    else if (u) m.setView([u.lat, u.lng], 13);
+    var el = document.getElementById("torre-mapa"); if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ behavior: "smooth" });
+  } catch (e) {}
+}
+
+/* ---------- mapa ---------- */
+function torreMapaIniciar() {
+  var el = document.getElementById("torre-mapa"); if (!el) return;
+  srLeafletCarregar(function (ok) {
+    var el2 = document.getElementById("torre-mapa"); if (!el2 || el2 !== el) return;
+    if (!ok) { el.innerHTML = '<div style="padding:16px;color:#aaa;font-size:13px;">Não consegui carregar o mapa (sem internet?). A lista ao lado continua valendo.</div>'; return; }
+    try { if (TORRE.mapa) { TORRE.vista = { c: TORRE.mapa.getCenter(), z: TORRE.mapa.getZoom() }; TORRE.mapa.remove(); } } catch (e) {}
+    var L = window.L, map = L.map(el, { zoomControl: true, attributionControl: true });
+    TORRE.mapa = map; TORRE.camada = L.layerGroup().addTo(map);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: "© OpenStreetMap · © CARTO" }).addTo(map);
+    map.on("click", function (ev) { if (TORRE.escolhendoNoMapa && TORRE.form) torreDestinoNoMapa(ev.latlng.lat, ev.latlng.lng); });
+    if (TORRE.vista) map.setView(TORRE.vista.c, TORRE.vista.z); else torreMapaEnquadrar();
+    torreMapaAtualizar();
+    setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 200);
+  });
+}
+function torreMapaEnquadrar() {
+  var m = TORRE.mapa, cfg = TORRE.cfg || {}; if (!m) return;
+  var pts = (TORRE.ultima || []).map(function (u) { return [u.lat, u.lng]; });
+  torreAtivas().forEach(function (v) { pts.push([v.destino_lat, v.destino_lng]); });
+  if (pts.length > 1) m.fitBounds(pts, { padding: [40, 40], maxZoom: 12 });
+  else if (pts.length) m.setView(pts[0], 12);
+  else m.setView([cfg.base_lat || -12.294, cfg.base_lng || -38.921], 9);
+}
+function torreMapaAtualizar() {
+  var m = TORRE.mapa, L = window.L; if (!m || !L || !TORRE.camada) return;
+  if (!document.getElementById("torre-mapa") || m._container !== document.getElementById("torre-mapa")) return;
+  var g = TORRE.camada; g.clearLayers();
+  var cfg = TORRE.cfg || {};
+  if (cfg.base_lat != null) L.marker([cfg.base_lat, cfg.base_lng], { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html: '<div style="width:26px;height:26px;border-radius:7px;background:' + GOLD + ';display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 0 0 2px #000;">🏠</div>' }) }).addTo(g).bindTooltip("Base " + esc(cfg.base_nome || ""));
+  torreAtivas().forEach(function (v) {
+    var s = TORRE_SIT[v.situacao] || TORRE_SIT.no_prazo, foco = !TORRE.sel || TORRE.sel === v.placa;
+    if (v.rota_geom && v.rota_geom.length > 1) L.polyline(v.rota_geom, { color: s.c, weight: foco ? 5 : 3, opacity: foco ? 0.85 : 0.35 }).addTo(g);
+    L.marker([v.destino_lat, v.destino_lng], { icon: L.divIcon({ className: "", iconSize: [24, 24], iconAnchor: [12, 22], html: '<div style="font-size:22px;filter:drop-shadow(0 0 2px #000);">🏁</div>' }) }).addTo(g)
+      .bindTooltip(esc(v.placa) + " → " + esc(v.destino_nome) + "<br>Chegada prevista " + torreDataHora(v.eta));
+  });
+  (TORRE.ultima || []).forEach(function (u) {
+    var v = torreViagemDaPlaca(u.placa), s = v ? (TORRE_SIT[v.situacao] || TORRE_SIT.no_prazo) : null, cor = s ? s.c : "#8a8a8a", sel = TORRE.sel === u.placa;
+    var mk = L.marker([u.lat, u.lng], { zIndexOffset: sel ? 1000 : v ? 500 : 0, icon: L.divIcon({ className: "", iconSize: [30, 30], iconAnchor: [15, 15],
+      html: '<div class="torre-cam" style="border-color:' + (sel ? GOLD : cor) + ';"><span style="border-color:' + cor + ';">' + esc(u.placa) + '</span>🚚</div>' }) }).addTo(g);
+    mk.bindTooltip('<b>' + esc(u.placa) + '</b>' + (v ? " → " + esc(v.destino_nome) : " (sem viagem monitorada)") + '<br>' + (u.velocidade || 0) + ' km/h · ignição ' + (u.ignicao === 0 ? "desligada" : "ligada")
+      + '<br>' + esc([u.rua, [u.cidade, u.uf].filter(Boolean).join("/")].filter(Boolean).join(", ")) + '<br>' + torreHa(u.data_pacote));
+    mk.on("click", function () { torreFoco(u.placa); });
+  });
+  var f = TORRE.form;
+  if (f && f.destino_lat != null) {
+    L.marker([f.destino_lat, f.destino_lng], { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 24], html: '<div style="font-size:24px;filter:drop-shadow(0 0 3px ' + GOLD + ');">📍</div>' }) }).addTo(g).bindTooltip("Destino escolhido");
+    if (TORRE.previa && TORRE.previa.geom) { L.polyline(TORRE.previa.geom, { color: GOLD, weight: 4, opacity: 0.9, dashArray: "8 7" }).addTo(g); try { m.fitBounds(TORRE.previa.geom, { padding: [30, 30] }); } catch (e) {} }
+  }
+}
+
+/* ---------- configuração ---------- */
+function torreAbrirCfg() {
+  TORRE.cfgAberta = !TORRE.cfgAberta; TORRE.cfgEd = Object.assign({}, TORRE.cfg || {}); TORRE.grupos = null;
+  var el = document.getElementById("torre-cfg"); if (el) { el.innerHTML = torreCfgHTML(); if (TORRE.cfgAberta) el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+}
+function torreCfgHTML() {
+  if (!TORRE.cfgAberta) return "";
+  var c = TORRE.cfgEd || {}, adm = ehAdmin();
+  var num = function (k, rot, ajuda, passo) { return '<div><label class="tc-l">' + rot + '</label><input type="number" step="' + (passo || 1) + '" style="width:100%;" value="' + esc(c[k] == null ? "" : c[k]) + '" oninput="TORRE.cfgEd.' + k + '=this.value">' + (ajuda ? '<div style="font-size:10.5px;color:#777;">' + ajuda + '</div>' : '') + '</div>'; };
+  var grp = TORRE.grupos;
+  return '<div class="tc-card" style="margin-bottom:12px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="color:' + GOLD + ';font-size:15px;">⚙ Configuração da Torre</b><button class="btn-outline-gray" onclick="torreAbrirCfg()">Fechar</button></div>'
+    + '<label style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer;"><input type="checkbox" ' + (c.ativo !== false ? "checked" : "") + ' onchange="TORRE.cfgEd.ativo=this.checked"> <b>Robô ligado</b> <span style="color:#888;font-size:12px;">(desligado: não monitora nem manda nada)</span></label>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 12px;">'
+    + num("intervalo_status_min", "Situação a cada (min)", "mensagem por caminhão") + num("parada_min", "Alerta de parado após (min)", "fora da origem e do destino")
+    + num("vel_max", "Velocidade máxima (km/h)", "1 aviso a cada 15 min no máximo") + num("sem_sinal_min", "Sem sinal após (min)", "sem posição nova do rastreador")
+    + num("desvio_km", "Fora da rota a partir de (km)", "2 leituras seguidas", 0.5) + num("chegada_raio_km", "Chegou num raio de (km)", "", 0.1)
+    + num("fator_tempo", "Fator de tempo de caminhão", "tempo do OSRM × fator", 0.05) + num("atencao_min", "Atenção até (min além do prazo)", "acima disso: atrasado")
+    + '</div><div class="tc-btns"><button class="btn" onclick="torreSalvarCfg()">💾 Salvar parâmetros</button></div>'
+    + '<div style="border-top:1px solid #222;margin-top:12px;padding-top:10px;"><b style="color:' + GOLD + ';">📲 WhatsApp (Z-API)</b>'
+    + '<div style="font-size:12px;color:#aaa;margin:4px 0;">Z-API: ' + (TORRE.zapiOk ? '<span style="color:#2ecc71;">configurada ✓</span>' : '<span style="color:#F2C94C;">falta configurar</span>') + ' · Grupo: ' + (c.zapi_grupo ? '<b style="color:#fff;">' + esc(c.zapi_grupo_nome || c.zapi_grupo) + '</b>' : '<span style="color:#F2C94C;">não escolhido</span>') + '</div>'
+    + (adm ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0 12px;">'
+      + '<div><label class="tc-l">ID da instância</label><input id="torre-z-inst" style="width:100%;" value="' + esc(c.zapi_instancia || "") + '"></div>'
+      + '<div><label class="tc-l">Token da instância</label><input id="torre-z-tok" type="password" style="width:100%;" placeholder="' + (TORRE.zapiOk ? "•••••• (guardado — só preencha para trocar)" : "") + '"></div>'
+      + '<div><label class="tc-l">Client-Token (token de segurança da conta)</label><input id="torre-z-ct" type="password" style="width:100%;" placeholder="se estiver ativado na Z-API"></div></div>'
+      + '<div class="tc-btns"><button class="btn-outline" onclick="torreSalvarZapi()">💾 Salvar Z-API</button></div>'
+      + '<div style="font-size:11px;color:#777;">O token fica guardado no banco num lugar que o app não lê; nem o seu login consegue vê-lo de volta.</div>'
+      : '<div style="font-size:12px;color:#888;">Só administrador configura a Z-API.</div>')
+    + '<div class="tc-btns"><button class="btn-outline" ' + (TORRE.zapiOk ? "" : "disabled") + ' onclick="torreListarGrupos()">🔎 Buscar grupos do chip</button></div>'
+    + (grp ? (grp.erro ? '<div style="color:#E53935;font-size:12px;">' + esc(grp.erro) + '</div>' : grp.length ? '<select style="width:100%;margin-top:6px;" onchange="var o=this.options[this.selectedIndex];TORRE.cfgEd.zapi_grupo=this.value;TORRE.cfgEd.zapi_grupo_nome=o.text">' + '<option value="">(escolha o grupo)</option>' + grp.map(function (x) { return '<option value="' + esc(x.phone) + '" ' + (x.phone === c.zapi_grupo ? "selected" : "") + '>' + esc(x.name) + '</option>'; }).join("") + '</select>' : '<div style="font-size:12px;color:#F2C94C;">Nenhum grupo encontrado — confira se o chip do robô já está no grupo.</div>') : '')
+    + '<label class="tc-l">ou ID do grupo (termina em -group)</label><input style="width:100%;" value="' + esc(c.zapi_grupo || "") + '" oninput="TORRE.cfgEd.zapi_grupo=this.value.trim()">'
+    + '<label style="display:inline-flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer;"><input type="checkbox" ' + (c.whatsapp_ativo ? "checked" : "") + ' onchange="TORRE.cfgEd.whatsapp_ativo=this.checked"> <b>Enviar os alertas e a situação no grupo</b></label>'
+    + '<div class="tc-btns"><button class="btn" onclick="torreSalvarCfg()">💾 Salvar grupo e envio</button><button class="btn-outline" ' + (TORRE.zapiOk && c.zapi_grupo ? "" : "disabled") + ' onclick="torreTesteWhats()">✅ Mandar mensagem de teste</button></div>'
+    + '</div></div>';
+}
+function torreSalvarCfg() {
+  var c = TORRE.cfgEd || {}, nums = ["intervalo_status_min", "parada_min", "vel_max", "sem_sinal_min", "desvio_km", "chegada_raio_km", "fator_tempo", "atencao_min"], up = { atualizado_em: new Date().toISOString() };
+  for (var i = 0; i < nums.length; i++) { var n = Number(String(c[nums[i]]).replace(",", ".")); if (!isFinite(n) || n <= 0) { alert("Valor inválido em " + nums[i]); return; } up[nums[i]] = n; }
+  ["intervalo_status_min", "parada_min", "vel_max", "sem_sinal_min", "atencao_min"].forEach(function (k) { up[k] = Math.round(up[k]); });
+  up.ativo = c.ativo !== false; up.whatsapp_ativo = !!c.whatsapp_ativo; up.zapi_grupo = c.zapi_grupo || null; up.zapi_grupo_nome = c.zapi_grupo_nome || null;
+  torreSb(function (sb) { return sb.from("torre_config").update(up).eq("id", 1); }).then(function (r) {
+    if (r && r.error) throw new Error(r.error.message);
+    Object.assign(TORRE.cfg, up); TORRE.aviso = "✔ Configuração salva."; torreAtualizarTela();
+    var el = document.getElementById("torre-cfg"); if (el) el.innerHTML = torreCfgHTML();
+  }).catch(function (e) { alert("Não salvou: " + e.message); });
+}
+function torreSalvarZapi() {
+  var inst = (document.getElementById("torre-z-inst") || {}).value || "", tok = (document.getElementById("torre-z-tok") || {}).value || "", ct = (document.getElementById("torre-z-ct") || {}).value || "";
+  if (!inst.trim()) { alert("Informe o ID da instância."); return; }
+  if (!tok.trim() && !TORRE.zapiOk) { alert("Informe o token da instância."); return; }
+  torreSb(function (sb) { return sb.rpc("torre_salvar_zapi", { p_instancia: inst.trim(), p_token: tok.trim(), p_client_token: ct.trim() ? ct.trim() : null }); }).then(function (r) {
+    if (r && r.error) throw new Error(r.error.message);
+    TORRE.cfgEd.zapi_instancia = inst.trim(); TORRE.aviso = "✔ Z-API salva."; return torreCarregar();
+  }).then(function () { TORRE.cfgEd = Object.assign({}, TORRE.cfg, { zapi_grupo: TORRE.cfgEd.zapi_grupo, zapi_grupo_nome: TORRE.cfgEd.zapi_grupo_nome, whatsapp_ativo: TORRE.cfgEd.whatsapp_ativo }); var el = document.getElementById("torre-cfg"); if (el) el.innerHTML = torreCfgHTML(); })
+    .catch(function (e) { alert("Não salvou: " + e.message); });
+}
+function torreListarGrupos() {
+  TORRE.grupos = null;
+  torreInvoke({ acao: "listar_grupos" }).then(function (r) { TORRE.grupos = (r && r.grupos) || []; }).catch(function (e) { TORRE.grupos = { erro: "Não consegui listar: " + e.message }; })
+    .then(function () { var el = document.getElementById("torre-cfg"); if (el) el.innerHTML = torreCfgHTML(); });
+}
+function torreTesteWhats() {
+  var c = TORRE.cfgEd || {};
+  if (c.zapi_grupo !== (TORRE.cfg || {}).zapi_grupo) { alert("Salve o grupo antes de testar."); return; }
+  torreInvoke({ acao: "testar_whatsapp" }).then(function () { alert("✅ Mensagem de teste enviada ao grupo."); }).catch(function (e) { alert("Falhou: " + e.message); });
+}
+
+/* ---------- assistente ---------- */
+function torreContextoAssistente() {
+  if (!torrePode()) return "";
+  if (!TORRE.carregado) { try { torreCarregar(true); } catch (e) {} }
+  var c = TORRE.cfg || {};
+  var t = "TORRE DE CONTROLE (v653, 19/10/2026, aba '🛰️ Torre de Controle' no grupo Viagens; acesso: admin ou quem tem o modulo 'torre' marcado em Usuarios): "
+    + "acompanha em tempo real os caminhoes com rastreador Sascar (a posicao chega a cada 2 min). COMO USAR: quando o caminhao sai, a equipe toca 'Iniciar monitoramento', escolhe o caminhao, o destino (busca por endereco ou toque no mapa) e, se quiser, o prazo; "
+    + "o robo (torre-monitor, roda a cada 2 min no servidor) calcula a rota pelo OSRM com o tempo multiplicado por " + (c.fator_tempo || 1.25) + " (tempo de caminhao), avisa a saida no grupo de WhatsApp e passa a mandar a SITUACAO de cada caminhao a cada " + (c.intervalo_status_min || 10) + " min (onde esta, velocidade, km e tempo que faltam, chegada prevista x prazo). "
+    + "ALERTAS automaticos: parado mais de " + (c.parada_min || 10) + " min no trajeto (fora da origem e do destino), velocidade acima de " + (c.vel_max || 80) + " km/h (no maximo 1 aviso a cada 15 min), sem sinal do rastreador por " + (c.sem_sinal_min || 20) + " min, saida da rota (mais de " + (c.desvio_km || 2) + " km da rota em 2 leituras seguidas; ai a previsao passa a ser recalculada da posicao atual), atraso (chegada prevista passa do prazo; ate " + (c.atencao_min || 15) + " min e Atencao, acima disso Atrasado), e chegada (dentro de " + (c.chegada_raio_km || 0.8) + " km do destino a viagem fecha sozinha). "
+    + "Sem prazo informado, o prazo e o horario previsto na saida. Botoes na viagem: Recalcular rota, Chegou (fecha avisando o grupo) e Encerrar. ⚙ Configuracao: parametros acima, Z-API (instancia, token e Client-Token -- o token fica guardado num lugar que o app nao le), escolher o grupo e mandar mensagem de teste. "
+    + "Caminhoes com Sascar hoje: QDN8J44 e QEN6J82; o PKO3F40 instala em 22/10. A Posítron ainda nao esta integrada. "
+    + "WHATSAPP: " + (c.whatsapp_ativo && TORRE.zapiOk && c.zapi_grupo ? "ligado, enviando para o grupo " + (c.zapi_grupo_nome || c.zapi_grupo) : "AINDA NAO LIGADO (" + (!TORRE.zapiOk ? "falta configurar a Z-API -- Renato vai providenciar um chip so para o robo e coloca-lo no grupo" : !c.zapi_grupo ? "falta escolher o grupo" : "envio desligado na configuracao") + "); os alertas ficam registrados na aba") + ". "
+    + (c.ativo === false ? "ATENCAO: o robo esta DESLIGADO na configuracao. " : "");
+  if (!TORRE.carregado) return t + (TORRE.erro ? "Erro ao carregar: " + TORRE.erro : "Dados da Torre ainda carregando.");
+  var at = torreAtivas();
+  t += "\nVIAGENS EM MONITORAMENTO AGORA (" + at.length + "):" + (at.length ? "" : " nenhuma.");
+  at.forEach(function (v) {
+    var s = TORRE_SIT[v.situacao] || TORRE_SIT.no_prazo, fl = [];
+    if (v.alerta_parado && v.parado_desde) fl.push("parado ha " + torreDur((Date.now() - new Date(v.parado_desde).getTime()) / 60000));
+    if (v.alerta_sinal) fl.push("sem sinal desde " + torreDataHora(v.ultima_pos_em));
+    if (v.fora_rota) fl.push("fora da rota");
+    t += "\n- " + v.placa + (v.motorista ? " (" + v.motorista + ")" : "") + (v.cliente ? " cliente " + v.cliente : "") + ": " + (v.origem_nome || "?") + " -> " + v.destino_nome
+      + "; saiu " + torreDataHora(v.saida_em) + "; rota " + torreKm(v.rota_km) + "/" + torreDur(v.rota_min) + "; faltam " + torreKm(v.km_restante) + " (~" + torreDur(v.min_restante) + ")"
+      + "; chegada prevista " + torreDataHora(v.eta) + "; prazo " + torreDataHora(v.prazo || v.previsto_em) + (v.prazo ? "" : " (o da rota)") + "; situacao " + s.t + " (" + Math.round(Number(v.atraso_min || 0)) + " min em relacao ao prazo)"
+      + "; ultima posicao " + [v.ultima_rua, v.ultima_cidade, v.ultima_uf].filter(Boolean).join(", ") + " a " + (v.ultima_vel || 0) + " km/h " + torreHa(v.ultima_pos_em) + (fl.length ? "; ALERTAS ABERTOS: " + fl.join(", ") : "");
+  });
+  var fim = (TORRE.viagens || []).filter(function (v) { return v.status !== "ativa"; });
+  if (fim.length) t += "\nENCERRADAS NOS ULTIMOS 3 DIAS: " + fim.slice(0, 15).map(function (v) {
+    return v.placa + " -> " + v.destino_nome + " (" + (v.status === "concluida" ? "chegou " + torreDataHora(v.chegou_em) + ", " + (Number(v.atraso_min) > 0 ? Math.round(v.atraso_min) + " min depois do prazo" : "no prazo") : "encerrada sem chegada " + torreDataHora(v.encerrada_em)) + ")";
+  }).join("; ");
+  var al = (TORRE.eventos || []).filter(function (e) { return e.tipo !== "status"; }).slice(0, 20);
+  if (al.length) t += "\nULTIMOS ALERTAS/EVENTOS: " + al.map(function (e) { return torreDataHora(e.em) + " " + (TORRE_EV_NOME[e.tipo] || e.tipo) + " " + (e.placa || "") + (e.enviado ? " (enviado no WhatsApp)" : ""); }).join("; ");
+  t += "\nPOSICAO ATUAL DOS CAMINHOES COM RASTREADOR: " + ((TORRE.ultima || []).map(function (u) {
+    return u.placa + " em " + [u.rua, u.cidade, u.uf].filter(Boolean).join(", ") + ", " + (u.velocidade || 0) + " km/h, ignicao " + (u.ignicao === 0 ? "desligada" : "ligada") + ", " + torreHa(u.data_pacote) + (torreViagemDaPlaca(u.placa) ? " (em viagem monitorada)" : " (sem viagem monitorada)");
+  }).join("; ") || "nenhum enviando posicao");
+  return t;
+}
+/* itens para o diagnóstico proativo do assistente (rfDiagnosticoSistema) */
+function torreDiagnostico(add) {
+  if (!torrePode() || !TORRE.carregado) return;
+  var at = torreAtivas(), c = TORRE.cfg || {};
+  at.forEach(function (v) {
+    if (v.situacao === "atrasado") add("alto", "Torre de Controle: o " + v.placa + " vai chegar ATRASADO em " + v.destino_nome + " (" + torreDur(v.atraso_min) + " além do prazo, chegada prevista " + torreDataHora(v.eta) + ").");
+    if (v.alerta_sinal) add("alto", "Torre de Controle: o " + v.placa + " está SEM SINAL do rastreador desde " + torreDataHora(v.ultima_pos_em) + ".");
+    if (v.alerta_parado && v.parado_desde) add("medio", "Torre de Controle: o " + v.placa + " está parado há " + torreDur((Date.now() - new Date(v.parado_desde).getTime()) / 60000) + " no trajeto para " + v.destino_nome + ".");
+    if (v.fora_rota) add("medio", "Torre de Controle: o " + v.placa + " saiu da rota prevista para " + v.destino_nome + ".");
+  });
+  if (at.length && !(c.whatsapp_ativo && TORRE.zapiOk && c.zapi_grupo)) add("medio", "Torre de Controle: há " + at.length + " viagem(ns) monitorada(s), mas o WhatsApp do robô ainda não está ligado — os alertas só aparecem na aba.");
+  if (c.ativo === false && at.length) add("alto", "Torre de Controle: o robô está DESLIGADO na configuração e há viagem marcada como monitorada.");
+}
+
 function gerarContextoAssistente() {
   // v369: REGRA FIXA de a quem pertence a rota. Alimentado aqui conforme a
   // regra permanente de nunca entregar versao sem ligar o dado novo no
@@ -40537,6 +41046,7 @@ ${blocoDatasViagem}
 ${blocoNaoVieram}
 ${blocoNotaVazia}
 ${revContextoAssistente()}
+${(function () { try { return torreContextoAssistente(); } catch (e) { return ""; } })()}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -41030,6 +41540,7 @@ function rfDiagnosticoSistema() {
     const dc = diasPara(v.venctoCronotacografo);
     if (dc !== null && dc < 0) add("alto", "Cronotacógrafo do " + v.placa + " VENCIDO há " + Math.abs(dc) + " dia(s).");
   });
+  try { torreDiagnostico(add); } catch (e) {}   // v653: Torre de Controle
   return p;
 }
 function rfDiagnosticoTexto() {
@@ -45527,6 +46038,11 @@ function renderTabela() {
   if (state.aba === "saoroquecarga") {   // v586
     wrap.innerHTML = srBlocoHTML();
     setTimeout(function () { try { sr3dIniciar(); } catch (e) {} }, 0);   // v590: liga o 3D que gira
+    return;
+  }
+  if (state.aba === "torre") {   // v653: Torre de Controle
+    wrap.innerHTML = torreTelaHTML();
+    setTimeout(function () { try { torreMapaIniciar(); } catch (e) {} }, 0);
     return;
   }
   if (state.aba === "reversa") {   // logística reversa
