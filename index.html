@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v659)</title>
+<title>RF Logística — Painel da Frota (v660)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v659">
+<meta name="rf-versao" content="v660">
+<!-- v660 (20/10/2026): aba Viagens -- VOLTA o botao "📎 anexar foto" no KM de saida e de chegada quando a viagem esta sem foto (tinha saido na v570). Pedido do Renato: apagou a foto de saida do QDE8C12 e nao tinha como anexar de novo. Usa o rfKmUpload que ja existia (comprime, guarda em km/<placa> e a IA le o KM com a mesma trava). -->
 <!-- v659 (19/10/2026): TORRE -- ROTAS DA ANJUN PRE-CADASTRADAS + COLAR PROGRAMACAO. A Anjun pede so "1 TOCO ROTA PE (C.S.AGOSTINHO)" com data e hora; agora as rotas dela (PE, MA, CE, AL/SE) ficam salvas em torre_config.rotas com destino, cidades e postos fiscais, e um toque preenche tudo. Botao "📋 Colar programação" le a mensagem da Anjun (data, hora do carregamento, quantidade, tipo e rota) e monta cada viagem. "💾 Salvar rota" grava os postos fiscais e o ponto exato do CD para as proximas. Armar pela aba Viagens tambem reconhece a rota pelo texto. Assistente: rotas da Anjun e a regra de que nas cargas da Anjun a RF nao emite CT-e nem MDF-e (a Anjun gera e averba). -->
 <!-- v658 (19/10/2026): TORRE DE CONTROLE -- LARGADA AUTOMATICA. Pedido do Renato: a viagem lancada ja fica ARMADA na Torre e o Ravi da a largada sozinho quando o caminhao LIGA E ANDA 1 KM (nao depende da foto de saida do motorista, que erra muito; manobra no patio nao conta). Na aba Viagens, caminhao com rastreador ganha o botao "🛰️ Armar na Torre" (abre o formulario da Torre ja preenchido com placa, motorista, cliente e a ligacao com a viagem). Na Torre: secao "⏳ Armadas" com Largar agora e Desarmar; no formulario, escolha entre esperar a largada ou comecar agora. Todos os caminhoes rastreados entram na Torre, mas o WhatsApp so vai para o grupo da Anjun nas viagens da Anjun (as outras ficam so na tela). Edge Function torre-monitor v7. Assistente atualizado. -->
 <!-- v657 (19/10/2026): TORRE DE CONTROLE -- TRACKING NO MODELO DA ANJUN. No "Iniciar monitoramento" o modelo "📋 Tracking Anjun" pede SM, manifestos (UF + numero), telefone do motorista, os 4 horarios do carregamento e a lista ordenada de pontos da rota (cidades e postos fiscais: busca ou toque no mapa, com reordenar e remover). A rota passa pelos pontos e o robo Ravi preenche sozinho chegada e saida de cada ponto e manda o tracking no grupo a cada mudanca. Card da viagem mostra os pontos e tem "📝 Dados Anjun" e "📤 Reenviar tracking". Assinatura do robo na Configuracao ("🤖 _Ravi - RF Logística_", vai em todas as mensagens). Situacao passa a ser a cada 1 hora. Assistente atualizado. Edge Function torre-monitor v5. -->
@@ -1025,7 +1026,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v659" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v660" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -40861,7 +40862,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
     if (viagemVinc && rom.vinculoAuto) linha += `. Esse vínculo foi feito AUTOMATICAMENTE pelo sistema, casando a placa do romaneio com a viagem aberta do mesmo caminhão${rom.vinculoAmbiguo ? " — havia MAIS DE UMA viagem aberta dessa placa, foi usada a mais recente e vale conferir" : ""}`;
     if (!rom.viagemId) linha += `. SEM viagem vinculada${rom.placa ? " (não existe viagem aberta dessa placa; a equipe pode criar uma pelo botão \"+ criar viagem\")" : " (o romaneio ainda não tem placa direcionada)"} — o prazo não atualiza na aba Viagens`;
     if (relogio && relogio.pendente) {
-      linha += `. Relógio de previsão (${relogio.diasPrevistos} dia(s)) AINDA NÃO COMEÇOU A CONTAR — o motorista ainda não confirmou o início real da viagem no app dele (foto do KM de saída). Não estime prazo de chegada até isso acontecer.`;
+      linha += `. Relógio de previsão (${relogio.diasPrevistos} dia(s)) AINDA NÃO COMEÇOU A CONTAR — o motorista ainda não confirmou o início real da viagem no app dele (foto do KM de saída; se a foto faltar ou tiver sido apagada, a equipe pode anexar pelo botão '📎 anexar foto' na coluna KM saída/chegada da aba Viagens — v660). Não estime prazo de chegada até isso acontecer.`;
     } else if (relogio) {
       linha += `. Relógio começou a contar quando o motorista confirmou o início real (KM de saída). Previsão original: ${relogio.diasPrevistos} dia(s), terminar em ${rfFmtDataHora(relogio.previstoFimOriginalMs)}`;
       if (relogio.recalculado) {
@@ -46039,7 +46040,7 @@ function renderTabela() {
               <div style="margin-top:3px;">
                 ${v.fotoKmSaida
                   ? `<button class="btn-outline" style="font-size:9px;padding:2px 6px;" onclick="rfKmVer('${v.fotoKmSaida}')">📷 ver</button> <button class="btn-del" style="font-size:11px;padding:0 4px;" onclick="rfKmExcluir('${v.id}','saida')" title="Remover foto">✕</button>`
-                  : ""}
+                  : `<label class="btn-outline" style="font-size:9px;padding:2px 6px;cursor:pointer;display:inline-block;" title="Anexar a foto do KM de saída (o sistema lê o KM da foto)">📎 anexar foto<input type="file" accept="image/*" style="display:none;" onchange="rfKmUpload(this,'${v.id}','saida')"></label>`}
               </div>
             </td>
             <td style="min-width:130px;">
@@ -46047,7 +46048,7 @@ function renderTabela() {
               <div style="margin-top:3px;">
                 ${v.fotoKmChegada
                   ? `<button class="btn-outline" style="font-size:9px;padding:2px 6px;" onclick="rfKmVer('${v.fotoKmChegada}')">📷 ver</button> <button class="btn-del" style="font-size:11px;padding:0 4px;" onclick="rfKmExcluir('${v.id}','chegada')" title="Remover foto">✕</button>`
-                  : ""}
+                  : `<label class="btn-outline" style="font-size:9px;padding:2px 6px;cursor:pointer;display:inline-block;" title="Anexar a foto do KM de chegada (o sistema lê o KM da foto)">📎 anexar foto<input type="file" accept="image/*" style="display:none;" onchange="rfKmUpload(this,'${v.id}','chegada')"></label>`}
               </div>
             </td>
             <td>
