@@ -17,10 +17,12 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v660)</title>
+<title>RF Logística — Painel da Frota (v662)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v660">
+<meta name="rf-versao" content="v662">
+<!-- v662 (20/10/2026): TORRE -- a pedido do Renato a placa de fora da frota (MGW3G86) VOLTA a aparecer no mapa, para validar a Torre com um veiculo rodando de verdade; fica so na tela, com uma nota cinza, sem WhatsApp. -->
+<!-- v661 (20/10/2026): TORRE -- so caminhao cadastrado na Frota aparece. A Sascar comecou a mandar (20/10, 08:55) o sinal da placa MGW3G86, que nao e da RF (estava em Serra/ES); placa fora da frota sai do mapa e vira aviso amarelo para conferir com a Sascar. Assistente avisado. -->
 <!-- v660 (20/10/2026): aba Viagens -- VOLTA o botao "📎 anexar foto" no KM de saida e de chegada quando a viagem esta sem foto (tinha saido na v570). Pedido do Renato: apagou a foto de saida do QDE8C12 e nao tinha como anexar de novo. Usa o rfKmUpload que ja existia (comprime, guarda em km/<placa> e a IA le o KM com a mesma trava). -->
 <!-- v659 (19/10/2026): TORRE -- ROTAS DA ANJUN PRE-CADASTRADAS + COLAR PROGRAMACAO. A Anjun pede so "1 TOCO ROTA PE (C.S.AGOSTINHO)" com data e hora; agora as rotas dela (PE, MA, CE, AL/SE) ficam salvas em torre_config.rotas com destino, cidades e postos fiscais, e um toque preenche tudo. Botao "📋 Colar programação" le a mensagem da Anjun (data, hora do carregamento, quantidade, tipo e rota) e monta cada viagem. "💾 Salvar rota" grava os postos fiscais e o ponto exato do CD para as proximas. Armar pela aba Viagens tambem reconhece a rota pelo texto. Assistente: rotas da Anjun e a regra de que nas cargas da Anjun a RF nao emite CT-e nem MDF-e (a Anjun gera e averba). -->
 <!-- v658 (19/10/2026): TORRE DE CONTROLE -- LARGADA AUTOMATICA. Pedido do Renato: a viagem lancada ja fica ARMADA na Torre e o Ravi da a largada sozinho quando o caminhao LIGA E ANDA 1 KM (nao depende da foto de saida do motorista, que erra muito; manobra no patio nao conta). Na aba Viagens, caminhao com rastreador ganha o botao "🛰️ Armar na Torre" (abre o formulario da Torre ja preenchido com placa, motorista, cliente e a ligacao com a viagem). Na Torre: secao "⏳ Armadas" com Largar agora e Desarmar; no formulario, escolha entre esperar a largada ou comecar agora. Todos os caminhoes rastreados entram na Torre, mas o WhatsApp so vai para o grupo da Anjun nas viagens da Anjun (as outras ficam so na tela). Edge Function torre-monitor v7. Assistente atualizado. -->
@@ -1026,7 +1028,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v660" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v662" };
 (function () {
   var FILA = "rf-logs-fila-v1", MAX = 50, enviando = false;
 
@@ -39844,7 +39846,14 @@ function torreCarregar(silencioso) {
     TORRE.cfg = r[0].data || {};
     TORRE.viagens = (r[1].data || []).concat(r[2].data || []).filter(function (v) { return !torreEhTeste(v); });
     TORRE.eventos = (r[3].data || []).filter(function (e) { return !/^TST/.test(e.placa || ""); });
-    TORRE.ultima = (r[4].data || []).filter(function (u) { return !torreEhTeste(u); }).sort(function (a, b) { return a.placa < b.placa ? -1 : 1; });
+    /* v661: só caminhão da FROTA entra na Torre. A Sascar passou a mandar sinal de uma placa que não é nossa (MGW3G86, em 20/10);
+       placa fora da frota fica fora do mapa e vira aviso para conferir com a Sascar. */
+    var frota = {}; (state.veiculos || []).forEach(function (x) { var p = String(x.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); if (p) frota[p] = 1; });
+    var temFrota = Object.keys(frota).length > 0, todas = (r[4].data || []).filter(function (u) { return !torreEhTeste(u); });
+    TORRE.estranhas = temFrota ? todas.filter(function (u) { return !frota[u.placa]; }) : [];
+    /* v662: Renato pediu para DEIXAR a placa de fora aparecendo — serve para validar a Torre com um veículo rodando de verdade.
+       Ela continua no mapa (marcada como "fora da frota") e nunca manda nada no WhatsApp, porque não tem viagem nossa. */
+    TORRE.ultima = todas.sort(function (a, b) { return a.placa < b.placa ? -1 : 1; });
     TORRE.zapiOk = !!(r[5] && r[5].data);
     TORRE.log = (r[6] && r[6].data) || [];
     TORRE.carregado = true; TORRE.erro = ""; TORRE.ultCarga = Date.now();
@@ -39917,6 +39926,7 @@ function torreAvisoHTML() {
     if (cfg.ativo === false) a.push('<div style="color:#F2C94C;">⏸ O robô da Torre está DESLIGADO na configuração — nada é monitorado nem enviado.</div>');
     if (!cfg.whatsapp_ativo || !TORRE.zapiOk || !cfg.zapi_grupo) a.push('<div style="color:#F2C94C;">📵 WhatsApp ainda não ligado (' + (!TORRE.zapiOk ? "falta configurar a Z-API" : !cfg.zapi_grupo ? "falta escolher o grupo" : "envio desligado") + '). Os alertas ficam registrados aqui na tela; abra ⚙ Configuração quando o chip do robô estiver no grupo.</div>');
     var ls = TORRE.log.find(function (l) { return l.fonte === "sascar"; });
+    if ((TORRE.estranhas || []).length) a.push('<div style="color:#9a9a9a;">🔎 Placa de fora da frota aparecendo para validar a Torre: <b>' + TORRE.estranhas.map(function (u) { return esc(u.placa) + " (" + esc([u.cidade, u.uf].filter(Boolean).join("/")) + ")"; }).join(", ") + '</b> — só na tela, sem WhatsApp.</div>');
     if (ls && (Date.now() - new Date(ls.em).getTime() > 10 * 60000 || !ls.ok)) a.push('<div style="color:#E53935;">⚠ A integração Sascar ' + (ls.ok ? "não roda desde " + torreDataHora(ls.em) : "deu erro: " + esc(ls.msg)) + '.</div>');
   }
   if (TORRE.aviso) a.push('<div style="color:#2ecc71;">' + esc(TORRE.aviso) + '</div>');
@@ -40628,6 +40638,7 @@ function torreContextoAssistente() {
   }).join("; ");
   var al = (TORRE.eventos || []).filter(function (e) { return e.tipo !== "status"; }).slice(0, 20);
   if (al.length) t += "\nULTIMOS ALERTAS/EVENTOS: " + al.map(function (e) { return torreDataHora(e.em) + " " + (TORRE_EV_NOME[e.tipo] || e.tipo) + " " + (e.placa || "") + (e.enviado ? " (enviado no WhatsApp)" : ""); }).join("; ");
+  if ((TORRE.estranhas || []).length) t += "\nATENCAO: a Sascar esta mandando sinal de placa que nao e da frota da RF (" + TORRE.estranhas.map(function (u) { return u.placa; }).join(", ") + "); Renato decidiu DEIXAR ela aparecendo na Torre para validar o sistema com um veiculo rodando de verdade -- e so tela, sem WhatsApp, e nao conta como caminhao da RF.";
   t += "\nPOSICAO ATUAL DOS CAMINHOES COM RASTREADOR: " + ((TORRE.ultima || []).map(function (u) {
     return u.placa + " em " + [u.rua, u.cidade, u.uf].filter(Boolean).join(", ") + ", " + (u.velocidade || 0) + " km/h, ignicao " + (u.ignicao === 0 ? "desligada" : "ligada") + ", " + torreHa(u.data_pacote) + (torreViagemDaPlaca(u.placa) ? " (em viagem monitorada)" : " (sem viagem monitorada)");
   }).join("; ") || "nenhum enviando posicao");
