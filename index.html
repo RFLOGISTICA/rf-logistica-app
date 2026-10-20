@@ -21,7 +21,7 @@
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
 <meta name="rf-versao" content="v666">
-<!-- v666 (20/10/2026): SÃO ROQUE — BIP DA CAIXA DE PRODUTO VENDIDO EM UNIDADE. No piloto, a caixa fechada da escova Colgate Classic Clean (12 pacotes) não achava produto: a DANFE trazia o item em UN (12 UN) e a importação reparte os volumes da NF pelo VALOR dos itens, então item barato ficava com 0 volume e não aparecia na lista do bip. Agora: (1) a lista do bip mostra TODOS os produtos da carga (inclusive os vendidos em unidade), com filtro; (2) o produto casa pelo NOME sem a quantidade ("· 12 UN"), então o código aprendido vale para todos os clientes; (3) se o produto não tem volume próprio, a etiqueta sai num volume pendente do CLIENTE que comprou (a quantidade de volumes da NF continua a mesma) e o volume passa a ter a descrição do produto bipado. -->
+<!-- v666 (20/10/2026): PÓSITRON LIGADA NA TORRE + 📜 HISTÓRICO DE TRAJETO. A fila logística da Pósitron (usuário RF_LOG_TRANSL_WS, senha no Vault) entra a cada 2 min pela Edge Function positron-sync (14 caminhões; placa antiga convertida para Mercosul). Na Torre, botão "📜 Histórico": caminhão + dia ou semana, trajeto no mapa (uma cor por dia), paradas de 8 min ou mais com cidade, km, tempo rodando, motor ligado parado, excesso de velocidade e PROGRAMAÇÃO × O QUE FEZ (cidades das viagens lançadas e da Torre: parou / só passou / não foi, e paradas fora da programação). Edge Function rastreio-historico (Sascar do banco + histórico da Pósitron pela API). Assistente atualizado. -->
 <!-- v665 (20/10/2026): RAVI PESSOAL -- o resumo pessoal passa a ir DUAS vezes por dia, 07:30 e 20:00 (pedido do Renato); "Bom dia" de manha e "Boa noite" a noite. Crons ravi-pessoal-manha e ravi-pessoal-noite. -->
 <!-- v664 (20/10/2026): RAVI PESSOAL -- todo dia as 07:55 o Ravi manda no WhatsApp do Renato (75 99971-7578) o saldo atualizado das aplicacoes e os atrasos dos emprestimos da aba Pessoal. Decisao do Renato: ao abrir/salvar a aba, uma copia so de aplicacoes/emprestimos (sem observacoes) vai para a tabela ravi_pessoal (o app nao le de volta). Topo da aba Pessoal: status, "Mandar agora" e liga/desliga. Edge Function ravi-pessoal + cron ravi-pessoal-diario. -->
 <!-- v663 (20/10/2026): ASSISTENTE -- a bolha amarela 💬 virou a foto do Ravi INTEIRO, sem recorte (pedido do Renato), num circulo branco de 64px com borda dourada e o selo vermelho de alertas; o topo do chat mostra "Ravi · Assistente RF". -->
@@ -13328,55 +13328,11 @@ function srVolsOrdemCarga(c) {   // ordem de carregamento: última parada primei
   c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; }).forEach(function (cl) { c.vols.forEach(function (v) { if (v.k === cl.k) out.push(v); }); });
   return out;
 }
-function srProdNome(d) { return srDescNorm(String(d || "").split(" · ")[0].split(" · ")[0]).replace(/\s*·.*$/, "").trim(); }   // v666: nome do produto sem a quantidade ("· 12 UN")
 function srVolDoProduto(v, base) {
   if (!base) return false;
   if (v.e && srGtinBase(v.e) === base) return true;
   var apr = srCodAprendidos()[base];
-  return !!(apr && srProdNome(v.d) === srProdNome(apr));
-}
-/* v666: linhas de produto da carga (todos os clientes), inclusive as vendidas em UN que ficaram sem volume próprio */
-function srLinhasDoProduto(c, base, nome) {
-  var out = [];
-  (c.clientes || []).slice().sort(function (a, b) { return b.seq - a.seq; }).forEach(function (cl) {
-    (cl.itens || []).forEach(function (it) {
-      var porEan = base && String(it[3] || "").split("|").some(function (e) { return e && srGtinBase(e) === base; });
-      if (porEan || (nome && srProdNome(it[0]) === nome)) out.push({ cl: cl, it: it });
-    });
-  });
-  return out;
-}
-/* v666: caixa de produto sem volume próprio (vendido em UN, a NF repartiu os volumes pelo valor) -- usa um
-   volume pendente do CLIENTE que comprou; o total de volumes da NF não muda. */
-function srCaixaSemVolume(c, nome) {
-  var linhas = srLinhasDoProduto(c, "", nome);
-  if (!linhas.length) return null;
-  var fe = srFeitos(c, "t"), fc = srFeitos(c, "c"); if (!c.etqCx) c.etqCx = {}; if (!c.etqProdCli) c.etqProdCli = {};
-  var livre = function (v) { return v.t === "CX" && !fe[v.c] && !fc[v.c] && !c.etqCx[v.c]; };
-  var escolhido = null, semVaga = [];
-  for (var pass = 0; pass < 2 && !escolhido; pass++) {
-    for (var i = 0; i < linhas.length && !escolhido; i++) {
-      var L = linhas[i], kk = nome + "|" + L.cl.k, ja = c.etqProdCli[kk] || 0;
-      if (pass === 0 && ja >= Math.max(1, Number(L.it[1]) || 0)) continue;
-      var pend = c.vols.filter(function (v) { return v.k === L.cl.k && livre(v); });
-      if (!pend.length) { if (semVaga.indexOf(L.cl.fant) < 0) semVaga.push(L.cl.fant); continue; }
-      if (pass === 1 && !confirm(L.cl.fant + " já recebeu " + ja + " caixa(s) de " + String(L.it[0]).split(" · ")[0] + " e ainda tem " + pend.length + " volume(s) da nota sem etiqueta.\n\nImprimir uma etiqueta deste cliente para esta caixa?")) return null;
-      // volume do produto do mesmo cliente que tem mais volumes sobrando (a repartição por valor deu volume demais a ele)
-      var cont = {}; pend.forEach(function (v) { var n = srProdNome(v.d); cont[n] = (cont[n] || 0) + 1; });
-      pend.sort(function (a, b) { return cont[srProdNome(b.d)] - cont[srProdNome(a.d)]; });
-      escolhido = { v: pend[0], L: L, kk: kk };
-    }
-  }
-  if (!escolhido) return { ok: false, msg: "⚠ PARE. Todos os volumes da nota de " + (semVaga.join(", ") || "quem comprou este produto") + " já têm etiqueta. Esta caixa está SOBRANDO ou foi dentro de outro volume — separe e confira com a São Roque." };
-  var v = escolhido.v;
-  if (!v.dOrig) v.dOrig = v.d;
-  v.d = escolhido.L.it[0];
-  c.etqProdCli[escolhido.kk] = (c.etqProdCli[escolhido.kk] || 0) + 1;
-  c.etqCx[v.c] = Date.now(); c.atualizadoEm = Date.now(); salvar();
-  srApito(false);
-  srImprimirEtiquetas(c.id, null, null, [v.c]);
-  var dono = srCliente(c, v.k);
-  return { ok: true, msg: "🖨 Etiqueta impressa: PARADA " + dono.seq + " — " + dono.fant + " · VOL " + v.n + "/" + v.tot + " (" + v.d + "). Cole NESTA caixa." };
+  return !!(apr && srDescNorm(v.d) === apr);
 }
 function srCaixaBipar(cargaId, codigo) {
   var c = srCarga(cargaId); if (!c) return { ok: false, msg: "Carga não encontrada." };
@@ -13389,15 +13345,13 @@ function srCaixaBipar(cargaId, codigo) {
   var doProd = ordem.filter(function (v) { return v.t === "CX" && srVolDoProduto(v, base); });
   if (!doProd.length) {
     // código ainda não conhecido: pergunta uma vez qual é o produto (só entre os desta carga que faltam etiquetar)
-    // v666: lista TODOS os produtos da carga pelo nome (sem a quantidade), inclusive os vendidos em UN sem volume próprio
     var fe0 = srFeitos(c, "t"), fc0 = srFeitos(c, "c"), cx0 = c.etqCx || {}, porDesc = {}, lista = [];
-    c.clientes.slice().sort(function (a, b) { return b.seq - a.seq; }).forEach(function (cl) { (cl.itens || []).forEach(function (it) { var n = srProdNome(it[0]); if (!n) return; if (!porDesc[n]) { porDesc[n] = { d: String(it[0]).split(" · ")[0], n: 0, cli: 0 }; lista.push(n); } porDesc[n].cli++; }); });
-    ordem.forEach(function (v) { if (v.t !== "CX" || fe0[v.c] || fc0[v.c] || cx0[v.c]) return; var n = srProdNome(v.d); if (porDesc[n]) porDesc[n].n++; });
-    if (!lista.length) { srApito(true); return { ok: false, msg: "⚠ Esta carga não tem produtos. Separe esta caixa." }; }
+    ordem.forEach(function (v) { if (v.t !== "CX" || fe0[v.c] || fc0[v.c] || cx0[v.c]) return; var n = srDescNorm(v.d); if (!porDesc[n]) { porDesc[n] = { d: v.d, n: 0 }; lista.push(n); } porDesc[n].n++; });
+    if (!lista.length) { srApito(true); return { ok: false, msg: "⚠ Este produto não é desta carga — todas as caixas desta carga já estão etiquetadas. Separe esta caixa." }; }
     // a carga pode ter centenas de produtos: primeiro filtra por parte do nome, depois escolhe o número
     var vis = lista, escolha = null;
     for (var tent = 0; tent < 4 && !escolha; tent++) {
-      var txt = vis.slice(0, 30).map(function (n, i) { return (i + 1) + ") " + porDesc[n].d + "  (" + (porDesc[n].n ? porDesc[n].n + " cx" : "vendido em unidade") + " · " + porDesc[n].cli + " cliente" + (porDesc[n].cli > 1 ? "s" : "") + ")"; }).join("\n");
+      var txt = vis.slice(0, 30).map(function (n, i) { return (i + 1) + ") " + porDesc[n].d + "  (" + porDesc[n].n + " cx)"; }).join("\n");
       var r = prompt("Código " + cod + " ainda não cadastrado (só desta vez).\n\nDigite o NÚMERO do produto desta caixa" + (vis.length > 30 ? ", ou PARTE DO NOME para filtrar (ex.: sabao)" : "") + ". Vazio = a caixa não é desta carga.\n\n" + txt + (vis.length > 30 ? "\n… (mostrando 30 de " + vis.length + ")" : ""));
       if (r === null || !String(r).trim()) break;
       var i = parseInt(r, 10);
@@ -13407,17 +13361,12 @@ function srCaixaBipar(cargaId, codigo) {
       if (nv.length) vis = nv; else alert("Nenhum produto desta carga com \"" + r + "\". Tente outra palavra.");
     }
     if (!escolha) { srApito(true); return { ok: false, msg: "⚠ PARE. Produto não reconhecido nesta carga — nada impresso. Separe esta caixa." }; }
-    srCodAprendidos()[base] = srProdNome(escolha);
+    srCodAprendidos()[base] = escolha;
     salvar();
     doProd = ordem.filter(function (v) { return v.t === "CX" && srVolDoProduto(v, base); });
-    if (!doProd.length) return srCaixaSemVolume(c, escolha) || { ok: false, msg: "Nada impresso. Separe esta caixa e confira com a nota." };   // v666
   }
   var fe = srFeitos(c, "t"), fc = srFeitos(c, "c"); if (!c.etqCx) c.etqCx = {};
   var pend = doProd.filter(function (v) { return !fe[v.c] && !fc[v.c] && !c.etqCx[v.c]; });
-  if (!pend.length) {   // v666: os volumes por produto vêm repartidos pelo VALOR na DANFE -- o que vale é o total do cliente.
-    // Antes de dizer que sobra, usa um volume livre de quem comprou este produto (perguntando se ele já recebeu a cota).
-    var rUn = srCaixaSemVolume(c, srProdNome(doProd[0].d)); if (rUn && rUn.ok) return rUn;
-  }
   if (!pend.length) {
     var soImpressas = doProd.filter(function (v) { return !fe[v.c] && !fc[v.c]; });
     if (soImpressas.length && confirm("Todas as " + doProd.length + " etiqueta(s) de " + doProd[0].d + " já foram IMPRESSAS, mas " + soImpressas.length + " ainda não foram bipadas como coladas.\n\nReimprimir a próxima (" + srCliente(c, soImpressas[0].k).fant + ", VOL " + soImpressas[0].n + "/" + soImpressas[0].tot + ")?")) {
@@ -13428,7 +13377,6 @@ function srCaixaBipar(cargaId, codigo) {
     return { ok: false, msg: "⚠ PARE. Todas as " + doProd.length + " caixa(s) de " + doProd[0].d + " desta carga já têm etiqueta. Esta caixa está SOBRANDO — separe e confira." };
   }
   var v = pend[0], dono = srCliente(c, v.k);
-  if (!c.etqProdCli) c.etqProdCli = {}; var kP = srProdNome(v.d) + "|" + v.k; c.etqProdCli[kP] = (c.etqProdCli[kP] || 0) + 1;   // v666
   c.etqCx[v.c] = Date.now(); c.atualizadoEm = Date.now(); salvar();
   srApito(false);
   srImprimirEtiquetas(c.id, null, null, [v.c]);
@@ -39953,10 +39901,11 @@ function torreTelaHTML() {
     + '</style>';
   var cab = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between;margin-bottom:10px;">'
     + '<div><div style="font-size:20px;font-weight:800;color:' + GOLD + ';">🛰️ Torre de Controle</div>'
-    + '<div style="font-size:12px;color:#9a9a9a;">Rastreador Sascar · posição a cada 2 min · rota pelo OSRM (tempo de caminhão ×' + String(cfg.fator_tempo || 1.25).replace(".", ",") + ')</div></div>'
+    + '<div style="font-size:12px;color:#9a9a9a;">Rastreadores Sascar e Pósitron · posição a cada 2 min · rota pelo OSRM (tempo de caminhão ×' + String(cfg.fator_tempo || 1.25).replace(".", ",") + ')</div></div>'
     + '<div class="tc-btns" style="margin:0;">'
     + '<button class="btn" onclick="torreAbrirForm()">▶ Iniciar monitoramento</button>'
     + '<button class="btn-outline" onclick="TORRE.prog=TORRE.prog?null:{txt:\'\',itens:null};var e=document.getElementById(\'torre-prog\');if(e)e.innerHTML=torreProgHTML()">📋 Colar programação</button>'
+    + '<button class="btn-outline" onclick="thAbrir()">📜 Histórico</button>'
     + '<button class="btn-outline" onclick="torreAbrirCfg()">⚙ Configuração</button>'
     + '<button class="btn-outline" onclick="torreCarregar()">↻ Atualizar</button></div></div>';
   return st + '<div id="torre-raiz">' + cab
@@ -39964,6 +39913,7 @@ function torreTelaHTML() {
     + '<div id="torre-prog">' + torreProgHTML() + '</div>'
     + '<div id="torre-form">' + torreFormHTML() + '</div>'
     + '<div id="torre-cfg">' + torreCfgHTML() + '</div>'
+    + '<div id="torre-hist">' + thHTML() + '</div>'
     + '<div id="torre-kpis">' + torreKpisHTML() + '</div>'
     + '<div class="tc-grid"><div><div id="torre-mapa"></div><div style="font-size:11.5px;color:#9a9a9a;margin-top:5px;">Círculo do caminhão: <span style="color:#2ecc71;">● ligado</span> · <span style="color:#E53935;">● desligado</span> &nbsp;·&nbsp; borda da placa: situação da viagem (<span style="color:#2ecc71;">no prazo</span>, <span style="color:#F2C94C;">atenção</span>, <span style="color:#E53935;">atrasado</span>, cinza = sem viagem)</div><div id="torre-frota" style="margin-top:10px;">' + torreFrotaHTML() + '</div></div>'
     + '<div><div id="torre-viagens">' + torreViagensHTML() + '</div></div></div>'
@@ -40581,6 +40531,220 @@ function torreMapaAtualizar() {
   }
 }
 
+/* ===================== v666 (20/10/2026): 📜 HISTÓRICO DE TRAJETO =====================
+   Pedido do Renato: histórico diário e semanal de cada caminhão — ver a trajetória que ele fez e se saiu da programação.
+   O servidor (Edge Function rastreio-historico) junta a Sascar (gravada no banco a cada 2 min) com o histórico da Pósitron
+   (1 ponto por minuto, consultado direto na API). Aqui o app desenha o trajeto, acha as PARADAS (≥ 8 min parado), soma km e
+   tempo rodando, e compara as cidades onde o caminhão parou com a programação (viagens lançadas + viagens da Torre). */
+var TH = { placa: "", modo: "dia", data: "", dados: null, carregando: false, erro: "", diaSel: "" };
+var TH_CORES = ["#D4A017", "#2E8BFF", "#2ecc71", "#E53935", "#9b59b6", "#ff8a65", "#1abc9c", "#f06292"];
+function thHojeISO() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function thAbrir(placa) {
+  TORRE.histAberto = !TORRE.histAberto || !!placa;
+  if (placa) TH.placa = placa;
+  if (!TH.placa) TH.placa = TORRE.sel || ((TORRE.ultima || [])[0] || {}).placa || "";
+  if (!TH.data) TH.data = thHojeISO();
+  var el = document.getElementById("torre-hist"); if (el) el.innerHTML = thHTML();
+  if (TORRE.histAberto) { if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); if (TH.placa) thCarregar(); }
+}
+function thPeriodo() {
+  var p = String(TH.data || thHojeISO()).split("-"), fim = new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59);
+  var ini = new Date(+p[0], +p[1] - 1, +p[2] - (TH.modo === "semana" ? 6 : 0), 0, 0, 0);
+  return { ini: ini, fim: fim };
+}
+function thSet(campo, valor) { TH[campo] = valor; TH.diaSel = ""; thCarregar(); }
+function thCarregar() {
+  if (!TH.placa) return;
+  var per = thPeriodo(), chave = TH.placa + "|" + per.ini.toISOString() + "|" + TH.modo;
+  TH.carregando = true; TH.erro = ""; TH.dados = null; TH.chave = chave; thRedesenhar();
+  torreSb(function (sb) { return sb.functions.invoke("rastreio-historico", { body: { placa: TH.placa, inicio: per.ini.toISOString(), fim: per.fim.toISOString() } }); })
+    .then(function (r) {
+      if (TH.chave !== chave) return;
+      if (r && r.error) {
+        var m = r.error.message || String(r.error);
+        return (r.error.context && r.error.context.json ? r.error.context.json().catch(function () { return {}; }) : Promise.resolve({})).then(function (j) { throw new Error((j && j.error) || m); });
+      }
+      if (r.data && r.data.error) throw new Error(r.data.error);
+      TH.dados = thAnalisar(r.data);
+    })
+    .catch(function (e) { if (TH.chave === chave) TH.erro = String((e && e.message) || e); })
+    .then(function () { if (TH.chave === chave) { TH.carregando = false; thRedesenhar(); } });
+}
+function thDist(a, b) { var R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dg = (b.lng - a.lng) * r, x = Math.sin(dl / 2) * Math.sin(dl / 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dg / 2) * Math.sin(dg / 2); return 2 * R * Math.asin(Math.min(1, Math.sqrt(x))); }
+function thNorm(t) { return String(t || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim(); }
+function thDiaISO(t) { var d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+/* cidades programadas para a placa no período: viagens lançadas (rota, paradas da Mateus) + viagens da Torre (destino e pontos) */
+function thProgramacao(placa, ini, fim, viagensTorre) {
+  var cid = {}, vs = [], add = function (nome, origem) { var n = thNorm(nome); if (n && n.length > 2) { if (!cid[n]) cid[n] = { nome: String(nome).trim(), origem: origem }; } };
+  (state.viagens || []).forEach(function (v) {
+    if (String(v.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== placa || !v.data) return;
+    var d0 = new Date(v.data + "T00:00:00"), d1 = new Date(d0.getTime() + Math.max(1, Number(v.dias) || 1) * 864e5);
+    if (d1 < ini || d0 > fim) return;
+    vs.push(v);
+    var org = (v.cliente || "viagem") + " " + String(v.data).split("-").reverse().join("/");
+    (v.mateusParadas || []).forEach(function (p) { if (p && p.cidade) add(p.cidade, org); });
+    String(v.rota || "").split(/\s+X\s+|\s*[\/,;>]\s*|\s+-\s+|→/i).forEach(function (s) { s = s.replace(/-[A-Z]{2}$/i, "").replace(/\(.*\)/, "").trim(); if (s && !/^(rota|regional|centro|norte|sul|leste|oeste|interior|capital)\b/i.test(s)) add(s, org); });
+  });
+  (viagensTorre || []).forEach(function (t) {
+    if (t.destino_nome) add(String(t.destino_nome).split(",")[0], "Torre " + (t.cliente || ""));
+    (t.pontos || []).forEach(function (p) { if (p && p.nome && p.tipo !== "posto") add(String(p.nome).split(",")[0], "Torre " + (t.cliente || "")); });
+  });
+  return { cidades: cid, viagens: vs, torre: viagensTorre || [] };
+}
+function thAnalisar(d) {
+  var cfg = TORRE.cfg || {}, base = cfg.base_lat != null ? { lat: Number(cfg.base_lat), lng: Number(cfg.base_lng) } : { lat: -12.294, lng: -38.921 };
+  var pts = (d.pontos || []).filter(function (p) { return p.t && p.lat != null && p.lng != null && Math.abs(p.lat) > 0.01; })   /* o rastreador Pósitron marca gps=false em metade dos pontos mesmo andando, com posição boa — não descartar */.map(function (p) { p.ms = Date.parse(p.t); return p; });
+  // tira repetidos (Sascar + Pósitron no mesmo minuto) e saltos absurdos de GPS
+  /* Área sem sinal (GSM): a Pósitron repete a MESMA posição, às vezes com velocidade, por até 1-2 h e depois salta para o lugar certo
+     (visto no QDH7D61 em 20/10: parado em Itaberaba "a 57 km/h" por 100 min e depois 80 km adiante). Ponto repetido em movimento = sem sinal: sai. */
+  var limpos = [], semSinal = [];
+  pts.forEach(function (p) {
+    var a = limpos[limpos.length - 1];
+    if (a && p.ms - a.ms < 20000) return;
+    if (a && p.lat === a.lat && p.lng === a.lng && (p.v || 0) >= 5) { a._congelado = (a._congelado || 0) + 1; return; }
+    if (a && thDist(a, p) > 3 && thDist(a, p) / Math.max(1 / 60, (p.ms - a.ms) / 3600e3) > 160) return;
+    if (a && (p.ms - a.ms) > 12 * 60000 && thDist(a, p) > 2) semSinal.push({ de: a, ate: p, min: (p.ms - a.ms) / 60000, km: thDist(a, p) });
+    limpos.push(p);
+  });
+  pts = limpos;
+  var dias = {}, paradas = [], excessos = [], velMax = 0, kmGps = 0, movMin = 0, ocioMin = 0;
+  var velLim = Number(cfg.vel_max) || 80;
+  for (var i = 0; i < pts.length; i++) {
+    var p = pts[i], dia = thDiaISO(p.ms), D = dias[dia] || (dias[dia] = { dia: dia, pts: [], km: 0, mov: 0, saida: null, chegada: null, cidades: {}, odo0: null, odo1: null });
+    D.pts.push(p);
+    if (p.odo != null && p.odo > 0) { if (D.odo0 == null || p.odo < D.odo0) D.odo0 = p.odo; if (D.odo1 == null || p.odo > D.odo1) D.odo1 = p.odo; }
+    if ((p.v || 0) > velMax) velMax = p.v || 0;
+    if ((p.v || 0) > velLim + 5) { var ue = excessos[excessos.length - 1]; if (!ue || p.ms - ue.fimMs > 10 * 60000) excessos.push({ ms: p.ms, fimMs: p.ms, v: p.v, cid: p.cid, lat: p.lat, lng: p.lng }); else { ue.fimMs = p.ms; if (p.v > ue.v) ue.v = p.v; } }
+    if (i > 0) {
+      var a = pts[i - 1], dt = (p.ms - a.ms) / 60000, dk = thDist(a, p);
+      if (dt <= 30 || (dk > 2 && dk / (dt / 60) < 110)) {   // trecho sem sinal também conta (em linha reta, então fica um pouco abaixo do real)
+        kmGps += dk; D.km += dk; if ((p.v || 0) >= 5 || dk > 0.3) { movMin += dt; D.mov += dt; if (!D.saida) D.saida = a.ms; D.chegada = p.ms; } else if (p.ign === 1 && dt <= 30) ocioMin += dt; }
+    }
+  }
+  // paradas: sequência parada (vel < 5) por 8 min ou mais
+  var ini = null;
+  var fecha = function (j) {
+    if (ini == null) return; var a = pts[ini], b = pts[j], dur = (b.ms - a.ms) / 60000;
+    if (dur >= 8) {
+      var cid = "", end = "", ign = 0; for (var k = ini; k <= j; k++) { if (!cid && pts[k].cid) cid = pts[k].cid; if (!end && pts[k].end) end = pts[k].end; if (pts[k].ign === 1) ign++; }
+      paradas.push({ ini: a.ms, fim: b.ms, dur: dur, lat: a.lat, lng: a.lng, cid: cid, end: end, base: thDist(a, base) < 1.5, motorLigado: ign / (j - ini + 1) > 0.6 });
+    }
+    ini = null;
+  };
+  for (var i2 = 0; i2 < pts.length; i2++) {
+    var q = pts[i2], parado = (q.v || 0) < 5 && (ini == null || thDist(pts[ini], q) < 0.4) && !(i2 > 0 && thDist(pts[i2 - 1], q) > 2);
+    var gap = i2 > 0 && (q.ms - pts[i2 - 1].ms) > 45 * 60000 && thDist(pts[i2 - 1], q) < 0.4;   // sem sinal, mas no mesmo lugar = continua parado
+    if (parado || gap) { if (ini == null) ini = i2; } else { fecha(i2 - 1); }
+  }
+  fecha(pts.length - 1);
+  paradas.forEach(function (s) { var D = dias[thDiaISO(s.ini)]; if (D && s.cid) D.cidades[s.cid] = 1; });
+  var ini0 = new Date(d.inicio), fim0 = new Date(d.fim), prog = thProgramacao(d.placa, ini0, fim0, d.viagensTorre);
+  var baseNome = thNorm((cfg.base_nome || "Feira de Santana"));
+  /* "FEIRA" da rota = "FEIRA DE SANTANA" do rastreador: nome curto vale se for o começo do outro */
+  var igual = function (a, b) { return a === b || (a.length >= 4 && b.indexOf(a + " ") === 0) || (b.length >= 4 && a.indexOf(b + " ") === 0); };
+  var progN = Object.keys(prog.cidades).filter(function (n) { return !igual(n, baseNome); });
+  var naProg = function (n) { return progN.some(function (x) { return igual(x, n); }); };
+  var visitadas = [], passou = [];
+  paradas.forEach(function (s) { if (!s.cid) return; var n = thNorm(s.cid); s.prog = naProg(n) || igual(n, baseNome) || s.base; s.fora = !s.prog && progN.length > 0 && s.dur >= 10; visitadas.push(n); });
+  // cidades por onde PASSOU (sem parar) também contam como "passou"
+  pts.forEach(function (p) { if (p.cid) { var n = thNorm(p.cid); if (passou.indexOf(n) < 0) passou.push(n); } });
+  var progLista = progN.map(function (n) { return { nome: prog.cidades[n].nome, origem: prog.cidades[n].origem,
+    parou: visitadas.some(function (v) { return igual(n, v); }), passou: passou.some(function (v) { return igual(n, v); }) }; });
+  /* km pelo trajeto do GPS: o hodômetro de alguns rastreadores Pósitron não bate (QDH7D61 marcou 121 km num dia de 290 km) */
+  Object.keys(dias).forEach(function (k) { dias[k].kmOdo = null; });
+  return { placa: d.placa, fontes: d.fontes || [], avisos: d.avisos || [], pts: pts, dias: dias, paradas: paradas, excessos: excessos, velMax: velMax, velLim: velLim,
+    semSinal: semSinal, km: kmGps, movMin: movMin, ocioMin: ocioMin, prog: prog, progLista: progLista, foraProg: paradas.filter(function (s) { return s.fora; }) };
+}
+function thHora(ms) { var d = new Date(ms); return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
+function thDiaTxt(iso) { var d = new Date(iso + "T12:00:00"); return ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"][d.getDay()] + " " + iso.split("-").reverse().slice(0, 2).join("/"); }
+function thRedesenhar() { var el = document.getElementById("torre-hist"); if (el) el.innerHTML = thHTML(); setTimeout(thMapa, 30); }
+function thHTML() {
+  if (!TORRE.histAberto) return "";
+  var placas = (TORRE.ultima || []).map(function (u) { return u.placa; });
+  (state.veiculos || []).forEach(function (v) { var p = String(v.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); if (p && placas.indexOf(p) < 0 && !/^TES/.test(p)) placas.push(p); });
+  var h = '<div class="tc-card" style="margin-bottom:12px;border-color:' + GOLD + ';">'
+    + '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between;"><div style="font-size:17px;font-weight:800;color:' + GOLD + ';">📜 Histórico de trajeto</div>'
+    + '<button class="btn-outline" style="font-size:12px;padding:4px 9px;" onclick="TORRE.histAberto=false;thRedesenhar()">✕ Fechar</button></div>'
+    + '<div class="tc-btns" style="align-items:flex-end;">'
+    + '<div><label class="tc-l">Caminhão</label><select onchange="thSet(\'placa\',this.value)">' + placas.map(function (p) { var u = (TORRE.ultima || []).find(function (x) { return x.placa === p; }); return '<option value="' + esc(p) + '"' + (p === TH.placa ? " selected" : "") + '>' + esc(p) + (u ? "" : " (sem rastreador)") + '</option>'; }).join("") + '</select></div>'
+    + '<div><label class="tc-l">' + (TH.modo === "semana" ? "Semana até" : "Dia") + '</label><input type="date" value="' + esc(TH.data) + '" max="' + thHojeISO() + '" onchange="thSet(\'data\',this.value)"></div>'
+    + '<button class="' + (TH.modo === "dia" ? "btn" : "btn-outline") + '" onclick="thSet(\'modo\',\'dia\')">Dia</button>'
+    + '<button class="' + (TH.modo === "semana" ? "btn" : "btn-outline") + '" onclick="thSet(\'modo\',\'semana\')">Semana (7 dias)</button>'
+    + '<button class="btn-outline" onclick="TH.data=thHojeISO();thSet(\'modo\',TH.modo)">Hoje</button>'
+    + '<button class="btn-outline" onclick="var d=new Date();d.setDate(d.getDate()-1);TH.data=thDiaISO(d.getTime());thSet(\'modo\',\'dia\')">Ontem</button></div>';
+  if (TH.carregando) return h + '<div style="padding:14px 0;color:#aaa;font-size:13px;">Buscando o trajeto' + (TH.modo === "semana" ? " da semana (pode levar uns 20 s)" : "") + '…</div></div>';
+  if (TH.erro) return h + '<div style="color:#E53935;margin-top:10px;font-size:13px;">⚠ ' + esc(TH.erro) + '</div></div>';
+  var R = TH.dados; if (!R) return h + '</div>';
+  if (!R.pts.length) return h + '<div style="padding:14px 0;color:#aaa;font-size:13px;">Nenhuma posição de ' + esc(R.placa) + ' nesse período.' + (R.avisos.length ? ' (' + esc(R.avisos.join("; ")) + ')' : '') + ' A Sascar só tem histórico a partir de 19/10/2026.</div></div>';
+  var k = function (v, t, c) { return '<div class="tc-k"><b style="color:' + (c || "#fff") + ';font-size:19px;">' + v + '</b><span>' + t + '</span></div>'; };
+  h += '<div class="tc-kpi" style="margin-top:10px;">' + k(torreKm(R.km), "Rodados", GOLD) + k(torreDur(R.movMin), "Em movimento") + k(R.paradas.filter(function (s) { return !s.base; }).length, "Paradas fora da base")
+    + k(torreDur(R.ocioMin), "Parado com motor ligado", R.ocioMin > 60 ? "#F2C94C" : "#fff") + k(R.velMax + " km/h", "Velocidade máxima", R.velMax > R.velLim + 5 ? "#E53935" : "#fff")
+    + k(R.foraProg.length, "Paradas fora da programação", R.foraProg.length ? "#E53935" : "#2ecc71") + '</div>';
+  h += '<div class="tc-grid"><div><div id="th-mapa" style="height:420px;border-radius:12px;border:1px solid #2a2a2a;background:#dfe6ea;overflow:hidden;"></div>'
+    + '<div style="font-size:11.5px;color:#9a9a9a;margin-top:5px;">🟢 saída · 🏁 fim · números = paradas (vermelho = fora da programação) · ⚡ excesso de velocidade · <span style="letter-spacing:2px;">- - -</span> sem sinal de celular · fontes: ' + esc(R.fontes.join(" + ") || "—") + '</div></div><div>';
+  var ds = Object.keys(R.dias).sort();
+  if (ds.length > 1) h += '<div style="font-size:12px;font-weight:700;color:#aaa;margin-bottom:4px;">DIA A DIA (toque para ver só o dia)</div><div style="display:grid;gap:5px;margin-bottom:10px;">' + ds.map(function (d, i) {
+    var D = R.dias[d], km = D.kmOdo != null ? D.kmOdo : D.km, sel = TH.diaSel === d;
+    return '<div onclick="TH.diaSel=TH.diaSel===\'' + d + '\'?\'\':\'' + d + '\';thRedesenhar()" style="cursor:pointer;border:1px solid ' + (sel ? GOLD : "#2a2a2a") + ';border-left:5px solid ' + TH_CORES[i % TH_CORES.length] + ';border-radius:8px;padding:6px 9px;font-size:12.5px;">'
+      + '<b>' + thDiaTxt(d) + '</b> · ' + torreKm(km) + ' · ' + torreDur(D.mov) + ' rodando' + (D.saida ? ' · saiu ' + thHora(D.saida) + ' · último movimento ' + thHora(D.chegada) : ' · <span style="color:#777;">parado o dia todo</span>')
+      + (Object.keys(D.cidades).length ? '<div style="color:#9a9a9a;font-size:11.5px;">' + esc(Object.keys(D.cidades).join(" → ")) + '</div>' : '') + '</div>';
+  }).join("") + '</div>';
+  // programação
+  var P = R.progLista;
+  h += '<div style="font-size:12px;font-weight:700;color:#aaa;margin-bottom:4px;">PROGRAMAÇÃO × O QUE FEZ</div>';
+  if (!P.length) h += '<div style="font-size:12px;color:#888;margin-bottom:10px;">Sem viagem lançada para ' + esc(R.placa) + ' nesse período (aba Viagens ou Torre) — não dá para comparar. As paradas abaixo mostram por onde ele andou.</div>';
+  else h += '<div style="display:grid;gap:3px;margin-bottom:6px;font-size:12.5px;">' + P.map(function (c) {
+      return '<div>' + (c.parou ? '<span style="color:#2ecc71;">✔ parou</span>' : c.passou ? '<span style="color:#F2C94C;">↗ só passou</span>' : '<span style="color:#E53935;">✖ não foi</span>') + ' · <b>' + esc(c.nome) + '</b> <span style="color:#777;font-size:11px;">(' + esc(c.origem) + ')</span></div>';
+    }).join("") + '</div>'
+    + (R.foraProg.length ? '<div style="color:#E53935;font-size:12.5px;margin-bottom:10px;">⚠ Parou em cidade fora da programação: <b>' + esc(R.foraProg.map(function (s) { return s.cid + " (" + thHora(s.ini) + ", " + torreDur(s.dur) + ")"; }).join("; ")) + '</b></div>' : '<div style="color:#2ecc71;font-size:12.5px;margin-bottom:10px;">✔ Nenhuma parada fora da programação.</div>');
+  // paradas
+  var ps = R.paradas.filter(function (s) { return !TH.diaSel || thDiaISO(s.ini) === TH.diaSel; });
+  h += '<div style="font-size:12px;font-weight:700;color:#aaa;margin-bottom:4px;">PARADAS DE 8 MIN OU MAIS (' + ps.length + ')</div><div style="max-height:300px;overflow:auto;">' + (ps.length ? ps.map(function (s) {
+    var n = R.paradas.indexOf(s) + 1;
+    return '<div class="tc-ev" style="cursor:pointer;" onclick="thFocoParada(' + (n - 1) + ')"><b style="color:' + (s.fora ? "#E53935" : s.base ? GOLD : "#fff") + ';">' + n + '.</b> ' + (ds.length > 1 ? thDiaTxt(thDiaISO(s.ini)) + ' ' : '') + thHora(s.ini) + '–' + thHora(s.fim) + ' · <b>' + torreDur(s.dur) + '</b> · '
+      + (s.base ? '🏠 Base' : esc(s.cid || "local sem nome")) + (s.fora ? ' <span style="color:#E53935;font-weight:700;">fora da programação</span>' : '') + (s.motorLigado ? ' <span style="color:#F2C94C;">· motor ligado</span>' : '')
+      + (s.end && !s.base ? '<div style="color:#777;font-size:11px;">' + esc(s.end) + '</div>' : '') + '</div>';
+  }).join("") : '<div style="font-size:12px;color:#888;">Nenhuma parada longa.</div>') + '</div>';
+  if ((R.semSinal || []).length) h += '<div style="font-size:12px;color:#9a9a9a;margin-top:8px;">📵 Sem sinal de celular: ' + esc(R.semSinal.map(function (g) { return (Object.keys(R.dias).length > 1 ? thDiaTxt(thDiaISO(g.de.ms)) + " " : "") + thHora(g.de.ms) + "–" + thHora(g.ate.ms) + (g.ate.cid ? " (até " + g.ate.cid + ")" : ""); }).join("; ")) + '</div>';
+  if (R.excessos.length) h += '<div style="font-size:12.5px;color:#E53935;margin-top:8px;">⚡ Acima de ' + R.velLim + ' km/h: ' + esc(R.excessos.map(function (e) { return thHora(e.ms) + " " + e.v + " km/h" + (e.cid ? " (" + e.cid + ")" : ""); }).join("; ")) + '</div>';
+  if (R.avisos.length) h += '<div style="font-size:11.5px;color:#F2C94C;margin-top:6px;">' + esc(R.avisos.join("; ")) + '</div>';
+  return h + '</div></div></div>';
+}
+function thFocoParada(i) { var s = TH.dados && TH.dados.paradas[i]; if (s && TH.mapa) { try { TH.mapa.setView([s.lat, s.lng], 15); } catch (e) {} } }
+function thMapa() {
+  var el = document.getElementById("th-mapa"), R = TH.dados; if (!el || !R || !R.pts.length) return;
+  srLeafletCarregar(function (ok) {
+    var L = window.L; if (!ok || !L || document.getElementById("th-mapa") !== el) return;
+    try { if (TH.mapa) TH.mapa.remove(); } catch (e) {}
+    var map = L.map(el, { zoomControl: true }); TH.mapa = map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "© OpenStreetMap" }).addTo(map);
+    var ds = Object.keys(R.dias).sort(), todos = [];
+    ds.forEach(function (d, i) {
+      if (TH.diaSel && TH.diaSel !== d) return;
+      var seg = [], linhas = [];
+      R.dias[d].pts.forEach(function (p, j, arr) { if (j && p.ms - arr[j - 1].ms > 30 * 60000 && thDist(arr[j - 1], p) > 2) { if (seg.length > 1) linhas.push(seg); seg = []; } seg.push([p.lat, p.lng]); todos.push([p.lat, p.lng]); });
+      if (seg.length > 1) linhas.push(seg);
+      linhas.forEach(function (l) { L.polyline(l, { color: TH_CORES[i % TH_CORES.length], weight: 4, opacity: 0.85 }).addTo(map).bindTooltip(thDiaTxt(d)); });
+      (R.semSinal || []).forEach(function (g) { if (thDiaISO(g.de.ms) !== d) return; L.polyline([[g.de.lat, g.de.lng], [g.ate.lat, g.ate.lng]], { color: "#777", weight: 3, opacity: 0.9, dashArray: "6 8" }).addTo(map).bindTooltip("Sem sinal " + thHora(g.de.ms) + "–" + thHora(g.ate.ms) + " (" + torreDur(g.min) + ", ~" + torreKm(g.km) + " em linha reta)"); });
+    });
+    var vis = R.pts.filter(function (p) { return !TH.diaSel || thDiaISO(p.ms) === TH.diaSel; });
+    if (vis.length) {
+      L.marker([vis[0].lat, vis[0].lng], { icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11], html: '<div style="font-size:20px;">🟢</div>' }) }).addTo(map).bindTooltip("Início " + thHora(vis[0].ms));
+      var u = vis[vis.length - 1];
+      L.marker([u.lat, u.lng], { icon: L.divIcon({ className: "", iconSize: [24, 24], iconAnchor: [4, 22], html: '<div style="font-size:22px;">🏁</div>' }) }).addTo(map).bindTooltip("Última posição " + thHora(u.ms));
+    }
+    R.paradas.forEach(function (s, i) {
+      if (TH.diaSel && thDiaISO(s.ini) !== TH.diaSel) return;
+      var cor = s.fora ? "#E53935" : s.base ? GOLD : "#fff";
+      L.marker([s.lat, s.lng], { icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11], html: '<div style="width:22px;height:22px;border-radius:50%;background:' + cor + ';color:#000;font:800 11px sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #000;">' + (i + 1) + '</div>' }) }).addTo(map)
+        .bindTooltip((i + 1) + ". " + (s.base ? "Base" : esc(s.cid || "")) + "<br>" + thHora(s.ini) + "–" + thHora(s.fim) + " (" + torreDur(s.dur) + ")" + (s.fora ? "<br><b>fora da programação</b>" : ""));
+    });
+    R.excessos.forEach(function (e) { if (TH.diaSel && thDiaISO(e.ms) !== TH.diaSel) return; L.marker([e.lat, e.lng], { icon: L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: '<div style="font-size:16px;">⚡</div>' }) }).addTo(map).bindTooltip(thHora(e.ms) + " · " + e.v + " km/h"); });
+    try { if (todos.length > 1) map.fitBounds(todos, { padding: [25, 25] }); else if (todos.length) map.setView(todos[0], 13); } catch (e) {}
+    [200, 800].forEach(function (ms) { setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, ms); });
+  });
+}
+
 /* ---------- configuração ---------- */
 function torreAbrirCfg() {
   TORRE.cfgAberta = !TORRE.cfgAberta; TORRE.cfgEd = Object.assign({}, TORRE.cfg || {}); TORRE.grupos = null;
@@ -40657,7 +40821,7 @@ function torreContextoAssistente() {
   if (!TORRE.carregado) { try { torreCarregar(true); } catch (e) {} }
   var c = TORRE.cfg || {};
   var t = "TORRE DE CONTROLE (v653 a v657, 19/10/2026, aba '🛰️ Torre de Controle' no grupo Viagens; acesso: admin ou quem tem o modulo 'torre' marcado em Usuarios): "
-    + "acompanha em tempo real os caminhoes com rastreador Sascar (a posicao chega a cada 2 min). O robo do WhatsApp se chama RAVI (robo de monitoramento 24h da RF) e, desde a v663, o botao deste assistente no sistema tambem mostra a foto do Ravi (no chat o assistente aparece como 'Ravi · Assistente RF'). SAO ROQUE - BIP DA CAIXA (v666): na etiquetagem, o conferente bipa o codigo do fabricante da caixa; se o codigo nao e conhecido, a lista mostra TODOS os produtos da carga (inclusive os vendidos em UNIDADE, que na DANFE ficam sem volume proprio porque os volumes da NF sao repartidos pelo valor dos itens) e o conferente filtra por parte do nome. Produto vendido em unidade: a etiqueta sai num volume pendente do CLIENTE que comprou (o total de volumes da NF nao muda). Se todos os volumes da nota daquele cliente ja tem etiqueta, o sistema manda separar a caixa e conferir com a Sao Roque. RAVI PESSOAL (v664/v665): todo dia as 07:30 e as 20:00 o Ravi manda no WhatsApp do Renato (75 99971-7578) o resumo da aba Pessoal -- saldo atualizado das aplicacoes, rendimento do mes e os atrasos dos emprestimos; liga/desliga e 'Mandar agora' ficam no topo da aba Pessoal (so o login master). Os valores do resumo voce NAO enxerga (a aba Pessoal e criptografada); se perguntarem, diga para abrir a aba Pessoal e assina todas as mensagens com '" + (c.assinatura || "") + "'. "
+    + "acompanha em tempo real os caminhoes com rastreador Sascar (a posicao chega a cada 2 min). O robo do WhatsApp se chama RAVI (robo de monitoramento 24h da RF) e, desde a v663, o botao deste assistente no sistema tambem mostra a foto do Ravi (no chat o assistente aparece como 'Ravi · Assistente RF'). RAVI PESSOAL (v664/v665): todo dia as 07:30 e as 20:00 o Ravi manda no WhatsApp do Renato (75 99971-7578) o resumo da aba Pessoal -- saldo atualizado das aplicacoes, rendimento do mes e os atrasos dos emprestimos; liga/desliga e 'Mandar agora' ficam no topo da aba Pessoal (so o login master). Os valores do resumo voce NAO enxerga (a aba Pessoal e criptografada); se perguntarem, diga para abrir a aba Pessoal e assina todas as mensagens com '" + (c.assinatura || "") + "'. "
     + "COMO USAR: quando o caminhao sai, a equipe toca 'Iniciar monitoramento', escolhe o caminhao, o MODELO, o destino final (busca por endereco ou toque no mapa) e, se quiser, o prazo. "
     + "MODELO 'Tracking Anjun' (v657, para os agregados da Anjun): a equipe preenche SM, manifestos (UF + numero, quantos tiver), telefone do motorista, os 4 horarios do carregamento (previsto, iniciado, finalizado, liberacao/inicio da viagem -- em branco a liberacao vira a hora de inicio do monitoramento) e a lista ORDENADA dos pontos da rota que a Anjun passa em cada viagem (cidades e postos fiscais: busca pelo nome ou toque no mapa, com setas para reordenar e X para tirar). "
     + "A rota passa pelos pontos; o robo preenche SOZINHO o horario de chegada e de saida/liberacao de cada ponto (raio de 1 km no posto fiscal e 3 km na cidade) e manda o tracking no grupo no formato da Anjun ('Atualizacoes referente ao veiculo X', Tracking de Entregas - Anjun, data, rota tipo FSA X PICOS X TERESINA X SAO LUIS, SM, manifestos, motorista, telefone, horarios de carregamento e um bloco Data/Chegada/Saida por ponto) na saida e a cada mudanca. No destino final a viagem so fecha quando o caminhao sai de la (ou em 48 h). Na viagem: '📝 Dados Anjun' corrige SM/manifestos/horarios (pode mandar de novo no grupo) e '📤 Reenviar tracking'. "
@@ -40671,7 +40835,8 @@ function torreContextoAssistente() {
     + "ALERTAS automaticos: parado mais de " + (c.parada_min || 10) + " min no trajeto (fora da origem e do destino), velocidade acima de " + (c.vel_max || 80) + " km/h (no maximo 1 aviso a cada 15 min), sem sinal do rastreador por " + (c.sem_sinal_min || 20) + " min, saida da rota (mais de " + (c.desvio_km || 2) + " km da rota em 2 leituras seguidas; ai a previsao passa a ser recalculada da posicao atual, passando pelos pontos que faltam), atraso (chegada prevista passa do prazo; ate " + (c.atencao_min || 15) + " min e Atencao, acima disso Atrasado), e chegada (dentro de " + (c.chegada_raio_km || 0.8) + " km do destino). "
     + "Sem prazo informado, o prazo e o horario previsto na saida. Botoes na viagem: Recalcular rota, Chegou (fecha avisando o grupo) e Encerrar. ⚙ Configuracao: parametros acima, assinatura do robo, Z-API (instancia, token e Client-Token -- o token fica guardado num lugar que o app nao le), escolher o grupo e mandar mensagem de teste. "
     + "REGRAS DO RENATO: WhatsApp so no grupo de monitoramento da Anjun e so sobre os caminhoes Sascar agregados a Anjun; nunca usar o grupo 'QEN6J82 - RF LOGISTICA' (Yamaha); a Positron (GSM, com area de sombra) vai entrar na mesma Torre so na tela, sem WhatsApp. Futuro: aviso de retorno do caminhao para programar a proxima viagem (aguardando a Joslene, da Anjun, dizer para quem). "
-    + "Caminhoes com Sascar hoje: QDN8J44 e QEN6J82; o PKO3F40 instala em 22/10. A Positron ainda nao esta integrada. "
+    + "Caminhoes com Sascar: QDN8J44 e QEN6J82 (o PKO3F40 instala em 22/10). POSITRON INTEGRADA desde 20/10/2026 (v666): fila logistica RF_LOG_TRANSL_WS, 14 caminhoes (OTQ9B07, OTQ9H46, PKK1G22, PKO3F40, PKS6I42, PLE6A32, PLY0A97, QDE8A82, QDG7J21, QDH7D61, QDN8J44, QDO1A52, QDO6J30, QEN1F22 -- este sem sinal desde 03/09, o rastreador saiu dele); a Positron tem 6 placas no formato antigo (QDE8082, QDG7921, QDH7361, QDO6930, PKK1622, QEN1522) e o sistema converte sozinho para Mercosul. Os 4 do contrato novo (protocolo 18407: QDE8C12, QDG7I41, QDO5E70, QDR1J72) ainda NAO aparecem na Positron. OTZ3A55, QDO1012 e QDQ8186 nao tem rastreador. "
+    + "HISTORICO DE TRAJETO (v666, botao '📜 Historico' no topo da Torre): escolhe o caminhao e o DIA ou a SEMANA (7 dias ate a data); mostra o trajeto no mapa (uma cor por dia), os km rodados, tempo em movimento, tempo parado com motor ligado, velocidade maxima e excessos, as PARADAS de 8 min ou mais com cidade e horario, e PROGRAMACAO x O QUE FEZ: as cidades das viagens lancadas (rota e paradas da Mateus) e das viagens da Torre aparecem como parou / so passou / nao foi, e parada de 10 min ou mais em cidade fora da programacao fica em vermelho. Historico da Positron vem completo da API (1 ponto por minuto, qualquer dia); o da Sascar so existe a partir de 19/10/2026. Se a viagem nao foi lancada, nao ha programacao para comparar. "
     + "WHATSAPP: " + (c.whatsapp_ativo && TORRE.zapiOk && c.zapi_grupo ? "ligado, enviando para o grupo " + (c.zapi_grupo_nome || c.zapi_grupo) : "NAO LIGADO (" + (!TORRE.zapiOk ? "falta configurar a Z-API" : !c.zapi_grupo ? "falta escolher o grupo" : "envio desligado na configuracao") + "); os alertas ficam registrados na aba") + ". "
     + (c.ativo === false ? "ATENCAO: o robo esta DESLIGADO na configuracao. " : "");
   if (!TORRE.carregado) return t + (TORRE.erro ? "Erro ao carregar: " + TORRE.erro : "Dados da Torre ainda carregando.");
