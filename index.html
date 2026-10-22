@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v674)</title>
+<title>RF Logística — Painel da Frota (v675)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v674">
+<meta name="rf-versao" content="v675">
+<!-- v675 (21/10/2026): TORRE -- Historico de trajeto ganhou "Baixar trajeto" em KMZ / KML (Google Earth, Google Maps "Meus mapas") e GPX (apps de GPS): linha de cada dia, saida, fim, paradas numeradas, excessos de velocidade e trechos sem sinal. Pedido do Renato: "tem que ter um botao para extrair em formato kmz ou kml para ver todo o trajeto". Dia sem posicao abre sozinho o ultimo dia com coordenada, com aviso de desde quando o rastreador esta sem mandar. LOGIN AUTOMATICO DO MOTORISTA: senha do CPF recusada como fraca -> tenta CPF inteiro e "Rf"+6 digitos, e ficha com erro nao tenta mais a cada abertura (eram 58 tentativas/dia do ALMIRO). SERVIDOR: indice de documentos (2 consultas ao armazenamento por placa) passa a rodar no maximo a cada 30 min por aparelho -- estava rodando a cada download e sobrecarregava o servidor. ASSISTENTE: voz masculina do Ravi (funcao ravi-voz, OpenAI voz onyx; sem internet usa voz masculina/grave do aparelho). -->
 <!-- v674 (21/10/2026): TORRE -- historico de trajeto le as cidades da viagem (observacao "A -> B -> C" e as paradas da Torre): Anguera/Serra Preta/Ipira deixam de aparecer "fora da programacao" e "JDL" nao vira cidade. Robo torre-monitor v14: busca o historico da Positron e rele as posicoes atrasadas -- cidade com posicao dentro fica verde, nao amarela. -->
 <!-- v673 (21/10/2026): PESSOAL -- rendimento do mes ("rendeu em", "o mes inteiro rende") nao recomeca mais do zero quando o saldo e atualizado no meio do mes (saldo real, aporte, transferencia); o resumo do Ravi (ravi-pessoal v3) usa a mesma conta. -->
 <!-- v672 (21/10/2026): SINCRONIZACAO -- corrigido o travamento "aguardando 1o download antes de salvar": quem editava enquanto o app ainda baixava a nuvem ficava com o aparelho travado e nada subia (viagem do Anderson presa no tablet). Agora une e sobe sozinho. Tambem corrigido erro na abertura do app do motorista (sessao nula). -->
@@ -53,7 +54,7 @@
 <!-- v645 (18/10/2026): TELA INICIAL -- ícones novos no estilo da imagem aprovada (ilustração 3D brilhante) em Frota, Operação, Manutenção, Viagens, Carregamento e Financeiro. -->
 <!-- v644 (18/10/2026): TELA INICIAL -- ícones 3D novos em Extração CT-e/MDF-e/CIOT (pilha de CT-e com XML), Contratos (contrato com selo) e Campanhas (megafone). -->
 <!-- v643 (18/10/2026): FRACIONADO -- ícone 3D próprio na caixa da tela inicial, no mesmo estilo das outras áreas. -->
-<meta name="rf-data" content="2026-10-21">
+<meta name="rf-data" content="2026-10-22">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v642 (18/10/2026): FRACIONADO -- logo própria (opção B "rota que junta": três coletas que viram uma viagem, grafite e dourado) no cabeçalho da aba, no portal do cliente, no selo da etiqueta e no romaneio. -->
 <!-- v641 (18/10/2026): FRACIONADO -- ferramenta nova de carga fracionada (coleta em vários clientes e entrega na mesma viagem). Aba "📦 Fracionado" no grupo CARREGAMENTO para a equipe (pedidos, roteirização com ocupação em peso e m³, trava de prejuízo, decisão sair/esperar/voltar à base, rota, etiqueta 10x15 com QR por volume e romaneio) e módulo "📦 Fracionado" no portal do cliente (o cliente vê o que comprou: marcar o módulo no login dele em Usuários). Pedido com leitura da NF-e por XML, PDF (DANFE) ou foto. Dados no banco em tabelas próprias (frc_config, frc_pedidos, frc_rotas, bucket frc-notas) com RLS. Assistente alimentado (bloco do Fracionado). -->
@@ -1040,7 +1041,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v674" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v675" };
 /* v663: foto do Ravi (robô da RF) no botão e no topo do assistente */
 var RF_RAVI_IMG = "data:image/webp;base64,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";
 (function () {
@@ -3667,17 +3668,24 @@ function cmLoginCriarDaFicha(f) {
     if (ja) { cmLoginLigar(f, ja, false); return "ligado"; }
     if (cmLoginAmbiguo(f)) { f.loginErro = "há mais de um login parecido — escolha na ficha"; return "ambiguo"; }
     var prop = cmLoginProposta(f);
+    /* v675 (22/10/2026): o servidor recusa senha "fraca/vazada" -- o CPF do ALMIRO caiu nisso e o sistema tentou criar o login 58 vezes
+       num dia (a cada abertura, em cada aparelho). Agora, se os 6 primeiros dígitos forem recusados, tenta o CPF inteiro (11 dígitos)
+       e depois "Rf" + os 6 primeiros dígitos. A senha usada fica anotada na ficha (loginSenhaRegra) para avisar o motorista. */
+    var cpf = cmLoginCpf(f), senhas = [{ s: prop.senha, regra: "6 primeiros dígitos do CPF" }, { s: cpf, regra: "CPF inteiro (11 dígitos)" }, { s: "Rf" + cpf.slice(0, 6), regra: "Rf + 6 primeiros dígitos do CPF" }];
+    var js = 0;
     var tentar = function (i) {
       if (i >= prop.emails.length) { f.loginErro = "e-mails " + prop.emails.join(", ") + " já estão em uso"; return "erro"; }
-      return cmLoginChamarCriar({ nome: prop.nome, email: prop.emails[i], senha: prop.senha, placa: prop.placa }).then(function (r) {
+      return cmLoginChamarCriar({ nome: prop.nome, email: prop.emails[i], senha: senhas[js].s, placa: prop.placa }).then(function (r) {
+        if (!(r.ok && r.j.id) && /weak|easy to guess|pwned|leaked|fraca/i.test(String(r.j.error || "")) && js < senhas.length - 1) { js++; return tentar(i); }
         if (r.ok && r.j.id) {
-          f.loginUid = r.j.id; f.loginNome = prop.nome; f.loginEmail = prop.emails[i]; f.loginPlaca = prop.placa;
+          f.loginUid = r.j.id; f.loginNome = prop.nome; f.loginEmail = prop.emails[i]; f.loginPlaca = prop.placa; f.loginSenhaRegra = senhas[js].regra;
           f.loginCriadoEm = Date.now(); f.loginAuto = true; delete f.loginErro;
           f.atualizadoEm = Date.now();
           return "criado";
         }
         var msg = String(r.j.error || "falha ao criar");
         if (/already|registered|exist|j[aá] (est|exist)|duplicate/i.test(msg)) return tentar(i + 1);   // e-mail ocupado -> próximo
+        if (/weak|easy to guess|pwned|leaked/i.test(msg)) msg = "o servidor recusou a senha inicial por ser fraca (CPF) — crie o login na aba Usuários com outra senha";
         f.loginErro = msg; return "erro";
       });
     };
@@ -3702,6 +3710,7 @@ function cmLoginsAutomaticos() {
   if (!state._cmLoginTentou) state._cmLoginTentou = {};
   var criar = aptas.filter(function (f) {
     if (state._cmLoginTentou[f.id]) return false;               // uma tentativa por ficha por sessão
+    if (f.loginErro) return false;                              // v675: já falhou -> não insiste a cada abertura (botão "tentar de novo" na ficha)
     var p = cmLoginDaFicha(f);
     return !p && !cmLoginAmbiguo(f);
   });
@@ -3711,14 +3720,14 @@ function cmLoginsAutomaticos() {
   var proxima = function (i) {
     if (i >= criar.length) {
       state._cmLoginRodando = false;
-      state._cmLoginMsg = feitos.length ? "Login criado sozinho: " + feitos.join(" · ") + " (senha inicial = 6 primeiros dígitos do CPF)" : "";
+      state._cmLoginMsg = feitos.length ? "Login criado sozinho: " + feitos.join(" · ") : "";
       salvar(); render();
       return;
     }
     var f = criar[i];
     state._cmLoginTentou[f.id] = true;
     cmLoginCriarDaFicha(f).then(function (r) {
-      if (r === "criado") feitos.push(f.loginNome + " (" + f.loginEmail + ")");
+      if (r === "criado") feitos.push(f.loginNome + " (" + f.loginEmail + ", senha inicial = " + (f.loginSenhaRegra || "6 primeiros dígitos do CPF") + ")");
       proxima(i + 1);
     });
   };
@@ -40700,6 +40709,7 @@ function thHojeISO() { var d = new Date(); return d.getFullYear() + "-" + String
 function thAbrir(placa) {
   TORRE.histAberto = !TORRE.histAberto || !!placa;
   if (placa) TH.placa = placa;
+  if (TH.autoDe) { TH.data = TH.autoDe; TH.autoDe = ""; }   // v675
   if (!TH.placa) TH.placa = TORRE.sel || ((TORRE.ultima || [])[0] || {}).placa || "";
   if (!TH.data) TH.data = thHojeISO();
   var el = document.getElementById("torre-hist"); if (el) el.innerHTML = thHTML();
@@ -40710,7 +40720,7 @@ function thPeriodo() {
   var ini = new Date(+p[0], +p[1] - 1, +p[2] - (TH.modo === "semana" ? 6 : 0), 0, 0, 0);
   return { ini: ini, fim: fim };
 }
-function thSet(campo, valor) { TH[campo] = valor; TH.diaSel = ""; thCarregar(); }
+function thSet(campo, valor) { if (TH.autoDe && campo !== "data") TH.data = TH.autoDe; TH[campo] = valor; TH.diaSel = ""; TH.autoDe = ""; thCarregar(); }   // v675: trocar de caminhão volta para o dia que a pessoa escolheu
 function thCarregar() {
   if (!TH.placa) return;
   var per = thPeriodo(), chave = TH.placa + "|" + per.ini.toISOString() + "|" + TH.modo;
@@ -40724,6 +40734,16 @@ function thCarregar() {
       }
       if (r.data && r.data.error) throw new Error(r.data.error);
       TH.dados = thAnalisar(r.data);
+      /* v675: o dia escolhido veio sem nenhuma posição -> abre sozinho o último dia em que o rastreador mandou coordenada
+         (Renato, 22/10: "preciso que abra sempre, pois teve locais que tem coordenada") */
+      if (!TH.dados.pts.length && !TH.autoDe) {
+        var ul = (TORRE.ultima || []).find(function (u) { return u.placa === TH.placa; });
+        var ulDia = ul && ul.data_pacote ? thDiaISO(Date.parse(ul.data_pacote)) : "";
+        if (ulDia && ulDia < String(TH.data || thHojeISO())) {
+          TH.autoDe = TH.data; TH.data = ulDia; TH.modo = "dia";
+          setTimeout(thCarregar, 0); return;
+        }
+      }
     })
     .catch(function (e) { if (TH.chave === chave) TH.erro = String((e && e.message) || e); })
     .then(function () { if (TH.chave === chave) { TH.carregando = false; thRedesenhar(); } });
@@ -40823,6 +40843,78 @@ function thAnalisar(d) {
   return { placa: d.placa, fontes: d.fontes || [], avisos: d.avisos || [], pts: pts, dias: dias, paradas: paradas, excessos: excessos, velMax: velMax, velLim: velLim,
     semSinal: semSinal, km: kmGps, movMin: movMin, ocioMin: ocioMin, prog: prog, progLista: progLista, foraProg: paradas.filter(function (s) { return s.fora; }) };
 }
+/* v675: exportar o trajeto (KMZ/KML para Google Earth e "Meus mapas", GPX para apps de GPS) */
+function thXml(t) { return String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function thIso(ms) { return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z"); }
+function thNomeArq(ext) { var per = thPeriodo(); return "trajeto_" + (TH.dados ? TH.dados.placa : TH.placa) + "_" + thDiaISO(per.ini.getTime()) + (TH.modo === "semana" ? "_a_" + thDiaISO(per.fim.getTime()) : "") + "." + ext; }
+function thKmlCor(hex, alfa) { var h = String(hex).replace("#", ""); return (alfa || "ff") + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2); }   // KML é aabbggrr
+function thKML() {
+  var R = TH.dados; if (!R || !R.pts.length) return "";
+  var ds = Object.keys(R.dias).sort(), per = thPeriodo();
+  var k = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
+    '<name>' + thXml("Trajeto " + R.placa + " — " + thDiaTxt(thDiaISO(per.ini.getTime())) + (TH.modo === "semana" ? " a " + thDiaTxt(thDiaISO(per.fim.getTime())) : "")) + '</name>',
+    '<description>' + thXml("RF Logística · " + torreKm(R.km) + " rodados · " + torreDur(R.movMin) + " em movimento · velocidade máxima " + R.velMax + " km/h · fontes: " + (R.fontes.join(" + ") || "—")) + '</description>'];
+  ds.forEach(function (d, i) { k.push('<Style id="dia' + i + '"><LineStyle><color>' + thKmlCor(TH_CORES[i % TH_CORES.length]) + '</color><width>4</width></LineStyle></Style>'); });
+  k.push('<Style id="semsinal"><LineStyle><color>' + thKmlCor("#9a9a9a", "cc") + '</color><width>3</width></LineStyle></Style>',
+    '<Style id="saida"><IconStyle><color>ff71cc2e</color><scale>1.2</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/grn-circle.png</href></Icon></IconStyle></Style>',
+    '<Style id="fim"><IconStyle><scale>1.2</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/red-square.png</href></Icon></IconStyle></Style>',
+    '<Style id="parada"><IconStyle><scale>1.0</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/ylw-blank.png</href></Icon></IconStyle></Style>',
+    '<Style id="fora"><IconStyle><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href></Icon></IconStyle></Style>',
+    '<Style id="base"><IconStyle><scale>1.0</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon></IconStyle></Style>',
+    '<Style id="vel"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/caution.png</href></Icon></IconStyle></Style>');
+  // trajeto por dia
+  k.push('<Folder><name>Trajeto</name>');
+  ds.forEach(function (d, i) {
+    var D = R.dias[d]; if (D.pts.length < 2) return;
+    k.push('<Placemark><name>' + thXml(thDiaTxt(d) + " · " + torreKm(D.km)) + '</name><description>' + thXml(torreDur(D.mov) + " rodando" + (D.saida ? " · saiu " + thHora(D.saida) + " · último movimento " + thHora(D.chegada) : "")) + '</description><styleUrl>#dia' + i + '</styleUrl>'
+      + '<LineString><tessellate>1</tessellate><coordinates>' + D.pts.map(function (p) { return p.lng.toFixed(6) + "," + p.lat.toFixed(6) + ",0"; }).join(" ") + '</coordinates></LineString></Placemark>');
+  });
+  k.push('</Folder>');
+  // pontos
+  var pt = function (nome, desc, st, lat, lng, ms) { return '<Placemark><name>' + thXml(nome) + '</name><description>' + thXml(desc) + '</description>' + (ms ? '<TimeStamp><when>' + thIso(ms) + '</when></TimeStamp>' : '') + '<styleUrl>#' + st + '</styleUrl><Point><coordinates>' + lng.toFixed(6) + "," + lat.toFixed(6) + ',0</coordinates></Point></Placemark>'; };
+  var p0 = R.pts[0], p1 = R.pts[R.pts.length - 1];
+  k.push('<Folder><name>Saída e fim</name>', pt("Saída " + thHora(p0.ms), (p0.cid || "") + (p0.end ? " · " + p0.end : ""), "saida", p0.lat, p0.lng, p0.ms), pt("Fim " + thHora(p1.ms), (p1.cid || "") + (p1.end ? " · " + p1.end : ""), "fim", p1.lat, p1.lng, p1.ms), '</Folder>');
+  k.push('<Folder><name>Paradas de 8 min ou mais (' + R.paradas.length + ')</name>');
+  R.paradas.forEach(function (s, i) {
+    k.push(pt((i + 1) + ". " + (s.base ? "Base" : (s.cid || "local sem nome")) + " · " + torreDur(s.dur),
+      (ds.length > 1 ? thDiaTxt(thDiaISO(s.ini)) + " " : "") + thHora(s.ini) + "–" + thHora(s.fim) + " · " + torreDur(s.dur) + (s.fora ? " · FORA DA PROGRAMAÇÃO" : "") + (s.motorLigado ? " · motor ligado" : "") + (s.end ? " · " + s.end : ""),
+      s.fora ? "fora" : s.base ? "base" : "parada", s.lat, s.lng, s.ini));
+  });
+  k.push('</Folder>');
+  if (R.excessos.length) { k.push('<Folder><name>Acima de ' + R.velLim + ' km/h (' + R.excessos.length + ')</name>'); R.excessos.forEach(function (e) { k.push(pt(e.v + " km/h " + thHora(e.ms), e.cid || "", "vel", e.lat, e.lng, e.ms)); }); k.push('</Folder>'); }
+  if ((R.semSinal || []).length) {
+    k.push('<Folder><name>Sem sinal de celular (' + R.semSinal.length + ')</name>');
+    R.semSinal.forEach(function (g) { k.push('<Placemark><name>' + thXml("Sem sinal " + thHora(g.de.ms) + "–" + thHora(g.ate.ms)) + '</name><description>' + thXml(Math.round(g.min) + " min · " + torreKm(g.km) + " em linha reta (trecho real desconhecido)") + '</description><styleUrl>#semsinal</styleUrl><LineString><tessellate>1</tessellate><coordinates>' + g.de.lng.toFixed(6) + "," + g.de.lat.toFixed(6) + ",0 " + g.ate.lng.toFixed(6) + "," + g.ate.lat.toFixed(6) + ',0</coordinates></LineString></Placemark>'); });
+    k.push('</Folder>');
+  }
+  k.push('</Document></kml>');
+  return k.join("\n");
+}
+function thGPX() {
+  var R = TH.dados; if (!R || !R.pts.length) return "";
+  var g = ['<?xml version="1.0" encoding="UTF-8"?>', '<gpx version="1.1" creator="RF Logistica - Torre de Controle" xmlns="http://www.topografix.com/GPX/1/1">',
+    '<metadata><name>' + thXml("Trajeto " + R.placa) + '</name><time>' + thIso(R.pts[0].ms) + '</time></metadata>'];
+  R.paradas.forEach(function (s, i) { g.push('<wpt lat="' + s.lat.toFixed(6) + '" lon="' + s.lng.toFixed(6) + '"><time>' + thIso(s.ini) + '</time><name>' + thXml((i + 1) + ". " + (s.base ? "Base" : (s.cid || "Parada")) + " " + torreDur(s.dur)) + '</name><desc>' + thXml(thHora(s.ini) + "–" + thHora(s.fim) + (s.fora ? " · fora da programação" : "") + (s.end ? " · " + s.end : "")) + '</desc></wpt>'); });
+  Object.keys(R.dias).sort().forEach(function (d) {
+    var D = R.dias[d]; if (!D.pts.length) return;
+    g.push('<trk><name>' + thXml(R.placa + " " + thDiaTxt(d) + " · " + torreKm(D.km)) + '</name><trkseg>');
+    D.pts.forEach(function (p) { g.push('<trkpt lat="' + p.lat.toFixed(6) + '" lon="' + p.lng.toFixed(6) + '"><time>' + thIso(p.ms) + '</time>' + (p.v != null ? '<desc>' + p.v + ' km/h</desc>' : '') + '</trkpt>'); });
+    g.push('</trkseg></trk>');
+  });
+  g.push('</gpx>');
+  return g.join("\n");
+}
+function thExportar(fmt) {
+  var R = TH.dados; if (!R || !R.pts.length) { alert("Carregue um trajeto com posições antes de baixar."); return; }
+  if (fmt === "gpx") { rfBaixarBlob(new Blob([thGPX()], { type: "application/gpx+xml" }), thNomeArq("gpx")); return; }
+  var kml = thKML();
+  if (fmt === "kml") { rfBaixarBlob(new Blob([kml], { type: "application/vnd.google-earth.kml+xml" }), thNomeArq("kml")); return; }
+  rfFiscalZipLib().then(function (JSZip) {
+    if (!JSZip) { rfBaixarBlob(new Blob([kml], { type: "application/vnd.google-earth.kml+xml" }), thNomeArq("kml")); alert("Sem internet para montar o KMZ — baixei em KML, que abre igual no Google Earth."); return; }
+    var z = new JSZip(); z.file("doc.kml", kml);
+    return z.generateAsync({ type: "blob", compression: "DEFLATE", mimeType: "application/vnd.google-earth.kmz" }).then(function (b) { rfBaixarBlob(b, thNomeArq("kmz")); });
+  }).catch(function (e) { alert("Não consegui gerar o KMZ: " + ((e && e.message) || e)); });
+}
 function thHora(ms) { var d = new Date(ms); return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
 function thDiaTxt(iso) { var d = new Date(iso + "T12:00:00"); return ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"][d.getDay()] + " " + iso.split("-").reverse().slice(0, 2).join("/"); }
 function thRedesenhar() { var el = document.getElementById("torre-hist"); if (el) el.innerHTML = thHTML(); setTimeout(thMapa, 30); }
@@ -40843,11 +40935,29 @@ function thHTML() {
   if (TH.carregando) return h + '<div style="padding:14px 0;color:#aaa;font-size:13px;">Buscando o trajeto' + (TH.modo === "semana" ? " da semana (pode levar uns 20 s)" : "") + '…</div></div>';
   if (TH.erro) return h + '<div style="color:#E53935;margin-top:10px;font-size:13px;">⚠ ' + esc(TH.erro) + '</div></div>';
   var R = TH.dados; if (!R) return h + '</div>';
-  if (!R.pts.length) return h + '<div style="padding:14px 0;color:#aaa;font-size:13px;">Nenhuma posição de ' + esc(R.placa) + ' nesse período.' + (R.avisos.length ? ' (' + esc(R.avisos.join("; ")) + ')' : '') + ' A Sascar só tem histórico a partir de 19/10/2026.</div></div>';
+  if (!R.pts.length) {
+    /* v675: dia sem posição -- mostra quando o rastreador falou pela última vez (QDH7D61 em 22/10: última posição 21/10 16:34 em Boninal, depois nada) */
+    var ul = (TORRE.ultima || []).find(function (u) { return u.placa === R.placa; }), ulTxt = "";
+    if (ul && ul.data_pacote) {
+      var ulMs = Date.parse(ul.data_pacote), ulDia = thDiaISO(ulMs), hrs = (Date.now() - ulMs) / 60000;
+      ulTxt = '<div style="margin-top:8px;padding:9px 11px;border:1px solid #E53935;border-radius:8px;color:#ffb4b4;">📵 O rastreador de <b>' + esc(R.placa) + '</b> não manda posição desde <b>' + thDiaTxt(ulDia) + ' às ' + thHora(ulMs) + '</b>'
+        + (ul.cidade ? ' (última posição em <b>' + esc(ul.cidade) + '</b>' + (ul.velocidade != null ? ', ' + ul.velocidade + ' km/h' : '') + ')' : '') + ' — há <b>' + torreDur(hrs) + '</b>. '
+        + 'Provável área sem sinal de celular ou rastreador desligado; quando voltar, as posições guardadas aparecem aqui.'
+        + (ulDia !== TH.data ? ' <button class="btn-outline" style="font-size:12px;padding:3px 9px;margin-left:6px;" onclick="TH.data=\'' + ulDia + '\';thSet(\'modo\',\'dia\')">Ver ' + thDiaTxt(ulDia) + '</button>' : '') + '</div>';
+    }
+    return h + '<div style="padding:14px 0;color:#aaa;font-size:13px;">Nenhuma posição de ' + esc(R.placa) + ' nesse período.' + (R.avisos.length ? ' (' + esc(R.avisos.join("; ")) + ')' : '') + (ulTxt ? '' : ' A Sascar só tem histórico a partir de 19/10/2026.') + ulTxt + '</div></div>';
+  }
+  if (TH.autoDe) { var uP = R.pts[R.pts.length - 1], hs = (Date.now() - uP.ms) / 60000;   // v675: abriu sozinho o último dia com coordenada
+    h += '<div style="margin-top:10px;padding:9px 11px;border:1px solid #E53935;border-radius:8px;color:#ffb4b4;font-size:12.5px;">📵 <b>' + thDiaTxt(TH.autoDe) + '</b> ainda sem nenhuma posição de <b>' + esc(R.placa) + '</b> — abri o último dia com coordenada (<b>' + thDiaTxt(TH.data) + '</b>). '
+      + 'Última posição às <b>' + thHora(uP.ms) + '</b>' + (uP.cid ? ' em <b>' + esc(uP.cid) + '</b>' : '') + ', há <b>' + torreDur(hs) + '</b>. Quando o sinal voltar, as posições guardadas pelo rastreador aparecem no dia certo.</div>'; }
   var k = function (v, t, c) { return '<div class="tc-k"><b style="color:' + (c || "#fff") + ';font-size:19px;">' + v + '</b><span>' + t + '</span></div>'; };
   h += '<div class="tc-kpi" style="margin-top:10px;">' + k(torreKm(R.km), "Rodados", GOLD) + k(torreDur(R.movMin), "Em movimento") + k(R.paradas.filter(function (s) { return !s.base; }).length, "Paradas fora da base")
     + k(torreDur(R.ocioMin), "Parado com motor ligado", R.ocioMin > 60 ? "#F2C94C" : "#fff") + k(R.velMax + " km/h", "Velocidade máxima", R.velMax > R.velLim + 5 ? "#E53935" : "#fff")
     + k(R.foraProg.length, "Paradas fora da programação", R.foraProg.length ? "#E53935" : "#2ecc71") + '</div>';
+  h += '<div class="tc-btns" style="margin:8px 0 2px;align-items:center;"><span style="font-size:12px;color:#aaa;font-weight:700;">⬇ Baixar trajeto:</span>'   // v675
+    + '<button class="btn-outline" style="font-size:12px;padding:5px 10px;" onclick="thExportar(\'kmz\')" title="Google Earth">KMZ (Google Earth)</button>'
+    + '<button class="btn-outline" style="font-size:12px;padding:5px 10px;" onclick="thExportar(\'kml\')" title="Google Earth / Google Meus Mapas">KML</button>'
+    + '<button class="btn-outline" style="font-size:12px;padding:5px 10px;" onclick="thExportar(\'gpx\')" title="Aplicativos de GPS">GPX</button></div>';
   h += '<div class="tc-grid"><div><div id="th-mapa" style="height:420px;border-radius:12px;border:1px solid #2a2a2a;background:#dfe6ea;overflow:hidden;"></div>'
     + '<div style="font-size:11.5px;color:#9a9a9a;margin-top:5px;">🟢 saída · 🏁 fim · números = paradas (vermelho = fora da programação) · ⚡ excesso de velocidade · <span style="letter-spacing:2px;">- - -</span> sem sinal de celular · fontes: ' + esc(R.fontes.join(" + ") || "—") + '</div></div><div>';
   var ds = Object.keys(R.dias).sort();
@@ -41089,6 +41199,8 @@ function torreContextoAssistente() {
     + "'Entrega possivelmente feita' e uma deducao pelo tempo parado na cidade, NAO e o canhoto -- se perguntarem se a entrega foi feita, diga isso e indique o canhoto/comprovante. "
     + "No card da viagem as cidades aparecem como selos (✅ entregue com o tempo, 📍 esta la, ⚡ so passou, ⏳ falta, ❌ nao foi, ⚠️ cidade sem coordenada). No mapa, as cidades sao bolinhas numeradas (verde entregue, amarela esta la, cinza so passou, branca falta). "
     + "POSICOES ATRASADAS (v674, robo v16): a Positron guarda as posicoes enquanto esta sem sinal e manda depois; o robo busca o historico da Positron a cada 15 min por viagem e rele o trajeto -- cidade em que ha posicao do caminhao dentro fica VERDE (entrega possivelmente feita, com o tempo que ficou), amarelo e so quando nao ha nenhuma posicao dentro e apenas o trajeto passou por ela. Parado no municipio (nome da cidade no endereco do rastreador, ate 40 km do centro) tambem conta como dentro da cidade; segunda visita a cidade ja entregue soma o tempo. "
+    + "MODO NOITE (robo v17): das 19h as 6h o grupo da RF so recebe a situacao da frota a cada 3 h e o alerta '🌙 caminhao em movimento a noite' (caminhao estacionado que liga e anda mais de 1 km); os demais avisos ficam so na tela. "
+    + "BAIXAR TRAJETO (v675): no Historico de trajeto ha botoes KMZ (Google Earth), KML (Google Earth / Google Meus Mapas) e GPX (apps de GPS) com a linha de cada dia, saida, fim, paradas numeradas, excessos de velocidade e trechos sem sinal. "
     + "ENTREGA PROVAVEL (v671, robo v13, 21/10/2026): pedido do Renato -- em cidade sem sinal GSM o rastreador fica sem posicao; se o trajeto entre duas posicoes cruza a cidade, ou se o caminhao ja chegou a uma cidade seguinte da rota, a cidade fica AMARELA (sit provavel, 'passou sem sinal, entrega provavel' -- chance alta de ter entregue). Se depois aparecer posicao dentro dela, volta ao normal. No grupo da RF sai a mensagem 'Passou por X sem sinal' e o resumo da volta lista as provaveis a parte. "
     + "TODAS AS PLACAS EM VIAGEM (v669): o robo pega sozinho TODAS as viagens em andamento do sistema (a mais recente de cada placa, sem KM de chegada e dentro de data + dias + 1 dia), de qualquer cliente e de qualquer dia -- nao so as que tem paradas lancadas para hoje. Cidades: as paradas da viagem (tabela entregas) ou a lista 'A -> B -> C' escrita na observacao da viagem; sem cidades, acompanha so posicao, paradas e situacao. Viagem que ja tinha saido entra direto em monitoramento e o robo rele o trajeto desde a saida (marca as cidades ja visitadas sem mandar mensagem antiga no grupo). A viagem sai da Torre quando o sistema encerra (KM de chegada lancado, fim aprovado ou passou do prazo data + dias + 1). Viagem em andamento cuja placa NAO tem rastreador aparece na secao '🚚 Em viagem sem rastreador' (so na tela). Viagens antigas que ficaram 'em andamento' sem fechar no sistema nao entram -- se perguntarem, oriente encerrar essas viagens na aba Viagens. "
     + (function () { try { var s = torreEmViagemSistema(); return "EM VIAGEM AGORA PELO SISTEMA (" + s.length + "): " + s.map(function (x) { return x.placa + " (" + (x.v.cliente || "") + ", saiu " + torreDataBR(x.v.data) + ")"; }).join("; ") + ". "; } catch (e) { return ""; } })()
@@ -42727,22 +42839,61 @@ function chatLimpar() {
 // disso ele escuta, responde e volta a escutar sozinho, sem precisar
 // apertar de novo a cada pergunta. Só desliga se: (a) apertar o microfone
 // de novo, (b) fechar o chat, ou (c) passar alguns minutos sem ninguém falar.
-function falarTexto(texto, aoTerminar) {
-  if (state._chatVozAtiva === false || !window.speechSynthesis || !texto) { if (aoTerminar) aoTerminar(); return; }
+// v675 (22/10/2026): VOZ MASCULINA DO RAVI — Renato: "coloca a voz do Ravi masculina, hoje está com voz de mulher".
+// A voz do navegador depende do aparelho (no tablet Android só há a feminina do Google). Agora o texto vira áudio na
+// função ravi-voz (OpenAI, voz "onyx", grave e masculina). Sem internet ou se a função falhar, usa a voz do aparelho,
+// preferindo uma masculina (Antonio/Daniel/Ricardo...) e, se não houver, a pt-BR com o tom mais grave.
+var RF_VOZ_AUDIO = null, RF_VOZ_SEQ = 0;
+function rfVozParar() {
+  RF_VOZ_SEQ++;
+  if (RF_VOZ_AUDIO) { try { RF_VOZ_AUDIO.pause(); } catch (e) {} RF_VOZ_AUDIO = null; }
+  if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+}
+function rfVozNavegador(texto, aoTerminar) {
+  if (!window.speechSynthesis) { if (aoTerminar) aoTerminar(); return; }
   try {
-    window.speechSynthesis.cancel(); // corta qualquer fala anterior ainda em andamento
+    window.speechSynthesis.cancel();
     const fala = new SpeechSynthesisUtterance(texto);
     fala.lang = "pt-BR";
-    const vozes = window.speechSynthesis.getVoices();
-    const vozPt = vozes.find((v) => v.lang === "pt-BR") || vozes.find((v) => v.lang && v.lang.indexOf("pt") === 0);
-    if (vozPt) fala.voice = vozPt;
+    const vozes = window.speechSynthesis.getVoices().filter((v) => v.lang && v.lang.replace("_", "-").indexOf("pt") === 0);
+    const masc = vozes.find((v) => /antonio|daniel|ricardo|fabio|f[aá]bio|humberto|donato|julio|j[uú]lio|nicolau|valerio|male|mascul/i.test(v.name));
+    const br = vozes.find((v) => v.lang.replace("_", "-") === "pt-BR") || vozes[0];
+    if (masc) fala.voice = masc; else { if (br) fala.voice = br; fala.pitch = 0.55; }   // sem voz masculina no aparelho: deixa a voz mais grave
     if (aoTerminar) { fala.onend = aoTerminar; fala.onerror = aoTerminar; }
     window.speechSynthesis.speak(fala);
   } catch (e) { if (aoTerminar) aoTerminar(); }
 }
+function falarTexto(texto, aoTerminar) {
+  if (state._chatVozAtiva === false || !texto) { if (aoTerminar) aoTerminar(); return; }
+  rfVozParar();
+  const seq = RF_VOZ_SEQ;
+  let terminou = false;
+  const fim = function () { if (terminou) return; terminou = true; if (aoTerminar) aoTerminar(); };
+  const limpo = String(texto).replace(/[*_#`>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 3500);
+  rfGetClient().then(function (sb) {
+    if (!sb) throw new Error("sem conexão");
+    return sb.auth.getSession();
+  }).then(function (r) {
+    const tok = r && r.data && r.data.session && r.data.session.access_token;
+    if (!tok) throw new Error("sem sessão");
+    const ctl = new AbortController(); const to = setTimeout(function () { ctl.abort(); }, 15000);
+    return fetch(RF_SB_URL + "/functions/v1/ravi-voz", { method: "POST", signal: ctl.signal,
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok, "apikey": RF_SB_KEY },
+      body: JSON.stringify({ texto: limpo }) }).then(function (resp) { clearTimeout(to); if (!resp.ok) throw new Error("voz " + resp.status); return resp.blob(); });
+  }).then(function (blob) {
+    if (seq !== RF_VOZ_SEQ) return fim();   // outra fala começou (ou o usuário silenciou) enquanto o áudio chegava
+    const url = URL.createObjectURL(blob), au = new Audio(url);
+    RF_VOZ_AUDIO = au;
+    au.onended = function () { URL.revokeObjectURL(url); if (RF_VOZ_AUDIO === au) RF_VOZ_AUDIO = null; fim(); };
+    au.onerror = function () { URL.revokeObjectURL(url); if (RF_VOZ_AUDIO === au) RF_VOZ_AUDIO = null; if (seq === RF_VOZ_SEQ) rfVozNavegador(limpo, fim); else fim(); };
+    return au.play().catch(function () { if (seq === RF_VOZ_SEQ) rfVozNavegador(limpo, fim); else fim(); });
+  }).catch(function () {
+    if (seq === RF_VOZ_SEQ) rfVozNavegador(limpo, fim); else fim();
+  });
+}
 function chatAlternarVozResposta() {
   state._chatVozAtiva = !state._chatVozAtiva;
-  if (!state._chatVozAtiva && window.speechSynthesis) window.speechSynthesis.cancel();
+  if (!state._chatVozAtiva) rfVozParar();   // v675
   render();
 }
 var _rfReconhecimentoVoz = null;
@@ -42760,7 +42911,7 @@ function chatPararConversa() {
   state._chatOuvindo = false;
   if (_rfConversaTimer) { clearTimeout(_rfConversaTimer); _rfConversaTimer = null; }
   if (_rfReconhecimentoVoz) { try { _rfReconhecimentoVoz.abort(); } catch (e) {} }
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  rfVozParar();   // v675
   render();
 }
 // Chamado depois que a resposta chega (falada ou não) — se o modo conversa
@@ -48612,7 +48763,7 @@ revalidarSessaoAoAbrir();
       // v199: monta o indice de documentos em segundo plano, sem travar a tela
       setTimeout(function () { try { rfDocsIndexarTudo(); } catch (e) {} }, 2000);
       // v205: procura documentos em pasta com placa errada, em segundo plano
-      setTimeout(function () { try { rfDocsOrfaosCarregar(); } catch (e) {} }, 3500);
+      setTimeout(function () { try { var oe = Number(localStorage.getItem("rf-docs-orfaos-em") || 0); if (Date.now() - oe > 6 * 3600e3) { localStorage.setItem("rf-docs-orfaos-em", String(Date.now())); rfDocsOrfaosCarregar(); } } catch (e) {} }, 3500);   // v675: no máximo a cada 6 h
       promoverReceitaRecorrente();
       migrarTrocasOleoFiltros();
       garantirAcesso();
@@ -49537,7 +49688,18 @@ function rfCrlvDesfazer() {
    lista deles vem de uma chamada assincrona ao storage, e o contexto e montado
    de forma sincrona. Resolvido com um indice em memoria, atualizado em segundo
    plano e sempre que um documento sobe ou e excluido. */
-function rfDocsIndexarTudo() {
+function rfDocsIndexarTudo(forcar) {
+  /* v675 (22/10/2026): o índice faz 2 consultas ao armazenamento POR PLACA e rodava a cada download da nuvem -- num aparelho deu
+     400 consultas em 4 min e o servidor passou a responder com atraso ("falha ao salvar na nuvem"). Agora: no máximo 1 vez a cada
+     30 min por aparelho (guardado no navegador); anexar/excluir/mover documento continua atualizando na hora (forcar). */
+  var agoraMs = Date.now(), ultimo = state._docsIndexEm || 0;
+  try { ultimo = Math.max(ultimo, Number(localStorage.getItem("rf-docs-index-em") || 0)); if (!state._docsIndex) { var cache = JSON.parse(localStorage.getItem("rf-docs-index") || "null"); if (cache) { state._docsIndex = cache; state._docsIndexEm = ultimo; } } } catch (e) {}
+  if (!forcar && state._docsIndex && agoraMs - ultimo < 30 * 60000) return Promise.resolve(state._docsIndex);
+  if (!forcar && window.__rfDocsIndexando) return window.__rfDocsIndexando;
+  window.__rfDocsIndexando = rfDocsIndexarTudoAgora().then(function (r) { window.__rfDocsIndexando = null; try { if (r) { localStorage.setItem("rf-docs-index", JSON.stringify(r)); localStorage.setItem("rf-docs-index-em", String(Date.now())); } } catch (e) {} return r; }, function (e) { window.__rfDocsIndexando = null; throw e; });
+  return window.__rfDocsIndexando;
+}
+function rfDocsIndexarTudoAgora() {
   return rfGetClient().then(function (sb) {
     if (!sb) return null;
     var placas = (state.veiculos || []).map(function (v) { return v.placa; }).filter(Boolean);
@@ -49685,7 +49847,7 @@ function rfDocsMoverOrfao(pasta, destino) {
         st.style.color = erros.length ? "#C0392B" : "#2E7D32";
         st.textContent = "✔ " + movidos + " movido(s) para " + destino + (erros.length ? " · falhou: " + erros.join(" | ") : "");
       }
-      return rfDocsIndexarTudo().then(function () {
+      return rfDocsIndexarTudo(true).then(function () {
         return rfDocsOrfaosCarregar().then(function () {
           if (state.docPlaca) rfDocsRenderLista(state.docPlaca);
           return movidos;
@@ -49850,7 +50012,7 @@ function rfDocsUpload(input) {
       }
       input.value = "";
       rfDocsRenderLista(placa);
-      try { rfDocsIndexarTudo(); } catch (e) {}   // v199: assistente enxerga o arquivo novo
+      try { rfDocsIndexarTudo(true); } catch (e) {}   // v199: assistente enxerga o arquivo novo
       return;
     }
     var f = files[i];
