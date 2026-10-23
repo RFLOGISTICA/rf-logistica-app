@@ -16739,6 +16739,7 @@ function srDanfeParaLinhas(nfs) {
       var somaV = 0;
       itens.forEach(function (it) {
         var ci = CI[it.cod], upc = ci.upc, qtd = Math.round(it.qtd) || 0, ncx = Math.floor(qtd / upc), fr = qtd - ncx * upc;
+        if (String(it.und || "").toUpperCase() === "CX") { ncx = qtd; fr = 0; }   // item já vendido em CAIXA (PT/FD = pacote, conta como unidade)
         somaV += ncx + (fr > 0 ? 1 : 0); SR_DANFE_REGRA.cx += ncx; SR_DANFE_REGRA.fr += fr > 0 ? 1 : 0;
         var pesoIt = peso * ((it.vtot || 1) / vt);
         linhas.push([numcar, data, codcli, n.nome || codcli, n.nome || codcli, n.end || "", n.bairro || "", est, cep, String(seqCli[codcli]), n.nf, "",
@@ -16746,6 +16747,7 @@ function srDanfeParaLinhas(nfs) {
           String(srNum(n.vlnf)).replace(".", ","), String(fr), String(upc)]);
       });
       if (!(Q > 0) || somaV === Q) SR_DANFE_REGRA.confere++;
+      else (SR_DANFE_REGRA.div = SR_DANFE_REGRA.div || []).push("NF " + n.nf + " (" + (n.nome || "").slice(0, 22) + "): nota diz " + Q + " vol, sistema montou " + somaV);
       return;
     }
     var vt = itens.reduce(function (s, it) { return s + (it.vtot || 0); }, 0) || itens.length;
@@ -16796,7 +16798,8 @@ function srImportarDanfe2(paginas, file, input) {
     + srFmt(t.peso, 1) + " kg (peso bruto) · " + t.vols + " volumes · mercadoria R$ " + srFmt(t.valor, 2)
     + (semVol ? "\n⚠ " + semVol + " NF sem quantidade de volumes: contei pelas unidades em caixa/fardo." : "")
     + (SR_DANFE_REGRA && SR_DANFE_REGRA.regra ? "\n\n✓ Caixa x fracionado pelo cadastro (unid. por caixa): " + SR_DANFE_REGRA.cx + " caixas fechadas + " + SR_DANFE_REGRA.fr + " fracionados · "
-        + SR_DANFE_REGRA.confere + " de " + SR_DANFE_REGRA.nfs + " notas batem com a quantidade de volumes da nota" + (SR_DANFE_REGRA.regra < SR_DANFE_REGRA.nfs ? "\n⚠ " + (SR_DANFE_REGRA.nfs - SR_DANFE_REGRA.regra) + " nota(s) com produto fora do cadastro: volumes pela regra antiga." : "")
+        + SR_DANFE_REGRA.confere + " de " + SR_DANFE_REGRA.nfs + " notas batem com a quantidade de volumes da nota"
+        + (SR_DANFE_REGRA.div && SR_DANFE_REGRA.div.length ? "\n\n⚠ CONFERIR (a São Roque pode ter juntado fracionados na mesma caixa, ou a Unid. por Caixa do cadastro difere):\n" + SR_DANFE_REGRA.div.slice(0, 12).join("\n") + (SR_DANFE_REGRA.div.length > 12 ? "\n… e mais " + (SR_DANFE_REGRA.div.length - 12) : "") : "") + (SR_DANFE_REGRA.regra < SR_DANFE_REGRA.nfs ? "\n⚠ " + (SR_DANFE_REGRA.nfs - SR_DANFE_REGRA.regra) + " nota(s) com produto fora do cadastro: volumes pela regra antiga." : "")
         : "\n\n⚠ Cadastro sem Unid. por Caixa: caixa e fracionado NÃO foram separados. Toque em \"Atualizar cadastro\" com a planilha DUN14 e importe de novo.")
     + "\n\nA ordem das paradas já está na rota sugerida. Confira no passo 2.");
 }
