@@ -17,12 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v687)</title>
+<title>RF Logística — Painel da Frota (v686)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v687">
-<!-- v687 (23/10/2026): SAO ROQUE -- TESTE DE IMPRESSORA DO TABLET: botao "Testar impressora" com 3 caminhos que mandam a etiqueta na linguagem da impressora (TSPL) direto, sem a tela de impressao do Android: (A) RawBT por intent, (B) cabo USB pelo Chrome (WebUSB), (C) Bluetooth pelo Chrome (Web Bluetooth). Cada um imprime 1 etiqueta de teste no formato escolhido e mostra o resultado na tela. -->
-<!-- v686 (23/10/2026): SAO ROQUE -- QR CODE AO LADO DAS BARRAS: o leitor lia o QR da caixa (ex.: Dove Deo Aer 12x150ml), o sistema achava que era um produto novo e abria a janela "qual e o produto" -- travava o leitor e obrigava a escolher produto. Agora o sistema DESCONSIDERA o QR (pedido do Renato: nao trabalham com ele): leitura com letras/simbolos ou numero que nao e EAN/DUN e ignorada sem apito, sem janela e sem contar. -->
+<meta name="rf-versao" content="v686">
+<!-- v686 (23/10/2026): SAO ROQUE -- IMPRESSAO DIRETA PELO TABLET: "Bluetooth direto (tablet)" na doca, botao Conectar impressora, ajustes da etiqueta guardados no aparelho (largura, altura, espaco entre etiquetas, escuro, velocidade, posicao, mover), teste e calibrar. A etiqueta vai em TSPL (texto e codigo de barras da impressora) com SIZE/GAP a cada impressao. -->
 <!-- v685 (23/10/2026): PESSOAL -- "Desde o inicio": saldo bruto de 01/10/2026 FIXO (gravado uma vez, so muda em "ajustar"), saldo de hoje, diferenca no patrimonio, quanto e rendimento e quanto e deposito, e tabela de rendimento por mes, por ano e total desde 01/10/2026. -->
 <!-- v684 (23/10/2026): PESSOAL -- quadros do topo das aplicacoes refeitos: "Rendeu em <mes> ate hoje", "<mes> deve fechar em" (com quanto falta ate o fim do mes), "Ritmo atual (30 dias)" (antes "Rende por mes") com patrimonio em 30 dias, e "Saldo previsto em <fim do mes>". -->
 <!-- v683 (23/10/2026): PESSOAL -- destaque do MELHOR RENDIMENTO nas aplicacoes: quadro dourado no topo (aplicacao que mais rende em % a.m. liquido, ranking e quanto cada uma rende em R$ 10 mil) e selo "MELHOR RENDIMENTO" na linha; coluna liquida mostra o % a.m. -->
@@ -1053,7 +1052,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v687" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v686" };
 /* v663: foto do Ravi (robô da RF) no botão e no topo do assistente */
 var RF_RAVI_IMG = "data:image/webp;base64,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";
 (function () {
@@ -13515,40 +13514,6 @@ function srGtinDaLeitura(cod) {
 /* v677 (22/10/2026) — o leitor leu só um pedaço do código do fardo de ALA (278911500976 em vez de 27891150097616)
    e o sistema abriu a pergunta "qual é o produto". Código de produto tem dígito verificador: se não fecha, é
    leitura incompleta -> apita e pede para bipar de novo, sem perguntar nem gravar nada. */
-/* v686 (23/10/2026) — Renato: "sempre que tem um QR CODE próximo dificulta a leitura e o sistema às vezes trava,
-   não bipa, aí tenho que escolher outro produto" (caixa Dove Deo Aer Ap Original 12x150ml). O leitor pega o QR e
-   manda um texto que não é EAN/DUN; os números soltos dele viravam um "código novo" e abriam a janela de escolher o
-   produto, que prende o teclado (o leitor). Regras novas:
-   - DECISÃO FINAL do Renato (23/10): "prefiro que o sistema desconsidere QR CODE, hoje não trabalhamos com ele" --
-     leitura de QR é IGNORADA por completo (sem apito, sem janela, sem imprimir, sem contar). O texto abaixo era a
-     1ª proposta; srGtinDoQR ficou guardada sem uso.
-   - leitura com letras/símbolos ou com mais de 14 dígitos = veio de QR/2D -> NUNCA abre a janela;
-   - procura dentro dela um GTIN de 13/14 dígitos com dígito verificador certo e que seja de produto DESTA carga
-     (ou já aprendido); achou -> segue como se tivesse bipado as barras;
-   - não achou -> aviso amarelo "leu o QR, mire nas BARRAS", nada impresso, nada contado;
-   - QR que chega até 2,5 s depois de um bip certo (o leitor leu barras + QR) é ignorado em silêncio. */
-function srLeituraEhQR(cod) {
-  var t = String(cod || "").trim();
-  if (!t) return false;
-  if (/^\d+$/.test(t)) return t.length > 14 || [8, 12, 13, 14].indexOf(t.length) < 0;
-  return true;
-}
-function srGtinDoQR(c, cod) {
-  var t = String(cod || ""), cands = [];
-  var m = t.match(/\/01\/(\d{14})/) || t.match(/\(01\)(\d{14})/) || t.match(/\x1d01(\d{14})/) || t.match(/(?:^|\D)01(\d{14})/);
-  if (m) cands.push(m[1]);
-  (t.match(/\d{13,}/g) || []).forEach(function (seg) {
-    for (var i = 0; i + 14 <= seg.length; i++) cands.push(seg.substr(i, 14));
-    for (var j = 0; j + 13 <= seg.length; j++) cands.push(seg.substr(j, 13));
-  });
-  var ordem = c ? srVolsOrdemCarga(c) : [], apr = srCodAprendidos();
-  for (var k = 0; k < cands.length; k++) {
-    var g = cands[k]; if (!srGtinDigitoOk(g)) continue;
-    var b = srGtinBase(g); if (!b) continue;
-    if (apr[b] || ordem.some(function (v) { return srVolDoProduto(v, b); })) return g;
-  }
-  return "";
-}
 function srGtinDigitoOk(d) {
   d = String(d || ""); var n = d.length, s = 0;
   for (var i = 0; i < n - 1; i++) s += (+d[n - 2 - i]) * (i % 2 === 0 ? 3 : 1);
@@ -13561,8 +13526,6 @@ function srCaixaBipar(cargaId, codigo, semFrac) {
   if (c.vols.some(function (v) { return v.c === cod; })) return { ok: false, msg: "Esse código é de uma ETIQUETA RF (já impressa). Aqui bipe o código do FABRICANTE, que vem impresso no papelão da caixa. Para confirmar etiqueta colada, use o campo 2 logo abaixo." };
   if (!srPalAtivo(c.id) || !srPaletesDaCarga(c).porK[srPalAtivo(c.id)]) { if (srPaletesDaCarga(c).lista.length) { srApito(true); return { ok: false, msg: "⚠ PARE. Escolha primeiro o PALETE que está montando (botões acima do campo). Nada impresso." }; } }   // v679
   var gtin = srGtinDaLeitura(cod);   // v676: também tira o código de dentro do QR / GS1-128 da caixa
-  if (srLeituraEhQR(cod)) return { ok: false, silencio: true, qr: true, msg: "" };   // v686: Renato -- "prefiro que o sistema desconsidere QR CODE, hoje não trabalhamos com ele": QR é ignorado, sem apito, sem janela, sem contar nada
-
   if (/^\d+$/.test(gtin) && [8, 12, 13, 14].indexOf(gtin.length) >= 0 && !srGtinDigitoOk(gtin)) return { ok: false, msg: "PARE: leitura incompleta do código (" + gtin + "). Estique o plástico/papelão e bipe de novo, com o leitor reto." };   // v677
   var base = srGtinBase(gtin);
   if (!base) return { ok: false, msg: "Não reconheci este código como código de produto (EAN/DUN). Confira se bipou o código certo da caixa." };
@@ -13618,18 +13581,12 @@ function srCaixaBipar(cargaId, codigo, semFrac) {
   c.etqCx[v.c] = Date.now(); c.atualizadoEm = Date.now(); salvar();
   srApito(false);
   srImprimirEtiquetas(c.id, null, null, [v.c]);
-  SRBIP.okEm = Date.now();   // v686
   return { ok: true, msg: "🖨 Etiqueta impressa: PARADA " + dono.seq + " — " + dono.fant + " · VOL " + v.n + "/" + v.tot + " (" + v.d + "). Cole NESTA caixa. Faltam " + (pend.length - 1) + " deste produto." + srPalCompleto(c, v.c) };
 }
 function srCaixaCampo(cargaId) {
   var el = document.getElementById("sr-bip-x"); if (!el) return;
   var r = srCaixaBipar(cargaId, el.value);
   el.value = "";
-  if (r.silencio) {   // v686: QR code ignorado -- só um lembrete discreto no próprio campo, sem redesenhar a tela
-    el.placeholder = "QR code ignorado — bipe as BARRAS"; el.focus();
-    clearTimeout(srCaixaCampo._t); srCaixaCampo._t = setTimeout(function () { var e3 = document.getElementById("sr-bip-x"); if (e3) e3.placeholder = ""; }, 3000);
-    return;
-  }
   state.srMsg = { txt: r.msg, ok: r.ok, tipo: "x" };
   SRBIP.foco = "sr-bip-x";   // v650
   if (!r.ok && /PARE/.test(r.msg)) srAvisoForte(r.msg);   // v650
@@ -13829,81 +13786,6 @@ function srBarcodeSvg(txt, alturaMm, modMm) {
   for (var i = 0; i < bits.length; i++) { if (bits[i] === "1") r += '<rect x="' + x.toFixed(3) + '" y="0" width="' + m + '" height="' + alturaMm + '"/>'; x += m; }
   return '<svg xmlns="http://www.w3.org/2000/svg" width="' + x.toFixed(2) + 'mm" height="' + alturaMm + 'mm" viewBox="0 0 ' + x.toFixed(3) + ' ' + alturaMm + '" shape-rendering="crispEdges">' + r + '</svg>';
 }
-/* v687 (23/10/2026) — Renato: "vamos configurar o tablet; você tem que virar especialista nisso". A tela de
-   impressão do Android + serviço RawBT não entregava o trabalho. Impressora de etiqueta trabalha melhor recebendo a
-   linguagem dela (TSPL): o sistema monta os comandos e manda direto, por um destes caminhos:
-   A) RawBT por intent (intent:base64,...;scheme=rawbt) -- o RawBT só repassa os bytes para a impressora;
-   B) cabo USB pelo Chrome (WebUSB), sem app;  C) Bluetooth BLE pelo Chrome (Web Bluetooth), sem app.
-   Aqui é só o TESTE (1 etiqueta); o caminho que funcionar vira o padrão do aparelho na próxima versão. */
-var SRIMP = { log: [] };
-function srTsplTeste() {
-  var F = srEtiquetaFormato(), W = F.w * 8, H = F.h * 8, g = F.h >= 150 ? 1 : F.h >= 75 ? 0.75 : 0.5;
-  var y = function (mm) { return Math.round(mm * 8 * g); };
-  var L = ["SIZE " + F.w + " mm," + F.h + " mm", "GAP 3 mm,0 mm", "DIRECTION 1", "REFERENCE 0,0", "SPEED 3", "DENSITY 8", "CLS",
-    "BOX 16,16," + (W - 16) + "," + (H - 16) + ",4",
-    'TEXT 40,' + y(6) + ',"3",0,' + (g >= 0.75 ? 3 : 2) + ',' + (g >= 0.75 ? 3 : 2) + ',"TESTE RF"',
-    'TEXT 40,' + y(30) + ',"3",0,2,2,"' + F.w + 'x' + F.h + ' mm - ' + new Date().toLocaleTimeString("pt-BR").slice(0, 5) + '"',
-    'TEXT 60,' + (y(50) + 30) + ',"3",0,3,3,"PALETE 1"',
-    "REVERSE 40," + y(50) + "," + (W - 80) + "," + y(28),
-    'TEXT 40,' + y(84) + ',"3",0,2,2,"PARADA 18 - CLIENTE TESTE"',
-    'BARCODE 80,' + y(102) + ',"128",' + y(26) + ',1,0,3,6,"RFTESTE001"',
-    "PRINT 1,1", ""];
-  return L.join("\r\n");
-}
-function srImpLog(t, ok) { SRIMP.log.unshift((ok === false ? "❌ " : ok ? "✅ " : "… ") + t); var d = document.getElementById("srimp-log"); if (d) d.innerHTML = SRIMP.log.slice(0, 12).map(esc).join("<br>"); }
-function srImpTeste() {
-  var F = srEtiquetaFormato(), old = document.getElementById("srimp"); if (old) old.remove();
-  var d = document.createElement("div"); d.id = "srimp";
-  d.style.cssText = "position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px;";
-  var bt = function (fn, ico, tit, sub) { return '<button onclick="' + fn + '" style="display:block;width:100%;text-align:left;margin:8px 0;padding:12px 14px;border-radius:10px;border:1px solid #7FA7C9;background:#141c24;color:#fff;cursor:pointer;"><b style="font-size:16px;">' + ico + ' ' + tit + '</b><br><span style="font-size:12px;color:#aaa;">' + sub + '</span></button>'; };
-  d.innerHTML = '<div style="background:#0f1419;border:2px solid #D4A017;border-radius:14px;max-width:560px;width:100%;padding:18px;color:#cfd8dc;font-family:Arial,sans-serif;max-height:92vh;overflow:auto;">'
-    + '<div style="display:flex;align-items:center;"><b style="font-size:18px;color:#D4A017;">🖨 Testar impressora deste aparelho</b><button onclick="document.getElementById(\'srimp\').remove()" style="margin-left:auto;font-size:18px;background:none;border:none;color:#aaa;cursor:pointer;">✖</button></div>'
-    + '<div style="font-size:13px;margin:8px 0 4px;">Sai <b>1 etiqueta de teste</b> no tamanho <b>' + F.w + '×' + F.h + ' mm</b> (o escolhido em "Etiqueta"). Confira se é o rolo que está na impressora. Teste um caminho de cada vez e veja qual imprime:</div>'
-    + bt("srImpRawbt()", "A", "Pelo RawBT (direto)", "Impressora ligada no RawBT (cabo ou Bluetooth). Não abre a tela de impressão.")
-    + bt("srImpUsb()", "B", "Pelo cabo USB (sem app)", "Impressora no cabo USB do tablet. O Chrome pede para escolher a impressora — toque nela e em Permitir.")
-    + bt("srImpBle()", "C", "Pelo Bluetooth (sem app, sem fio)", "Impressora ligada e SEM cabo. O Chrome lista os aparelhos — escolha a JK-402A.")
-    + '<div style="font-size:12px;color:#aaa;margin-top:10px;">Resultado:</div><div id="srimp-log" style="font-size:13px;min-height:40px;background:#000;border-radius:8px;padding:8px;margin-top:4px;"></div></div>';
-  document.body.appendChild(d); srImpLog("pronto para testar");
-}
-function srImpOk(caminho) { try { localStorage.setItem("rf-sr-imp", caminho); } catch (e) {} }
-function srImpRawbt() {
-  try {
-    var b64 = btoa(srTsplTeste());
-    srImpLog("A: enviando para o RawBT… (se o RawBT abrir, toque em imprimir)");
-    srImpOk("rawbt");
-    window.location.href = "intent:base64," + b64 + "#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;";
-  } catch (e) { srImpLog("A: " + e.message, false); }
-}
-async function srImpUsb() {
-  if (!navigator.usb) { srImpLog("B: este navegador não tem acesso ao USB (use o Chrome do tablet)", false); return; }
-  try {
-    var dev = await navigator.usb.requestDevice({ filters: [] });
-    srImpLog("B: conectando em " + (dev.productName || "dispositivo USB") + "…");
-    await dev.open(); if (dev.configuration === null) await dev.selectConfiguration(1);
-    var alvo = null;
-    dev.configuration.interfaces.forEach(function (it) { if (alvo) return; it.alternates.forEach(function (al) { if (alvo) return; al.endpoints.forEach(function (ep) { if (!alvo && ep.direction === "out" && ep.type === "bulk") alvo = { i: it.interfaceNumber, ep: ep.endpointNumber }; }); }); });
-    if (!alvo) { srImpLog("B: não achei a saída de dados da impressora", false); return; }
-    await dev.claimInterface(alvo.i);
-    var r = await dev.transferOut(alvo.ep, new TextEncoder().encode(srTsplTeste()));
-    srImpLog("B: enviado (" + r.bytesWritten + " bytes) — saiu a etiqueta?", true); srImpOk("usb");
-    try { await dev.releaseInterface(alvo.i); await dev.close(); } catch (e) {}
-  } catch (e) { srImpLog("B: " + (e && e.message || e) + (/claim|access/i.test(e && e.message || "") ? " — feche o RawBT/desmarque 'sempre abrir RawBT' e tente de novo" : ""), false); }
-}
-var SR_BLE_SERV = [0x18f0, 0xff00, 0xfee7, 0xffe0, 0xae30, 0xae00, 0xff80, "49535343-fe7d-4ae5-8fa9-9fafd205e455", "e7810a71-73ae-499d-8c15-faa9aef0c3f2", "0000fff0-0000-1000-8000-00805f9b34fb", "0000ff00-0000-1000-8000-00805f9b34fb"];
-async function srImpBle() {
-  if (!navigator.bluetooth) { srImpLog("C: este navegador não tem Bluetooth (use o Chrome do tablet, com Bluetooth e Localização ligados)", false); return; }
-  try {
-    var dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SR_BLE_SERV });
-    srImpLog("C: conectando em " + (dev.name || "aparelho") + "…");
-    var gatt = await dev.gatt.connect(), servs = await gatt.getPrimaryServices(), car = null;
-    for (var i = 0; i < servs.length && !car; i++) { var cs = await servs[i].getCharacteristics(); for (var j = 0; j < cs.length; j++) { if (cs[j].properties.writeWithoutResponse || cs[j].properties.write) { car = cs[j]; break; } } }
-    if (!car) { srImpLog("C: a impressora conectou, mas não achei o canal de impressão (" + servs.length + " serviços)", false); return; }
-    var dados = new TextEncoder().encode(srTsplTeste()), passo = 180;
-    for (var k = 0; k < dados.length; k += passo) { var pd = dados.slice(k, k + passo); if (car.properties.writeWithoutResponse && car.writeValueWithoutResponse) await car.writeValueWithoutResponse(pd); else await car.writeValue(pd); await new Promise(function (r) { setTimeout(r, 20); }); }
-    srImpLog("C: enviado (" + dados.length + " bytes) pelo canal " + car.uuid.slice(4, 8) + " — saiu a etiqueta?", true); srImpOk("ble");
-    setTimeout(function () { try { gatt.disconnect(); } catch (e) {} }, 1500);
-  } catch (e) { srImpLog("C: " + (e && e.message || e), false); }
-}
 function srEtiquetaFormato() {
   var f = (state.config && state.config.srEtiqueta) || "100x50";
   return f === "100x150" ? { w: 100, h: 150 } : f === "100x75" ? { w: 100, h: 75 } : { w: 100, h: 50 };
@@ -13916,6 +13798,186 @@ function srSetEtiquetaFormato(v) { if (!state.config) state.config = {}; state.c
    do fracionado leva a faixa "FRACIONADO" em preto pra se destacar mesmo que
    saia no rolo errado. grupo: "cx" | "fr" | vazio (tudo). */
 function srEhFracionado(v) { return v.t === "MIU" || v.t === "SOL" || v.t === "FR"; }
+/* v686 (23/10/2026) -- IMPRESSÃO DIRETA PELO TABLET (Bluetooth), sem driver. Renato: "não vamos usar o notebook e sim o
+   tablet; configurar o tamanho é simples, deixe as configurações dentro do nosso sistema". O sistema conversa com a
+   impressora térmica (JK-402A, linguagem TSPL) pelo Bluetooth do Chrome: a cada etiqueta manda o tamanho (SIZE), o
+   espaço entre etiquetas (GAP), densidade e velocidade -- a impressora não precisa ter aprendido nada antes. A etiqueta
+   vai em texto/código de barras da própria impressora (poucos bytes = sai na hora, sem travar o Bluetooth).
+   Configuração por aparelho (cada tablet guarda a sua). */
+var SRBT = { dev: null, ch: null, nome: "", fila: Promise.resolve(), auto: false, chunk: 180 };
+function srImpCfg() {
+  var d = { modo: "nav", w: 100, h: 150, gap: 3, dens: 8, vel: 4, dir: 1, dx: 0, dy: 0 };
+  try { var s = JSON.parse(localStorage.getItem("rf-sr-imp") || "{}"); Object.keys(s).forEach(function (k) { d[k] = s[k]; }); } catch (e) {}
+  return d;
+}
+function srImpSet(k, v) {
+  var c = srImpCfg(); c[k] = (k === "modo") ? v : Number(String(v).replace(",", ".")) || 0;
+  try { localStorage.setItem("rf-sr-imp", JSON.stringify(c)); } catch (e) {}
+  render();
+}
+var SRBT_SERV = ["000018f0-0000-1000-8000-00805f9b34fb", "0000ff00-0000-1000-8000-00805f9b34fb", "0000ffe0-0000-1000-8000-00805f9b34fb",
+  "0000fee7-0000-1000-8000-00805f9b34fb", "0000ae30-0000-1000-8000-00805f9b34fb", "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2", "0000ffb0-0000-1000-8000-00805f9b34fb", "0000ff80-0000-1000-8000-00805f9b34fb"];
+function srBtMsg(txt, ok) { state.srMsg = { txt: txt, ok: ok !== false, tipo: "x" }; try { render(); } catch (e) {} }
+function srBtAchar(server) {
+  return server.getPrimaryServices().then(function (servs) {
+    var p = Promise.resolve(null);
+    servs.forEach(function (s) {
+      p = p.then(function (achou) {
+        if (achou) return achou;
+        return s.getCharacteristics().then(function (chs) {
+          return chs.find(function (ch) { return ch.properties.writeWithoutResponse; }) || chs.find(function (ch) { return ch.properties.write; }) || null;
+        }).catch(function () { return null; });
+      });
+    });
+    return p;
+  });
+}
+function srBtLigar(dev) {
+  SRBT.dev = dev; SRBT.nome = dev.name || "impressora";
+  try { dev.addEventListener("gattserverdisconnected", function () { SRBT.ch = null; try { render(); } catch (e) {} }); } catch (e) {}
+  return dev.gatt.connect().then(srBtAchar).then(function (ch) {
+    if (!ch) throw new Error("a impressora conectou, mas não aceitou envio de dados por este canal");
+    SRBT.ch = ch; try { localStorage.setItem("rf-sr-imp-nome", SRBT.nome); } catch (e) {}
+    return ch;
+  });
+}
+function srBtConectar() {
+  if (!navigator.bluetooth) { alert("Este navegador não tem Bluetooth para sites.\n\nUse o Google Chrome no tablet (Android), com o Bluetooth e a Localização ligados."); return; }
+  navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SRBT_SERV })
+    .then(srBtLigar)
+    .then(function () { srBtMsg("🖨 Impressora conectada: " + SRBT.nome + ". Pode bipar — a etiqueta sai direto."); srFocoBip(); })
+    .catch(function (e) { if (String(e && e.name) === "NotFoundError") return; srBtMsg("⚠ Não conectou na impressora: " + (e && e.message || e) + ". Desligue e ligue a impressora e tente de novo.", false); });
+}
+function srBtAuto() {   // reconecta sozinho na impressora já autorizada (quando o Chrome permite)
+  if (SRBT.auto || SRBT.ch || !navigator.bluetooth || !navigator.bluetooth.getDevices) return; SRBT.auto = true;
+  navigator.bluetooth.getDevices().then(function (ds) {
+    var nome = ""; try { nome = localStorage.getItem("rf-sr-imp-nome") || ""; } catch (e) {}
+    var d = ds.find(function (x) { return nome && x.name === nome; }) || ds[0]; if (!d) return;
+    return srBtLigar(d).then(function () { try { render(); } catch (e) {} });
+  }).catch(function () {});
+}
+function srBtEnviar(txt) {
+  var bytes = new TextEncoder().encode(txt);
+  SRBT.fila = SRBT.fila.then(function () {
+    var go = function () {
+      var ch = SRBT.ch, i = 0, n = SRBT.chunk;
+      var passo = function () {
+        if (i >= bytes.length) return Promise.resolve();
+        var parte = bytes.slice(i, i + n);
+        var w = ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse ? ch.writeValueWithoutResponse(parte) : (ch.writeValueWithResponse ? ch.writeValueWithResponse(parte) : ch.writeValue(parte));
+        return w.then(function () { i += n; return passo(); }, function (e) {
+          if (n > 20) { n = 20; SRBT.chunk = 20; return passo(); }   // pacote grande demais para este Bluetooth: manda em pedaços de 20
+          throw e;
+        });
+      };
+      return passo();
+    };
+    if (SRBT.ch) return go();
+    if (SRBT.dev) return srBtLigar(SRBT.dev).then(go);
+    return Promise.reject(new Error("impressora não conectada"));
+  });
+  return SRBT.fila;
+}
+function srTsplTxt(s) {
+  return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/º/g, "o").replace(/ª/g, "a").replace(/·/g, "-").replace(/[—–]/g, "-").replace(/"/g, "'").replace(/[^\x20-\x7E]/g, "");
+}
+function srTsplQuebra(s, max, linhas) {
+  var pal = srTsplTxt(s).split(/\s+/), out = [], at = "";
+  pal.forEach(function (p) { if (!p) return; if ((at + " " + p).trim().length > max) { if (at) out.push(at); at = p.slice(0, max); } else at = (at + " " + p).trim(); });
+  if (at) out.push(at);
+  return out.slice(0, linhas);
+}
+function srTsplCab() {
+  var c = srImpCfg();
+  return "SIZE " + c.w + " mm," + c.h + " mm\r\nGAP " + c.gap + " mm,0 mm\r\nDIRECTION " + (c.dir ? 1 : 0) + ",0\r\nREFERENCE " + Math.max(0, Math.round(c.dx * 8)) + ",0\r\nSHIFT " + Math.round(c.dy * 8)
+    + "\r\nDENSITY " + Math.max(0, Math.min(15, Math.round(c.dens))) + "\r\nSPEED " + Math.max(1, Math.min(6, Math.round(c.vel))) + "\r\nSET TEAR ON\r\nCLS\r\n";
+}
+function srTsplT(x, y, f, mx, my, s) { return "TEXT " + Math.round(x) + "," + Math.round(y) + ",\"" + f + "\",0," + mx + "," + my + ",\"" + srTsplTxt(s) + "\"\r\n"; }
+function srTsplBarra(x, y, alt, cod, W) {
+  var dig = /^\d+$/.test(cod) && cod.length % 2 === 0, mods = (dig ? cod.length / 2 : cod.length) * 11 + 35, nar = mods * 3 <= W - 60 ? 3 : 2;
+  return "BARCODE " + Math.max(20, Math.round((W - mods * nar) / 2)) + "," + y + ",\"128\"," + alt + ",0,0," + nar + "," + nar + ",\"" + cod + "\"\r\n";
+}
+function srTsplEtiqueta(c, x, ctx) {
+  var C = srImpCfg(), W = C.w * 8, H = C.h * 8, v = x.v, cl = x.cl, t = srTsplCab();
+  var seq = String(cl.seq), bz = ctx.blocos[cl.k], ps = bz && ctx.mont && bz.slots && bz.slots.length ? srPaleteDoVolume(bz, v) : null;
+  var pp = ps && ctx.PLe ? ctx.PLe.porK[ps.fila + "-" + ps.lado] : null, R = W - 30;
+  if (H < 1000) {   // etiqueta pequena (100x50 / 100x75): o essencial
+    t += srTsplT(30, 20, "3", 2, 2, "P" + seq + " " + String(cl.fant || cl.nome || "").slice(0, 16));
+    t += srTsplT(30, 80, "3", 1, 1, (pp ? "PALETE " + pp.ordem + "o - " : "") + "VOL " + v.n + "/" + v.tot + (v.t === "FR" ? " - FRACIONADO " + (v.q || 0) + " UN" : ""));
+    t += srTsplT(30, 110, "2", 1, 1, String(v.d || "").slice(0, 60));
+    t += srTsplBarra(0, 140, Math.max(60, H - 220), v.c, W);
+    t += srTsplT(30, H - 60, "3", 1, 1, v.c + "  " + String(cl.cidade || ""));
+    return t + "PRINT 1,1\r\n";
+  }
+  t += srTsplT(30, 40, "4", 1, 2, "RF LOGISTICA");
+  t += srTsplT(30, 115, "3", 1, 1, "Grupo Sao Roque");
+  t += srTsplT(30, 150, "2", 1, 1, "Carga " + srNomeCarga(c) + (c.placa ? " - " + c.placa : ""));
+  t += "BOX " + (R - 230) + ",20," + R + ",250,6\r\n" + srTsplT(R - 170, 34, "3", 1, 1, "PARADA");
+  t += srTsplT(R - 115 - seq.length * 32, 70, "5", 2, 2, seq) + srTsplT(R - 160, 205, "3", 1, 1, "de " + ctx.n);
+  var nomeL = srTsplQuebra(cl.fant || cl.nome, 22, 2); nomeL.forEach(function (l, i) { t += srTsplT(30, 270 + i * 52, "3", 2, 2, l); });
+  var y = 270 + nomeL.length * 52 + 8;
+  t += srTsplT(30, y, "4", 1, 1, String(cl.cidade || "") + (cl.bairro ? " - " + cl.bairro : "")); y += 40;
+  if (cl.end) { t += srTsplT(30, y, "2", 1, 1, String(cl.end).slice(0, 60)); } y += 34;
+  if (pp || ps || bz) {
+    t += "BOX 20," + y + "," + R + "," + (y + 160) + ",4\r\n";
+    if (pp) {
+      t += srTsplT(55, y + 12, "3", 1, 1, "PALETE") + srTsplT(pp.ordem > 9 ? 40 : 70, y + 44, "5", 2, 2, pp.ordem + "o") + "REVERSE 28," + (y + 8) + ",230,144\r\n";
+      t += srTsplT(285, y + 25, "4", 1, 1, "VAGA F" + ps.fila + " " + srLadoTxt(ctx.mont, ps).toUpperCase());
+      t += srTsplT(285, y + 90, "3", 1, 1, "BAU " + bz.zona + " - carregar " + bz.passo + "o");
+    } else if (ps) {
+      t += srTsplT(40, y + 25, "4", 1, 1, "VAGA F" + ps.fila + " " + srLadoTxt(ctx.mont, ps).toUpperCase() + " - PALETE " + ps.n + "/" + bz.pals);
+      t += srTsplT(40, y + 90, "3", 1, 1, "BAU " + bz.zona + " - carregar " + bz.passo + "o");
+    } else {
+      t += srTsplT(40, y + 25, "4", 1, 1, "BAU " + bz.zona + " - carregar " + bz.passo + "o");
+    }
+    y += 175;
+  }
+  t += srTsplT(30, y, "5", 2, 2, "VOL " + v.n + "/" + v.tot);
+  t += "BOX " + (R - 175) + "," + (y + 25) + "," + R + "," + (y + 75) + ",3\r\n" + srTsplT(R - 160, y + 38, "3", 1, 1, v.t === "CX" ? " CAIXA" : "FRACION.");
+  y += 108;
+  if (v.t === "FR") { t += srTsplT(60, y + 12, "5", 1, 1, "FRACIONADO - " + (v.q || 0) + " UN") + "REVERSE 20," + y + "," + (R - 20) + ",72\r\n"; y += 84; }
+  srTsplQuebra(v.d, 45, 2).forEach(function (l, i) { t += srTsplT(30, y + i * 30, "3", 1, 1, l); }); y += 68;
+  var alt = Math.max(90, Math.min(170, H - 110 - y));
+  t += srTsplBarra(0, y, alt, v.c, W); y += alt + 12;
+  t += srTsplT(30, y, "4", 1, 1, v.c) + srTsplT(30, y + 40, "2", 1, 1, "NF " + (cl.nfs || []).slice(0, 3).join("/"));
+  return t + "PRINT 1,1\r\n";
+}
+function srBtImprimir(txt, n) {
+  if (!navigator.bluetooth) { srBtMsg("⚠ Etiqueta NÃO saiu: este navegador não tem Bluetooth. Use o Chrome no tablet.", false); return; }
+  if (!SRBT.ch && !SRBT.dev) { try { srApito(true); } catch (e) {} srBtMsg("⚠ Etiqueta NÃO saiu: a impressora não está conectada. Toque em \"🔵 Conectar impressora\" e depois em \"não saiu — imprimir de novo\".", false); return; }
+  srBtEnviar(txt).then(function () { srFocoBip(); }).catch(function (e) {
+    SRBT.ch = null; try { srApito(true); } catch (e2) {}
+    srBtMsg("⚠ Etiqueta NÃO saiu (" + (e && e.message || e) + "). Toque em \"🔵 Conectar impressora\" e use \"não saiu — imprimir de novo\".", false);
+  });
+}
+function srBtCalibrar() {
+  if (!SRBT.ch && !SRBT.dev) { alert("Conecte a impressora primeiro."); return; }
+  srBtEnviar(srTsplCab().replace("CLS\r\n", "") + "GAPDETECT\r\nHOME\r\n").then(function () { srBtMsg("✓ Calibração enviada: a impressora puxa algumas etiquetas e para no começo da próxima."); })
+    .catch(function (e) { srBtMsg("⚠ Não deu para calibrar: " + (e && e.message || e), false); });
+}
+function srBtTeste() {
+  if (!SRBT.ch && !SRBT.dev) { alert("Conecte a impressora primeiro."); return; }
+  var C = srImpCfg(), W = C.w * 8, H = C.h * 8;
+  var t = srTsplCab() + "BOX 10,10," + (W - 10) + "," + (H - 10) + ",4\r\n" + srTsplT(40, 40, "4", 1, 2, "TESTE RF") + srTsplT(40, 130, "3", 1, 1, C.w + "x" + C.h + " mm - gap " + C.gap + " mm")
+    + srTsplT(40, 200, "5", 2, 2, "PALETE 1") + srTsplT(40, 330, "3", 1, 1, "Os 4 cantos da moldura tem que aparecer") + srTsplBarra(0, H - 260, 150, "123456789012", W) + "PRINT 1,1\r\n";
+  srBtEnviar(t).then(function () { srBtMsg("🖨 Teste enviado. A moldura tem que caber inteira numa etiqueta só."); }).catch(function (e) { srBtMsg("⚠ Teste não saiu: " + (e && e.message || e), false); });
+}
+function srImpPainelHTML() {
+  var C = srImpCfg(), bt = C.modo === "bt"; if (bt) srBtAuto();
+  var aberto = state._srImpAj, sel = function (v, r) { return '<option value="' + v + '"' + (String(C.modo) === v ? " selected" : "") + '>' + r + '</option>'; };
+  var num = function (k, rot, w) { return '<label style="font-size:11px;color:#bbb;">' + rot + '<br><input value="' + String(C[k]).replace(".", ",") + '" inputmode="decimal" onchange="srImpSet(\'' + k + '\',this.value)" style="width:' + (w || 58) + 'px;font-size:13px;"></label>'; };
+  var h = '<div style="margin:0 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;">🖨 <select onchange="srImpSet(\'modo\',this.value)" style="font-size:12px;width:auto;">' + sel("bt", "Bluetooth direto (tablet)") + sel("nav", "Driver do computador") + '</select>';
+  if (bt) h += SRBT.ch ? '<span style="color:#7fd6a0;font-weight:800;">● conectada: ' + esc(SRBT.nome) + '</span>' : '<button onclick="srBtConectar()" style="font-size:13px;padding:6px 12px;background:#1565C0;color:#fff;border:0;border-radius:7px;font-weight:800;cursor:pointer;">🔵 Conectar impressora</button>';
+  h += '<a href="javascript:void(0)" onclick="state._srImpAj=!state._srImpAj;render()" style="color:#aaa;">⚙ ajustes da etiqueta</a></div>';
+  if (aberto) h += '<div style="background:#14181c;border:1px solid #37474F;border-radius:8px;padding:8px 10px;margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">'
+    + num("w", "Largura (mm)") + num("h", "Altura (mm)") + num("gap", "Espaço entre (mm)") + num("dens", "Escuro 0-15") + num("vel", "Velocidade 1-6")
+    + '<label style="font-size:11px;color:#bbb;">Posição<br><select onchange="srImpSet(\'dir\',this.value)" style="font-size:13px;width:auto;"><option value="1"' + (C.dir ? " selected" : "") + '>normal</option><option value="0"' + (!C.dir ? " selected" : "") + '>de cabeça para baixo</option></select></label>'
+    + num("dx", "Mover → (mm)", 50) + num("dy", "Mover ↓ (mm)", 50)
+    + (bt ? '<button onclick="srBtTeste()" style="font-size:12px;">🧪 imprimir teste</button><button onclick="srBtCalibrar()" style="font-size:12px;">📏 calibrar etiqueta</button>' : '')
+    + '<div style="flex-basis:100%;font-size:11px;color:#888;">Fica guardado neste aparelho. Etiqueta 10x15: 100 × 150 mm, espaço 3 mm. Saiu deslocada para baixo? use "Mover ↓" negativo (ex.: -5). Clara demais? aumente o Escuro.</div></div>';
+  return h;
+}
 function srImprimirEtiquetas(cargaId, k, grupo, soCods) {   // v649: soCods = imprimir só estes volumes, sem perguntar (etiquetagem pela caixa)
   var c = srCarga(cargaId); if (!c) return;
   if (!c.etqImpEm) { c.etqImpEm = Date.now(); try { salvar(); } catch (e) {} }   // v627: passo 2 concluído, segue para a etiquetagem
@@ -13938,6 +14000,11 @@ function srImprimirEtiquetas(cargaId, k, grupo, soCods) {   // v649: soCods = im
   var F = srEtiquetaFormato(), alto = F.h >= 75;
   var blocos = {}, mont = null; try { mont = srMontagem(c); mont.blocos.forEach(function (b) { (b.membros || [b.k]).forEach(function (k) { if (!blocos[k]) blocos[k] = b; }); }); } catch (e) {}   // v586; v587: palete
   c.etqImpressas = Date.now(); salvar();
+  if (srImpCfg().modo === "bt") {   // v686: direto pelo Bluetooth do tablet (TSPL), sem janela de impressão
+    var PLb = null; try { PLb = srPaletesDaCarga(c); } catch (e) {}
+    srBtImprimir(lista.map(function (x) { return srTsplEtiqueta(c, x, { n: nParadas, blocos: blocos, mont: mont, PLe: PLb }); }).join(""), lista.length);
+    return;
+  }
   /* v676 (22/10/2026) — Renato: "toda vez que bipo ela vai para a impressora e eu tenho que voltar para o sistema".
      Etiqueta da bipagem pela caixa agora imprime por um quadro escondido DENTRO da própria tela: não abre aba,
      e depois da impressão o cursor volta sozinho para o campo de bipar. */
@@ -15040,7 +15107,7 @@ function srDocaHTML(c, msg) {
     + '<div style="border:2px solid #7E57C2;background:#1a1426;border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
     + '<div style="font-weight:800;color:#B39DDB;margin-bottom:4px;">1º · Bipe a CAIXA (código do fabricante no papelão) — sai a etiqueta dela</div>'
     + '<div style="font-size:11px;color:#bbb;margin-bottom:6px;">O sistema imprime a próxima etiqueta daquele produto, na ordem do carregamento. Produto que não é desta carga ou que já foi todo etiquetado: apita e não imprime.</div>'
-    + srPalSelHTML(c) + srFracPainelHTML(c)
+    + srImpPainelHTML() + srPalSelHTML(c) + srFracPainelHTML(c)
     + '<input id="sr-bip-x" placeholder="bipe o código da caixa" onkeydown="if(event.key===\'Enter\')srCaixaCampo(\'' + c.id + '\')" style="font-size:16px;padding:8px;width:230px;"> '
     + '<button onclick="srCaixaCampo(\'' + c.id + '\')">🖨 imprimir etiqueta</button>' + msg("x")
     + '<div style="font-size:11px;color:#888;margin-top:6px;">Etiquetas impressas pela caixa: ' + Object.keys(c.etqCx || {}).length + '</div>' + srUltImpHTML(c) + '</div>'
@@ -15188,8 +15255,7 @@ function srPostoHTML(posto) {
   var b = function (v, rot) { return '<button onclick="srPostoSet(\'' + v + '\')" style="font-size:12px;' + (posto === v ? 'background:' + GOLD + ';color:#000;font-weight:800;' : '') + '">' + rot + '</button>'; };
   var m = state.srMsg;
   return '<div style="margin:0 14px 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px;color:#999;">Este aparelho mostra: '
-    + b("tudo", "tudo (gestor)") + b("doca", "só doca · etiquetagem") + b("bau", "só baú · carregamento")
-    + '<button onclick="srImpTeste()" style="font-size:12px;margin-left:8px;border:1px solid #7FA7C9;color:#cfe3f5;background:none;">🖨 Testar impressora</button></div>'
+    + b("tudo", "tudo (gestor)") + b("doca", "só doca · etiquetagem") + b("bau", "só baú · carregamento") + '</div>'
     + (m && m.tipo === "etapa" ? '<div style="margin:0 14px 10px;font-weight:800;color:#E74C3C;">' + esc(m.txt) + '</div>' : '');
 }
 function srCardHTML(c) {
@@ -42210,7 +42276,7 @@ ${linhasTetoManut || "(nenhum veículo com placa cadastrada)"}`;
       const t = srTotais(c), m = srMontagem(c);
       return `- Carga ${srNomeCarga(c)}${c.parte ? " (parte " + c.parte + " da divisão, " + (c.bau || "") + ")" : ""}${c.exemplo ? " (EXEMPLO de demonstração)" : ""} (${c.data}, placa ${c.placa || "não definida"}, motorista ${c.motorista || "não definido"}): ${t.clientes} clientes, ${t.cidades} cidades, ${t.nfs} NF, ${srFmt(t.peso, 1)} kg, ${t.vols} volumes. Etiquetados (conferidos na doca) ${srProgResumo(c, "t").ok}/${t.vols}, carregados ${t.carregados}/${t.vols}, entregues ${t.entregues}/${t.vols}. Rota: ${c.viagemId ? "criada" : "não criada"}. Baú ${m.bau}, carga ${m.modo === "palete" ? "paletizada: " + m.palTot + " paletes em " + m.vagas + " vagas" : "batida: usa " + srFmtM(m.usado) + " de " + srFmtM(m.B.c) + " m"} (${Math.round(m.ocupVol * 100)}%), peso ${Math.round(m.ocupKg * 100)}% da capacidade${m.naoCabe ? " — NÃO CABE" : ""}. Rota: ordem atual ${srFmt(srImpactoRota(c).atual.km, 0)} km x sugerida ${srFmt(srImpactoRota(c).sug.km, 0)} km (diferença ${srFmt(srImpactoRota(c).difKm, 0)} km, ${srFmtR(srImpactoRota(c).difR)}). Ordem de carregamento (fundo→porta): ` + m.blocos.map((b) => `${b.passo}º ${b.rot} ${b.fant} (${b.cidade}, ${b.zona}, ${b.slots && b.slots.length ? b.pals + " palete(s) nas vagas " + b.slots.map((x) => "F" + x.fila + " " + srLadoTxt(m, x)).join("/") : srFmtM(b.ini) + "–" + srFmtM(b.fim) + " m"})`).join("; ");
     }).join("\n");
-    return regra + "\nTESTE DE IMPRESSORA (v687, 23/10/2026): na tela da Sao Roque, botao 'Testar impressora' (ao lado de 'Este aparelho mostra') imprime 1 etiqueta de teste em TSPL por 3 caminhos: A) pelo RawBT direto, B) pelo cabo USB sem app, C) pelo Bluetooth sem app. Serve para descobrir qual funciona no tablet.\nQR CODE NA CAIXA (v686, 23/10/2026): se o leitor pegar o QR ao lado das barras (ex.: Dove Deo Aer 12x150ml), o sistema nao abre mais a janela de escolher produto: tenta achar o codigo do produto dentro do QR; Decisao do Renato: o sistema DESCONSIDERA o QR code (a Sao Roque nao trabalha com ele) -- leitura de QR e ignorada sem apito, sem janela e sem contar; o campo mostra 'QR code ignorado — bipe as BARRAS'. Nao precisa mais cobrir o QR.\nETIQUETA POR PALETE E CANCELAR LEITURA (v679, 23/10/2026): na etiquetagem pela caixa o conferente escolhe o palete que esta montando (o NOSSO palete = vaga da montagem do bau, F1 esq., F1 dir. etc.; um palete pode ter varios clientes; a ordem e a de carregamento, o 1o vai no fundo). Escolher o palete e obrigatorio antes de bipar; quando o palete fecha aparece uma faixa verde \"PALETE 2o COMPLETO\" com o proximo. O bip so imprime caixa daquele palete; caixa de outro palete apita e diz para qual palete vai; a tela lista o que falta etiquetar no palete. Os paletes da Sao Roque sao so apoio (carga batida) -- se a mercadoria nao esta no palete deles, procura em outro. Etiqueta impressa que nao vai ser usada: botao \"cancelar\" (ou \"cancelar uma etiqueta\" bipando a etiqueta RF) -- sai da contagem e o volume volta pendente. FRACIONADO (v679): o espelho (DANFE) traz tudo em UN, mas a QUANTIDADE de volumes da nota segue a regra da Sao Roque (conferida em 55 de 55 notas): caixas fechadas = quantidade / Unid. por Caixa do cadastro, e cada produto que sobra vira 1 volume FRACIONADO. A importacao monta os volumes assim (precisa do cadastro atualizado com a planilha DUN14, que tem a Unid. por Caixa). Na doca: ao bipar a UNIDADE de um produto fracionado o sistema diz \"bipe 3 unidades\"; a cada bip conta 1; ao completar sai a etiqueta com a faixa preta FRACIONADO · 3 UN, parada e palete; coloca numa caixa. Codigo de caixa (DUN-14) nunca conta como unidade; botoes \"cancelar fracionado\", \"era caixa fechada\" e \"veio fechado — conta tudo de uma vez\" (display fechado, ex.: Cookies Renata 12 dentro da master de 96): fecha num toque e o sistema guarda que aquele codigo = N unidades; na proxima vez 1 bip do display conta as N. Sem rolo amarelo (so uma impressora).\nETIQUETA QUE NAO SAIU (v678, 22/10/2026): o navegador nao sabe se a impressora travou; abaixo do campo de bipar ficam as 4 ultimas impressas com o botao \"nao saiu - imprimir de novo\", que reimprime exatamente aquele volume. Nao usar o OK da pergunta \"reimprimir a proxima\" para isso (ela pega outro volume). Impressora JK-402A pelo Bluetooth (COM4) trava em etiqueta grande (~576 KB): preferir o cabo USB (porta USB001).\nETIQUETAGEM CONTA PELA IMPRESSAO (v677, 22/10/2026): etiqueta impressa pelo bip da caixa ja conta como etiquetada no contador da doca, na doca 3D e no portal do gestor; o titulo mostra quantas foram impressas pela caixa e quantas foram coladas e confirmadas (passo 2, opcional). Codigo com digito verificador errado = leitura incompleta: apita e pede para bipar de novo. Itens que a importacao deixou com 0 volume (ex.: maionese Quero da Rosilene em 22/10) nao aparecem na lista -- pedir ao Claude para criar o volume.\nBIPAGEM PELA CAIXA NA DOCA (v676, 22/10/2026): a etiqueta sai sem abrir aba nova -- imprime por dentro da propria tela e o cursor volta sozinho ao campo de bipar. Para nao aparecer nem a janela de impressao, abrir o Chrome pelo atalho com --kiosk-printing (imprime direto na impressora padrao, a JK-402A). Impressora JK-402A no Windows: papel Custom 100x150 mm no driver (Advanced: Speed 76, Density 8, Gap 3 mm, AfterPrint Tear Off) e no Chrome Tamanho do papel = Custom 100x150 -- o 4x6 (152,4 mm) puxa uma etiqueta em branco a mais. O bip tambem aceita o QR code GS1 da caixa (tira o GTIN de id.gs1.org/01/..., (01)... ou 01...). Cadastro de produtos da Sao Roque importado em 22/10: 54.168 produtos com codigo, 28.514 com DUN-14 da caixa. Produto que nao esta na carga ABERTA apita e nao imprime -- conferir sempre se a carga aberta e a do dia.\nETIQUETA 10x15 (v652, 19/10/2026): pedido dos motoristas (aprovação unânime) -- o número da PARADA ficou bem maior no topo da etiqueta, porque é por ele que se acha a mercadoria no baú; o código de barras ficou menor (cerca de 56 mm de largura), para o leitor ler também de perto. Dica para o leitor Elgin: bipar a uns 40-50 cm, com a luz vermelha cobrindo o código inteiro." + "\nBIPAGEM SEM TRAVAR (v650, 19/10/2026): o campo de bipar mantém o cursor mesmo quando a tela se atualiza sozinha; se o cursor sair do campo, o sistema capta a leitura do leitor na página e entrega no último campo de bipar usado (não precisa mais clicar em bipar); o aviso de PARE é uma faixa vermelha no topo com apito (antes era uma janela que prendia o leitor); o mesmo código lido duas vezes em menos de 0,5 s é ignorado (leitura dupla do leitor); bipar de novo uma caixa já bipada mostra na hora uma faixa amarela (já foi bipado, bipe a próxima caixa); se o cursor sair do campo, ele volta sozinho em menos de meio segundo (v651). Se o leitor apitar e nada aparecer, confira se ele está conectado (Bluetooth) ao aparelho." + "\nETIQUETAGEM PELA CAIXA (v649, 19/10/2026): na etapa 1 (doca) o conferente primeiro bipa o CÓDIGO DO FABRICANTE da caixa (EAN-13/DUN-14, impresso no papelão) no campo 1º; o sistema imprime na hora a PRÓXIMA etiqueta pendente daquele produto, na ordem do carregamento (última parada primeiro) — assim nunca se cola etiqueta de um produto em outro. Produto fora da carga ou já todo etiquetado: apita, vibra e não imprime (caixa sobrando). Código nunca visto: o sistema pergunta uma vez qual é o produto e grava para as próximas (não depende do XML). Depois de colar, o conferente bipa a etiqueta RF no campo 2º para confirmar colada. Leitor usado no piloto: Elgin BR240-BT (Bluetooth no notebook, funciona como teclado e dá Enter sozinho)." + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nV620 (12/10/2026) -- (1) BIPS DA SÃO ROQUE EM TABELA PRÓPRIA (sr_bips) e BIPAGEM SEM INTERNET: cada bip vale na hora no aparelho e entra numa fila guardada nele; se a internet cair na doca, os bips ficam guardados (selo ⏳ N bips guardados no aparelho) e sobem sozinhos quando volta. (2) NÃO ENTREGUEI: o motorista escolhe o motivo (cliente fechado/ausente, recusou, avaria, entrega parcial, endereço não encontrado, outro), tira a FOTO obrigatória e o celular grava o GPS; a rota segue para a próxima parada, mas os volumes continuam no baú e voltam para o CD (na entrega parcial conta como entregue com ressalva); o gestor vê a ocorrência em vermelho, com a foto, e o caminhão fica em Atenção. (3) RELATÓRIO DA CARGA (botão 📊 na carga e na tela do caminhão do portal, com PDF): etiquetagem e carregamento com início, fim, duração, tempo bipando sem pausas, ritmo em volumes por minuto, pausas acima de 5 min e quem bipou; da 1ª etiqueta ao caminhão carregado; saída, cada entrega com horário e tempo desde a anterior, prazo x previsão; e a média das últimas cargas reais (vai calibrar os 20 min por parada). (4) ALERTAS: com o portal ou a aba aberta, a cada minuto o sistema avisa (notificação no celular se ativada no botão 🔔, vibração e faixa vermelha no topo) quando um caminhão fica ATRASADO, passa 90 min sem entregar ou registra ocorrência; cada alerta sai uma vez. Integração com rastreador Pósitron: aguardando a Pósitron responder." + "\nCENTRAL DA FROTA (v621): o portal do gestor abre na Central da frota: números do dia (na rua, entregas feitas/total, no prazo, atenção, atrasados, ocorrências); uma fila de botões com as PLACAS em cima do mapa (Todos ou uma placa); o MAPA de ruas real (OpenFreeMap, gratuito, sem chave; botão mapa claro/escuro) com todos os caminhões ao mesmo tempo, cada um com a cor própria da rota e um anel na cor do status, linha cheia no trecho feito e tracejada no que falta, e o CD com quantos caminhões estão lá; tocando numa placa (no botão ou no mapa) abre a FICHA da viagem: placa, tipo, motorista, carga, status/atraso, botões Ligar e WhatsApp para o motorista (celular da ficha de cadastro), Baú 3D e PDF do relatório, entregas/volumes/hora de volta, linha do tempo (etiquetagem, carregamento, saída, última entrega, próxima, volta ao CD) e cada parada com horário e ocorrência; e a lista dos ÚLTIMOS ACONTECIMENTOS do dia. O Google Maps foi descartado por custo (Renato não quer onerar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCADASTRO DE PRODUTOS (v670, 21/10/2026): na tela da carga ha a faixa \"Cadastro de produtos (codigo de barras)\" -- importa a planilha de produtos do cliente (colunas Descricao do Produto e Cod. Auxiliar = codigo de barras). A carga que vem do PDF 910 / espelho DANFE nao traz codigo de barras; com o cadastro, o bip do codigo da caixa na doca acha o produto pelo nome e casa sozinho com os volumes (EAN-13 e DUN-14 do mesmo produto casam). Produto que nem o cadastro conhece continua perguntando uma vez e grava. Planilha da Sao Roque (Filial 3) recebida em 21/10/2026: 61.215 produtos, cerca de 54 mil com codigo de barras valido; quase todos sao o codigo da UNIDADE (EAN-13). Em seguida a Sao Roque mandou a 2a planilha (produtos_filial3_DUN14.xlsx) com as colunas DUN-14 (codigo da caixa fechada) e Unid. por Caixa: 28.514 produtos com DUN-14; o cadastro le as duas colunas. Situacao agora: " + (srCadInfo() ? (srFmt(srCadInfo().produtos || 0, 0) + " produtos com codigo no cadastro, importado em " + new Date(srCadInfo().em).toLocaleDateString("pt-BR")) : "cadastro ainda nao importado") + ".\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
+    return regra + "\nIMPRESSAO PELO TABLET (v686, 23/10/2026): na doca da Sao Roque, em \"🖨\", escolher \"Bluetooth direto (tablet)\" e tocar em \"Conectar impressora\" (Chrome do Android, Bluetooth e Localizacao ligados; escolher JK-402A na lista). A etiqueta sai direto, sem janela de impressao. Em \"ajustes da etiqueta\": largura 100, altura 150, espaco 3 mm, escuro 8, velocidade 4; posicao normal ou de cabeca para baixo; mover para a direita/baixo em mm se sair deslocada; \"imprimir teste\" (moldura tem que caber numa etiqueta) e \"calibrar etiqueta\". Se a impressora desconectar, a etiqueta NAO sai e o sistema avisa -- reconectar e usar \"nao saiu — imprimir de novo\". \"Driver do computador\" volta ao modo antigo (notebook).\nETIQUETA POR PALETE E CANCELAR LEITURA (v679, 23/10/2026): na etiquetagem pela caixa o conferente escolhe o palete que esta montando (o NOSSO palete = vaga da montagem do bau, F1 esq., F1 dir. etc.; um palete pode ter varios clientes; a ordem e a de carregamento, o 1o vai no fundo). Escolher o palete e obrigatorio antes de bipar; quando o palete fecha aparece uma faixa verde \"PALETE 2o COMPLETO\" com o proximo. O bip so imprime caixa daquele palete; caixa de outro palete apita e diz para qual palete vai; a tela lista o que falta etiquetar no palete. Os paletes da Sao Roque sao so apoio (carga batida) -- se a mercadoria nao esta no palete deles, procura em outro. Etiqueta impressa que nao vai ser usada: botao \"cancelar\" (ou \"cancelar uma etiqueta\" bipando a etiqueta RF) -- sai da contagem e o volume volta pendente. FRACIONADO (v679): o espelho (DANFE) traz tudo em UN, mas a QUANTIDADE de volumes da nota segue a regra da Sao Roque (conferida em 55 de 55 notas): caixas fechadas = quantidade / Unid. por Caixa do cadastro, e cada produto que sobra vira 1 volume FRACIONADO. A importacao monta os volumes assim (precisa do cadastro atualizado com a planilha DUN14, que tem a Unid. por Caixa). Na doca: ao bipar a UNIDADE de um produto fracionado o sistema diz \"bipe 3 unidades\"; a cada bip conta 1; ao completar sai a etiqueta com a faixa preta FRACIONADO · 3 UN, parada e palete; coloca numa caixa. Codigo de caixa (DUN-14) nunca conta como unidade; botoes \"cancelar fracionado\", \"era caixa fechada\" e \"veio fechado — conta tudo de uma vez\" (display fechado, ex.: Cookies Renata 12 dentro da master de 96): fecha num toque e o sistema guarda que aquele codigo = N unidades; na proxima vez 1 bip do display conta as N. Sem rolo amarelo (so uma impressora).\nETIQUETA QUE NAO SAIU (v678, 22/10/2026): o navegador nao sabe se a impressora travou; abaixo do campo de bipar ficam as 4 ultimas impressas com o botao \"nao saiu - imprimir de novo\", que reimprime exatamente aquele volume. Nao usar o OK da pergunta \"reimprimir a proxima\" para isso (ela pega outro volume). Impressora JK-402A pelo Bluetooth (COM4) trava em etiqueta grande (~576 KB): preferir o cabo USB (porta USB001).\nETIQUETAGEM CONTA PELA IMPRESSAO (v677, 22/10/2026): etiqueta impressa pelo bip da caixa ja conta como etiquetada no contador da doca, na doca 3D e no portal do gestor; o titulo mostra quantas foram impressas pela caixa e quantas foram coladas e confirmadas (passo 2, opcional). Codigo com digito verificador errado = leitura incompleta: apita e pede para bipar de novo. Itens que a importacao deixou com 0 volume (ex.: maionese Quero da Rosilene em 22/10) nao aparecem na lista -- pedir ao Claude para criar o volume.\nBIPAGEM PELA CAIXA NA DOCA (v676, 22/10/2026): a etiqueta sai sem abrir aba nova -- imprime por dentro da propria tela e o cursor volta sozinho ao campo de bipar. Para nao aparecer nem a janela de impressao, abrir o Chrome pelo atalho com --kiosk-printing (imprime direto na impressora padrao, a JK-402A). Impressora JK-402A no Windows: papel Custom 100x150 mm no driver (Advanced: Speed 76, Density 8, Gap 3 mm, AfterPrint Tear Off) e no Chrome Tamanho do papel = Custom 100x150 -- o 4x6 (152,4 mm) puxa uma etiqueta em branco a mais. O bip tambem aceita o QR code GS1 da caixa (tira o GTIN de id.gs1.org/01/..., (01)... ou 01...). Cadastro de produtos da Sao Roque importado em 22/10: 54.168 produtos com codigo, 28.514 com DUN-14 da caixa. Produto que nao esta na carga ABERTA apita e nao imprime -- conferir sempre se a carga aberta e a do dia.\nETIQUETA 10x15 (v652, 19/10/2026): pedido dos motoristas (aprovação unânime) -- o número da PARADA ficou bem maior no topo da etiqueta, porque é por ele que se acha a mercadoria no baú; o código de barras ficou menor (cerca de 56 mm de largura), para o leitor ler também de perto. Dica para o leitor Elgin: bipar a uns 40-50 cm, com a luz vermelha cobrindo o código inteiro." + "\nBIPAGEM SEM TRAVAR (v650, 19/10/2026): o campo de bipar mantém o cursor mesmo quando a tela se atualiza sozinha; se o cursor sair do campo, o sistema capta a leitura do leitor na página e entrega no último campo de bipar usado (não precisa mais clicar em bipar); o aviso de PARE é uma faixa vermelha no topo com apito (antes era uma janela que prendia o leitor); o mesmo código lido duas vezes em menos de 0,5 s é ignorado (leitura dupla do leitor); bipar de novo uma caixa já bipada mostra na hora uma faixa amarela (já foi bipado, bipe a próxima caixa); se o cursor sair do campo, ele volta sozinho em menos de meio segundo (v651). Se o leitor apitar e nada aparecer, confira se ele está conectado (Bluetooth) ao aparelho." + "\nETIQUETAGEM PELA CAIXA (v649, 19/10/2026): na etapa 1 (doca) o conferente primeiro bipa o CÓDIGO DO FABRICANTE da caixa (EAN-13/DUN-14, impresso no papelão) no campo 1º; o sistema imprime na hora a PRÓXIMA etiqueta pendente daquele produto, na ordem do carregamento (última parada primeiro) — assim nunca se cola etiqueta de um produto em outro. Produto fora da carga ou já todo etiquetado: apita, vibra e não imprime (caixa sobrando). Código nunca visto: o sistema pergunta uma vez qual é o produto e grava para as próximas (não depende do XML). Depois de colar, o conferente bipa a etiqueta RF no campo 2º para confirmar colada. Leitor usado no piloto: Elgin BR240-BT (Bluetooth no notebook, funciona como teclado e dá Enter sozinho)." + "\nPORTAL AO VIVO DOS GESTORES (v614): o portal do gestor da São Roque acompanha a carga sozinho, em 3 etapas: 1) DOCA (etiquetagem) enquanto falta etiquetar; 2) BAÚ (carregamento) assim que a etiquetagem termina ou começa o carregamento; 3) DESCARGA quando começam as entregas: o baú começa cheio e cada volume entregue some, até o baú ficar vazio. A faixa AO VIVO mostra a etapa; se o gestor tocar numa aba, ela fica fixa até ele tocar em acompanhar ao vivo. A seção 6 Entrega da equipe também mostra a descarga em 3D." + "\nENTREGA POR PARADA OU POR BIP (v615, pedido do Renato em 12/10/2026, porque na rua não haverá leitor e o motorista pode se recusar a bipar pelo celular): no app do motorista, cada parada da São Roque tem o botão Entreguei esta parada e há botões Entreguei tudo em <cidade>; a equipe marca o mesmo na seção 6 Entrega, aba por parada / cidade (a outra aba é por bip, volume a volume). Marcar a parada conta TODOS os volumes daquele cliente como entregues e o baú do gestor esvazia igual ao bip; parada que fechou com todos os canhotos também conta. Dá para desfazer. O canhoto continua sendo exigido normalmente para fechar a parada." + "\nMEU BAÚ DO MOTORISTA (v616): na rota do dia, o motorista tem o botão ABRIR O BAÚ (mostra quantas entregas faltam), que abre uma tela só dele com: entregas faltando, entregues e volumes no baú; a PRÓXIMA PARADA com o botão Entreguei esta parada; o baú em 3D esvaziando (a mesma visão do gestor, só a parte das entregas) e a lista do que ainda está no baú. Tem botão voltar. Início e fim da viagem (fotos de KM), abastecimento, KM rodado e viagens continuam no painel do motorista como sempre. Quando tudo é entregue, a tela lembra de conferir os canhotos e tirar a foto do KM final. v617: a tela ficou enxuta para o celular -- só Faltam X de Y entregas, a próxima parada com o botão ENTREGUEI, o caminhão em 3D sem legenda nem botões, e a lista de paradas escondida no botão ver todas as paradas." + "\nFROTA DO DIA AO VIVO (v618): no topo do portal do gestor da São Roque há um painel com um card por caminhão do dia: status (Aguardando, Etiquetando, Carregando, Em trânsito, No prazo, Atenção, Atrasado, Voltando ao CD, Concluída), entregas feitas/total, previsão de chegada ao CD (com o atraso), há quanto tempo foi a última entrega e a próxima cidade; e a ORDEM PREVISTA DE CHEGADA. Sem rastreador ainda, a conta usa as entregas: PRAZO = saída (último volume carregado) + km da rota a 50 km/h + 20 min por parada; PREVISÃO = última entrega + km que faltam (pelas paradas que faltam e volta ao CD) a 50 km/h + 20 min por parada que falta, somando o excesso se o caminhão passou da hora de chegar na próxima parada. Atenção = até 30 min além do prazo ou 90 min sem entrega; Atrasado = mais de 30 min. Recalcula a cada entrega e sozinho a cada 30 min. Quando os rastreadores (Pósitron/Sascar) forem integrados, a previsão passa a usar a posição real." + "\nMAPA DA FROTA (v619): o painel Frota ao vivo abre num MAPA de ruas com o CD e um ícone de caminhão por veículo, na cor do status (linha cheia = trecho feito, tracejada = o que falta até voltar ao CD); há botão Mapa/Lista. Tocando no caminhão abre a tela dele: mapa da rota com as paradas numeradas (verdes com ✓ as entregues), onde ele está agora (ESTIMADO entre a última entrega e a próxima, pelo tempo que passou), última entrega e há quanto tempo, próxima parada com horário previsto, previsão de volta ao CD, e botões Ver o baú em 3D e Paradas. Quando o motorista toca Entreguei, o celular dele grava o ponto de GPS daquela entrega (se ele permitir a localização) e o mapa usa esse ponto. A posição contínua em tempo real só vem com os rastreadores (Pósitron/Sascar)." + "\nV620 (12/10/2026) -- (1) BIPS DA SÃO ROQUE EM TABELA PRÓPRIA (sr_bips) e BIPAGEM SEM INTERNET: cada bip vale na hora no aparelho e entra numa fila guardada nele; se a internet cair na doca, os bips ficam guardados (selo ⏳ N bips guardados no aparelho) e sobem sozinhos quando volta. (2) NÃO ENTREGUEI: o motorista escolhe o motivo (cliente fechado/ausente, recusou, avaria, entrega parcial, endereço não encontrado, outro), tira a FOTO obrigatória e o celular grava o GPS; a rota segue para a próxima parada, mas os volumes continuam no baú e voltam para o CD (na entrega parcial conta como entregue com ressalva); o gestor vê a ocorrência em vermelho, com a foto, e o caminhão fica em Atenção. (3) RELATÓRIO DA CARGA (botão 📊 na carga e na tela do caminhão do portal, com PDF): etiquetagem e carregamento com início, fim, duração, tempo bipando sem pausas, ritmo em volumes por minuto, pausas acima de 5 min e quem bipou; da 1ª etiqueta ao caminhão carregado; saída, cada entrega com horário e tempo desde a anterior, prazo x previsão; e a média das últimas cargas reais (vai calibrar os 20 min por parada). (4) ALERTAS: com o portal ou a aba aberta, a cada minuto o sistema avisa (notificação no celular se ativada no botão 🔔, vibração e faixa vermelha no topo) quando um caminhão fica ATRASADO, passa 90 min sem entregar ou registra ocorrência; cada alerta sai uma vez. Integração com rastreador Pósitron: aguardando a Pósitron responder." + "\nCENTRAL DA FROTA (v621): o portal do gestor abre na Central da frota: números do dia (na rua, entregas feitas/total, no prazo, atenção, atrasados, ocorrências); uma fila de botões com as PLACAS em cima do mapa (Todos ou uma placa); o MAPA de ruas real (OpenFreeMap, gratuito, sem chave; botão mapa claro/escuro) com todos os caminhões ao mesmo tempo, cada um com a cor própria da rota e um anel na cor do status, linha cheia no trecho feito e tracejada no que falta, e o CD com quantos caminhões estão lá; tocando numa placa (no botão ou no mapa) abre a FICHA da viagem: placa, tipo, motorista, carga, status/atraso, botões Ligar e WhatsApp para o motorista (celular da ficha de cadastro), Baú 3D e PDF do relatório, entregas/volumes/hora de volta, linha do tempo (etiquetagem, carregamento, saída, última entrega, próxima, volta ao CD) e cada parada com horário e ocorrência; e a lista dos ÚLTIMOS ACONTECIMENTOS do dia. O Google Maps foi descartado por custo (Renato não quer onerar)." + "\nACOMPANHAMENTO EM 3D (v604, pedido da São Roque na reunião de 10/10/2026, quando liberaram o piloto): (1) na seção 3 Etiquetas há a CONFERÊNCIA DA ETIQUETAGEM NA DOCA -- o conferente cola a etiqueta e bipa; uma doca em 3D, no mesmo arranjo do baú, começa toda marrom e cada volume etiquetado ganha a cor do cliente (volume já carregado conta como etiquetado); lista quem ainda falta etiquetar. (2) Na seção 4 Bipar o carregamento há o baú em 3D que começa todo marrom e ganha a cor do cliente no lugar certo a cada bip (palete por palete na paletizada, coluna por coluna na batida), para os gestores acompanharem; sincroniza entre aparelhos. PORTAL DOS GESTORES (v613): login de CLIENTE vinculado a 'Grupo São Roque' (criado em Usuários, papel Cliente) abre uma tela própria no celular com as cargas dos últimos 45 dias, o andamento de etiquetagem, carregamento e entrega, a doca e o baú em 3D e as paradas; atualiza a cada 15 s; sem frete, sem financeiro e sem documentos fiscais (dados pela função cliente_saoroque_dados do banco). A equipe pré-visualiza pelo botão '👁 Ver como gestor da São Roque'. A montagem aprovada (seção 2) não muda. Ordem das seções do card (v606): 1 Veículo e resumo, 2 Ordem/rota/montagem do baú, 3 Etiquetas, 4 Bipar o carregamento, 5 Rota do motorista, 6 Bipar na entrega, 7 Paradas, 8 Documentos da viagem (CT-e, CIOT, MDF-e) por último, por ser o processo final.\nCADASTRO DE PRODUTOS (v670, 21/10/2026): na tela da carga ha a faixa \"Cadastro de produtos (codigo de barras)\" -- importa a planilha de produtos do cliente (colunas Descricao do Produto e Cod. Auxiliar = codigo de barras). A carga que vem do PDF 910 / espelho DANFE nao traz codigo de barras; com o cadastro, o bip do codigo da caixa na doca acha o produto pelo nome e casa sozinho com os volumes (EAN-13 e DUN-14 do mesmo produto casam). Produto que nem o cadastro conhece continua perguntando uma vez e grava. Planilha da Sao Roque (Filial 3) recebida em 21/10/2026: 61.215 produtos, cerca de 54 mil com codigo de barras valido; quase todos sao o codigo da UNIDADE (EAN-13). Em seguida a Sao Roque mandou a 2a planilha (produtos_filial3_DUN14.xlsx) com as colunas DUN-14 (codigo da caixa fechada) e Unid. por Caixa: 28.514 produtos com DUN-14; o cadastro le as duas colunas. Situacao agora: " + (srCadInfo() ? (srFmt(srCadInfo().produtos || 0, 0) + " produtos com codigo no cadastro, importado em " + new Date(srCadInfo().em).toLocaleDateString("pt-BR")) : "cadastro ainda nao importado") + ".\nCARGAS SÃO ROQUE NO SISTEMA:\n" + linhas;
   })();
 
   // --- v228: operação Suzano (carregamento conferido volume a volume) ---
