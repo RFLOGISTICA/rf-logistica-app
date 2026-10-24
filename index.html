@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v697)</title>
+<title>RF Logística — Painel da Frota (v698)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v697">
+<meta name="rf-versao" content="v698">
+<!-- v698 (24/10/2026): WHATSAPP PROPRIO DO RAVI -- servidor da RF (VPS Hostinger srv2021578, Node + Baileys) no lugar da Z-API: Torre > Configuracao ganhou o bloco "WhatsApp do Ravi — servidor da RF" (QR ao vivo, numero conectado, teste de envio, grupos, desconectar so master), pela Edge Function ravi-whatsapp. O envio da Torre continua pela Z-API ate a troca. -->
 <!-- v697 (23/10/2026): JORNADA -- no celular travava em "lendo o rastreador (1 de 15)": agora le direto as posicoes ja gravadas no banco (4 caminhoes por vez), em segundos, em vez de buscar a API da Positron dia a dia. -->
 <!-- v696 (23/10/2026): JORNADA DOS CAMINHOES (aba nova no grupo Viagens, em graficos como o Dashboard; "Ver: Frota toda" ou um caminhao, que mostra tudo dia a dia e a lista de paradas): pelo rastreador (Sascar + Positron), por caminhao e por motorista no periodo -- km, tempo rodando, motor ligado parado (e por 100 km), velocidade maxima e tempo acima do limite, km a noite, paradas e cidades com mais tempo parado; cards "quem corre mais", "mais motor ligado parado", "roda mais a noite"... Botao "Jornada de trabalho do motorista": por dia inicio/fim, jornada, direcao, direcao continua e alertas da Lei 13.103. -->
 <!-- v695 (23/10/2026): SAO ROQUE -- fracionados em destaque no palete: botao do palete mostra "🟨 N frac." e o quadro do palete abre com "FRACIONADOS NESTE PALETE" (quantidade, produto e cliente/parada) antes da lista de caixas. -->
@@ -76,7 +77,7 @@
 <!-- v645 (18/10/2026): TELA INICIAL -- ícones novos no estilo da imagem aprovada (ilustração 3D brilhante) em Frota, Operação, Manutenção, Viagens, Carregamento e Financeiro. -->
 <!-- v644 (18/10/2026): TELA INICIAL -- ícones 3D novos em Extração CT-e/MDF-e/CIOT (pilha de CT-e com XML), Contratos (contrato com selo) e Campanhas (megafone). -->
 <!-- v643 (18/10/2026): FRACIONADO -- ícone 3D próprio na caixa da tela inicial, no mesmo estilo das outras áreas. -->
-<meta name="rf-data" content="2026-10-23">
+<meta name="rf-data" content="2026-10-24">
 <meta name="rf-cliente" content="RF Logística">
 <!-- v642 (18/10/2026): FRACIONADO -- logo própria (opção B "rota que junta": três coletas que viram uma viagem, grafite e dourado) no cabeçalho da aba, no portal do cliente, no selo da etiqueta e no romaneio. -->
 <!-- v641 (18/10/2026): FRACIONADO -- ferramenta nova de carga fracionada (coleta em vários clientes e entrega na mesma viagem). Aba "📦 Fracionado" no grupo CARREGAMENTO para a equipe (pedidos, roteirização com ocupação em peso e m³, trava de prejuízo, decisão sair/esperar/voltar à base, rota, etiqueta 10x15 com QR por volume e romaneio) e módulo "📦 Fracionado" no portal do cliente (o cliente vê o que comprou: marcar o módulo no login dele em Usuários). Pedido com leitura da NF-e por XML, PDF (DANFE) ou foto. Dados no banco em tabelas próprias (frc_config, frc_pedidos, frc_rotas, bucket frc-notas) com RLS. Assistente alimentado (bloco do Fracionado). -->
@@ -1063,7 +1064,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v697" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v698" };
 /* v663: foto do Ravi (robô da RF) no botão e no topo do assistente */
 var RF_RAVI_IMG = "data:image/webp;base64,UklGRqgVAABXRUJQVlA4IJwVAAAwTQCdASrAAMAAPlEmj0UjoiETrBzwOAUEsbdur+LIQfnI75Z8od39yvMhfS9D3mAc6vzDfuB6zfok/xnqAdJL+6HsAfsr6cnsc/2n/pftz7anqAegB/9utnUz/dPBf8a+X/t39c/Z/+5e0XjX69/470E/j32e/H/3r9zv6/7md8/xY1Bfxr+T/3v8w/7v8Nf0Hak2U9AX2h+i/7L+1/jt6U3+X6I/Yv/e+4B/Ov6r/pPzi/unz9/ufBh85/2/uBf0X+zf8z+7+7L/Tf9r/U/l17Wf0L/F/+P/JfAR/Lv65/v/8D7bPsO/dT2U/2J//BUzolxhatVrXKGkLvCHZ1tZAkWe7TVt5vajtWQyyo+P/F+bJCA0eXXsii+R7XXTq+aC2dAzVzkw5pC1at8MmVULytjv3T+e0wtz+lINPTySj+k7uFzz7oY84aUj1SuxmFrKtB77AjnyUgC49smu3km3ebtD4LVqzzrDQJEpy11UqWOuQqGiDAMKcIP0bbmYGm410uCIe4TJbJggNR0Daw7TvY1ac9qGb1xmC9LY8lUKyl5UNZQPSrFtlRJggOmAXU8J4bhKsi6QObj4d1lJ6lqPpT+144D9+vyXqOXr/wXFLkfb01oJevDa7XJr0Pq2Olol7gj6PlXoqwoS0FAoklh6kZJP+j6F2v5XVq2bdi5BDtne2BttTsBCkJvseoIJZDceZGQbS9TEZvHrLCoWyrckeI9AiBluEXubZ1BAXBvGOsfBJNHTc3wm4ZlbrSO+VdLPki/aiKEdqAxZhpPV+SYfx1UrAPt6BkrrV89dVzvU0gpUgoKHMfdzOjTOiXGFq1WxUAD+/cCAAUt2QvrdkTR8mW6zj+zVWJiveTviD2NaORHH+LRvF2CDgaubVFfzACz+NqefQANLfL91eqWbzTyR/5eNNCfSgMd/DWBH+O3UQh16Jy9fx9Bh0NOijhIhl6BybocQ24c84nScnTTO9IKreblFqCbiou/h+/Ea4U4lznrCFINScJSUFRqZy/opuX58V9fG2ZBCuU4BRHmioos8m1whF22heLY88hP0U/V3h3B0xykifl6fpkNThYTqSZaSBILJBh1bgImHkI83dr+Is4ppmQMgJ27P4Nw0qh3s0vQXN2ZJaq/Bq/Mza2DaOE3o5Kjm2XnuPQdk8IupZ93P8piZ/Sc3Td9AohCIl71ylaajQAx17VObI+uZr1Peodv+TtSas0Nrl749TxXUMK2gzvax0KPoufBJ8Mvh0eSE8eGmkIHJPo9zFHsAR+VY7kTqwAJL2FuKfkhfMuG+LgJrHa/xM+fy4uBozZbESGFigIZ/AA+HhUyxAg0LJwvnxOVktCt7KWmNlHyrhpaR6d4mxvX93K7Voq+GbN1329pbBCLv7G5OOwb5aOiPWWilNxPVNB8CE3YmAnmFjGT3+xsdpUNlWTce3iJEZ3OxGm9OGhqP77jrHYH7agEeRu29CspirFiZn3+i2bg1V9oDCvrK/4gBz9P/YHxWJsLYZeE0larJ6hdfV3UIhSJV+OS5p9cdq7lW98+C/ACD2AjYVUvfOfXle7tMxWiP6wDbPq9Hocc6JAZL4p3WwnNQ1W70RmVUWzw4sDNZqiZVd8yQZddALJusyjIqiC6j0EPshV95nM5iULfzULc4AEfpQKaa7R7j/CsOb8EXUJ1yGgJ72pBDgMlSU/uBD+7Q1WmQ0+4I3v01rsTAPVxt4zebwuOET8SoYqcO4p1uxosZ887uu0hPjeWk0WZijZ8u2li47nyNOtGq9LHLwUyYDRxJ5cK+O8vY94FUOzsgNIKu/kY73qkFmBWWz3yym0zTLOK6LT6vSfVmDCsfyfpTLRKzMwJU+vS6BxJ8z4rDIqIjXhfd1S8U5xQHxBSnn5RBcK78oJRZigoHv5x+Z24OXStCtb8t5OvJkrht3zALw+MMusFG2F2aQzVmtkIMn+9/dapOsjfBedo6ciL4TugE3REoz226qoo/P8UZXxrM/8F/F/nwkLv80OJG+fXBMHRW9zj/Ixl1wwhEYQf7h7MgMMirCKxUYq0DLRy9f2r2jkwcsCSE0vJj7+z2MvrzTIhzd7m5lG19zY4zSWwrPYVr3NM1bQchlzxnwGghtvuXZRpXqJuPUATJCmJpqvjeYqA0bXlNMam5TDnKz3OYX7SwO912ALw3JvCZqEnChUQ6N4rUNHoRWo1/nqpnb8aGh4FmlbSycskQXQWtAyhREYF1r9ip8GIjBC0oGdT7TrQ2b7719O4pA52Qb4ecviGo0OuT4ekIK+f+6dLdvxq6xzt3VIH3RkEQAQzX7Dey6p1EVnpiDXLO1Lo19cBrRXUeca65zpyCSWg07MtnEUQVDRtkgRs2dytHlArM4Kveqd2RwzAuAknQe/F46R/7d83evb6JrreWdEioho/n9o2hYVq/8oIaoYhGHyM96Md/9oa1C+qXNGJdHJQ26pjC7LS28KyLJTgohh+gGx8h91M0pqQNMwE/dV9Wf4aVD3WHZ8m16d9p9io6KJLarNNivlQ3fi+88ADoM92P59l6BnOrisaBbnAV3IlUvEtN0WDFEI8+fgEnpzhMEtnF8TJjCdRQrFzDSUhmAxPt149z1BtavUTrQXtsu1shj+Sj5Irz3Y+8dbjzgjvU9Cs19N9D9L0u73CukpjyOXQGl34i7S/qJcpOD7DRm+DDZ+fDriHX8DmM0mgBo4D8KGU8m+z0CWkdoCPO4IkhFBkfkoBAq12Th6o/qTh9N45x626MzuM/Mxfd0AihjNaqZRh5f79uQluCrSR9V/h2OxwO9ruAZYyM6fnNXF0NdhaRDtVUjygDm2ha2J52zYXFPsxeWzkAr+kDNY8ERNVfXk4d8XFVM1cHctz/JzlLo602aLybzxn3pTU7BQJOaTYdgPo2magi/Y3ALbw4qCrKCKCESy1bHp/hOn9hcQ1nqTKx2bqhryabH7e9HwxXLCHAvN1EiWMJhWWJx6hzcvFXiwWkJLI6YMHqBTFqnji8OxFtlDCJPvDGb95+eYz8p3tqmC/lfkl7hjMi6oYYIdmQu3zYD+twHPllnu0vSCD4TR4OD9pIA/z3Xcx6jESkPpyP+1b7l+M8dUuRslmpL+Vg5Avr01EZdEWMyGy++nd8xTDMh+szNkX7/i2CL04CgHHjfI2aTIoZDQx58PkbQt7SI1hJfhRDIp4bTGeRr7ShiJBGKPKgiV+mpvASTzd5gQoEVIk37uX5N5Q6+s0/RaZQ7exuWG1RVDER/t/2x+ffr30+3YAryyhvJY7kgXz16BjFNzVjJnAqot1QMzn8K73DmofB0u6wkm92aCStuh+JK+RXVk++Cgh8aGBhaHfbAEeCdVW8C1P7n7EqdHa+IWWJxfLvPB7veaMd5sriJbSC/jgCYDLM3G0Muf8huJEZuvO01GG4Dj1Mlj9wEogh7BxMlDI9qdDvlpfwUxX2BGoZHM9thAqPLXBrwfie1BILoyFYH/CssYl7NUedXi/zngrswmywi8iUqiDVPX+SFKCix95Q3nmtypHsrxYa/XVFi7VjmhIEpFwPC/JhiUYZpAvKrtw3Fjz8VO8kfg411g2kSTiw7uhaDRA26KRNi7hj7WGkd8E2RYiMkGkiwAdxMw4Mw33sK5flS0Xni6pZtZQcvTiriyiA/wihOXtpsb6pBo2RdmRU6odkB1dNc1R0FDPPd1h7jJ2Pu6lmysZUGQJi9x/d1OKq/tq5ocLVWxOZvDnUeuvo378kH7BrxcrN6qFeqXX2ARgDbY4mNA4pHVj+ds0enwzK9xHpWPDjPaRjv/WSTieYKDg61bfcWqqXQx8jXjlwKPTfVvGTMMK/l3eiEOSF7TRsI5uVpHSll4We9DvpnLWfUPMIeyKL970L+qqyd7hPLb2SfF+Dw5aCfcdHNQVkIBiDMMRGTRQGyZM7nHrw3pTWofrAI7cYXSLmQJn+IqZJJy9z8R24ap8qdsyB+TUTvD5036DPikrVJtZb0EN+u9bQZLPif3Yz7TIvYm50M12poWIHI5HyrCh4z1okkxYgXBtCPqU2Q6ynwcNZk+GQlNZ/2KNHrdp6acQVZvx6aJE5lM1NNBdVUae6P6FWvIfpfkgHXTvNyQ52ygOyjnyvZ/ZH5LNZ4oFN11pXe9USHK/zl13Er7WcX9TjS/BmUvNeZiVQ4BnFDs0wEe6diPXfCG/vbbqnwvZdpkG0tdyJy0rNSqAk4W/sy2zmNyTjVyTlBqbvNS8fNQwmGmA2b9GIA+zkIMni97PibP3nWV7g5GBM4tEXvBx+544YQUL/seoy4j7vfCf2+kEyu9rS49/4ubnR+j4kDq8JgTnaASETI1iu6M6BKmmbHFJwhxjxPCysA48AjiJ4SciYTYg0IOm5JO6zgj/Cab3JcbLes/ge0C3TFe9haW+8UzxVjj7b+S4DR6NsyPBfrcOCfO/SLxIgnfuwjtpNKTRHuyTbvm5QO7d9ektqyqa5XuerYZ+F5ZbIB+R8N23E1t9k5CP0BgKGmuYOCz/2vsTUkv9n3Lb1MuDwz7v8t27l+HEjAvStnK0AcmZRw11qSEfS2B0nnPDmehmhECv6ZTEkk9RtV8WlF1aKnM2t6SDJcSJzLJ3MTqCEyZVlQEULuXUQa0Dlj7jl9vYsF6o+m/EiEqtsCMW5295MpDyCL53qWraZqNnJBZvlw1mikvE28e9VkVMzJ1e854r7nAuBgymUCw2tftF2x65AjXQ3PJVQIEH/29dmrj1oDPkF1fy0rKpCkLbf/BMp5mpmifGzKSqCdfG+PmWNJSn7PyHhyisWsl75Ifhhj2D4TrgMp/l0tZaU827RiVhoxRsUEK+lsBzFiGN7kSKFImx448ilFbkLthHPTG3F36IbKOXYR8HpXH8NC04EZpVCDI2+lbFakHofK1xxb2V8x6OB9ys30HmYETn4ddCV1FcTcc0circ/NSYooI92V7pgEM+agTtfBAcl4WUCoJQW+GjsQKciZB973MW5eLx/cwC+/A2Ei9ESm6FdwWi6+2LRj5bjjNyRa6J3a+FKRl8pCJ5qr+s2DWvVglpnfwrpDsWBhJn4uv/6kgWDw3K9fyxRWC0iJie7xEFt5NCWhhYroR96U27+OvjNkeAP55Pco3oHTLfX4m9ieDEutrZq8MEiEYBNap9OyO0wDe7e4CasjgT02bt3Srrh3xEnjXXWVo6X+2UMclnznaABBPx3fQGvkk6SEG4laou7v2AnaOye/HA2BFV/u7RvUOq+rXI7JayhsKqveLO8EnwqEZMaJ7vbdOlGu+RJStH3K0qdzr4n2ultOjJVlZjETd0ncQiQpIwCMoAmXyiFmMzBmGrwgV+TiLkPEV6Gcu6aGfKiQ2BHlXG/Sz/F049bLHPnszwuVougjZ7tzamIqQPcXiEe80q88jZjAxAWEmKOd6Mxt6RSu8N0/hGwpRvyCKCvAsioBG4i73iDSH5gxHzyOKJetJstiO/2uqUoIgHwPArzI7Aphjfr9Gnu9y+NknKUerFuFZn7uDm4j3QUfWANmocrArMRP/3PfBiwS/pSgQxdE7f1crIVCG0HqtiAJxni3BT60M7BE7E10bCq9mEAq2puD36DQnn8NBTD6uWJAD/68wzoJ4lCE0jKCLrOxLwQzb5X2RSlBZ0UiL1syPrl895FA1A+VcivKgC/vfh/jl9T5DBBatuuZJ9Fdy3eN0GXFCuBPrcg+6XJSFKidxRHUgp/D2drDYVDbYr+YZwtASUGWtwVmpMo045CaxOjfSl0ALp8G2DcMHFqnbvLwD3pwjrvf7TBwVltXAmy5OlHkkh/YlkeuZN8dmXyi/XSO4BiU7RqAdi6JuzgkziLKJXbIPV0oUJAOG/iaVuYSiaPMf4O8kZHkEv63e88EL+YuXtDoTvX6sQDpZJjLsynVjS9a22p1JrhfldMW+TG2Gskl74mBoffrJYmMPMwxYAM0+QHAiTf/ypiaOaLl8R3sCDup2CakEyrR65sM3hBU2rHzc2gBxBhega0/AOwoAcfD1Kqrjas6Ya6asHYO+TfRGLf5pTJNYOX/hotvn9mO6FjMoSREgX97JqYXv2VMeKkE0IKyU4NH+vHVVosMD1NN/oLfTR6CyI1eClPcibIV+lV6c+juRaDlBZVFO+YfV+qgUsby0L5nBSvyeYAoS6/VRse7E7nw/uguIOZIayB4qQzefGY68xA2dAtIP+PZCL1L54Y8d+Xc6HEWqX2Dmbxdm1HnqG1NL7Sxn7I1dmWX3QTwpSvuYFiWELyKzrDe/rc7ynVBgwcKut42oJOTJsO3/7EnqxHSH9wPZU4ZPIPvBTZ9x29FZG9bOPg07ctPEnP/Aov+pFIV4UyL3X2ZorSshRDfjRJ/Ov2fnf+fS/l9dfrDtUkfMwFdbYSF/kTDvzkABvnl/sK4JKpylWf1IrUCWbz+hmAqc6oS3VmaIzZTnyefZ2veP1fbz13K9gUSDv+SR/YOzKfOVyZAuffsvD6O6Ixn0Pgvfpg91pr/DTS0aAkNDN7WF0w0THo8oEyYyKNMDa9tOY14cVY/llgdvm7VfHvPDr/3+vj8qwUTZUEE8o8ci4/GhMGO5Kwx2zOV/6fkTxeAdiH7SaP5N4IgS82LR68i6pVGkm9jmWHp5nx/6i35rN/P4bZ1us5VFgmo9YmNP8D6jyRkqN/cXavVudHSEwv3U5rRPh+3GY2FELglpN19zG70Isck3axUMPJ0zoCiKztNpyVyzBhKpR7q9VVh8CAy1j25UJ5QzDznd1boo4oWL4bVmejJExYnvF5IXatsJFGs0vIQn8RVfpPWu0GFY77F2cWfxkfJEi04okkKzapYmabd+Kk/PSc1tjRaPJgK6GsgAy4HYqOzXBSQw4hIOK9Ukd/6lmxVVakOfo+A1RVdUrbW94QI4Y/sv0mrASM5HckUAKjjg+TE4dq5pztWxcZkAgrmps/jVQyn0egygYNel9GulLhxPgkrZqcPUQDseJPFxRUeQQXNpj59cCVfeePuvhcX+LNiHC/7st72SlWFIVNmOOZxrZZJJ3WL6lY7JpRl/lYbPeE7QvsUHdn2P4stiAarw3fn9cWG2WnVHjYfg7EmdSRDJXnVMrXEIkkImu/E2TkQkQ2DttNqgbnHsIOBYagSnxptCSqgiL/yVbhsY7WeaJNmMBQUqob/3KtKAKcAFnbkgZSc8OjKinqtkXGz7KRNwTJfTfcyXBsis2Rz5tliuvX3O5CKcXb846EeNAhpMfL9KwukvljVMlAfMdkJW9s6xhz7YKvKzhzzlY6HxQLAO7Gyw+6pdYXg77adjUZwwV7dGPhHKyssF62HyUE7Vg/Dp/80nlYGDZfs68/atZbCH/W26H0/e5bKsM8oaFzAnDNngiUwEkp/5J3YEgAAAAAAAA=";
 (function () {
@@ -42170,9 +42171,108 @@ function torreArmarDia() {
     .catch(function (e) { alert("Não consegui armar: " + e.message); }).then(function () { TORRE.ocupado = false; var el = document.getElementById("torre-cfg"); if (el) el.innerHTML = torreCfgHTML(); });
 }
 
+/* v698 (24/10/2026): WHATSAPP PRÓPRIO DO RAVI — servidor da RF (VPS Hostinger, srv2021578) no lugar da Z-API.
+   Renato: servidor próprio para o Ravi não depender da Z-API (paga até 20/11/2026).
+   O serviço (Node + Baileys, "aparelho conectado") roda no VPS na porta 8443; o app fala com ele pela Edge Function
+   ravi-whatsapp (o certificado do servidor é próprio e fica fixado lá — o navegador não fala direto com o VPS).
+   Nesta versão a Torre continua ENVIANDO pela Z-API; aqui só conecta (QR), confere e testa. A troca do envio vem depois. */
+var RAVIWA = { st: null, carregando: false, erro: "", grupos: null, teste: "5575999717578", timer: null, msg: "" };
+function raviWaInvoke(body) {
+  return torreSb(function (sb) { return sb.functions.invoke("ravi-whatsapp", { body: body }); }).then(function (r) {
+    if (r && r.error) {
+      var m = r.error.message || String(r.error);
+      try { if (r.error.context && r.error.context.json) return r.error.context.json().then(function (j) { throw new Error((j && (j.erro || j.error)) || m); }); } catch (e) {}
+      throw new Error(m);
+    }
+    if (r && r.data && (r.data.erro || (r.data.ok === false && r.data.error))) throw new Error(r.data.erro || r.data.error);
+    return r ? r.data : null;
+  });
+}
+function raviWaRedesenhar() { var el = document.getElementById("ravi-wa"); if (el) el.innerHTML = raviWaHTML(); }
+function raviWaCarregar(silencioso) {
+  if (RAVIWA.carregando) return Promise.resolve();
+  RAVIWA.carregando = true; if (!silencioso) raviWaRedesenhar();
+  return raviWaInvoke({ acao: "status" }).then(function (r) { RAVIWA.st = r || null; RAVIWA.erro = ""; })
+    .catch(function (e) { RAVIWA.erro = e.message || String(e); })
+    .then(function () { RAVIWA.carregando = false; raviWaRedesenhar(); raviWaAgendar(); });
+}
+/* enquanto a configuração da Torre estiver aberta e o WhatsApp não estiver conectado, atualiza sozinho (o QR muda a cada ~20 s) */
+function raviWaAgendar() {
+  if (RAVIWA.timer) { clearTimeout(RAVIWA.timer); RAVIWA.timer = null; }
+  if (!TORRE.cfgAberta || state.aba !== "torre" || !document.getElementById("ravi-wa")) return;
+  var conectado = RAVIWA.st && RAVIWA.st.conectado;
+  RAVIWA.timer = setTimeout(function () { raviWaCarregar(true); }, conectado ? 60000 : 5000);
+}
+function raviWaDataHora(d) { return d ? torreDataHora(d) : "—"; }
+function raviWaNumero(n) {
+  var s = String(n || "").replace(/\D/g, ""); if (!s) return "—";
+  if (s.length === 13 && s.indexOf("55") === 0) return "+55 " + s.slice(2, 4) + " " + s.slice(4, 9) + "-" + s.slice(9);
+  if (s.length === 12 && s.indexOf("55") === 0) return "+55 " + s.slice(2, 4) + " " + s.slice(4, 8) + "-" + s.slice(8);
+  return "+" + s;
+}
+function raviWaHTML() {
+  var st = RAVIWA.st, G = "#D4A017";
+  var pill = function (txt, cheio) { return '<span style="border-radius:14px;padding:3px 10px;font-size:12px;font-weight:700;' + (cheio ? 'background:' + G + ';color:#000;' : 'border:1px solid ' + G + ';color:' + G + ';') + '">' + txt + '</span>'; };
+  var estado = !st ? (RAVIWA.erro ? pill("⚠ Sem resposta do servidor") : pill("… consultando")) : st.conectado ? pill("✓ Conectado", true)
+    : st.estado === "aguardando_qr" ? pill("⏳ Aguardando leitura do QR") : pill("🔄 " + (st.estado === "reconectando" ? "Reconectando" : st.estado === "desconectado" ? "Desconectado" : String(st.estado || "iniciando")));
+  var h = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><b style="color:' + G + ';">📱 WhatsApp do Ravi — servidor da RF</b>' + estado + '</div>';
+  if (RAVIWA.erro && !st) return h + '<div style="font-size:12px;color:#F2C94C;margin-top:6px;">' + esc(RAVIWA.erro) + '</div><div class="tc-btns"><button class="btn-outline" onclick="raviWaCarregar()">🔄 Tentar de novo</button></div>';
+  if (!st) return h + '<div style="font-size:12px;color:#888;margin-top:6px;">Consultando o servidor…</div>';
+  if (!st.conectado) {
+    h += '<div style="font-size:12.5px;color:#aaa;margin:8px 0;">Servidor próprio da RF (substitui a Z-API). O QR muda a cada ~20 s e esta tela atualiza sozinha.</div>';
+    if (st.qr) h += '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:6px;"><img src="' + esc(st.qr) + '" alt="QR do WhatsApp" style="width:210px;height:210px;background:#fff;border-radius:8px;padding:6px;border:2px solid ' + G + ';">'
+      + '<ol style="margin:0;padding-left:18px;font-size:12.5px;color:#ddd;line-height:1.7;"><li>Pegue o <b>celular do Ravi</b></li><li>WhatsApp → <b>⋮</b> → <b>Aparelhos conectados</b></li><li>Toque em <b>Conectar um aparelho</b></li><li>Aponte a câmera para este QR</li></ol></div>';
+    else h += '<div style="font-size:12px;color:#888;">O servidor está ' + (st.estado === "reconectando" ? "reconectando ao WhatsApp" : "preparando o QR") + '… aguarde alguns segundos.' + (st.ultimoErro ? ' <span style="color:#777;">(' + esc(st.ultimoErro) + ')</span>' : '') + '</div>';
+    h += '<div class="tc-btns"><button class="btn-outline" ' + (RAVIWA.carregando ? "disabled" : "") + ' onclick="raviWaCarregar()">🔄 Atualizar agora</button></div>'
+      + '<div style="font-size:11px;color:#777;margin-top:6px;">A Z-API continua enviando normalmente até a troca ser confirmada.</div>';
+    return h;
+  }
+  h += '<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin-top:10px;">'
+    + '<span style="color:#888;">Número</span><b>' + esc(raviWaNumero(st.numero)) + (st.nome ? ' <span style="color:#888;font-weight:400;">(' + esc(st.nome) + ')</span>' : '') + '</b>'
+    + '<span style="color:#888;">Conectado desde</span><b>' + esc(raviWaDataHora(st.desde)) + '</b>'
+    + '<span style="color:#888;">Servidor</span><b>srv2021578 · ' + esc(st.versao || "") + '</b>'
+    + '<span style="color:#888;">Envio da Torre</span><b>pela Z-API (troca no próximo passo)</b></div>'
+    + '<div style="font-size:12.5px;color:#aaa;margin-top:12px;">Teste de envio (vai só para o número abaixo):</div>'
+    + '<div style="display:flex;gap:6px;margin-top:4px;"><input style="flex:1;" value="' + esc(RAVIWA.teste) + '" oninput="RAVIWA.teste=this.value.trim()"><button class="btn-gold" ' + (RAVIWA.ocupado ? "disabled" : "") + ' onclick="raviWaTeste()">✉️ Enviar teste</button></div>'
+    + '<div class="tc-btns"><button class="btn-outline" ' + (RAVIWA.ocupado ? "disabled" : "") + ' onclick="raviWaGrupos()">🔎 Ver grupos do Ravi</button><button class="btn-outline" ' + (RAVIWA.carregando ? "disabled" : "") + ' onclick="raviWaCarregar()">🔄 Atualizar</button>'
+    + (ehMaster() ? '<button class="btn-outline-gray" onclick="raviWaDesconectar()">⏏ Desconectar</button>' : '') + '</div>';
+  if (RAVIWA.grupos) h += RAVIWA.grupos.erro ? '<div style="font-size:12px;color:#F2C94C;margin-top:6px;">' + esc(RAVIWA.grupos.erro) + '</div>'
+    : '<div style="font-size:11.5px;color:#888;margin-top:6px;">Grupos encontrados (' + RAVIWA.grupos.length + '): ' + (RAVIWA.grupos.length ? RAVIWA.grupos.map(function (g) { return esc(g.name); }).join(" · ") : "nenhum") + '</div>';
+  if (RAVIWA.msg) h += '<div style="font-size:12px;color:' + G + ';margin-top:6px;">' + esc(RAVIWA.msg) + '</div>';
+  return h;
+}
+function raviWaTeste() {
+  var n = String(RAVIWA.teste || "").replace(/\D/g, "");
+  if (n.length < 10) { alert("Informe o número com DDD (ex.: 5575999717578)."); return; }
+  RAVIWA.ocupado = true; RAVIWA.msg = ""; raviWaRedesenhar();
+  raviWaInvoke({ acao: "enviar", phone: n, message: "🤖 Teste do *Ravi* pelo servidor próprio da RF Logística — " + new Date().toLocaleString("pt-BR") + ".\n\nRavi - RF Logística" })
+    .then(function () { RAVIWA.msg = "✔ Teste enviado para " + raviWaNumero(n) + " — confira no WhatsApp."; })
+    .catch(function (e) { RAVIWA.msg = "Falhou: " + (e.message || e); })
+    .then(function () { RAVIWA.ocupado = false; raviWaRedesenhar(); });
+}
+function raviWaGrupos() {
+  RAVIWA.ocupado = true; raviWaRedesenhar();
+  raviWaInvoke({ acao: "chats" }).then(function (r) { RAVIWA.grupos = Array.isArray(r && r.grupos) ? r.grupos : { erro: "Não consegui listar: " + JSON.stringify((r && r.grupos) || r).slice(0, 160) }; })
+    .catch(function (e) { RAVIWA.grupos = { erro: "Não consegui listar: " + (e.message || e) }; })
+    .then(function () { RAVIWA.ocupado = false; raviWaRedesenhar(); });
+}
+function raviWaDesconectar() {
+  if (!ehMaster()) return;
+  if (!confirm("Desconectar o WhatsApp do Ravi deste servidor? Vai precisar escanear o QR de novo.")) return;
+  raviWaInvoke({ acao: "logout" }).then(function () { RAVIWA.st = null; RAVIWA.grupos = null; RAVIWA.msg = ""; return raviWaCarregar(); })
+    .catch(function (e) { alert("Falhou: " + (e.message || e)); });
+}
+function raviWaContextoAssistente() {
+  var st = RAVIWA.st;
+  return "WHATSAPP PROPRIO DO RAVI (v698, 24/10/2026): o Renato montou um servidor proprio de WhatsApp para o Ravi no VPS da RF (Hostinger srv2021578, porta 8443, servico rf-ravi, Node + Baileys como 'aparelho conectado'), para substituir a Z-API (paga ate 20/11/2026). "
+    + "Ele aparece em Torre de Controle > Configuracao > 'WhatsApp do Ravi — servidor da RF': mostra o QR ao vivo para conectar o celular do Ravi (WhatsApp > Aparelhos conectados > Conectar um aparelho), o numero conectado, teste de envio, lista de grupos e Desconectar (so o master). "
+    + "NESTA VERSAO a Torre e o Ravi pessoal AINDA ENVIAM PELA Z-API; a troca do envio para o servidor proprio e o proximo passo, depois que o teste chegar. "
+    + "SITUACAO AGORA: " + (!st ? (RAVIWA.erro ? "sem resposta do servidor (" + RAVIWA.erro + ")" : "nao consultada nesta sessao (abra a Configuracao da Torre)") : st.conectado ? "CONECTADO no numero " + raviWaNumero(st.numero) + " desde " + raviWaDataHora(st.desde) : "NAO CONECTADO (" + (st.estado || "?") + (st.qr ? ", QR disponivel para escanear" : "") + ")") + ".";
+}
 function torreAbrirCfg() {
   TORRE.cfgAberta = !TORRE.cfgAberta; TORRE.cfgEd = Object.assign({}, TORRE.cfg || {}); TORRE.grupos = null;
   var el = document.getElementById("torre-cfg"); if (el) { el.innerHTML = torreCfgHTML(); if (TORRE.cfgAberta) el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  if (TORRE.cfgAberta) raviWaCarregar(true); else if (RAVIWA.timer) { clearTimeout(RAVIWA.timer); RAVIWA.timer = null; }   // v698
 }
 function torreCfgHTML() {
   if (!TORRE.cfgAberta) return "";
@@ -42181,6 +42281,7 @@ function torreCfgHTML() {
   var grp = TORRE.grupos;
   return '<div class="tc-card" style="margin-bottom:12px;">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="color:' + GOLD + ';font-size:15px;">⚙ Configuração da Torre</b><button class="btn-outline-gray" onclick="torreAbrirCfg()">Fechar</button></div>'
+    + '<div id="ravi-wa" style="border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;margin-top:10px;background:#0a0a0a;">' + raviWaHTML() + '</div>'   // v698
     + '<label style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer;"><input type="checkbox" ' + (c.ativo !== false ? "checked" : "") + ' onchange="TORRE.cfgEd.ativo=this.checked"> <b>Robô ligado</b> <span style="color:#888;font-size:12px;">(desligado: não monitora nem manda nada)</span></label>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:0 12px;">'
     + num("intervalo_status_min", "Situação a cada (min)", "mensagem por caminhão") + num("parada_min", "Alerta de parado após (min)", "fora da origem e do destino")
@@ -43122,6 +43223,7 @@ ${blocoNaoVieram}
 ${blocoNotaVazia}
 ${revContextoAssistente()}
 ${(function () { try { return torreContextoAssistente(); } catch (e) { return ""; } })()}
+${(function () { try { return raviWaContextoAssistente(); } catch (e) { return ""; } })()}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
