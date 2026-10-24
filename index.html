@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v703)</title>
+<title>RF Logística — Painel da Frota (v707)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v703">
+<meta name="rf-versao" content="v707">
+<!-- v707 (24/10/2026): RAVI E TORRE COM RETORNO -- (1) aba Viagens: selo dourado "KM a conferir" nas 17 viagens antigas fechadas na limpeza de 24/10 sem KM de chegada confiavel (some sozinho quando a equipe lanca o KM de chegada) e "encerrada pela equipe" no lugar de "via motorista" quando foi a equipe que fechou; (2) o assistente aprende o que o Ravi passou a fazer em 24/10: aprova abastecimento sozinho (nota maior que a bomba = aprova pela nota), registra quem aprovou/rejeitou (tabela ravi_abast_log) e da parabens no "Resolvido", e a Torre v20 so avisa parado depois de 1h30 e manda o retorno quando volta a andar / volta para a rota (madrugada so avisa). Os numeros v704-v706 foram usados como rotulo nas funcoes do servidor e nao viraram versao do app. -->
 <!-- v703 (24/10/2026): RAVI AUTONOMO -- o Ravi do WhatsApp passa a CONSULTAR o banco com ferramentas (viagens, contas a pagar, compras, frota, manutencoes, motoristas, entregas, abastecimentos, documentos fiscais, torre). O que e CONTA do app (despesa/sobra da viagem, situacao das parcelas, oleo e preventiva) o app grava pronto em ravi_dados (raviDadosEstruturados, junto com o conhecimento) -- assim o numero do Ravi e sempre o mesmo do app. -->
 <!-- v702 (24/10/2026): RAVI LE POR ASSUNTO -- o conhecimento do sistema (300 mil+ caracteres, metade manual do app) vai inteiro (ate 1 milhao) e o Ravi (ravi-ouvir v3) separa em gavetas (financeiro, viagens, frota, pessoas, torre) e abre so as da pergunta. Placa que nao e da frota sai das respostas dele. -->
 <!-- v701 (24/10/2026): o conhecimento do Ravi vai NA HORA em que algo e salvo (aqui ou em outro aparelho, viagens, entregas, fim de viagem) -- espera 30 s para juntar varios salvamentos; os 10 min ficam como garantia. Envia o texto inteiro (antes cortava em 80 mil caracteres). -->
@@ -1069,7 +1070,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v703" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v707" };
 /* v663: foto do Ravi (robô da RF) no botão e no topo do assistente */
 var RF_RAVI_IMG = "data:image/webp;base64,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";
 (function () {
@@ -9253,6 +9254,12 @@ function kmManualOk(placa, km, opts) {
     return confirm("⚠ " + rfKmSuspeitoTexto(s) + "\n\nQuer gravar esse número mesmo assim?");
   } catch (e) { return true; }
 }
+// v707: "KM a conferir" (viagens fechadas sem KM na limpeza de 24/10) sai quando a equipe lanca saida e chegada coerentes
+function rfKmConferido(v) {
+  if (!v || !v.kmAConferir) return;
+  const s = Number(v.kmSaida) || 0, c = Number(v.kmChegada) || 0;
+  if (s > 0 && c > s && c - s < 5000) { v.kmAConferir = false; v.kmConferidoPor = (state.sessao && (state.sessao.nome || state.sessao.email)) || ""; v.kmConferidoEm = Date.now(); }
+}
 function setViagemKmSaida(id, valor) {
   const v = state.viagens.find((x) => String(x.id) === String(id));
   if (!v) return;
@@ -9261,6 +9268,7 @@ function setViagemKmSaida(id, valor) {
   if (km > 0 && !kmManualOk(v.placa, km, { data: v.data, ignorarRef: "viagem-saida:" + v.id })) { render(); return; }
   v.kmSaida = km;
   recalcularKmDaViagem(v);
+  rfKmConferido(v);   // v707
   salvar(); render();
 }
 function setViagemKmChegada(id, valor) {
@@ -9271,6 +9279,7 @@ function setViagemKmChegada(id, valor) {
   if (km > 0 && !kmManualOk(v.placa, km, { data: v.dataFim || v.data, ignorarRef: "viagem-chegada:" + v.id })) { render(); return; }
   v.kmChegada = km;
   recalcularKmDaViagem(v);
+  rfKmConferido(v);   // v707
   salvar(); render();
 }
 /* ===== v217: O KM RODADO É O MEDIDO, NÃO O ESTIMADO =====================
@@ -42390,6 +42399,18 @@ function raviOuvirSalvar() {
     var el = document.getElementById("ravi-wa"); if (el) el.innerHTML = raviWaHTML();
   }).catch(function (e) { alert("Não salvou: " + (e.message || e)); });
 }
+/* v707: o que o Ravi e a Torre passaram a fazer em 24/10/2026 (regra: toda versao alimenta o assistente) */
+function ravi24ContextoAssistente() {
+  var semKm = (state.viagens || []).filter(function (v) { return v && v.kmAConferir; });
+  return "RAVI APROVA ABASTECIMENTO (24/10/2026, funcao ravi-aprovador, roda a cada 5 min): o Ravi aprova sozinho o abastecimento lancado pelo motorista (app ou WhatsApp) quando tudo confere: 3 fotos (painel, bomba, nota), caminhao da frota, motorista ativo, preco por litro entre R$ 4,50 e R$ 10, valor da nota igual ao da bomba (tolerancia R$ 1 ou 1%), KM coerente com o historico do caminhao, nao repetido e mes aberto. Aprovar e igual ao botao do app (soma o combustivel na viagem do caminhao; sem viagem aberta cria uma viagem solta). "
+    + "NOTA MAIOR QUE A BOMBA (decisao do Renato em 24/10): o posto abasteceu duas vezes e emitiu uma nota so -- o Ravi aprova pelo valor da NOTA e recalcula os litros pelo preco da bomba; nota MENOR que a bomba fica pendente para a equipe. "
+    + "O que nao confere fica pendente e vai um aviso no grupo Torre com o motivo; quando a equipe aprova, rejeita ou exclui, o Ravi manda no grupo '\u2705 Resolvido' com o NOME de quem resolveu e da parabens a essa pessoa (o banco registra quem mudou o status de cada abastecimento na tabela ravi_abast_log). "
+    + "REGRA DO RENATO: toda mensagem de problema tem o retorno quando resolve, com parabens a quem resolveu (Ravi e Torre). "
+    + "TORRE v20 (24/10): caminhao parado normalmente e entrega (1h a 1h30 por cliente), entao o aviso de parado no grupo da RF so sai depois de 1h30 no mesmo ponto (Configuracao da Torre > 'Parado no mesmo ponto apos', hoje " + ((TORRE && TORRE.cfg && TORRE.cfg.rf_parada_min) || 90) + " min); quando volta a andar sai '\u2705 Resolvido - voltou a andar' com o tempo parado. Fora da rota pode ser entrega no interior: o aviso diz isso e, quando volta, sai '\u2705 Resolvido - voltou para a rota'. Movimento de madrugada: so o aviso, sem retorno. A noite (19h-6h) os retornos ficam so na tela. "
+    + "LIMPEZA DE 24/10: as 34 viagens antigas (julho a 09/10) que estavam abertas foram encerradas pela equipe; 17 tinham KM coerente e 17 foram fechadas SEM KM de chegada confiavel e levam o selo 'KM a conferir' na aba Viagens (o selo some quando a equipe lanca saida e chegada coerentes). "
+    + (semKm.length ? "AGORA " + semKm.length + " viagem(ns) com KM a conferir: " + semKm.slice(0, 25).map(function (v) { return (v.data || "?") + " " + (v.placa || "?") + " (" + (v.cliente || "sem cliente") + ")"; }).join("; ") + ". " : "Nenhuma viagem com KM a conferir agora. ")
+    + "Correcoes de 24/10: abastecimento do Gustavo (QDG7J21, 24/10) passou de 81,6 L para 163,3 L (nota de R$ 1.200 = dois abastecimentos de R$ 600 a R$ 7,35/L); KM do QDG7J21 corrigido pela foto do painel (chegada da viagem de 07/10 = 152.057; abastecimento de 13/10 = 150.662).";
+}
 function raviWaContextoAssistente() {
   var st = RAVIWA.st;
   return "WHATSAPP PROPRIO DO RAVI (v698, 24/10/2026): o Renato montou um servidor proprio de WhatsApp para o Ravi no VPS da RF (Hostinger srv2021578, porta 8443, servico rf-ravi, Node + Baileys como 'aparelho conectado'), para substituir a Z-API (paga ate 20/11/2026). "
@@ -43356,6 +43377,7 @@ ${blocoNotaVazia}
 ${revContextoAssistente()}
 ${(function () { try { return torreContextoAssistente(); } catch (e) { return ""; } })()}
 ${(function () { try { return raviWaContextoAssistente(); } catch (e) { return ""; } })()}
+${(function () { try { return ravi24ContextoAssistente(); } catch (e) { return ""; } })()}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -48105,7 +48127,7 @@ function renderTabela() {
                   aguardando_motorista: { cor: "#3498DB", txt: "📤 aguardando motorista" },
                   em_andamento: { cor: GOLD, txt: "🚚 em viagem" },
                   aguardando_equipe: { cor: "#2E7D32", txt: "⏳ aguardando revisão" },
-                  aprovada: { cor: "#2E7D32", txt: "🏁 via motorista" },
+                  aprovada: { cor: "#2E7D32", txt: v.encerradaPelaEquipe ? "🏁 encerrada pela equipe" : "🏁 via motorista" },   // v707
                   rejeitada: { cor: "#C0392B", txt: "✕ rejeitada" },
                 };
                 const b = bmap[sm] || bmap.aguardando_motorista;
@@ -48134,7 +48156,7 @@ function renderTabela() {
                     <button class="btn-outline" style="font-size:9px;padding:2px 5px;color:#C0392B;border-color:#C0392B;" onclick="cancelarEnvioViagem('${v.id}')" title="Tira a viagem do app do motorista e volta a ficar sem motorista">✕ Cancelar envio</button>
                   </div>`;
                 }
-                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}${revisao}${devolvida}${revisadoPor}${trocaMotorista}</div>`;
+                return `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;color:${b.cor};border:1px solid ${b.cor};border-radius:4px;padding:1px 5px;" title="${v.motoristaDesignadoNome ? 'Enviado para ' + esc(v.motoristaDesignadoNome) : ''}">${b.txt}</span>${sm === "aguardando_equipe" && !v.valorViagem ? `<div style="font-size:9px;color:#C0392B;margin-top:2px;">⚠ falta completar</div>` : ""}${revisao}${devolvida}${revisadoPor}${v.kmAConferir && !(Number(v.kmChegada) > Number(v.kmSaida || 0) && Number(v.kmSaida) > 0) ? `<div style="margin-top:3px;"><span style="font-size:9px;font-weight:800;color:#D4A017;border:1px solid #D4A017;border-radius:4px;padding:1px 5px;background:rgba(212,160,23,.12);" title="Fechada na limpeza de 24/10 sem KM de chegada confiável. Confira a foto do painel e lance o KM de chegada: o selo some sozinho.">⚠ KM a conferir</span></div>` : ""}${trocaMotorista}</div>`;
               })()}
             </td>
             <td style="color:#ccc;">${(() => { const vc = state.veiculos.find((x) => x.placa === v.placa); const nome = motoristaDaViagem(v); if (!nome) return "—"; const clt = vc && vc.regimeMotorista === "clt"; return esc(nome) + ` <span style="font-size:9px; color:${clt ? "#999" : GOLD}; border:1px solid ${clt ? "#555" : GOLD}; border-radius:4px; padding:1px 4px;">${clt ? "CLT" : "por viagem"}</span>`; })()}</td>
