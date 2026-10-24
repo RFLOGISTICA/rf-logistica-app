@@ -17,10 +17,11 @@
   } catch (e) { if (String(e.message).indexOf("repositorio errado") !== -1) throw e; }
 })();
 </script>
-<title>RF Logística — Painel da Frota (v707)</title>
+<title>RF Logística — Painel da Frota (v708)</title>
 <meta name="rf-sistema" content="RFL">
 <meta name="rf-sistema-nome" content="rf-logistica-app">
-<meta name="rf-versao" content="v707">
+<meta name="rf-versao" content="v708">
+<!-- v708 (24/10/2026): CONSUMO REAL NA FROTA -- na aba Frota, embaixo do km/L do cadastro (que continua sendo o NORTE usado no custo), aparece o km/L REAL medido pelo Ravi (funcao ravi-consumo, tabela ravi_consumo): dourado quando ja e confiavel (3+ trechos e 800+ km), cinza com o numero de trechos enquanto tem poucos dados, "medindo..." sem medida. Saida da JDL conta como tanque cheio (a JDL entrega o caminhao abastecido e o motorista fotografa o painel). O assistente aprende a regra e os numeros de cada caminhao. Leitura da tabela so para a equipe (admin/user). -->
 <!-- v707 (24/10/2026): RAVI E TORRE COM RETORNO -- (1) aba Viagens: selo dourado "KM a conferir" nas 17 viagens antigas fechadas na limpeza de 24/10 sem KM de chegada confiavel (some sozinho quando a equipe lanca o KM de chegada) e "encerrada pela equipe" no lugar de "via motorista" quando foi a equipe que fechou; (2) o assistente aprende o que o Ravi passou a fazer em 24/10: aprova abastecimento sozinho (nota maior que a bomba = aprova pela nota), registra quem aprovou/rejeitou (tabela ravi_abast_log) e da parabens no "Resolvido", e a Torre v20 so avisa parado depois de 1h30 e manda o retorno quando volta a andar / volta para a rota (madrugada so avisa). Os numeros v704-v706 foram usados como rotulo nas funcoes do servidor e nao viraram versao do app. -->
 <!-- v703 (24/10/2026): RAVI AUTONOMO -- o Ravi do WhatsApp passa a CONSULTAR o banco com ferramentas (viagens, contas a pagar, compras, frota, manutencoes, motoristas, entregas, abastecimentos, documentos fiscais, torre). O que e CONTA do app (despesa/sobra da viagem, situacao das parcelas, oleo e preventiva) o app grava pronto em ravi_dados (raviDadosEstruturados, junto com o conhecimento) -- assim o numero do Ravi e sempre o mesmo do app. -->
 <!-- v702 (24/10/2026): RAVI LE POR ASSUNTO -- o conhecimento do sistema (300 mil+ caracteres, metade manual do app) vai inteiro (ate 1 milhao) e o Ravi (ravi-ouvir v3) separa em gavetas (financeiro, viagens, frota, pessoas, torre) e abre so as da pergunta. Placa que nao e da frota sai das respostas dele. -->
@@ -1070,7 +1071,7 @@
      e sobe na proxima abertura.
    - Nao grava dado de carga nem foto: so mensagem de erro e contexto.
    Consulta: Supabase > Table editor > rf_logs (so admin le).              */
-var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v707" };
+var RF_SISTEMA = { codigo: "RFL", nome: "rf-logistica-app", versao: "v708" };
 /* v663: foto do Ravi (robô da RF) no botão e no topo do assistente */
 var RF_RAVI_IMG = "data:image/webp;base64,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";
 (function () {
@@ -42399,6 +42400,61 @@ function raviOuvirSalvar() {
     var el = document.getElementById("ravi-wa"); if (el) el.innerHTML = raviWaHTML();
   }).catch(function (e) { alert("Não salvou: " + (e.message || e)); });
 }
+/* v708: km/L REAL medido pelo Ravi (Edge ravi-consumo, tabela ravi_consumo). So MOSTRA: as contas de custo seguem usando o norte do cadastro. */
+function raviCons() {
+  if (!window.__RAVICONS) window.__RAVICONS = { porPlaca: {}, carregadoEm: 0, carregando: false, erro: "" };
+  return window.__RAVICONS;
+}
+function raviConsPlaca(p) { return String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function raviConsumoCarregar(forcar) {
+  var R = raviCons();
+  if (R.carregando) return;
+  if (!forcar && R.carregadoEm && Date.now() - R.carregadoEm < 10 * 60e3) return;
+  R.carregando = true;
+  torreSb(function (sb) {
+    return sb.from("ravi_consumo").select("placa,tipo,km_l_norte,km_l_medido,km_total,litros_total,trechos,trechos_descartados,confiavel,ultimo_abast,atualizado_em");
+  }).then(function (r) {
+    if (r && r.error) throw r.error;
+    var m = {};
+    ((r && r.data) || []).forEach(function (x) { m[raviConsPlaca(x.placa)] = x; });
+    R.porPlaca = m; R.erro = "";
+  }).catch(function (e) {
+    R.erro = String((e && e.message) || e);
+  }).then(function () {
+    R.carregadoEm = Date.now(); R.carregando = false;
+    try { if (state.aba === "frota") renderTabela(); } catch (e) {}
+  });
+}
+function raviConsumoDa(placa) { return raviCons().porPlaca[raviConsPlaca(placa)] || null; }
+function raviConsFmt(n, d) { return Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+function raviConsumoSeloFrota(placa) {
+  var c = raviConsumoDa(placa);
+  var base = "font-size:10px;margin-top:3px;white-space:nowrap;line-height:1.2;";
+  if (!c || !(Number(c.km_l_medido) > 0)) {
+    return '<div title="O Ravi mede o km/L real a partir de 24/10: precisa de dois abastecimentos aprovados (ou a saída da JDL de tanque cheio e o abastecimento seguinte)." style="' + base + 'color:#777;">real: medindo…</div>';
+  }
+  var tip = "km/L REAL medido pelo Ravi: " + raviConsFmt(c.km_total, 0) + " km ÷ " + raviConsFmt(c.litros_total, 0) + " L em " + c.trechos + " trecho(s)"
+    + (c.trechos_descartados ? " (" + c.trechos_descartados + " descartado(s) por KM duvidoso)" : "")
+    + (c.confiavel ? ". Confiável (3+ trechos e 800+ km)." : ". Ainda com poucos dados: fica confiável com 3 trechos e 800 km.")
+    + " O número de cima (norte) continua sendo o usado no custo.";
+  if (c.confiavel) {
+    return '<div title="' + esc(tip) + '" style="' + base + 'font-size:10.5px;color:' + GOLD + ';font-weight:700;">real ' + raviConsFmt(c.km_l_medido, 2) + '</div>';
+  }
+  return '<div title="' + esc(tip) + '" style="' + base + 'color:#999;">real ' + raviConsFmt(c.km_l_medido, 2) + ' <span style="color:#777;">· ' + c.trechos + (c.trechos === 1 ? " trecho" : " trechos") + '</span></div>';
+}
+function raviConsumoContextoAssistente() {
+  raviConsumoCarregar();
+  var R = raviCons(), lista = Object.keys(R.porPlaca).map(function (k) { return R.porPlaca[k]; });
+  var medidos = lista.filter(function (c) { return Number(c.km_l_medido) > 0; });
+  return "CONSUMO REAL (km/L) MEDIDO PELO RAVI (v708, 24/10/2026, funcao ravi-consumo, roda a cada 30 min): o km/L do cadastro da aba Frota (Toco 3,5 / 3/4 4,5 ou o digitado) e so um NORTE do Renato e continua sendo o usado no custo das viagens; o REAL e medido pelo Ravi a partir de 24/10 com os abastecimentos APROVADOS: KM do painel entre um abastecimento e o seguinte dividido pelos litros do segundo (tanque cheio a tanque cheio). Fica confiavel com 3+ trechos e 800+ km. "
+    + "O rastreador confere o KM: trecho em que o KM do painel destoa muito do rastreador e descartado. "
+    + "JDL/MERCANTE: o abastecimento de saida e feito pela JDL, sempre de tanque cheio, e o motorista fotografa o painel para iniciar a viagem -- entao a SAIDA da viagem JDL conta como ponto de tanque cheio (o trecho ate o proximo abastecimento da RF entra na conta) e o trecho que termina nela fica fora (os litros sao da JDL). O valor do diesel da JDL so chega dias depois (o Renato lanca aproximado) e nunca entra na conta de consumo. Caminhoes da JT sao abastecidos pela RF. "
+    + "Se um trecho de 300+ km mostra consumo bom demais (mais de 1,6x a referencia e faltando 60+ L), o Ravi avisa no grupo Torre 'Possivel abastecimento nao lancado' e manda o 'Resolvido' quando o lancamento aparece. Relatorio semanal do km/L real vai para o Renato no privado (segunda 7h40). Na aba Frota, embaixo do km/L do cadastro, aparece o 'real' (dourado = confiavel). "
+    + (R.erro ? "(Nao consegui ler a medicao agora: " + R.erro + ".) " : "")
+    + (medidos.length
+      ? "MEDIDO AGORA: " + medidos.map(function (c) { return c.placa + " " + raviConsFmt(c.km_l_medido, 2) + " km/L" + (c.confiavel ? " (confiavel)" : " (poucos dados)") + " x norte " + raviConsFmt(c.km_l_norte, 1) + ", " + raviConsFmt(c.km_total, 0) + " km/" + raviConsFmt(c.litros_total, 0) + " L em " + c.trechos + " trecho(s)"; }).join("; ") + ". "
+      : (R.carregadoEm ? "Ainda nenhum caminhao com km/L medido (a medicao comecou em 24/10 e precisa de dois abastecimentos aprovados). " : ""));
+}
 /* v707: o que o Ravi e a Torre passaram a fazer em 24/10/2026 (regra: toda versao alimenta o assistente) */
 function ravi24ContextoAssistente() {
   var semKm = (state.viagens || []).filter(function (v) { return v && v.kmAConferir; });
@@ -43378,6 +43434,7 @@ ${revContextoAssistente()}
 ${(function () { try { return torreContextoAssistente(); } catch (e) { return ""; } })()}
 ${(function () { try { return raviWaContextoAssistente(); } catch (e) { return ""; } })()}
 ${(function () { try { return ravi24ContextoAssistente(); } catch (e) { return ""; } })()}
+${(function () { try { return raviConsumoContextoAssistente(); } catch (e) { return ""; } })()}
 Mês ativo no painel: ${mesA}
 Frota: ${t.totalVeiculos} veículos (${t.emViagem} em viagem, ${t.foraOperacao} fora de operação)
 Ocupação da frota: ${t.ocupacaoPct.toFixed(1)}%
@@ -47517,13 +47574,14 @@ function renderTabela() {
   }
 
   if (state.aba === "frota") {
+    raviConsumoCarregar();   // v708: km/L real medido pelo Ravi
     wrap.innerHTML = `<table style="min-width:1100px;"><thead><tr>
-      <th>Placa</th><th>Tipo</th><th title="Média de km rodados por litro de diesel — usado pra calcular o custo de combustível de cada viagem">km/L</th><th>Modelo</th><th>Status Baú</th><th>Motorista</th><th>Regime</th><th title="Cliente em que este caminhão está rodando. É por aqui que o app sabe quais caminhões são da JT, da JDL e da Suzano.">Cliente</th><th>Status Op.</th><th>Obs.</th><th></th>
+      <th>Placa</th><th>Tipo</th><th title="km/L do cadastro = NORTE, usado pra calcular o custo de combustível de cada viagem. Embaixo: o km/L REAL medido pelo Ravi desde 24/10 (KM rodado entre um abastecimento e o seguinte ÷ litros).">km/L</th><th>Modelo</th><th>Status Baú</th><th>Motorista</th><th>Regime</th><th title="Cliente em que este caminhão está rodando. É por aqui que o app sabe quais caminhões são da JT, da JDL e da Suzano.">Cliente</th><th>Status Op.</th><th>Obs.</th><th></th>
     </tr></thead><tbody>
       ${vs.map((v) => `<tr>
         <td><input value="${esc(v.placa)}" placeholder="AAA0A00" onchange="atualizarVeiculo('${v.id}','placa',this.value.toUpperCase())"></td>
         <td><select onchange="atualizarVeiculo('${v.id}','tipo',this.value)">${TIPOS.map((t) => `<option ${v.tipo === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
-        <td><input type="number" step="0.1" min="0" value="${v.kmPorLitro != null ? v.kmPorLitro : 3.5}" title="km/L médio deste veículo" onchange="atualizarVeiculo('${v.id}','kmPorLitro',this.value)" style="width:56px;"></td>
+        <td><input type="number" step="0.1" min="0" value="${v.kmPorLitro != null ? v.kmPorLitro : 3.5}" title="km/L médio deste veículo" onchange="atualizarVeiculo('${v.id}','kmPorLitro',this.value)" style="width:56px;">${raviConsumoSeloFrota(v.placa)}</td>
         <td><input value="${esc(v.modelo)}" placeholder="Modelo" onchange="atualizarVeiculo('${v.id}','modelo',this.value)"></td>
         <td><select onchange="atualizarVeiculo('${v.id}','bau',this.value)">${STATUS_BAU.map((s) => `<option ${v.bau === s ? "selected" : ""}>${s}</option>`).join("")}</select></td>
         <td>${seletorMotoristaVeiculo(v)}</td>
