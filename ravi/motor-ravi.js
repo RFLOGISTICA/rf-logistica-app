@@ -679,6 +679,7 @@ function rvViagemJDL(e) {
   var kmEst = r && r.km ? Math.round(r.km + (mtCfg().kmUrbanoCidade || 0) * cidOrd.length) : 0;
   var bonito = res.map(function (x) { return x.uf === "BA" ? x.nome : x.nome + "/" + x.uf; });
   var vist = []; bonito.forEach(function (b) { if (vist[vist.length - 1] !== b) vist.push(b); });
+  if (entLista.some(function (q) { return q > 0; })) entLista = entLista.map(function (q) { return q > 0 ? q : 1; });   // v735: cidade sem numero = 1 entrega (Renato: "Queimadas tem uma parada")
   var entPrev = [], totEnt = 0;   // v735
   res.forEach(function (x, i) { var q = entLista[i] || 0; if (!x.chave) return; var ult = entPrev[entPrev.length - 1]; if (ult && ult.chave === x.chave) { ult.qtd += q; } else entPrev.push({ chave: x.chave, cidade: x.uf === "BA" ? x.nome : x.nome + "/" + x.uf, qtd: q }); totEnt += q; });
   var viagem = {
