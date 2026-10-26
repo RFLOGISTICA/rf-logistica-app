@@ -1,0 +1,19 @@
+name: baixar-midia-temporario
+on:
+  push:
+    branches: [tmp-portfolio]
+permissions:
+  contents: write
+jobs:
+  baixar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-portfolio
+      - run: |
+          B=https://dpqgqgjhydrztouxscad.supabase.co/storage/v1/object/public/ravi-midia/ravi_
+          for k in ouvindo pensando falando; do curl -sSfL "${B}${k}.mp4?v=2" -o $k.mp4 || true; done
+          ls -la
+          git config user.name "rf-bot"; git config user.email "rf-bot@users.noreply.github.com"
+          git add -A; git commit -m "midia baixada (temporario)"; git push
