@@ -1,5 +1,5 @@
 /* RF Logistica -- MOTOR DO RAVI gerado do app v703 em 2026-10-24T19:38Z. NAO EDITAR A MAO: rode gerar.sh. Usado pela funcao ravi-motor (new Function("state", ...)). */
-var RV_MOTOR_VERSAO = "v703";
+var RV_MOTOR_VERSAO = "v734";
 function tarifaCliente(cliente) { return (state.tarifas && state.tarifas[cliente]) || null; }
 function modoCliente(cliente) { const t = tarifaCliente(cliente); return (t && t.modo) ? t.modo : "viagem"; }
 function freteKmDe(cliente, tipo) {
@@ -752,4 +752,110 @@ function rvViagemJT(e) {
   return { ok: true, viagem: v, avisos: avisos, escolha: esc ? esc.motivo : "", conferencia: c, rotaTabela: rotaTar, tipo: veic.tipo || "", peso: Math.round(peso * 1000) / 1000, volumes: volumes, carga: carga, rota: p.rota };
 }
 
-function rvMotor() { return { rvViagemJT: rvViagemJT, rvViagemJDL: rvViagemJDL, rvResolverCidades: rvResolverCidades, versao: RV_MOTOR_VERSAO }; }
+/* ===================== YAMAHA (v734, 26/10/2026) =====================
+   Copia exata das tabelas do app (YAMAHA_MODELOS, YAMAHA_REGIOES, YAMAHA_APELIDOS) + rvViagemYamaha: o PICKING LIST DE EXPEDICAO
+   da Yamalog (foto) lido pelo ravi-motor vira a viagem do MESMO jeito da calculadora do app (lancarComoViagem): cliente "Yamaha",
+   frete = soma por destino (quantidade x tarifa da classificacao da cidade: BA Capital, BA Interior I/II, PE II, SE II),
+   item "Yamaha — N itens · Cidade (Regiao): 23x Rack Small, 1x Rack Big" em outrosItens (valor 0, so descricao). */
+var YAMAHA_MODELOS = [
+  { id: "mtc1", nome: "Rack Small", cod: "MTC 1", cat: "Moto",    cabe: 33, emb: 56, kg: 205,   m3: 1.684, tar: { cap: 192.43, int1: 269.58, int2: 283.06, pe2: 252.96, se2: 232.72 } },
+  { id: "mtc2", nome: "Rack Big",   cod: "MTC 2", cat: "Moto",    cabe: 24, emb: 46, kg: 227.5, m3: 2.346, tar: { cap: 233.76, int1: 326.91, int2: 372.53, pe2: 258.70, se2: 238.00 } },
+  { id: "mtc4", nome: "Rack Big",   cod: "MTC 4", cat: "Moto",    cabe: 24, emb: 42, kg: 227.5, m3: 2.346, tar: { cap: 233.76, int1: 326.91, int2: 372.53, pe2: 258.70, se2: 238.00 } },
+  { id: "mtc5", nome: "Teneré ★",   cod: "MTC 5", cat: "Moto",    cabe: 19, emb: 62, kg: 220,   m3: 2.875, tar: { cap: 577.28, int1: 808.72, int2: 849.16, pe2: 758.86, se2: 698.15 } },
+  { id: "mtc6", nome: "Rack S.Big", cod: "MTC 6", cat: "Moto",    cabe: 23, emb: 38, kg: null,  m3: 2.455, tar: { cap: 282.97, int1: 395.73, int2: 417.14, pe2: 313.16, se2: 288.11 } },
+  { id: "ntc1", nome: "Náutica 1",  cod: "NTC 1", cat: "Náutica", cabe: 142, emb: 204, kg: 46,  m3: 0.402, tar: { cap: 33.21,  int1: 36.10,  int2: 53.59,  pe2: 61.33,  se2: 56.42 } },
+  { id: "ntc2", nome: "Náutica 2",  cod: "NTC 2", cat: "Náutica", cabe: 96,  emb: 96,  kg: 122, m3: 0.522, tar: { cap: 46.78,  int1: 50.85,  int2: 73.29,  pe2: 130.32, se2: 119.89 } },
+  { id: "ntc3", nome: "Náutica 3",  cod: "NTC 3", cat: "Náutica", cabe: 68,  emb: 85,  kg: 153, m3: 0.829, tar: { cap: 64.21,  int1: 69.80,  int2: 95.41,  pe2: 149.47, se2: 137.51 } },
+  { id: "ntc4", nome: "Náutica 4",  cod: "NTC 4", cat: "Náutica", cabe: 51,  emb: 52,  kg: 230, m3: 1.109, tar: { cap: 86.15,  int1: 93.64,  int2: 134.49, pe2: 241.46, se2: 222.14 } },
+  { id: "ntc5", nome: "Náutica 5",  cod: "NTC 5", cat: "Náutica", cabe: 44,  emb: 40,  kg: 246, m3: 1.282, tar: { cap: 172.76, int1: 187.78, int2: 252.48, pe2: 306.61, se2: 282.08 } },
+];
+var YAMAHA_REGIOES = {
+  cap:  { nome: "BA Capital",     cidades: "Feira de Santana · Salvador · Camaçari · Lauro de Freitas", km: 240, dias: 0 },
+  int1: { nome: "BA Interior I",  cidades: "Alagoinhas · Juazeiro · Irecê · Itabuna · Jacobina · Paulo Afonso · Sto Antônio de Jesus · Sr do Bonfim · Valença · Jequié · Itaberaba", km: 600, dias: 1 },
+  int2: { nome: "BA Interior II", cidades: "Barreiras · Bom Jesus da Lapa · Eunápolis · Guanambi · Porto Seguro · V. da Conquista · Teixeira de Freitas", km: 2000, dias: 2 },
+  pe2:  { nome: "PE Interior II", cidades: "Petrolina", km: 1000, dias: 2 },
+  se2:  { nome: "SE Interior II", cidades: "Aracaju · Indiaroba · Itabaiana", km: 670, dias: 1 },
+};
+// Apelidos que aparecem no picking list da Yamalog (coluna "Tipo")
+var YAMAHA_APELIDOS = { "SMALL": "mtc1", "BIG": "mtc2", "SBIG": "mtc6" };
+var YAMAHA_CIDADE_REGIAO = {
+  "FEIRA DE SANTANA": "cap", "SALVADOR": "cap", "CAMACARI": "cap", "LAURO DE FREITAS": "cap",
+  "ALAGOINHAS": "int1", "JUAZEIRO": "int1", "IRECE": "int1", "ITABUNA": "int1", "JACOBINA": "int1", "PAULO AFONSO": "int1", "SANTO ANTONIO DE JESUS": "int1", "SENHOR DO BONFIM": "int1", "VALENCA": "int1", "JEQUIE": "int1", "ITABERABA": "int1",
+  "BARREIRAS": "int2", "BOM JESUS DA LAPA": "int2", "EUNAPOLIS": "int2", "GUANAMBI": "int2", "PORTO SEGURO": "int2", "VITORIA DA CONQUISTA": "int2", "TEIXEIRA DE FREITAS": "int2",
+  "PETROLINA": "pe2", "ARACAJU": "se2", "INDIAROBA": "se2", "ITABAIANA": "se2"
+};
+function rvYamahaModelo(tipo) {
+  var t = mtNorm(tipo).replace(/[^A-Z0-9]/g, "");
+  if (YAMAHA_APELIDOS[t]) return YAMAHA_APELIDOS[t];
+  if (/^SUPERBIG|^SBIG|^SUPER/.test(t)) return "mtc6";
+  if (/TENERE|CAIXAMET|^MTC5/.test(t)) return "mtc5";
+  var m = t.match(/^(MTC|NTC)(\d)$/); if (m) return m[1].toLowerCase() + m[2];
+  return null;
+}
+function rvViagemYamaha(e) {
+  e = e || {};
+  var L = e.leitura || {}, avisos = [];
+  var itens = (L.itens || []).filter(function (x) { return x && (x.tipo || x.cidade); });
+  if (!itens.length) return { ok: false, erro: "nao achei os itens (motos) nesse picking list -- mande a foto inteira e reta" };
+  var placa = String(e.placa || L.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  var veic = (state.veiculos || []).find(function (x) { return String(x.placa || "").toUpperCase() === placa; });
+  if (!veic && placa.length === 7) {   // foto: I/1 e J/1 se confundem na placa (QEN6182 = QEN6J82)
+    var parecidas = (state.veiculos || []).filter(function (x) { var q = String(x.placa || "").toUpperCase(); if (q.length !== 7) return false; for (var k = 0, d = 0; k < 7; k++) { if (q[k] !== placa[k]) { d++; if (!(/[1IJL]/.test(q[k]) && /[1IJL]/.test(placa[k]))) d += 9; } } return d === 1; });
+    if (parecidas.length === 1) { avisos.push("placa lida " + placa + " = " + parecidas[0].placa + " (letra confundida na foto)"); veic = parecidas[0]; placa = veic.placa; }
+  }
+  if (!veic) return { ok: false, erro: "a placa " + (placa || "(nao lida)") + " nao esta na frota cadastrada -- diga a placa" };
+  var porCidade = {}, ordem = [], semTipo = [], semRegiao = [];
+  itens.forEach(function (x) {
+    var cid = mtNorm(x.cidade || "").replace(/\s+(BA|SE|PE)$/, "").trim() || "(sem cidade)";
+    var mod = rvYamahaModelo(x.tipo);
+    if (!mod) { semTipo.push((x.nf || "?") + " (" + (x.tipo || "?") + ")"); return; }
+    if (!porCidade[cid]) { porCidade[cid] = { cidade: cid, qtd: {}, clientes: {}, prazos: {} }; ordem.push(cid); }
+    porCidade[cid].qtd[mod] = (porCidade[cid].qtd[mod] || 0) + 1;
+    if (x.cliente) porCidade[cid].clientes[String(x.cliente).trim()] = 1;
+    if (x.prazo) porCidade[cid].prazos[String(x.prazo).trim()] = 1;
+  });
+  if (semTipo.length) return { ok: false, erro: "nao reconheci o tipo de embalagem destes itens: " + semTipo.join(", ") };
+  var frete = 0, totItens = 0, kg = 0, partes = [], blocos = [];
+  ordem.forEach(function (cid) {
+    var b = porCidade[cid], reg = YAMAHA_CIDADE_REGIAO[cid];
+    if (!reg) { semRegiao.push(cid); return; }
+    var fb = 0, ib = 0, mix = [];
+    YAMAHA_MODELOS.forEach(function (m) { var q = b.qtd[m.id] || 0; if (!q) return; fb += q * (m.tar[reg] || 0); ib += q; kg += q * (m.kg || 0); mix.push(q + "x " + m.nome); });
+    frete += fb; totItens += ib;
+    var rc = rvResolverCidades([cid])[0] || {};
+    var nomeC = cid.toLowerCase().replace(/(^|\s)\S/g, function (w) { return w.toUpperCase(); }).replace(/ (De|Da|Do|Dos|Das) /g, function (w) { return w.toLowerCase(); });
+    var ufR = reg === "se2" ? "SE" : reg === "pe2" ? "PE" : (rc.uf && rc.uf !== "BA" ? rc.uf : "");
+    if (ufR) nomeC += "/" + ufR;
+    partes.push(nomeC + " (" + YAMAHA_REGIOES[reg].nome + "): " + mix.join(", "));
+    blocos.push({ cidade: nomeC, regiao: reg, regiaoNome: YAMAHA_REGIOES[reg].nome, itens: ib, frete: Math.round(fb * 100) / 100, mix: mix.join(", "), clientes: Object.keys(b.clientes), prazos: Object.keys(b.prazos) });
+  });
+  if (semRegiao.length) return { ok: false, erro: "estas cidades nao estao na tabela de tarifas da Yamalog: " + semRegiao.join(", ") + " -- sem preco contratado" };
+  var tot = Number(L.totalProdutos) || 0;
+  if (tot && tot !== totItens) avisos.push("o picking list diz " + tot + " produtos e eu contei " + totItens + " itens -- confira a foto");
+  var data = e.data || L.dataEmbarque || rfDataLocalISO(new Date());
+  var dup = (state.viagens || []).find(function (x) { return x.placa === placa && x.data === data && /yama/i.test(String(x.cliente || "")) && Math.abs((Number(x.valorViagem) || 0) - frete) < 1; });
+  if (dup) return { ok: false, erro: "ja existe viagem Yamaha do " + placa + " em " + data + " com esse frete (id " + dup.id + ")", duplicada: dup.id };
+  var aberta = (state.viagens || []).find(function (x) { return x.placa === placa && !(Number(x.kmChegada) > 0) && /aguardando_motorista|em_andamento/.test(String(x.statusMotorista || "")); });
+  if (aberta) avisos.push("o " + placa + " ja tem viagem aberta (" + aberta.cliente + " de " + aberta.data + ")");
+  var chaves = ordem.map(function (c) { var r = rvResolverCidades([c])[0]; return r && r.chave; }).filter(Boolean);
+  var r = null; try { r = chaves.length ? mtRotaOtima(chaves) : null; } catch (er) { r = null; }
+  var regMaisLonge = blocos.reduce(function (a, b) { return YAMAHA_REGIOES[b.regiao].km > (a ? YAMAHA_REGIOES[a].km : -1) ? b.regiao : a; }, null);
+  var km = r && r.km ? Math.round(r.km + (mtCfg().kmUrbanoCidade || 0) * chaves.length) : (regMaisLonge ? YAMAHA_REGIOES[regMaisLonge].km : 0);
+  var dias = Math.max(1, Math.ceil(km / 650));
+  var mixTxt = partes.join(" | ");
+  var v = {
+    id: uid(), placa: placa, cliente: "Yamaha", data: data, criadoEm: Date.now(), dataCriacao: rfDataLocalISO(new Date()),
+    valorViagem: Math.round(frete * 100) / 100, km: km, dias: dias,
+    kmSaida: 0, kmChegada: 0, fotoKmSaida: "", fotoKmChegada: "", combustivelItens: [], vgPagMotorista: 500, vgPagAjudante: 300,
+    motoristaNaEpoca: e.motorista || veic.motorista || "", temAjudante: true,
+    pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "", pesoKg: Math.round(kg),
+    outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha — " + totItens + " itens · " + mixTxt }],
+    yamahaPicking: { viagemNum: L.viagemNum || "", rotaKMM: L.rotaKMM || "", emissor: L.emissor || "", totalProdutos: tot || totItens, blocos: blocos },
+    obs: "Picking list da Yamalog" + (L.viagemNum ? " (" + L.viagemNum + " viagem)" : "") + " criado pelo Ravi" + (e.pedidoPor ? " a pedido de " + e.pedidoPor : "") + ": "
+      + blocos.map(function (b) { return b.cidade; }).join(" → ") + " (KM estimado " + km + ", Feira de Santana ida e volta). " + totItens + " itens: " + mixTxt + ".",
+    criadaPeloRavi: true, pedidoRavi: e.pedidoPor || ""
+  };
+  return { ok: true, viagem: v, blocos: blocos, itens: totItens, avisos: avisos, tipo: veic.tipo || "", cidades: blocos.map(function (b) { return b.cidade; }) };
+}
+
+function rvMotor() { return { rvViagemJT: rvViagemJT, rvViagemJDL: rvViagemJDL, rvViagemYamaha: rvViagemYamaha, rvResolverCidades: rvResolverCidades, versao: RV_MOTOR_VERSAO }; }
