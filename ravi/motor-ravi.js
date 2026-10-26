@@ -474,7 +474,10 @@ function mtKmDaCarga(p) {
   /* v393: ROTEIRIZA e so entao mede. A ordem do print e a ordem em que a
      Mateus lista as lojas, nao um roteiro -- medir por ela dava distancia
      que ninguem roda. */
-  var rota = mtRotaOtima(nomes);
+  /* v731 (26/10/2026): Renato -- "a ordem do carregamento e de cima para baixo no PDF". A lista da Mateus E a ordem de
+     carregamento/entrega: a viagem segue a ordem do PDF (antes o sistema reordenava pelo menor caminho e o motorista via outra ordem). */
+  var seqPdf = mtKmSequencia(nomes);
+  var rota = { ordem: nomes.slice(), km: seqPdf.km, exato: true };
   var urb = (p.cidades || []).length * cfg.kmUrbanoCidade;
   /* v394: mtDistKm ja devolve com o fator GERAL embutido. Aqui voltamos pra
      linha reta pura e reaplicamos o fator DESTA rota. */
