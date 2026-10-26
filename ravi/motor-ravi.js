@@ -1,5 +1,5 @@
 /* RF Logistica -- MOTOR DO RAVI gerado do app v703 em 2026-10-24T19:38Z. NAO EDITAR A MAO: rode gerar.sh. Usado pela funcao ravi-motor (new Function("state", ...)). */
-var RV_MOTOR_VERSAO = "v734";
+var RV_MOTOR_VERSAO = "v735";
 function tarifaCliente(cliente) { return (state.tarifas && state.tarifas[cliente]) || null; }
 function modoCliente(cliente) { const t = tarifaCliente(cliente); return (t && t.modo) ? t.modo : "viagem"; }
 function freteKmDe(cliente, tipo) {
@@ -653,7 +653,18 @@ function rvViagemJDL(e) {
   if (!/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placa)) return { ok: false, erro: "placa invalida: " + (e.placa || "(vazia)") };
   var veic = (state.veiculos || []).find(function (x) { return String(x.placa || "").toUpperCase() === placa; });
   if (!veic) return { ok: false, erro: "a placa " + placa + " nao esta na frota cadastrada" };
-  var lista = (e.cidades || []).map(function (x) { return String(x || "").trim(); }).filter(Boolean);
+  /* v735: quantidade de ENTREGAS por cidade (Renato escreve "PONTO NOVO (cinco entregas)") -- vem em e.entregas (mesma ordem) ou
+     no proprio texto da cidade entre parenteses; vai para viagem.entregasPrevistas e a Torre usa 1 h por entrega na previsao */
+  var NUMS = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, "três": 3, quatro: 4, cinco: 5, seis: 6, seia: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19, vinte: 20 };
+  var qtdDe = function (t) { var m = String(t || "").toLowerCase().match(/(\d+)/); if (m) return parseInt(m[1], 10); var w = String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").match(/[a-z]+/g) || []; for (var i = 0; i < w.length; i++) if (NUMS[w[i]]) return NUMS[w[i]]; return 0; };
+  var entIn = Array.isArray(e.entregas) ? e.entregas : [];
+  var lista = [], entLista = [];
+  (e.cidades || []).forEach(function (x, i) {
+    var t = String(x || "").trim(); if (!t) return;
+    var mp = t.match(/^(.*?)\s*\(([^)]*)\)?\s*$/), q = Number(entIn[i]) || 0;
+    if (mp && (/entr|parad|\d/i.test(mp[2] || "") || qtdDe(mp[2]) > 0)) { if (!q) q = qtdDe(mp[2]); t = mp[1].trim(); }
+    lista.push(t); entLista.push(q);
+  });
   if (!lista.length) return { ok: false, erro: "nenhuma cidade informada" };
   var res = rvResolverCidades(lista), falta = res.filter(function (r) { return !r.chave; });
   if (falta.length) return { ok: false, erro: "nao achei estas cidades: " + falta.map(function (r) { return r.pedido; }).join(", "), cidades: res };
@@ -668,6 +679,8 @@ function rvViagemJDL(e) {
   var kmEst = r && r.km ? Math.round(r.km + (mtCfg().kmUrbanoCidade || 0) * cidOrd.length) : 0;
   var bonito = res.map(function (x) { return x.uf === "BA" ? x.nome : x.nome + "/" + x.uf; });
   var vist = []; bonito.forEach(function (b) { if (vist[vist.length - 1] !== b) vist.push(b); });
+  var entPrev = [], totEnt = 0;   // v735
+  res.forEach(function (x, i) { var q = entLista[i] || 0; if (!x.chave) return; var ult = entPrev[entPrev.length - 1]; if (ult && ult.chave === x.chave) { ult.qtd += q; } else entPrev.push({ chave: x.chave, cidade: x.uf === "BA" ? x.nome : x.nome + "/" + x.uf, qtd: q }); totEnt += q; });
   var viagem = {
     id: uid(), placa: placa, cliente: CLI, rota: e.rota || "JDL", data: data, criadoEm: Date.now(),
     dataCriacao: rfDataLocalISO(new Date()),
@@ -676,13 +689,15 @@ function rvViagemJDL(e) {
     vgPagMotorista: 500, vgPagAjudante: 300, temAjudante: false,
     motoristaNaEpoca: e.motorista || veic.motorista || "",
     pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "", pesoKg: 0,
-    obs: "Rota " + CLI + " criada pelo Ravi" + (e.pedidoPor ? " a pedido de " + e.pedidoPor : "") + ": " + vist.join(" → ") + " (KM estimado " + kmEst + ", Feira de Santana ida e volta).",
+    obs: "Rota " + CLI + " criada pelo Ravi" + (e.pedidoPor ? " a pedido de " + e.pedidoPor : "") + ": " + vist.join(" → ") + " (KM estimado " + kmEst + ", Feira de Santana ida e volta)."
+      + (totEnt ? " Entregas previstas: " + entPrev.filter(function (x) { return x.qtd > 0; }).map(function (x) { return x.cidade + " " + x.qtd; }).join(", ") + " (total " + totEnt + ")." : ""),
+    entregasPrevistas: entPrev.map(function (x) { return { cidade: x.cidade, qtd: x.qtd }; }),   // v735: a Torre usa na previsao (1 h por entrega)
     criadaPeloRavi: true, pedidoRavi: e.pedidoPor || ""
   };
   try { if (modoCliente(CLI) === "km" && viagem.km > 0) aplicarFreteKm(viagem, "km"); else if (Number(e.frete) > 0) viagem.valorViagem = Number(e.frete); } catch (er) { }
   if (!viagem.valorViagem) avisos.push("frete ficou zerado (sem tarifa por km para " + CLI + ")");
   var aprox = res.filter(function (x) { return x.aproximada || x.obs; }).map(function (x) { return x.pedido + " = " + x.nome + "/" + x.uf + (x.obs ? " (" + x.obs + ")" : ""); });
-  return { ok: true, viagem: viagem, cidades: res, ordemOtima: r ? r.ordem : [], avisos: avisos, aproximadas: aprox, tipo: veic.tipo || "" };
+  return { ok: true, viagem: viagem, cidades: res, ordemOtima: r ? r.ordem : [], avisos: avisos, aproximadas: aprox, tipo: veic.tipo || "", entregas: viagem.entregasPrevistas, totalEntregas: totEnt };
 }
 
 /* rvViagemJT: a programacao da JT/Mateus lida do print (mesmo formato da funcao ler-programacao-mateus) vira viagem do MESMO
