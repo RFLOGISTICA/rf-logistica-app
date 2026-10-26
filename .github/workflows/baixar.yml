@@ -1,0 +1,21 @@
+name: baixar-portfolio-temporario
+on:
+  push:
+    branches: [tmp-portfolio]
+permissions:
+  contents: write
+jobs:
+  baixar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-portfolio
+      - run: |
+          curl -sSfL "$(cat url_completo.txt)" -o completo.pdf
+          curl -sSfL "$(cat url_leve.txt)" -o leve.pdf
+          ls -la
+          git config user.name "rf-bot"; git config user.email "rf-bot@users.noreply.github.com"
+          git add completo.pdf leve.pdf
+          git commit -m "portfolio baixado (temporario)"
+          git push
