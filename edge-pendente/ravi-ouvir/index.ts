@@ -1,4 +1,5 @@
 // RF Logistica - RAVI OUVE E RESPONDE NO WHATSAPP - v3 (RFL v702, 24/10/2026)
+// v55 (01/11): tarefa com horario so considera rota INICIADA com prova de saida (app do motorista ou Torre), nao pela data programada; nunca inventa horario -- pedido #17 (QDO5E70 dado como em viagem).
 // v54 (31/10): enviar_whatsapp "grupo da Yamaha" vai para o grupo do cliente (QEN6J82 - RF LOGISTICA), nao para o grupo interno -- pedido #18.
 // v54 (31/10): "ja resolvi" / "para de cobrar" (texto ou audio, em qualquer parte da frase) encerra o chamado do grupo do cliente -- pedidos #19/#20.
 // v53 (31/10): viagem da Yamaha tambem pelo PRINT da PLANILHA de programacao da Yamalog (ravi-motor v8 le os dois formatos).
@@ -2617,6 +2618,7 @@ HOJE: ja cobrou ${doDia.cobrancas || 0} vez(es); ${doDia.escalou ? "o Renato JA 
 CONVERSA DE HOJE ENTRE O RAVI E O RESPONSAVEL:
 ${conversa || "(nenhuma mensagem hoje)"}
 COMO FAZER: 1) consulte o sistema com as ferramentas (ex.: frota para ver caminhoes em Manutencao, manutencoes com de/ate de hoje). 2) Decida se o que o Renato pediu ja foi feito (pelo sistema ou pela resposta do responsavel na conversa). 3) Se NAO foi feito, mande UMA mensagem ao responsavel com enviar_whatsapp: objetiva, educada, citando placas e o que falta; a cada cobranca do dia fique mais firme (1a: pedido; 2a: "ainda nao recebi"; 3a+: "e urgente, o Renato pediu"). 4) Se ja cobrou ${t.escalar_apos}+ vezes hoje sem resposta e o Renato ainda nao foi avisado, mande tambem ao Renato (para: 'Renato') um aviso curto. 5) Se estiver tudo feito, nao mande nada ao responsavel (se ele resolveu depois de cobrado, mande a ele um agradecimento curto). Nunca invente dados. Nunca mande valores em dinheiro ao responsavel.
+INICIO DE ROTA/VIAGEM (v55, pedido #17 -- Renato 29/10: "QDO5E70 nao esta em viagem"): a ferramenta viagens lista pela DATA PROGRAMADA; viagem com data de hoje NAO quer dizer que o caminhao saiu. So diga que uma rota/viagem INICIOU quando houver prova de saida: o motorista iniciou no app (status em_andamento / KM de saida lancado) ou a Torre mostra a viagem ativa (torre_ao_vivo). Sem essa prova, a viagem esta PROGRAMADA (ainda nao saiu) e nao gera aviso de diaria. NUNCA invente horario de inicio (ex.: 00:05) -- use so o horario que o sistema mostrar.
 Se achar cadastro desatualizado (data de documento que ja passou, oleo/preventiva "vencidos" ha muitos km, KM errado), nao trate como vencido: peca ao Marcelo/Sandra que corrijam no sistema (decisao do Renato).
 ${await memoriaTexto()}
 NO FIM responda SO um JSON: {"resolvido": true|false, "cobrou": true|false, "avisou_renato": true|false, "resumo": "uma frase"}`;
