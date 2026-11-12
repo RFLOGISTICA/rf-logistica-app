@@ -51956,6 +51956,12 @@ function chatEnviarPerguntaTexto(pergunta, oculta) {
               .then(function (m2) { state._chatMensagens.push({ role: "assistant", content: m2 }); render(); falarTexto(m2, chatContinuarConversaSeAtivo); });
             return;
           }
+          if (acao && (acao.tipo === "faturar_fracionado" || acao.tipo === "decidir_rota_fracionado")) {   // v872: a IA propoe, a equipe confirma
+            state._chatMensagens.push({ role: "assistant", content: resposta, acaoPendente: acao });
+            render();
+            falarTexto(resposta, chatContinuarConversaSeAtivo);
+            return;
+          }
           if (acao && acao.tipo === "confirmar_espaco_fracionado") {   // v870: a IA propoe, a equipe confirma
             state._chatMensagens.push({ role: "assistant", content: resposta, acaoPendente: acao });
             render();
@@ -52094,6 +52100,22 @@ function chatConfirmarViagem(msgIndex) {
   if (m.acaoPendente.tipo === "excluir_nota_compra") { ccNfChatConfirmar(msgIndex); return; }   // v756
   if (m.acaoPendente.tipo === "trocar_datas_parcelas") { ccDatasChatConfirmar(msgIndex); return; }   // v757
   if (m.acaoPendente.tipo === "marcar_excecao_resolvida") { cxChatConfirmar(msgIndex); return; }   // v760
+  if (m.acaoPendente.tipo === "faturar_fracionado") {   // v872
+    var dF2 = m.acaoPendente.dados || {}; m.acaoPendente = null;
+    var cF = (FRC2.cot || []).find(function (x) { return String(x.numero) === String(dF2.numero).replace(/\D/g, ""); });
+    if (!cF) { m.content += "\n\n⚠ Não achei a cotação nº " + (dF2.numero || "?") + " (abra a aba Fracionado para carregar)."; render(); return; }
+    frc2Rpc("frc_faturar", { p_cot: cF.id, p_valor: Number(dF2.valor) || 0, p_cte: dF2.cte || null, p_custo_real: dF2.custo_real ? Number(dF2.custo_real) : null }).then(function (r) {
+      m.content += "\n\n" + (r && r.ok ? "✅ Faturamento da cotação nº " + cF.numero + " registrado: " + frcR(dF2.valor) + (dF2.cte ? " (CT-e " + dF2.cte + ")" : "") + "." : "⚠ Não registrou: " + ((r && r.erro) || "?")); render(); FRC2.ind = null; frc2Carregar(true);
+    }).catch(function (e) { m.content += "\n\n⚠ " + e.message; render(); });
+    return;
+  }
+  if (m.acaoPendente.tipo === "decidir_rota_fracionado") {   // v872
+    var dR2 = m.acaoPendente.dados || {}; m.acaoPendente = null;
+    var sR = (FRC2.sug || []).find(function (x) { return frcNorm(x.cidade) === frcNorm(dR2.cidade); });
+    if (!sR || ["aceita", "descartada"].indexOf(dR2.decisao) === -1) { m.content += "\n\n⚠ Não achei a rota sugerida para " + (dR2.cidade || "?") + "."; render(); return; }
+    frc2DecidirRota(sR.id, dR2.decisao); m.content += "\n\n✅ Rota sugerida " + sR.cidade + " marcada como " + dR2.decisao + " (nenhuma viagem foi criada)."; render();
+    return;
+  }
   if (m.acaoPendente.tipo === "confirmar_espaco_fracionado") {   // v870
     var dE = m.acaoPendente.dados || {}; m.acaoPendente = null;
     var plE = String(dE.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
