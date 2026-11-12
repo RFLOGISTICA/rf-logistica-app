@@ -8355,6 +8355,139 @@ function loteBaixarTudo() {
     }, Promise.resolve()).then(function () { return z.generateAsync({ type: "blob" }); });
   }).then(function (b) { rfBaixarBlob(b, "CTe-subcontratacao-lote-" + hojeISO() + ".zip"); }).catch(function (e) { alert("Não consegui montar o ZIP: " + (e.message || e)); });
 }
+/* ===== v861 (12/11/2026): ENVIAR os CT-e de subcontratacao para a contratante =====================================
+   Renato: "so faltou o botao enviar ... e as opcoes de enviar o PDF, o XML" -- para a JDL: "os dois" (WhatsApp e e-mail),
+   contato Douglas (75) 99839-9939. WhatsApp sai pelo numero do Ravi (ravi-whatsapp acao enviar_documento, arquivo direto do
+   bucket); e-mail = baixa o ZIP (PDF/XML escolhidos) e abre o e-mail com as CHAVES no corpo (mesmo jeito do envio ao Andre).
+   Contato de cada contratante fica em rf_contatos_docs (vale em todos os aparelhos). Cada envio fica registrado no CT-e. */
+var ENV = { contatos: null, carregando: false };
+function envContratante(cli) { return dvVgContratante(cli || "") || "Contratante"; }
+function envCarregar(forca) {
+  if (ENV.carregando || (ENV.contatos && !forca)) return; ENV.carregando = true;
+  rfGetClient().then(function (sb) { return sb ? sb.from("rf_contatos_docs").select("*") : { data: [] }; }).then(function (r) {
+    ENV.contatos = {}; ((r && r.data) || []).forEach(function (c) { ENV.contatos[c.contratante] = c; }); ENV.carregando = false; render();
+  }).catch(function () { ENV.contatos = ENV.contatos || {}; ENV.carregando = false; });
+}
+function envSt() { if (!state._env) state._env = { aberto: false, sel: {}, pdf: true, xml: true, msg: "", rodando: false, log: [] }; return state._env; }
+function envLista() {
+  var cli = state._dvCliente || "", lim = Date.now() - 45 * 864e5, out = [];
+  (state.viagens || []).forEach(function (v) {
+    if (!v || !dvVgEhSub(v.cliente) || (cli && v.cliente !== cli)) return;
+    (v.ctesSub || []).forEach(function (c) { if (c.status === "autorizado" && c.amb === "producao" && Date.parse(c.em || 0) >= lim) out.push({ v: v, c: c }); });
+  });
+  return out.sort(function (a, b) { return String(b.c.em || "").localeCompare(String(a.c.em || "")); });
+}
+function envAbrir() {
+  var E = envSt(), L = loteSt(); envCarregar(); E.aberto = !E.aberto; E.msg = ""; E.log = []; E.sel = {};
+  var feitos = {}; (L.feitos || []).forEach(function (f) { if (f.amb === "producao") feitos[f.chave] = 1; });
+  envLista().forEach(function (x) { E.sel[x.c.chave] = Object.keys(feitos).length ? !!feitos[x.c.chave] : !(x.c.envios || []).length; });
+  render();
+}
+function envContato() {
+  var lst = envLista(), cli = state._dvCliente || (lst[0] && lst[0].v.cliente) || "";
+  var k = envContratante(cli); var c = (ENV.contatos || {})[k] || {};
+  return { k: k, nome: c.nome || "", whatsapp: c.whatsapp || "", email: c.email || "" };
+}
+function envSalvarContato() {
+  var k = envContato().k, g = function (id) { var el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  var reg = { contratante: k, nome: g("env-nome"), whatsapp: g("env-zap"), email: g("env-mail"), atualizado_em: new Date().toISOString(), por: ccQuem() };
+  ENV.contatos = ENV.contatos || {}; ENV.contatos[k] = reg;
+  return rfGetClient().then(function (sb) { return sb ? sb.from("rf_contatos_docs").upsert(reg) : null; }).then(function (r) { if (r && r.error) throw r.error; return reg; });
+}
+function envFone(s) { var d = String(s || "").replace(/\D/g, ""); if (d.length === 10 || d.length === 11) d = "55" + d; return d; }
+function envSelecionados() { var E = envSt(); return envLista().filter(function (x) { return E.sel[x.c.chave]; }); }
+function envNomeArq(x, ext) { return "CTe-" + x.c.numero + "-RF-" + String(x.v.placa || "").replace(/\W/g, "") + "-" + String(x.v.data || "").slice(0, 10) + "." + ext; }
+function envTextoResumo(sel, para) {
+  var med = {}; sel.forEach(function (x) { var m = loteMedDe(x.v); if (m) med[m.k] = 1; });
+  return "Olá" + (para ? ", " + para : "") + "! Seguem os CT-e de subcontratação da RF Logística" + (Object.keys(med).length ? " (medição " + Object.keys(med).join(", ") + ")" : "") + ":\n\n"
+    + sel.map(function (x) { var car = ctjCarr(x.v); return "• CT-e " + x.c.numero + " — " + (x.v.placa || "") + " " + dvDataBr(x.v.data) + (car ? " · carreg. " + car : "") + " · " + fmtR(x.c.valor) + "\n  Chave: " + x.c.chave; }).join("\n")
+    + "\n\nTotal: " + fmtR(sel.reduce(function (t, x) { return t + (Number(x.c.valor) || 0); }, 0)) + "\nRF Logística — (75) 99971-7578";
+}
+function envRegistrar(sel, canal, para) {
+  var E = envSt(), agora = new Date().toISOString();
+  sel.forEach(function (x) { x.c.envios = x.c.envios || []; x.c.envios.push({ canal: canal, para: para, pdf: !!E.pdf, xml: !!E.xml, em: agora, por: ccQuem() }); x.v.atualizadoEm = Date.now(); });
+  salvar();
+}
+function envZap() {
+  var E = envSt(), sel = envSelecionados(); if (!sel.length) { alert("Marque pelo menos um CT-e."); return; }
+  if (!E.pdf && !E.xml) { alert("Escolha PDF e/ou XML."); return; }
+  envSalvarContato().catch(function () {});
+  var ct = envContato(), fone = envFone((document.getElementById("env-zap") || {}).value || ct.whatsapp), nome = ((document.getElementById("env-nome") || {}).value || ct.nome).trim();
+  if (fone.length < 12) { alert("Informe o WhatsApp do contato (com DDD)."); return; }
+  var nArq = sel.length * ((E.pdf ? 1 : 0) + (E.xml ? 1 : 0));
+  if (!confirm("O Ravi vai mandar para " + (nome || fone) + " no WhatsApp:\n• a mensagem com as chaves\n• " + nArq + " arquivo(s) (" + [E.pdf ? "PDF" : "", E.xml ? "XML" : ""].filter(Boolean).join(" + ") + ")\n\nEnviar agora?")) return;
+  E.rodando = true; E.log = []; E.msg = "⏳ enviando…"; render();
+  var chamar = function (body) { return rfGetClient().then(function (sb) { return sb.functions.invoke("ravi-whatsapp", { body: body }); }).then(function (r) { if (r.error) throw r.error; if (r.data && r.data.ok === false) throw new Error(r.data.erro || r.data.error || "falhou"); return r.data; }); };
+  var passos = [function () { return chamar({ acao: "enviar", phone: fone, message: envTextoResumo(sel, nome) }).then(function () { E.log.push("✓ mensagem com as chaves"); }); }];
+  sel.forEach(function (x) {
+    if (E.pdf) passos.push(function () { if (!x.c.pdfPath) { E.log.push("⚠ CT-e " + x.c.numero + ": sem PDF guardado"); return; } return chamar({ acao: "enviar_documento", phone: fone, doc_path: x.c.pdfPath, mimetype: "application/pdf", fileName: envNomeArq(x, "pdf"), caption: "CT-e " + x.c.numero + " · " + (x.v.placa || "") + " " + dvDataBr(x.v.data) }).then(function () { E.log.push("✓ CT-e " + x.c.numero + " · PDF"); }); });
+    if (E.xml) passos.push(function () { if (!x.c.xmlPath) { E.log.push("⚠ CT-e " + x.c.numero + ": sem XML guardado"); return; } return chamar({ acao: "enviar_documento", phone: fone, doc_path: x.c.xmlPath, mimetype: "application/xml", fileName: envNomeArq(x, "xml"), caption: "" }).then(function () { E.log.push("✓ CT-e " + x.c.numero + " · XML"); }); });
+  });
+  var erro = null;
+  passos.reduce(function (p, f) { return p.then(function () { if (erro) return; render(); return f(); }).catch(function (e) { erro = e; }); }, Promise.resolve()).then(function () {
+    E.rodando = false;
+    if (erro) { E.msg = "❌ parou: " + ((erro && erro.message) || erro) + " — o que já foi está marcado com ✓"; }
+    else { E.msg = "✓ enviado pelo WhatsApp do Ravi para " + (nome || fone); envRegistrar(sel, "whatsapp", (nome ? nome + " " : "") + fone); }
+    render();
+  });
+}
+function envEmail() {
+  var E = envSt(), sel = envSelecionados(); if (!sel.length) { alert("Marque pelo menos um CT-e."); return; }
+  if (!E.pdf && !E.xml) { alert("Escolha PDF e/ou XML."); return; }
+  envSalvarContato().catch(function () {});
+  var ct = envContato(), mail = ((document.getElementById("env-mail") || {}).value || ct.email).trim(), nome = ((document.getElementById("env-nome") || {}).value || ct.nome).trim();
+  E.rodando = true; E.msg = "⏳ montando o ZIP…"; render();
+  rfFiscalZipLib().then(function (JSZip) {
+    var z = new JSZip();
+    return sel.reduce(function (p, x) { return p.then(function () {
+      return Promise.all([E.pdf && x.c.pdfPath ? rfBaixarDoBucket(x.c.pdfPath) : null, E.xml && x.c.xmlPath ? rfBaixarDoBucket(x.c.xmlPath) : null]).then(function (r) { if (r[0]) z.file(envNomeArq(x, "pdf"), r[0]); if (r[1]) z.file(envNomeArq(x, "xml"), r[1]); });
+    }); }, Promise.resolve()).then(function () { return z.generateAsync({ type: "blob" }); });
+  }).then(function (b) {
+    var nomeZip = "CTe-subcontratacao-RF-" + envContato().k + "-" + hojeISO() + ".zip";
+    rfBaixarBlob(b, nomeZip);
+    var assunto = "CT-e de subcontratação — RF Logística — " + sel.map(function (x) { return x.c.numero; }).join(", ");
+    var corpo = envTextoResumo(sel, nome) + "\n\nEm anexo: " + [E.pdf ? "PDF (DACTE)" : "", E.xml ? "XML" : ""].filter(Boolean).join(" e ") + ".";
+    E.rodando = false; E.msg = "✓ " + nomeZip + " baixado — anexe no e-mail que abriu (📎 → Downloads)"; envRegistrar(sel, "email", mail || "(e-mail aberto)"); render();
+    setTimeout(function () { location.href = "mailto:" + encodeURIComponent(mail) + "?subject=" + encodeURIComponent(assunto) + "&body=" + encodeURIComponent(corpo); }, 500);
+  }).catch(function (e) { E.rodando = false; E.msg = "❌ " + ((e && e.message) || e); render(); });
+}
+function envHTML() {
+  var E = envSt(); if (!E.aberto) return "";
+  var lst = envLista(), ct = envContato(), sel = lst.filter(function (x) { return E.sel[x.c.chave]; });
+  var inp = 'style="width:100%;font-size:13px;padding:7px 9px;background:#111;color:#eee;border:1px solid #444;border-radius:6px;"';
+  var h = '<div style="margin-top:12px;border:2px solid ' + GOLD + ';border-radius:10px;padding:12px 14px;background:#0A0A0A;">'
+    + '<div style="display:flex;align-items:center;gap:10px;"><div style="font-size:15px;font-weight:800;color:' + GOLD + ';">📤 Enviar CT-e para a ' + esc(ct.k) + '</div><button class="btn-outline" style="margin-left:auto;font-size:12px;" onclick="envSt().aberto=false;render()">✕ fechar</button></div>';
+  if (!lst.length) return h + '<div style="font-size:13px;color:#999;margin-top:8px;">Nenhum CT-e de subcontratação emitido nos últimos 45 dias' + (state._dvCliente ? " para " + esc(state._dvCliente) : "") + '.</div></div>';
+  h += '<div style="font-size:11px;color:#888;text-transform:uppercase;margin:10px 0 4px;">Quais CT-e</div>'
+    + lst.map(function (x) {
+      var env = (x.c.envios || []).slice(-1)[0];
+      return '<label style="display:flex;gap:10px;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid #1c1c1c;cursor:pointer;"><input type="checkbox" style="width:18px;height:18px;accent-color:' + GOLD + ';"' + (E.sel[x.c.chave] ? " checked" : "") + ' onchange="envSt().sel[&#39;' + esc(x.c.chave) + '&#39;]=this.checked;render()">'
+        + '<b>CT-e ' + esc(x.c.numero) + '</b><span>' + esc(x.v.placa || "") + ' ' + dvDataBr(x.v.data) + (ctjCarr(x.v) ? ' · carreg. ' + esc(ctjCarr(x.v)) : '') + '</span><span style="margin-left:auto;color:' + GOLD + ';">' + fmtR(x.c.valor) + '</span>'
+        + (env ? '<span style="font-size:11px;color:#8fd18f;">✓ enviado ' + (env.canal === "whatsapp" ? "WhatsApp" : "e-mail") + ' ' + esc(dvDataBr(String(env.em).slice(0, 10))) + '</span>' : '<span style="font-size:11px;color:#E6B84C;">não enviado</span>') + '</label>';
+    }).join("")
+    + '<div style="display:flex;gap:18px;align-items:center;margin:10px 0 4px;font-size:13px;"><span style="font-size:11px;color:#888;text-transform:uppercase;">O que vai</span>'
+    + '<label style="cursor:pointer;"><input type="checkbox" style="width:18px;height:18px;accent-color:' + GOLD + ';vertical-align:middle;"' + (E.pdf ? " checked" : "") + ' onchange="envSt().pdf=this.checked;render()"> PDF (DACTE)</label>'
+    + '<label style="cursor:pointer;"><input type="checkbox" style="width:18px;height:18px;accent-color:' + GOLD + ';vertical-align:middle;"' + (E.xml ? " checked" : "") + ' onchange="envSt().xml=this.checked;render()"> XML</label>'
+    + '<span style="color:#888;font-size:12px;">· as chaves vão sempre no texto</span></div>'
+    + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin:10px 0 4px;">Para (fica salvo para a ' + esc(ct.k) + ')</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;"><div style="flex:1;min-width:150px;"><input id="env-nome" placeholder="Nome (ex.: Douglas)" value="' + esc(ct.nome) + '" ' + inp + '></div>'
+    + '<div style="flex:1;min-width:160px;"><input id="env-zap" placeholder="WhatsApp com DDD" value="' + esc(ct.whatsapp) + '" ' + inp + '></div>'
+    + '<div style="flex:2;min-width:220px;"><input id="env-mail" placeholder="E-mail" value="' + esc(ct.email) + '" ' + inp + '></div></div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center;">'
+    + '<button class="btn-gold" style="font-size:13px;font-weight:800;padding:9px 14px;" ' + (E.rodando || !sel.length ? "disabled" : 'onclick="envZap()"') + '>📲 WhatsApp (pelo Ravi)</button>'
+    + '<button class="btn-outline" style="font-size:13px;font-weight:800;padding:9px 14px;border-color:' + GOLD + ';color:' + GOLD + ';" ' + (E.rodando || !sel.length ? "disabled" : 'onclick="envEmail()"') + '>📧 E-mail (baixa o ZIP e abre o e-mail)</button>'
+    + '<span style="font-size:12.5px;color:#999;margin-left:auto;">' + sel.length + ' CT-e · ' + fmtR(sel.reduce(function (t, x) { return t + (Number(x.c.valor) || 0); }, 0)) + '</span></div>';
+  if (E.msg) h += '<div style="margin-top:10px;font-size:13px;color:' + (/^❌/.test(E.msg) ? "#E6B84C" : "#8fd18f") + ';">' + esc(E.msg) + '</div>';
+  if (E.log.length) h += '<div style="font-size:12px;color:#bbb;margin-top:4px;">' + E.log.map(esc).join("<br>") + '</div>';
+  return h + '</div>';
+}
+function envContextoAssistente() {
+  try {
+    var l = envLista(); if (!l.length) return "";
+    return "ENVIO DOS CT-e DE SUBCONTRATACAO (v861: botao 'Enviar' no Gerar em lote -- WhatsApp pelo Ravi com PDF/XML e chaves, ou e-mail com ZIP; contato da contratante em rf_contatos_docs):\n"
+      + l.slice(0, 30).map(function (x) { var e = (x.c.envios || []).slice(-1)[0]; return "CT-e " + x.c.numero + " " + x.v.placa + " " + dvDataBr(x.v.data) + ": " + (e ? "enviado por " + e.canal + " para " + e.para + " em " + String(e.em).slice(0, 10) : "NAO enviado"); }).join("\n");
+  } catch (e) { return ""; }
+}
 function dvLoteHTML() {
   var L = loteSt(); if (!L.aberto) return "";
   var chip = function (id, rot, liga) { var on = L.tipo === id; return '<button ' + (liga ? 'onclick="loteSt().tipo=&#39;' + id + '&#39;;render()"' : 'disabled') + ' style="cursor:' + (liga ? 'pointer' : 'default') + ';font-size:13px;padding:6px 13px;border-radius:16px;margin:0 6px 6px 0;border:1px solid ' + (on ? GOLD : '#444') + ';background:' + (on ? GOLD : 'transparent') + ';color:' + (on ? '#000' : '#bbb') + ';font-weight:' + (on ? 800 : 400) + ';opacity:' + (liga ? 1 : 0.45) + ';">' + rot + '</button>'; };
@@ -8412,9 +8545,11 @@ function dvLoteHTML() {
       + '<div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:4px;">Andamento' + (L.homolog ? ' — TESTE (homologação)' : '') + ' · ' + feitos + ' de ' + (L.total || L.log.length) + '</div>'
       + '<div style="height:10px;background:#222;border-radius:6px;"><div style="width:' + Math.round(feitos / Math.max(1, L.total || 1) * 100) + '%;height:10px;background:' + GOLD + ';border-radius:6px;"></div></div>'
       + L.log.map(function (x) { var cor = x.st === "ok" ? "#8fd18f" : x.st === "rodando" ? "#bbb" : "#E6B84C"; return '<div style="padding:3px 0;color:' + cor + ';">' + (x.st === "ok" ? "✓" : x.st === "rodando" ? "⏳" : "⚠") + ' ' + esc(x.placa || "") + ' ' + dvDataBr(x.data) + ' — ' + esc(x.msg || (x.st === "rodando" ? "emitindo…" : x.st)) + '</div>'; }).join("")
-      + (!L.rodando && L.feitos.length ? '<button class="btn-gold" style="margin-top:8px;font-size:12.5px;" onclick="loteBaixarTudo()">📦 Baixar todos (PDF + XML)</button>' : '')
+      + (!L.rodando && L.feitos.length ? '<button class="btn-gold" style="margin-top:8px;font-size:12.5px;" onclick="loteBaixarTudo()">📦 Baixar todos (PDF + XML)</button> <button class="btn-gold" style="margin-top:8px;font-size:12.5px;" onclick="envAbrir()">📤 Enviar</button>' : '')   // v861
       + '</div>';
   }
+  if (!L.log.length) h += '<div style="margin-top:10px;"><button class="btn-outline" style="font-size:12.5px;border-color:' + GOLD + ';color:' + GOLD + ';" onclick="envAbrir()">📤 Enviar CT-e já emitidos</button></div>';   // v861
+  h += envHTML();
   return h + '</div>';
 }
 
@@ -8663,7 +8798,7 @@ function dvVgContextoAssistente() {
   try {
     var vs = dvVgViagens("").slice(0, 40), l = [];
     vs.forEach(function (v) { var r = dvVgSit(v); if (r.faltam.length) l.push(v.placa + " " + dvDataBr(v.data) + " " + v.cliente + " falta " + r.faltam.join("/")); });
-    return "VIAGENS E DOCUMENTOS (v860: no Gerar em lote o valor do CT-e de subcontratacao e, por padrao, o A PAGAR do recibo da medicao (frete menos diesel/descontos da JDL), decisao do Renato 11/11; seletor permite frete cheio; o anexar do lote reconhece o carregamento no nome do arquivo; v859: o Gerar em lote mostra se o total marcado fecha com a medicao (soma x frete da medicao, viagens que faltam) e o CT-e de subcontratacao sai com CFOP 6360 quando o destino e fora da BA; v851, 11/11/2026; v856: botao Gerar em lote -- escolhe o documento (CT-e de subcontratacao nesta versao), filtra, anexa os CT-e da contratante em XML/ZIP/PDF (casados pela placa, carregamento e data; JT pelos CT-e da JT ja ligados), marca as prontas e gera um por um, com teste em homologacao e ZIP com todos; viagem sem medicao ou com divergencia aberta fica de fora; v854: no filtro JDL/JT/FM tem o botao Anexar medicao (foto ou PDF) que le a medicao, separa as viagens, compara valor e avisa divergencia, e cada cartao mostra o selo da medicao/recibo -- o CT-e de subcontratacao sai com o valor da medicao; v853: por enquanto SO o login master do Renato ve o botao e a aba; o quadro Entrada das viagens tem botao recolher/abrir): a aba 'Documentos da Viagem' virou '📁 Viagens e Documentos'. Na aba Viagens, a caixa de cada cliente (menos Suzano) tem o botao '🧾 Gerar CT-e · MDF-e · CIOT →' que abre essa aba filtrada no cliente. Cada viagem do mes aparece com 4 passos: 1 CT-e, 2 MDF-e, 3 CIOT, 4 canhotos. Regra: JT/Mateus, Mercante/JDL e FM SUBCONTRATAM a RF -- a RF emite so o CT-e de subcontratacao (JDL/FM: botao Emitir CT-e na propria aba; JT: pelo XML da JT na caixa JT/Mateus, aba 2); o MDF-e e o CIOT sao emitidos pelo contratante e a equipe anexa o MDF-e (XML le chave, numero e CIOT) ou informa o numero/chave e o CIOT. Yamaha, Spot e outros: a aba mostra o CT-e/MDF-e/CIOT ja importados (XML do SimplesCTe) pela placa e data (+-3 dias); a emissao desses clientes continua no SimplesCTe. Suzano fica no chip Suzano (cargas do Carregamento, como antes). Pendencias agora: " + (l.slice(0, 25).join("; ") || "nenhuma") + ".";
+    return envContextoAssistente() + "\nVIAGENS E DOCUMENTOS (v861: botao Enviar dos CT-e de subcontratacao; v860: no Gerar em lote o valor do CT-e de subcontratacao e, por padrao, o A PAGAR do recibo da medicao (frete menos diesel/descontos da JDL), decisao do Renato 11/11; seletor permite frete cheio; o anexar do lote reconhece o carregamento no nome do arquivo; v859: o Gerar em lote mostra se o total marcado fecha com a medicao (soma x frete da medicao, viagens que faltam) e o CT-e de subcontratacao sai com CFOP 6360 quando o destino e fora da BA; v851, 11/11/2026; v856: botao Gerar em lote -- escolhe o documento (CT-e de subcontratacao nesta versao), filtra, anexa os CT-e da contratante em XML/ZIP/PDF (casados pela placa, carregamento e data; JT pelos CT-e da JT ja ligados), marca as prontas e gera um por um, com teste em homologacao e ZIP com todos; viagem sem medicao ou com divergencia aberta fica de fora; v854: no filtro JDL/JT/FM tem o botao Anexar medicao (foto ou PDF) que le a medicao, separa as viagens, compara valor e avisa divergencia, e cada cartao mostra o selo da medicao/recibo -- o CT-e de subcontratacao sai com o valor da medicao; v853: por enquanto SO o login master do Renato ve o botao e a aba; o quadro Entrada das viagens tem botao recolher/abrir): a aba 'Documentos da Viagem' virou '📁 Viagens e Documentos'. Na aba Viagens, a caixa de cada cliente (menos Suzano) tem o botao '🧾 Gerar CT-e · MDF-e · CIOT →' que abre essa aba filtrada no cliente. Cada viagem do mes aparece com 4 passos: 1 CT-e, 2 MDF-e, 3 CIOT, 4 canhotos. Regra: JT/Mateus, Mercante/JDL e FM SUBCONTRATAM a RF -- a RF emite so o CT-e de subcontratacao (JDL/FM: botao Emitir CT-e na propria aba; JT: pelo XML da JT na caixa JT/Mateus, aba 2); o MDF-e e o CIOT sao emitidos pelo contratante e a equipe anexa o MDF-e (XML le chave, numero e CIOT) ou informa o numero/chave e o CIOT. Yamaha, Spot e outros: a aba mostra o CT-e/MDF-e/CIOT ja importados (XML do SimplesCTe) pela placa e data (+-3 dias); a emissao desses clientes continua no SimplesCTe. Suzano fica no chip Suzano (cargas do Carregamento, como antes). Pendencias agora: " + (l.slice(0, 25).join("; ") || "nenhuma") + ".";
   } catch (e) { return ""; }
 }
 
