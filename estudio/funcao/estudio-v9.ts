@@ -268,6 +268,8 @@ async function receita(plano: any, formato: string) {
   for (const c of plano.cenas || []) {
     const x: any = { ...c }; delete x.id;
     if (c.midia?.ref) { const m = await refUrl(c.midia.ref); if (!m) throw new Error("mídia não encontrada na cena " + (c.titulo || c.tipo)); x.midia = { url: m.url, chave: m.chave, tipo: m.tipo }; }
+    const bt = c.midia?.ref ? BASE.find((m) => m.id === c.midia.ref && m.destaques) : null;   // telas da biblioteca: destaques sempre na posicao certa da tela
+    if (bt && c.tipo === "tela") { x.destaques = bt.destaques.map((d: any, j: number) => ({ ...d, ini: (c.destaques && c.destaques[j] && c.destaques[j].ini) || 1.2 + j * 2.2 })); x.ajuste = bt.ajuste || x.ajuste; }
     if (c.narracao?.path) x.narracao = { url: await assinar(c.narracao.path), chave: c.narracao.path, dur: c.narracao.dur, palavras: alinhar(c.narracao.texto, c.narracao.palavras), velocidade: c.narracao.velocidade || plano.voz?.velocidade || 1 };
     else delete x.narracao;
     if (c.tipo === "mapa") {
