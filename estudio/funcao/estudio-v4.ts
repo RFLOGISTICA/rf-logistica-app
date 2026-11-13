@@ -403,9 +403,10 @@ Deno.serve(async (req) => {
       if (acao === "worker_pull") {
         await sb.from("estudio_worker").update({ visto_em: new Date().toISOString(), sistema: b.sistema || null, versao: b.sistema?.versao || null }).eq("id", 1);
         const { data: wk } = await sb.from("estudio_worker").select("comando").eq("id", 1).maybeSingle();
-        if (wk?.comando === "atualizar") {
+        if (String(wk?.comando || "").startsWith("atualizar")) {
           await sb.from("estudio_worker").update({ comando: null }).eq("id", 1);
-          const r = await fetch(GH + "estudio-worker.mjs?t=" + Date.now()); const codigo = await r.text();
+          const sha = String(wk!.comando).split(":")[1] || "main";   // pelo commit: o GitHub nao devolve copia velha
+          const r = await fetch(GH.replace("/main/", "/" + sha + "/") + "estudio-worker.mjs?t=" + Date.now()); const codigo = await r.text();
           if (r.ok && codigo.includes("rf-estudio-v")) return json({ ok: true, comando: "atualizar", codigo });
         }
         // render travado (sem sinal ha 25 min) volta como erro
@@ -554,7 +555,7 @@ Deno.serve(async (req) => {
       await sb.from("estudio_worker").update({ instalacao: { pedido: { em: new Date().toISOString(), resposta: r.j } } }).eq("id", 1);
       return json({ ok: r.http === 200, resposta: r.j });
     }
-    if (acao === "worker_atualizar") { if (!U.master) return erro("só o login master", 403); await sb.from("estudio_worker").update({ comando: "atualizar" }).eq("id", 1); return json({ ok: true }); }
+    if (acao === "worker_atualizar") { if (!U.master) return erro("só o login master", 403); const sha = /^[0-9a-f]{7,40}$/.test(String(b.sha || "")) ? ":" + b.sha : ""; await sb.from("estudio_worker").update({ comando: "atualizar" + sha }).eq("id", 1); return json({ ok: true }); }
     if (acao === "ravi_saude") { const r = await raviVps("/saude"); return json({ ok: r.http === 200, ...r.j }); }
     return erro("ação desconhecida: " + acao);
   } catch (e) {
