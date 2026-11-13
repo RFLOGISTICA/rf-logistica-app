@@ -556,6 +556,7 @@ Deno.serve(async (req) => {
       return json({ ok: r.http === 200, resposta: r.j });
     }
     if (acao === "worker_atualizar") { if (!U.master) return erro("só o login master", 403); const sha = /^[0-9a-f]{7,40}$/.test(String(b.sha || "")) ? ":" + b.sha : ""; await sb.from("estudio_worker").update({ comando: "atualizar" + sha }).eq("id", 1); return json({ ok: true }); }
+    if (acao === "diretor_nome") { if (!U.master) return erro("só o login master", 403); const n = String(b.nome || "").trim().slice(0, 30); if (!n) return erro("nome vazio"); await sb.from("estudio_worker").update({ diretor_nome: n }).eq("id", 1); return json({ ok: true, diretor: n }); }
     if (acao === "ravi_saude") { const r = await raviVps("/saude"); return json({ ok: r.http === 200, ...r.j }); }
     return erro("ação desconhecida: " + acao);
   } catch (e) {
