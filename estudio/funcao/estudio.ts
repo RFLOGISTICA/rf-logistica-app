@@ -145,6 +145,9 @@ REGRAS INEGOCIÁVEIS:
 3) Espaço no baú é sempre "estimado" e "sujeito a confirmação"; cotação no site não garante embarque.
 4) Nas cenas do Rodavia 360 use só funcionalidades listadas em SERVICOS e as telas da BIBLIOTECA (são telas de DEMONSTRAÇÃO com dados fictícios).
 5) Frases curtas, tom comercial confiante, sem exagero ("o melhor do Brasil" é proibido). Narração total ≈ ${Math.round(alvo * 2.2)} palavras (≈${alvo}s).
+6) Avisos legais ("espaço estimado", "cotação não garante embarque") vão no rodapé do mapa e na legenda do post — NUNCA na narração do encerramento. O encerramento termina com chamada para ação (cotar no site / chamar no WhatsApp).
+7) Em "dados": rótulos em português natural (ex.: "kg livres no baú (estimado)", "caminhões na frota", "cidades atendidas em 90 dias"); valores formatados (ex.: "8.000 kg", "23", "20/11"). Nunca use nomes de campos técnicos.
+8) Números na narração escritos como se falam (ex.: "oito mil quilos").
 FORMATO: ${formato}. Tipos de cena: "abertura" (logo; titulo = slogan curto), "midia" (foto/vídeo da BIBLIOTECA com selo/titulo/subtitulo), "tela" (tela do sistema com até 2 destaques {x,y,w,h em 0..1, rotulo}), "mapa" (rota: cidades na ordem; use só cidades dos FATOS), "dados" (até 3 itens {valor, rotulo}; valores tirados LITERALMENTE dos FATOS), "cartao" (texto em fundo grafite), "encerramento" (titulo = chamada; linhas = contatos dos FATOS).
 Cada cena pode ter "narracao" (texto falado). Abertura e encerramento curtos. Transições: fade, slideleft, wipeleft, circleopen, smoothleft, fadeblack, dissolve.
 Responda APENAS JSON: {"titulo":"","legenda_post":"","hashtags":"","trilha":"base:trilha-rota|base:trilha-institucional|base:trilha-tecnologia","logo":"rf|rodavia","cenas":[{"tipo":"","midia":"id da BIBLIOTECA (midia/tela)","selo":"","titulo":"","subtitulo":"","narracao":"","transicao":"","dur":0,"cidades":[],"itens":[],"destaques":[],"linhas":[]}]}`;
@@ -178,14 +181,23 @@ function validar(o: any, F: any, lib: any[], formato: string, voz: string, tipo:
       if (c.tipo === "tela") x.destaques = (Array.isArray(c.destaques) ? c.destaques : []).slice(0, 2).map((d: any) => ({ x: +d.x || 0.1, y: +d.y || 0.1, w: +d.w || 0.3, h: +d.h || 0.2, rotulo: String(d.rotulo || "").slice(0, 34) }));
     }
     if (c.tipo === "mapa") {
-      const cs = (Array.isArray(c.cidades) ? c.cidades : []).map((n: any) => String(n)).filter((n: string) => cidadesOk.has(n.toLowerCase().split("/")[0]));
-      x.cidades = (cs.length ? cs : (oferta ? [oferta.origem, ...(oferta.cidades || [])] : [])).slice(0, 14).map((n: string) => ({ nome: n.split("/")[0] }));
-      if (x.cidades.length && !/feira de santana/i.test(x.cidades[0].nome) && (!oferta || oferta.sentido !== "volta")) x.cidades.unshift({ nome: "Feira de Santana" });
-      if (x.cidades.length) x.cidades[0].base = true;
+      const nm = (n: any) => String((n && n.nome) || n || "").split("/")[0].trim();
+      const cs = (Array.isArray(c.cidades) ? c.cidades : []).map(nm).filter((n: string) => n && cidadesOk.has(n.toLowerCase()));
+      let lista: string[] = oferta ? [...(oferta.cidades || [])].map(nm) : cs;
+      lista = lista.filter((n, j, a) => n && !/^feira de santana$/i.test(n) && a.indexOf(n) === j).slice(0, 13);
+      // ida: rota na ordem da programacao saindo de Feira; volta (coleta) ou cidades atendidas: pontos que seguem para Feira
+      x.modo = oferta && oferta.sentido === "ida" ? "rota" : "pontos";
+      x.cidades = x.modo === "rota" ? [{ nome: "Feira de Santana", base: true }, ...lista.map((n) => ({ nome: n }))] : [...lista.map((n) => ({ nome: n })), { nome: "Feira de Santana", base: true }];
       x.rodape = String(c.subtitulo || c.rodape || "").slice(0, 120) || undefined; x.subtitulo = "";
     }
     if (c.tipo === "dados") {
-      x.itens = (Array.isArray(c.itens) ? c.itens : []).filter((it: any) => { const n = String(it.valor || "").replace(/\D/g, ""); const bom = !n || nums.has(n); if (!bom) avisos.push("dado removido (não está nos fatos): " + it.valor); return bom && it.valor; }).slice(0, 3).map((it: any) => ({ valor: String(it.valor).slice(0, 14), rotulo: String(it.rotulo || "").slice(0, 40) }));
+      const ROT: Record<string, string> = { livre_kg: "kg livres no baú (estimado)", saida_br: "data de saída", saida: "data de saída", frota_total: "caminhões na frota", n_cidades_atendidas_90d: "cidades atendidas em 90 dias" };
+      x.itens = (Array.isArray(c.itens) ? c.itens : []).filter((it: any) => { const n = String(it.valor || "").replace(/\D/g, ""); const bom = !!n && nums.has(n); if (!bom) avisos.push("dado removido (não está nos fatos ou não é número): " + it.valor); return bom; }).slice(0, 3).map((it: any) => {
+        let v = String(it.valor).trim(), r = String(it.rotulo || "").trim(); if (ROT[r]) r = ROT[r]; else if (/^[a-z_]+$/.test(r)) r = r.replace(/_/g, " ");
+        if (/^\d{4,}$/.test(v)) v = Number(v).toLocaleString("pt-BR") + (/kg/i.test(r) ? " kg" : "");
+        if (/kg/i.test(v) && /^kg/i.test(r)) r = r.replace(/^kg\s*/i, "");
+        return { valor: v.slice(0, 14), rotulo: r.slice(0, 40) };
+      });
     }
     if (c.tipo === "encerramento") x.linhas = [CONTATO.site, "WhatsApp " + CONTATO.whatsapp];
     return x;

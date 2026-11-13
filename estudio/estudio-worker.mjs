@@ -262,6 +262,7 @@ function mapaSVG(c, W, H, t, ctx) {
     }
   }
   const pts = cid.map((x) => P(x.lng, x.lat));
+  if (c.modo === "pontos") return s + mapaPontos(c, W, H, t, ctx, cid, pts, k, L, bot);
   let tot = 0; const seg = [0]; for (let i = 1; i < pts.length; i++) { tot += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(tot); }
   const A = Math.max(1.2, Math.min(ctx.animDur - 0.3, 3.2));
   const pr = fase(t, 0.4, 0.4 + A), feito = tot * pr;
@@ -294,6 +295,46 @@ function mapaSVG(c, W, H, t, ctx) {
   s += blocoTexto({ titulo: c.titulo, subtitulo: c.subtitulo, selo: c.selo }, W, H, t, { centro: true, y: Math.round(H * (L.vert ? 0.135 : 0.05)) }).svg;
   if (c.rodape) {
     const px = Math.round(34 * k), r = caber(c.rodape, "Poppins", W - 2 * L.mx, 3, px, Math.round(26 * k)), y0 = bot + 40 * k, q = fase(t, 0.8, 1.4);
+    r.l.forEach((ln, i) => { s += `<text opacity="${q}" x="${W / 2}" y="${y0 + i * r.px * 1.35}" text-anchor="middle" font-family="Poppins" font-weight="600" font-size="${r.px}" fill="#EDEDED">${esc(ln)}</text>`; });
+  }
+  return s;
+}
+
+// mapa "pontos": cidades de coleta/atendidas aparecem uma a uma e seguem para a base (sem inventar ordem de rota)
+function mapaPontos(c, W, H, t, ctx, cid, pts, k, L, bot) {
+  let s = ""; const bi = cid.findIndex((x) => x.base); const outros = cid.map((x, i) => i).filter((i) => i !== bi);
+  const A = Math.max(1.2, Math.min(ctx.animDur - 1.4, 2.6)), passo = A / Math.max(1, outros.length);
+  const fs0 = Math.round((cid.length > 9 ? 28 : 34) * k), usados = [];
+  const rot = (i, o) => {
+    const [px, py] = pts[i], base = i === bi, nome = cid[i].nome, tw = largura(nome, fs0, "PoppinsB");
+    let lx = px + 18 * k, ly = py + fs0 * 0.35, anc = "start"; if (lx + tw > W - 20 * k) { lx = px - 18 * k; anc = "end"; }
+    const caixa = () => anc === "start" ? [lx, ly - fs0, lx + tw, ly + 6] : [lx - tw, ly - fs0, lx, ly + 6];
+    for (let tent = 0; tent < 6; tent++) { const b = caixa(); if (!usados.some((u) => b[0] < u[2] && b[2] > u[0] && b[1] < u[3] && b[3] > u[1])) break; ly += (tent % 2 ? -1 : 1) * (fs0 + 6) * (tent + 1); }
+    usados.push(caixa());
+    return `<text opacity="${o}" x="${lx}" y="${ly}" text-anchor="${anc}" font-family="Poppins" font-weight="${base ? 800 : 600}" font-size="${base ? fs0 * 1.15 : fs0}" fill="${base ? "#F2C94C" : "#F5F5F5"}" stroke="#000" stroke-width="${5 * k}" paint-order="stroke">${esc(nome)}</text>`;
+  };
+  let labs = "";
+  outros.forEach((i, j) => {
+    const a = 0.4 + j * passo, o = fase(t, a, a + 0.35); if (o <= 0) return;
+    const [px, py] = pts[i];
+    s += `<circle cx="${px}" cy="${py}" r="${(22 * (1 - o) + 10) * k}" fill="#F2C94C" fill-opacity="${0.25 * (1 - o)}"/><circle cx="${px}" cy="${py}" r="${10 * k * o}" fill="#FFF" stroke="#111" stroke-width="${3 * k}"/>`;
+    labs += rot(i, o);
+  });
+  if (bi >= 0) {
+    const cx = outros.reduce((a, i) => a + pts[i][0], 0) / Math.max(1, outros.length), cy = outros.reduce((a, i) => a + pts[i][1], 0) / Math.max(1, outros.length);
+    const [bx, by] = pts[bi], len = Math.hypot(bx - cx, by - cy), pr = fase(t, 0.5 + A, 1.6 + A);
+    if (pr > 0 && outros.length) {
+      s += `<path d="M${cx.toFixed(1)} ${cy.toFixed(1)}L${bx.toFixed(1)} ${by.toFixed(1)}" stroke="#F2C94C" stroke-width="${14 * k}" stroke-opacity="0.25" filter="url(#brilho)" stroke-dasharray="${len * pr} ${len + 10}"/>`
+        + `<path d="M${cx.toFixed(1)} ${cy.toFixed(1)}L${bx.toFixed(1)} ${by.toFixed(1)}" stroke="url(#ouro)" stroke-width="${7 * k}" stroke-linecap="round" stroke-dasharray="${len * pr} ${len + 10}"/>`;
+      if (pr < 1) { const hx = cx + (bx - cx) * pr, hy = cy + (by - cy) * pr; s += `<g transform="translate(${hx} ${hy})"><circle r="${24 * k}" fill="#111" stroke="${OURO}" stroke-width="${4 * k}"/><path transform="scale(${1.15 * k}) translate(-14 -10)" d="M0 4h16v12H0zM16 8h7l5 5v3h-12z" fill="${OURO}"/></g>`; }
+    }
+    s += `<circle cx="${bx}" cy="${by}" r="${16 * k}" fill="#F2C94C" stroke="#111" stroke-width="${3 * k}"/>`;
+    labs = rot(bi, 1) + labs;
+  }
+  s += labs;
+  s += blocoTexto({ titulo: c.titulo, subtitulo: c.subtitulo, selo: c.selo }, W, H, t, { centro: true, y: Math.round(H * (L.vert ? 0.135 : 0.05)) }).svg;
+  if (c.rodape) {
+    const r = caber(c.rodape, "Poppins", W - 2 * L.mx, 3, Math.round(34 * k), Math.round(26 * k)), y0 = bot + 40 * k, q = fase(t, 0.8, 1.4);
     r.l.forEach((ln, i) => { s += `<text opacity="${q}" x="${W / 2}" y="${y0 + i * r.px * 1.35}" text-anchor="middle" font-family="Poppins" font-weight="600" font-size="${r.px}" fill="#EDEDED">${esc(ln)}</text>`; });
   }
   return s;
@@ -429,7 +470,7 @@ async function render(rec, dir, prog) {
       await run("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=0x0b0b0b:s=${W}x${H}:r=${FPS}:d=${dur}`, "-vf", "format=yuv420p", ...enc, fundo]);
     }
     // 2) camada animada (PNG com transparencia) quadro a quadro so na animacao; depois segura o ultimo quadro
-    const animDur = c.tipo === "mapa" ? Math.min(dur - 0.2, 4.2) : (c.tipo === "dados" ? Math.min(dur, 2.6) : (c.tipo === "tela" && (c.destaques || []).length ? Math.min(dur, 1.2 + 1.2 * c.destaques.length + 1) : Math.min(dur, 1.9)));
+    const animDur = c.tipo === "mapa" ? Math.min(dur - 0.2, c.modo === "pontos" ? 5 : 4.2) : (c.tipo === "dados" ? Math.min(dur, 2.6) : (c.tipo === "tela" && (c.destaques || []).length ? Math.min(dur, 1.2 + 1.2 * c.destaques.length + 1) : Math.min(dur, 1.9)));
     const ctx = { legendas: rec.legendas !== false && !!c._narr, area, animDur, logo: c._logo && c._logo.uri, logoW: c._logo ? c._logo.w : 1, logoH: c._logo ? c._logo.h : 1 };
     const temCamada = c.tipo !== "midia" || c.titulo || c.subtitulo || c.selo || ctx.legendas;
     const nq = Math.max(1, Math.round(animDur * FPS));
