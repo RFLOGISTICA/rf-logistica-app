@@ -237,7 +237,7 @@ async function narrarCena(projId: string, c: any, vozId: string, estilo: string)
     const jt = await rt.json(); dur = Number(jt.duration) || 0;
     const ws = (jt.words || []).map((w: any) => ({ w: String(w.word).trim(), s: +Number(w.start).toFixed(2), e: +Number(w.end).toFixed(2) }));
     const orig = texto.split(/\s+/);
-    palavras = ws.length === orig.length ? ws.map((w: any, i: number) => ({ ...w, w: orig[i] })) : ws;
+    palavras = alinhar(texto, ws);
   } catch (_) { /* sem legenda sincronizada: divide pelo tempo */ }
   if (!palavras.length) { const orig = texto.split(/\s+/); dur = dur || orig.length / 2.4; let t = 0; const tot = orig.reduce((a, w) => a + w.length + 1, 0); palavras = orig.map((w) => { const d = dur * (w.length + 1) / tot; const p = { w, s: +t.toFixed(2), e: +(t + d).toFixed(2) }; t += d; return p; }); }
   if (!dur && palavras.length) dur = palavras[palavras.length - 1].e + 0.2;
@@ -251,6 +251,14 @@ async function refUrl(ref: string) {
   const { data: m } = await sb.from("estudio_midias").select("*").eq("id", ref).maybeSingle(); if (!m) return null;
   return { url: m.path ? await assinar(m.path) : m.url, chave: m.path || m.url, tipo: m.tipo === "tela" ? "imagem" : m.tipo };
 }
+// legenda: sempre o TEXTO do roteiro (nao o que a transcricao escreveu, ex.: "sete" e nao "7"), com o tempo das palavras ouvidas
+function alinhar(texto: string, ws: any[]) {
+  const orig = String(texto || "").split(/\s+/).filter(Boolean); if (!Array.isArray(ws) || !ws.length || !orig.length) return ws || [];
+  if (ws.length === orig.length) return ws.map((w: any, i: number) => ({ ...w, w: orig[i] }));
+  const ini = Number(ws[0].s) || 0, fim = Number(ws[ws.length - 1].e) || ini + orig.length * 0.4;
+  const tot = orig.reduce((a, w) => a + w.length + 1, 0); let t = ini;
+  return orig.map((w) => { const d = (fim - ini) * (w.length + 1) / tot; const r = { w, s: +t.toFixed(2), e: +(t + d * 0.92).toFixed(2) }; t += d; return r; });
+}
 async function coords(nome: string) { const { data } = await sb.rpc("frc_coords", { p: nome }); const c = Array.isArray(data) ? data[0] : null; return c ? { lat: c.lat, lng: c.lng } : null; }
 async function receita(plano: any, formato: string) {
   const logo = plano.logo === "rodavia" ? "logos/logo-rodavia360.png" : "logos/logo-rf.png";
@@ -260,7 +268,7 @@ async function receita(plano: any, formato: string) {
   for (const c of plano.cenas || []) {
     const x: any = { ...c }; delete x.id;
     if (c.midia?.ref) { const m = await refUrl(c.midia.ref); if (!m) throw new Error("mídia não encontrada na cena " + (c.titulo || c.tipo)); x.midia = { url: m.url, chave: m.chave, tipo: m.tipo }; }
-    if (c.narracao?.path) x.narracao = { url: await assinar(c.narracao.path), chave: c.narracao.path, dur: c.narracao.dur, palavras: c.narracao.palavras, velocidade: c.narracao.velocidade || plano.voz?.velocidade || 1 };
+    if (c.narracao?.path) x.narracao = { url: await assinar(c.narracao.path), chave: c.narracao.path, dur: c.narracao.dur, palavras: alinhar(c.narracao.texto, c.narracao.palavras), velocidade: c.narracao.velocidade || plano.voz?.velocidade || 1 };
     else delete x.narracao;
     if (c.tipo === "mapa") {
       x.cidades = []; for (const ci of c.cidades || []) { const p = (ci.lat != null && ci.lng != null) ? ci : await coords(ci.nome); if (p) x.cidades.push({ nome: ci.nome, lat: p.lat, lng: p.lng, base: !!ci.base }); }
