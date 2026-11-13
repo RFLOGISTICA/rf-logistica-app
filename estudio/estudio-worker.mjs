@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v2";
+const VERSAO = "rf-estudio-v3";   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
 const API = process.env.RF_API || "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
 const TOKEN = (() => { try { return fs.readFileSync(path.join(BASE, "token"), "utf8").trim(); } catch { return process.env.RF_TOKEN || ""; } })();
@@ -428,7 +428,7 @@ async function render(rec, dir, prog) {
     const dur = c._dur, N = Math.round(dur * FPS);
     // 1) fundo
     const fundo = path.join(cd, "fundo.mp4");
-    const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-r", String(FPS), "-threads", String(THREADS)];
+    const enc = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p", "-r", String(FPS), "-threads", String(THREADS)];
     let area = null;
     if (c._arq && (c.tipo === "midia" || c.tipo === "tela")) {
       const ehVideo = c.midia.tipo === "video" || (c._pr && c._pr.dur > 0.5 && /\.(mp4|mov|webm|m4v|mkv)$/i.test(c._arq));
@@ -460,7 +460,7 @@ async function render(rec, dir, prog) {
         const Z = 0.13, zexp = mov === "zoom_out" ? `${1 + Z}-${Z}*on/${N}` : (mov === "nenhum" || mov === "rolar" ? "1" : `1+${Z}*on/${N}`);
         const xexp = mov === "pan_dir" ? `(iw-iw/zoom)*on/${N}` : mov === "pan_esq" ? `(iw-iw/zoom)*(1-on/${N})` : `(iw-iw/zoom)/2`;
         const yexp = `(ih-ih/zoom)/2`;
-        const zoom = (mov === "nenhum" || mov === "rolar") ? "" : `,scale=${W * 2}:${H * 2}:flags=bicubic,zoompan=z='${zexp}':x='${xexp}':y='${yexp}':d=1:s=${W}x${H}:fps=${FPS}`;
+        const zoom = (mov === "nenhum" || mov === "rolar") ? "" : `,scale=${Math.round(W * 1.5 / 2) * 2}:${Math.round(H * 1.5 / 2) * 2}:flags=bicubic,zoompan=z='${zexp}':x='${xexp}':y='${yexp}':d=1:s=${W}x${H}:fps=${FPS}`;
         const pan = (mov === "pan_dir" || mov === "pan_esq") ? "" : "";
         vf = `[0:v]${pre},eq=contrast=1.05:saturation=1.08${zoom}${pan},trim=duration=${dur},setsar=1,format=yuv420p[v]`;
         if ((mov === "pan_dir" || mov === "pan_esq") && modo === "cobrir") vf = vf.replace(`zoompan=z='${zexp}'`, `zoompan=z='1.12'`);
@@ -474,10 +474,9 @@ async function render(rec, dir, prog) {
     const animDur = c.tipo === "mapa" ? Math.min(dur - 0.2, c.modo === "pontos" ? 5 : 4.2) : (c.tipo === "dados" ? Math.min(dur, 2.6) : (c.tipo === "tela" && (c.destaques || []).length ? Math.min(dur, 1.2 + 1.2 * c.destaques.length + 1) : Math.min(dur, 1.9)));
     const ctx = { legendas: rec.legendas !== false && !!c._narr, area, animDur, logo: c._logo && c._logo.uri, logoW: c._logo ? c._logo.w : 1, logoH: c._logo ? c._logo.h : 1 };
     const temCamada = c.tipo !== "midia" || c.titulo || c.subtitulo || c.selo || ctx.legendas;
-    const nq = Math.max(1, Math.round(animDur * FPS));
+    const QFPS = 15, nq = Math.max(1, Math.round(animDur * QFPS));   // v3: camada animada a 15 quadros/s (o video sai a 30)
     if (temCamada) {
-      const passo = c.tipo === "mapa" ? 1 : 1;
-      for (let q = 0; q < nq; q += passo) await svgPng(quadro(c, W, H, c._tin * 0 + q / FPS, ctx), path.join(cd, "q" + String(q).padStart(4, "0") + ".png"), W, H);
+      for (let q = 0; q < nq; q++) await svgPng(quadro(c, W, H, q / QFPS, ctx), path.join(cd, "q" + String(q).padStart(4, "0") + ".png"), W, H);
     }
     // 3) legendas (palavra a palavra)
     const legs = [];
@@ -502,8 +501,8 @@ async function render(rec, dir, prog) {
       const ins = ["-y", "-v", "error", "-i", fundo];
       let fc = "", ult = "[0:v]";
       if (temCamada) {
-        ins.push("-framerate", String(FPS), "-i", path.join(cd, "q%04d.png"));
-        fc += `[1:v]format=rgba,tpad=stop_mode=clone:stop_duration=${dur}[cam];[0:v][cam]overlay=0:0:shortest=0:eof_action=repeat[x0];`; ult = "[x0]";
+        ins.push("-framerate", "15", "-i", path.join(cd, "q%04d.png"));
+        fc += `[1:v]format=rgba,fps=${FPS},tpad=stop_mode=clone:stop_duration=${dur}[cam];[0:v][cam]overlay=0:0:shortest=0:eof_action=repeat[x0];`; ult = "[x0]";
       }
       const base = temCamada ? 2 : 1;
       legs.forEach((l, j) => { ins.push("-i", l.f); fc += `${ult}[${base + j}:v]overlay=0:0:enable='between(t,${l.a.toFixed(3)},${l.z.toFixed(3)})'[y${j}];`; ult = `[y${j}]`; });
