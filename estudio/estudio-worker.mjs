@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v1";
+const VERSAO = "rf-estudio-v2";
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
 const API = process.env.RF_API || "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
 const TOKEN = (() => { try { return fs.readFileSync(path.join(BASE, "token"), "utf8").trim(); } catch { return process.env.RF_TOKEN || ""; } })();
@@ -119,7 +119,7 @@ function blocoTexto(c, W, H, t, opt = {}) {
   const anc = centro || L.vert ? "middle" : "start", x0 = anc === "middle" ? W / 2 : L.mx;
   let s = "";
   const a0 = opt.atraso || 0.15;
-  if (c.selo) {
+  if (c.selo && !opt.compacto) {
     const px = Math.round(30 * k), tw = largura(String(c.selo).toUpperCase(), px, "PoppinsB") + 44 * k, hh = px + 26 * k;
     const p = fase(t, a0, a0 + 0.45), sx = anc === "middle" ? x0 - tw / 2 : x0;
     s += `<g opacity="${p}" transform="translate(0 ${(1 - p) * 20 * k})"><rect x="${sx}" y="${y}" rx="${hh / 2}" width="${tw}" height="${hh}" fill="url(#ouro)"/>`
@@ -128,7 +128,7 @@ function blocoTexto(c, W, H, t, opt = {}) {
   }
   if (c.titulo) {
     const T = String(c.titulo).toUpperCase();
-    const f = caber(T, "Anton", maxW, L.vert ? 4 : 3, Math.round((L.vert ? 118 : 104) * k), Math.round(56 * k));
+    const f = opt.compacto ? caber(T, "Anton", maxW, 1, Math.round(70 * k), Math.round(40 * k)) : caber(T, "Anton", maxW, L.vert ? 4 : 3, Math.round((L.vert ? 118 : 104) * k), Math.round(56 * k));
     const p = fase(t, a0 + 0.15, a0 + 0.75);
     s += `<g opacity="${p}" transform="translate(0 ${(1 - p) * 46 * k})" filter="url(#sombra)">`;
     f.l.forEach((ln, i) => { s += `<text x="${x0}" y="${y + f.px * 0.92 + i * f.px * 1.04}" text-anchor="${anc}" font-family="Anton" font-size="${f.px}" fill="#FFFFFF" letter-spacing="${1 * k}">${esc(ln)}</text>`; });
@@ -139,7 +139,7 @@ function blocoTexto(c, W, H, t, opt = {}) {
     y += 34 * k;
   }
   if (c.subtitulo) {
-    const f = caber(c.subtitulo, "Poppins", maxW, 4, Math.round(46 * k), Math.round(30 * k));
+    const f = opt.compacto ? caber(c.subtitulo, "Poppins", maxW, 1, Math.round(36 * k), Math.round(26 * k)) : caber(c.subtitulo, "Poppins", maxW, 4, Math.round(46 * k), Math.round(30 * k));
     const p = fase(t, a0 + 0.45, a0 + 1.05);
     s += `<g opacity="${p}" transform="translate(0 ${(1 - p) * 30 * k})" filter="url(#sombra)">`;
     f.l.forEach((ln, i) => { s += `<text x="${x0}" y="${y + f.px + i * f.px * 1.3}" text-anchor="${anc}" font-family="Poppins" font-weight="500" font-size="${f.px}" fill="#F2F2F2">${esc(ln)}</text>`; });
@@ -177,11 +177,12 @@ function quadro(c, W, H, t, ctx) {
   let s = svgIni(W, H) + DEFS;
   if (c.tipo === "midia" || c.tipo === "tela") {
     if (c.titulo || c.subtitulo || c.selo) {
-      if (c.texto_pos === "baixo" || !L.vert) s += `<rect x="0" y="${H * 0.45}" width="${W}" height="${H * 0.55}" fill="url(#scrimB)"/>`;
+      if (c.tipo === "tela" && L.horiz) s += `<rect x="0" y="${H * 0.70}" width="${W}" height="${H * 0.30}" fill="#000" fill-opacity="0.55"/>`;
+      else if (c.texto_pos === "baixo" || !L.vert) s += `<rect x="0" y="${H * 0.45}" width="${W}" height="${H * 0.55}" fill="url(#scrimB)"/>`;
       else s += `<rect x="0" y="0" width="${W}" height="${H * 0.55}" fill="url(#scrimT)"/>`;
     }
     if (ctx.legendas && L.vert) s += `<rect x="0" y="${H * 0.6}" width="${W}" height="${H * 0.4}" fill="url(#scrimB)" opacity="0.55"/>`;
-    s += blocoTexto(c, W, H, t).svg;
+    s += (c.tipo === "tela" && L.horiz ? blocoTexto(ctx.legendas ? { ...c, subtitulo: "" } : c, W, H, t, { y: Math.round(H * 0.735), compacto: true }) : blocoTexto(c, W, H, t)).svg;
     if (c.tipo === "tela" && ctx.area) s += destaques(c, W, H, t, ctx.area);
   } else if (c.tipo === "cartao") {
     s += blocoTexto(c, W, H, t, { centro: true, y: Math.round(H * (L.vert ? 0.33 : 0.26)) }).svg;
@@ -438,9 +439,9 @@ async function render(rec, dir, prog) {
       let pre;
       if (modo === "cobrir") pre = `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H}`;
       else if (modo === "conter" || modo === "desfocado") {
-        const sw = Math.round(W * (c.tipo === "tela" ? (H > W ? 0.98 : 0.90) : 0.96)), sh = Math.round(H * (c.tipo === "tela" ? (H > W ? 0.62 : 0.74) : 0.90));
+        const sw = Math.round(W * (c.tipo === "tela" ? (H > W ? 0.98 : 0.90) : 0.96)), sh = Math.round(H * (c.tipo === "tela" ? (H > W ? 0.62 : 0.68) : 0.90));
         const fit = Math.min(sw / iw, sh / ih), fw = Math.round(iw * fit / 2) * 2, fh = Math.round(ih * fit / 2) * 2;
-        area = { x: (W - fw) / 2, y: (H - fh) / 2 + (c.tipo === "tela" && H > W ? H * 0.04 : 0), w: fw, h: fh };
+        area = { x: (W - fw) / 2, y: c.tipo === "tela" && W > H * 1.2 ? Math.round(H * 0.04) : (H - fh) / 2 + (c.tipo === "tela" && H > W ? H * 0.04 : 0), w: fw, h: fh };
         const bgf = modo === "desfocado" ? `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=40:3,eq=brightness=-0.18:saturation=0.85` : `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=60:4,eq=brightness=-0.42:saturation=0.4`;
         if (mov === "rolar" && !ehVideo) {
           const fw2 = Math.round(W * 0.92 / 2) * 2, fh2 = Math.round(ih * (fw2 / iw) / 2) * 2, vh = Math.round(H * 0.74 / 2) * 2;
