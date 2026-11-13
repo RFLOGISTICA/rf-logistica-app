@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v3";   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
+const VERSAO = "rf-estudio-v4";   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
 const API = process.env.RF_API || "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
 const TOKEN = (() => { try { return fs.readFileSync(path.join(BASE, "token"), "utf8").trim(); } catch { return process.env.RF_TOKEN || ""; } })();
@@ -160,7 +160,7 @@ function destaques(c, W, H, t, area) {
     s += `<g opacity="${p}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${OURO}" stroke-width="${6 * layout(W, H).k}" opacity="${pulso}"/>`;
     if (d.rotulo) {
       const k = layout(W, H).k, px = Math.round(30 * k), tw = largura(d.rotulo, px, "PoppinsB") + 36 * k;
-      let ly = y + h + 14 * k; if (ly + px + 24 * k > H - 40 * k) ly = y - px - 40 * k;
+      let ly = y + h + 14 * k; if (ly + px + 24 * k > Math.min(H - 40 * k, area.y + area.h + 4)) ly = y + 12 * k;   // v4: rotulo dentro da caixa quando nao cabe embaixo
       const lx = Math.max(20 * k, Math.min(W - tw - 20 * k, x));
       s += `<rect x="${lx}" y="${ly}" width="${tw}" height="${px + 22 * k}" rx="${12 * k}" fill="#111" stroke="${OURO}" stroke-width="2"/>`
         + `<text x="${lx + tw / 2}" y="${ly + px * 0.9 + 6 * k}" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="${px}" fill="${OURO}">${esc(d.rotulo)}</text>`;
@@ -435,7 +435,7 @@ async function render(rec, dir, prog) {
       const iw = c._pr.w || W, ih = c._pr.h || H;
       let modo = c.ajuste || (c.tipo === "tela" ? "conter" : "auto");
       if (modo === "auto") modo = (iw / ih > W / H * 1.35 || iw / ih < W / H / 1.35) ? "desfocado" : "cobrir";
-      const mov = c.movimento || (ehVideo ? "nenhum" : (c.tipo === "tela" ? (ih / iw > H / W * 1.15 ? "rolar" : "zoom_in") : ["zoom_in", "zoom_out", "pan_dir", "pan_esq"][i % 4]));
+      const mov = c.movimento || (ehVideo ? "nenhum" : (c.tipo === "tela" ? (ih / iw > H / W * 1.15 && !(c.destaques || []).length ? "rolar" : "nenhum") : ["zoom_in", "zoom_out", "pan_dir", "pan_esq"][i % 4]));
       let pre;
       if (modo === "cobrir") pre = `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H}`;
       else if (modo === "conter" || modo === "desfocado") {
