@@ -1,5 +1,5 @@
 /* RF Logistica -- MOTOR DO RAVI gerado do app v703 em 2026-10-24T19:38Z. NAO EDITAR A MAO: rode gerar.sh. Usado pela funcao ravi-motor (new Function("state", ...)). */
-var RV_MOTOR_VERSAO = "v735";
+var RV_MOTOR_VERSAO = "v736";   // v736 (14/11/2026): Yamaha -- divergencia de quantidade bloqueia; trava de duplicidade por placa+dia, romaneio e NF
 function tarifaCliente(cliente) { return (state.tarifas && state.tarifas[cliente]) || null; }
 function modoCliente(cliente) { const t = tarifaCliente(cliente); return (t && t.modo) ? t.modo : "viagem"; }
 function freteKmDe(cliente, tipo) {
@@ -847,10 +847,30 @@ function rvViagemYamaha(e) {
   });
   if (semRegiao.length) return { ok: false, erro: "estas cidades nao estao na tabela de tarifas da Yamalog: " + semRegiao.join(", ") + " -- sem preco contratado" };
   var tot = Number(L.totalProdutos) || 0;
-  if (tot && tot !== totItens) avisos.push("o picking list diz " + tot + " produtos e eu contei " + totItens + " itens -- confira a foto");
+  // v10 (14/11/2026): divergencia de quantidade BLOQUEIA a criacao (antes so avisava e a viagem saia com 13+8 em vez de 11+10)
+  if (tot && tot !== totItens) return { ok: false, erro: "NAO criei: o picking list diz TOTAL PRODUTOS " + tot + " e eu li " + totItens + " motos -- confira a foto (ou lance pelo app)", divergencia: true };
+  var porCidadeQtd = {}; blocos.forEach(function (b) { porCidadeQtd[mtNorm(b.cidade.split("/")[0])] = b.itens; });
+  if (e.qtdPorCidade && typeof e.qtdPorCidade === "object") {   // conferencia humana: quantidade por cidade informada pelo Renato/Marcelo
+    var difs = [];
+    Object.keys(e.qtdPorCidade).forEach(function (c) { var k = mtNorm(c).replace(/\s+(BA|SE|PE)$/, "").trim(); var lido = porCidadeQtd[k] || 0, inf = Number(e.qtdPorCidade[c]) || 0; if (lido !== inf) difs.push(c + ": informado " + inf + ", li " + lido); });
+    var somaInf = Object.keys(e.qtdPorCidade).reduce(function (a, c) { return a + (Number(e.qtdPorCidade[c]) || 0); }, 0);
+    if (somaInf !== totItens) difs.push("total informado " + somaInf + ", li " + totItens);
+    if (difs.length) return { ok: false, erro: "NAO criei: a leitura da foto nao bate com as quantidades informadas (" + difs.join("; ") + ") -- lance pelo app ou mande a foto de novo", divergencia: true };
+  }
   var data = e.data || L.dataEmbarque || rfDataLocalISO(new Date());
-  var dup = (state.viagens || []).find(function (x) { return x.placa === placa && x.data === data && /yama/i.test(String(x.cliente || "")) && Math.abs((Number(x.valorViagem) || 0) - frete) < 1; });
-  if (dup) return { ok: false, erro: "ja existe viagem Yamaha do " + placa + " em " + data + " com esse frete (id " + dup.id + ")", duplicada: dup.id };
+  // v10: trava de DUPLICIDADE -- mesma placa + mesmo dia (qualquer valor: leitura diferente da mesma foto muda o frete),
+  // mesmo romaneio/numero da viagem, ou qualquer NF ja usada em outra viagem Yamaha dos ultimos 45 dias
+  var nfsNovas = itens.map(function (x) { return String(x.nf || "").replace(/\D/g, ""); }).filter(function (n) { return n.length >= 4; });
+  var lim45 = rfDataLocalISO(new Date(Date.now() - 45 * 86400e3));
+  var dup = (state.viagens || []).find(function (x) {
+    if (!/yama/i.test(String(x.cliente || "")) || x.excluida || x.cancelada) return false;
+    var yp = x.yamahaPicking || {};
+    if (x.placa === placa && x.data === data && !e.permitirMesmoDia) return true;
+    if (L.romaneio && yp.romaneio && String(yp.romaneio) === String(L.romaneio)) return true;
+    if (String(x.data || "") >= lim45 && nfsNovas.length && (yp.nfs || []).some(function (n) { return nfsNovas.indexOf(n) >= 0; })) return true;
+    return false;
+  });
+  if (dup) return { ok: false, erro: "NAO criei: ja existe viagem Yamaha " + dup.placa + " em " + dup.data + " (id " + dup.id + ") com a mesma placa/dia, romaneio ou nota fiscal -- e a mesma carga", duplicada: dup.id };
   var aberta = (state.viagens || []).find(function (x) { return x.placa === placa && !(Number(x.kmChegada) > 0) && /aguardando_motorista|em_andamento/.test(String(x.statusMotorista || "")); });
   if (aberta) avisos.push("o " + placa + " ja tem viagem aberta (" + aberta.cliente + " de " + aberta.data + ")");
   var chaves = ordem.map(function (c) { var r = rvResolverCidades([c])[0]; return r && r.chave; }).filter(Boolean);
@@ -866,7 +886,7 @@ function rvViagemYamaha(e) {
     motoristaNaEpoca: e.motorista || veic.motorista || "", temAjudante: true,
     pago: false, dataPagamento: "", pagoMotorista: false, dataPagamentoMotorista: "", pesoKg: Math.round(kg),
     outrosItens: [{ id: uid(), valor: 0, desc: "Yamaha — " + totItens + " itens · " + mixTxt }],
-    yamahaPicking: { viagemNum: L.viagemNum || "", rotaKMM: L.rotaKMM || "", emissor: L.emissor || "", totalProdutos: tot || totItens, blocos: blocos },
+    yamahaPicking: { viagemNum: L.viagemNum || "", rotaKMM: L.rotaKMM || "", emissor: L.emissor || "", romaneio: L.romaneio || "", totalProdutos: tot || totItens, nfs: nfsNovas, blocos: blocos },
     obs: "Picking list da Yamalog" + (L.viagemNum ? " (" + L.viagemNum + " viagem)" : "") + " criado pelo Ravi" + (e.pedidoPor ? " a pedido de " + e.pedidoPor : "") + ": "
       + blocos.map(function (b) { return b.cidade; }).join(" → ") + " (KM estimado " + km + ", Feira de Santana ida e volta). " + totItens + " itens: " + mixTxt + ".",
     criadaPeloRavi: true, pedidoRavi: e.pedidoPor || ""
