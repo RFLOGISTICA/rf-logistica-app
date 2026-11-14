@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v4";   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
+const VERSAO = "rf-estudio-v5";   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
+//   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
 const API = process.env.RF_API || "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
 const TOKEN = (() => { try { return fs.readFileSync(path.join(BASE, "token"), "utf8").trim(); } catch { return process.env.RF_TOKEN || ""; } })();
@@ -570,6 +571,51 @@ async function render(rec, dir, prog) {
 }
 
 // ---------------------------------------------------------------- comunicacao com o sistema
+// ---------------------------------------------------------------- ✨ Melhorar video (gratis, so FFmpeg)
+let _filtros = null;
+function temFiltro(n) { if (_filtros === null) { try { _filtros = spawnSync("ffmpeg", ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout || ""; } catch { _filtros = ""; } } return new RegExp("\\s" + n + "\\s").test(_filtros); }
+async function melhorar(rec, dir, prog) {
+  const o = rec.opcoes || {};
+  prog(3, "baixando o video original");
+  const src = await baixar(rec.fonte && rec.fonte.url, rec.fonte && rec.fonte.chave);
+  const p = probe(src); if (!p.dur || !p.w) throw new Error("nao consegui ler o video original");
+  const DUR = p.dur;
+  const tempo = (base, faixa, etapa) => (txt) => { const m = /out_time_ms=(\d+)/.exec(txt); if (m) prog(base + Math.min(faixa, Math.round(faixa * (Number(m[1]) / 1e6) / DUR)), etapa); };
+  const vf = [];
+  if (o.estabilizar !== false) {
+    if (temFiltro("vidstabdetect") && temFiltro("vidstabtransform")) {
+      const trf = path.join(dir, "mov.trf");
+      prog(6, "analisando o tremor da camera");
+      await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-vf", `vidstabdetect=shakiness=6:accuracy=12:result=${trf}`, "-threads", String(THREADS), "-f", "null", "-", "-progress", "pipe:1", "-nostats"], { onOut: tempo(6, 34, "analisando o tremor da camera") });
+      vf.push(`vidstabtransform=input=${trf}:smoothing=20:optzoom=1:zoomspeed=0.2:interpol=bicubic`);
+    } else vf.push("deshake=rx=24:ry=24");
+  }
+  if (o.ruido !== false) vf.push("hqdn3d=2:1.5:4:3");
+  if (o.cor !== false) vf.push("eq=contrast=1.06:brightness=0.012:saturation=1.14:gamma=1.02");
+  const curto = Math.min(p.w, p.h);
+  if (o.hd !== false && curto < 1080) vf.push(p.w >= p.h ? "scale=-2:1080:flags=lanczos" : "scale=1080:-2:flags=lanczos");
+  if (o.nitidez !== false) vf.push("unsharp=5:5:0.7:5:5:0.0");
+  vf.push("format=yuv420p");
+  const af = [];
+  if (p.audio && o.audio !== false) af.push("highpass=f=70", "afftdn=nf=-25", "loudnorm=I=-16:TP=-1.5:LRA=11");
+  const saida = path.join(dir, "melhorado.mp4");
+  prog(42, "aplicando as melhorias");
+  await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-map", "0:v:0", ...(p.audio ? ["-map", "0:a:0"] : []), "-vf", vf.join(","),
+    ...(af.length ? ["-af", af.join(",")] : []),
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", String(THREADS),
+    ...(p.audio ? ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"] : []), "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", saida],
+  { onOut: tempo(42, 52, "aplicando as melhorias") });
+  prog(96, "capa e previa");
+  const pr = probe(saida);
+  const capa = path.join(dir, "capa.jpg");
+  await run("ffmpeg", ["-y", "-v", "error", "-ss", (DUR / 2).toFixed(2), "-i", saida, "-frames:v", "1", "-q:v", "3", capa]);
+  // previa: antes x depois (mesmo instante, lado a lado)
+  const previa = path.join(dir, "previa.jpg"), alt = 320, t = (DUR * 0.4).toFixed(2);
+  await run("ffmpeg", ["-y", "-v", "error", "-ss", t, "-i", src, "-ss", t, "-i", saida, "-filter_complex",
+    `[0:v]trim=end_frame=1,scale=-2:${alt},setsar=1[a];[1:v]trim=end_frame=1,scale=-2:${alt},setsar=1[b];[a][b]hstack=2`, "-frames:v", "1", "-q:v", "4", previa]);
+  return { video: saida, capa, previa, dur: pr.dur || DUR, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size };
+}
+
 function sistema() {
   let disco = null;
   try { const s = fs.statfsSync(BASE); disco = { livre_gb: +(s.bavail * s.bsize / 1e9).toFixed(1), total_gb: +(s.blocks * s.bsize / 1e9).toFixed(1) }; } catch { /* */ }
@@ -596,7 +642,7 @@ async function processar(job) {
   };
   const t0 = Date.now();
   try {
-    const r = await render(job.receita, dir, prog);
+    const r = job.receita && job.receita.tipo === "melhorar" ? await melhorar(job.receita, dir, prog) : await render(job.receita, dir, prog);
     prog(98, "enviando o video");
     const up = async (url, f, tipo) => { const b = fs.readFileSync(f); const rr = await fetch(url, { method: "PUT", headers: { "Content-Type": tipo, "x-upsert": "true" }, body: b }); if (!rr.ok) throw new Error("upload " + rr.status + " " + (await rr.text()).slice(0, 200)); };
     await up(job.upload_video, r.video, "video/mp4");
@@ -630,5 +676,5 @@ async function laco() {
 if (LOCAL) {
   const rec = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const dir = process.argv[3] || path.join(TMP, "local"); fs.mkdirSync(dir, { recursive: true });
-  render(rec, dir, (p, e) => log(p + "%", e)).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
+  (rec.tipo === "melhorar" ? melhorar(rec, dir, (p, e) => log(p + "%", e)) : render(rec, dir, (p, e) => log(p + "%", e))).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
 } else laco();
