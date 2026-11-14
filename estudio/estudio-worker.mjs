@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v6";   // v6: Fim do recorte (corte_fim)
+const VERSAO = "rf-estudio-v7";   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
+//   // v6: Fim do recorte (corte_fim)
 //   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
 //   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
@@ -618,6 +619,204 @@ async function melhorar(rec, dir, prog) {
   return { video: saida, capa, previa, dur: pr.dur || DUR, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size };
 }
 
+// ---------------------------------------------------------------- 🎙️ Minha gravacao (v7, 14/11/2026): extrair audio + editar (gratis, so FFmpeg)
+// Job "audio": tira o audio do video gravado (mp3 mono 16 kHz) para o sistema transcrever palavra por palavra.
+async function extrairAudio(rec, dir, prog) {
+  prog(5, "baixando o vídeo gravado");
+  const src = await baixar(rec.fonte && rec.fonte.url, rec.fonte && rec.fonte.chave);
+  const p = probe(src); if (!p.dur) throw new Error("não consegui ler o vídeo gravado");
+  if (!p.audio) throw new Error("o vídeo não tem som — grave de novo com o microfone ligado");
+  prog(40, "separando a sua fala");
+  const saida = path.join(dir, "audio.mp3");
+  await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-af", "highpass=f=70,loudnorm=I=-18:TP=-2", "-c:a", "libmp3lame", "-b:a", "48k", saida]);
+  return { audio: saida, dur: p.dur, w: p.w, h: p.h, tamanho: fs.statSync(saida).size };
+}
+
+// tempo do video original -> tempo do video editado (trechos mantidos, em ordem, cada um com sua velocidade)
+function mapaTempo(manter) {
+  let o = 0; const segs = manter.map((m) => { const s = { ini: m.ini, fim: m.fim, vel: m.vel || 1, o }; o += (m.fim - m.ini) / s.vel; return s; });
+  const um = (t) => { for (const s of segs) if (t >= s.ini && t <= s.fim) return s.o + (t - s.ini) / s.vel; return null; };
+  const faixa = (a, b) => {   // intervalo [a,b] do original -> [x,y] do editado (null se tudo foi cortado)
+    let x = null, y = null;
+    for (const s of segs) { const i = Math.max(a, s.ini), f = Math.min(b, s.fim); if (f - i <= 0.02) continue; const mi = s.o + (i - s.ini) / s.vel, mf = s.o + (f - s.ini) / s.vel; if (x === null) x = mi; y = mf; }
+    return x === null ? null : [x, y];
+  };
+  return { um, faixa, total: o, segs };
+}
+function atempoCadeia(v) { const out = []; let r = v; while (r > 2) { out.push("atempo=2.0"); r /= 2; } while (r < 0.5) { out.push("atempo=0.5"); r /= 0.5; } out.push("atempo=" + r.toFixed(4)); return out.join(","); }
+
+// tela do sistema: no canto (janela com borda dourada) ou em tela cheia; seta opcional apontando para ela
+function telaSVG(W, H, img, modo, rotulo, seta) {
+  const L = layout(W, H), k = L.k; let s = svgIni(W, H) + DEFS;
+  if (modo === "cheia") {
+    const m = 40 * k, aw = W - 2 * m, ah = H - 2 * m - 90 * k, r = Math.min(aw / img.w, ah / img.h), w = img.w * r, h = img.h * r, x = (W - w) / 2, y = m + (ah - h) / 2;
+    s += `<rect width="${W}" height="${H}" fill="#000" fill-opacity="0.9"/>`;
+    s += `<rect x="${x - 6 * k}" y="${y - 6 * k}" width="${w + 12 * k}" height="${h + 12 * k}" rx="${18 * k}" fill="#D4A017"/>`;
+    s += `<clipPath id="ct"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${13 * k}"/></clipPath><image clip-path="url(#ct)" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" xlink:href="${img.uri}"/>`;
+    if (rotulo) s += `<text x="${W / 2}" y="${H - m - 20 * k}" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="${Math.round(38 * k)}" fill="#D4A017">${esc(rotulo)}</text>`;
+    return s + `</svg>`;
+  }
+  const w = Math.round(W * (L.horiz ? 0.34 : 0.44)), h = Math.round(Math.min(w * img.h / img.w, H * 0.42)), x = W - w - 34 * k, y = Math.round(L.horiz ? 34 * k : H * 0.09);
+  s += `<g filter="url(#sombra)"><rect x="${x - 6 * k}" y="${y - 6 * k}" width="${w + 12 * k}" height="${h + 12 * k}" rx="${16 * k}" fill="#D4A017"/></g>`;
+  s += `<clipPath id="ct"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${11 * k}"/></clipPath><image clip-path="url(#ct)" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMin slice" xlink:href="${img.uri}"/>`;
+  if (rotulo) { const px = Math.round(26 * k), tw = largura(rotulo, px, "PoppinsB") + 28 * k; s += `<rect x="${x + w / 2 - tw / 2}" y="${y + h + 14 * k}" width="${tw}" height="${px * 1.6}" rx="${px * 0.8}" fill="#000" fill-opacity="0.8"/><text x="${x + w / 2}" y="${y + h + 14 * k + px * 1.12}" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="${px}" fill="#D4A017">${esc(rotulo)}</text>`; }
+  if (seta) { const ax = x - 30 * k, ay = y + h * 0.45, t = 26 * k; s += `<g filter="url(#sombra)"><path d="M ${ax - 120 * k} ${ay} L ${ax - t} ${ay}" stroke="#D4A017" stroke-width="${14 * k}" stroke-linecap="round"/><path d="M ${ax - t * 1.6} ${ay - t * 1.3} L ${ax} ${ay} L ${ax - t * 1.6} ${ay + t * 1.3} Z" fill="#D4A017"/></g>`; }
+  return s + `</svg>`;
+}
+function textoSVG(W, H, texto, pos) {
+  const L = layout(W, H), k = L.k, maxW = W - 2 * L.mx;
+  const r = caber(String(texto || ""), "PoppinsB", maxW - 40 * k, 3, Math.round(64 * k), Math.round(34 * k));
+  const lh = r.px * 1.25, bh = r.l.length * lh + 34 * k, bw = Math.max(...r.l.map((l) => largura(l, r.px, "PoppinsB"))) + 60 * k;
+  const y0 = pos === "topo" ? H * 0.08 : pos === "meio" ? H / 2 - bh / 2 : H * (L.vert ? 0.56 : 0.62);
+  let s = svgIni(W, H) + DEFS + `<rect x="${W / 2 - bw / 2}" y="${y0}" width="${bw}" height="${bh}" rx="${20 * k}" fill="#000" fill-opacity="0.72" stroke="#D4A017" stroke-width="${4 * k}"/>`;
+  r.l.forEach((ln, i) => { s += `<text x="${W / 2}" y="${y0 + 17 * k + r.px * 0.98 + i * lh}" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="${r.px}" fill="#FFFFFF">${esc(ln)}</text>`; });
+  return s + `</svg>`;
+}
+function marcaSVG(W, H, logo) {
+  const k = Math.min(W, H) / 1080, w = 230 * k, h = w * logo.h / logo.w;
+  return svgIni(W, H) + `<image x="${30 * k}" y="${30 * k}" width="${w}" height="${h}" opacity="0.92" xlink:href="${logo.uri}"/></svg>`;
+}
+
+async function editar(rec, dir, prog) {
+  const FMT = { "9:16": [1080, 1920], "1:1": [1080, 1080], "16:9": [1920, 1080], "4:5": [1080, 1350] };
+  prog(2, "baixando o vídeo gravado");
+  const src = await baixar(rec.fonte && rec.fonte.url, rec.fonte && rec.fonte.chave);
+  const p = probe(src); if (!p.dur || !p.w) throw new Error("não consegui ler o vídeo gravado");
+  let [W, H] = FMT[rec.formato] || [0, 0];
+  if (!W) { const curto = Math.min(p.w, p.h, 1080), r = curto / Math.min(p.w, p.h); W = Math.round(p.w * r / 2) * 2; H = Math.round(p.h * r / 2) * 2; }
+  const FPS = 30, k = Math.min(W, H) / 1080;
+  let manter = (rec.manter || []).map((m) => ({ ini: Math.max(0, +m.ini), fim: Math.min(p.dur, +m.fim), vel: Math.max(0.5, Math.min(2, Number(m.vel) || 1)) })).filter((m) => m.fim - m.ini > 0.08);
+  if (!manter.length) manter = [{ ini: 0, fim: p.dur, vel: 1 }];
+  const M = mapaTempo(manter), DUR = M.total;
+  const tempo = (base, faixa, etapa, dur) => (txt) => { const m = /out_time_ms=(\d+)/.exec(txt); if (m) prog(base + Math.min(faixa, Math.round(faixa * (Number(m[1]) / 1e6) / (dur || DUR))), etapa); };
+
+  // ---- etapa A: cortes + velocidade + enquadramento + luz/cor + audio
+  const fc = [], N = manter.length;
+  const audioIn = p.audio ? "0:a" : "1:a";
+  manter.forEach((m, i) => {
+    fc.push(`[0:v]trim=start=${m.ini.toFixed(3)}:end=${m.fim.toFixed(3)},setpts=(PTS-STARTPTS)/${m.vel}[v${i}]`);
+    fc.push(`[${audioIn}]atrim=start=${m.ini.toFixed(3)}:end=${m.fim.toFixed(3)},asetpts=PTS-STARTPTS${m.vel !== 1 ? "," + atempoCadeia(m.vel) : ""}[a${i}]`);
+  });
+  fc.push(manter.map((_, i) => `[v${i}][a${i}]`).join("") + `concat=n=${N}:v=1:a=1[vc][ac]`);
+  const z = Math.max(1, Math.min(2, Number(rec.zoom) || 1));
+  const L0 = rec.luz || {};
+  const vf = [`scale=w=${Math.round(W * z)}:h=${Math.round(H * z)}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`, `fps=${FPS}`];
+  const br = Math.max(-0.25, Math.min(0.25, Number(L0.brilho) || 0)), ct = Math.max(0.7, Math.min(1.5, Number(L0.contraste) || 1)), sa = Math.max(0, Math.min(2, Number(L0.saturacao) || 1));
+  if (br || ct !== 1 || sa !== 1) vf.push(`eq=brightness=${br}:contrast=${ct}:saturation=${sa}`);
+  if (rec.limpar_imagem) vf.push("hqdn3d=1.5:1.2:3:2");
+  vf.push("format=yuv420p");
+  fc.push(`[vc]${vf.join(",")}[vo]`);
+  const af = rec.limpar_audio !== false ? ["highpass=f=80", "afftdn=nf=-25", "loudnorm=I=-16:TP=-1.5:LRA=11"] : ["loudnorm=I=-16:TP=-1.5:LRA=11"];
+  fc.push(`[ac]${af.join(",")},aresample=48000[ao]`);
+  const A = path.join(dir, "etapaA.mp4");
+  prog(6, "cortando e ajustando");
+  await run("ffmpeg", ["-y", "-v", "error", "-i", src, ...(p.audio ? [] : ["-f", "lavfi", "-t", String(p.dur), "-i", "anullsrc=r=48000:cl=mono"]),
+    "-filter_complex", fc.join(";"), "-map", "[vo]", "-map", "[ao]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-threads", String(THREADS),
+    "-c:a", "aac", "-b:a", "192k", "-progress", "pipe:1", "-nostats", A], { onOut: tempo(6, 34, "cortando e ajustando") });
+
+  // ---- juntar outros videos (dos motoristas ou seus) antes/depois da gravacao -- mesmo tamanho, 30 q/s, audio 48 kHz
+  let OFS = 0, DTOT = DUR;
+  const extras = (rec.extras || []).filter((x) => x && x.url).slice(0, 6);
+  if (extras.length) {
+    prog(36, "juntando os outros vídeos");
+    const partesAntes = [], partesDepois = [];
+    for (let i = 0; i < extras.length; i++) {
+      const x = extras[i], f = await baixar(x.url, x.chave), px = probe(f); if (!px.dur) continue;
+      const ini = Math.max(0, Number(x.ini) || 0), fim = Math.min(px.dur, Number(x.fim) || px.dur); if (fim - ini < 0.3) continue;
+      const o = path.join(dir, "extra-" + i + ".mp4");
+      await run("ffmpeg", ["-y", "-v", "error", "-ss", ini.toFixed(2), "-t", (fim - ini).toFixed(2), "-i", f, ...(px.audio ? [] : ["-f", "lavfi", "-t", (fim - ini).toFixed(2), "-i", "anullsrc=r=48000:cl=mono"]),
+        "-map", "0:v:0", "-map", px.audio ? "0:a:0" : "1:a:0", "-vf", `scale=w=${W}:h=${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},fps=${FPS},format=yuv420p`,
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000", "-ac", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-c:a", "aac", "-b:a", "192k", "-threads", String(THREADS), o]);
+      (x.posicao === "antes" ? partesAntes : partesDepois).push(o);
+      if (x.posicao === "antes") OFS += fim - ini;
+      DTOT += fim - ini;
+    }
+    if (partesAntes.length || partesDepois.length) {
+      const Ar = path.join(dir, "etapaA-mono.mp4");
+      await run("ffmpeg", ["-y", "-v", "error", "-i", A, "-c:v", "copy", "-af", "aresample=48000", "-ac", "1", "-c:a", "aac", "-b:a", "192k", Ar]);
+      const lista = path.join(dir, "lista.txt"); fs.writeFileSync(lista, [...partesAntes, Ar, ...partesDepois].map((f) => "file '" + f + "'").join("\n"));
+      const J = path.join(dir, "etapaA-junto.mp4");
+      await run("ffmpeg", ["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", lista, "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-c:a", "aac", "-b:a", "192k", "-threads", String(THREADS), J]);
+      fs.renameSync(J, A);
+    }
+  }
+
+  // ---- estabilizar (2 passadas sobre o video ja cortado)
+  let estab = null;
+  if (rec.estabilizar && temFiltro("vidstabdetect")) {
+    const trf = path.join(dir, "mov.trf");
+    prog(41, "tirando o tremido");
+    await run("ffmpeg", ["-y", "-v", "error", "-i", A, "-vf", `vidstabdetect=shakiness=6:accuracy=12:result=${trf}`, "-threads", String(THREADS), "-f", "null", "-", "-progress", "pipe:1", "-nostats"], { onOut: tempo(41, 12, "tirando o tremido") });
+    estab = `vidstabtransform=input=${trf}:smoothing=20:optzoom=1:zoomspeed=0.2:interpol=bicubic`;
+  }
+
+  // ---- etapa B: camadas (telas, textos, legendas, marca) + musica
+  prog(54, "preparando telas e legendas");
+  const cam = [];   // { png, a, b }
+  let n = 0;
+  const imgPrep = async (url, chave) => {
+    const f = await baixar(url, chave), dst = path.join(dir, "img-" + (n++) + ".jpg");
+    await run("ffmpeg", ["-y", "-v", "error", "-i", f, "-vf", "scale='min(1200,iw)':-1", "-q:v", "3", dst]);
+    const pr = probe(dst); return { uri: dataUri(dst), w: pr.w || 1000, h: pr.h || 1000 };
+  };
+  for (const t of (rec.telas || []).slice(0, 12)) {
+    if (!t.url) continue; const fx = M.faixa(+t.ini, +t.fim); if (!fx) continue;
+    const img = await imgPrep(t.url, t.chave), png = path.join(dir, "cam-" + (n++) + ".png");
+    await svgPng(telaSVG(W, H, img, t.modo === "cheia" ? "cheia" : "canto", t.rotulo || "", t.seta !== false && t.modo !== "cheia"), png, W, H);
+    cam.push({ png, a: OFS + fx[0], b: OFS + Math.max(fx[1], fx[0] + 1.2) });
+  }
+  for (const t of (rec.textos || []).slice(0, 15)) {
+    if (t.no_fim) { const png = path.join(dir, "cam-" + (n++) + ".png"); await svgPng(textoSVG(W, H, t.texto, t.pos || "meio"), png, W, H); cam.push({ png, a: Math.max(0, DTOT - (Number(t.dur) || 4)), b: DTOT + 1 }); continue; }
+    const fx = M.faixa(+t.ini, +t.fim); if (!fx || !String(t.texto || "").trim()) continue;
+    const png = path.join(dir, "cam-" + (n++) + ".png"); await svgPng(textoSVG(W, H, t.texto, t.pos), png, W, H); cam.push({ png, a: OFS + fx[0], b: OFS + fx[1] });
+  }
+  if (rec.legendas !== false && Array.isArray(rec.palavras) && rec.palavras.length) {
+    const pal = []; for (const w of rec.palavras) { const x = M.um(+w.s); if (x === null) continue; pal.push({ w: String(w.w), s: x, e: M.um(+w.e) ?? x + 0.3 }); }
+    const blocos = blocosLegenda(pal);
+    for (let i = 0; i < blocos.length && i < 220; i++) {
+      const bl = blocos[i], a = bl[0].s, b = i < blocos.length - 1 ? Math.min(blocos[i + 1][0].s, bl[bl.length - 1].e + 0.6) : bl[bl.length - 1].e + 0.6;
+      const png = path.join(dir, "leg-" + i + ".png"); await svgPng(legendaSVG(W, H, bl.map((x, j) => ({ w: x.w, i: j })), -1), png, W, H); cam.push({ png, a: OFS + a, b: OFS + b });
+    }
+  }
+  let marca = null;
+  if (rec.logo && rec.logo.url) { const f = await baixar(rec.logo.url, rec.logo.chave); const dst = path.join(dir, "logo.png"); await run("ffmpeg", ["-y", "-v", "error", "-i", f, "-vf", "scale='min(600,iw)':-1", dst]); const pr = probe(dst); marca = path.join(dir, "marca.png"); await svgPng(marcaSVG(W, H, { uri: dataUri(dst), w: pr.w || 600, h: pr.h || 200 }), marca, W, H); }
+  const musica = rec.musica && rec.musica.url ? await baixar(rec.musica.url, rec.musica.chave) : null;
+
+  const ins = ["-i", A]; let idx = 1; const fb = [];
+  let cur = "[0:v]";
+  if (estab) { fb.push(`${cur}${estab}[vs]`); cur = "[vs]"; }
+  if (marca) { ins.push("-i", marca); fb.push(`${cur}[${idx}:v]overlay=0:0[m${idx}]`); cur = `[m${idx}]`; idx++; }
+  for (const c of cam) { ins.push("-i", c.png); fb.push(`${cur}[${idx}:v]overlay=0:0:enable='between(t,${c.a.toFixed(2)},${c.b.toFixed(2)})'[m${idx}]`); cur = `[m${idx}]`; idx++; }
+  fb.push(`${cur}format=yuv420p[vf]`);
+  let amap = "0:a";
+  if (musica) { ins.push("-stream_loop", "-1", "-i", musica); const vol = Math.max(0.03, Math.min(0.5, Number(rec.musica.volume) || 0.12)); fb.push(`[${idx}:a]volume=${vol},atrim=0:${DTOT.toFixed(2)},afade=t=out:st=${Math.max(0, DTOT - 2).toFixed(2)}:d=2[mu];[0:a][mu]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[af]`); amap = "[af]"; idx++; }
+  const saida = path.join(dir, "editado.mp4");
+  prog(58, "montando o vídeo final");
+  await run("ffmpeg", ["-y", "-v", "error", ...ins, "-filter_complex", fb.join(";"), "-map", "[vf]", "-map", amap, "-t", DTOT.toFixed(2),
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", String(THREADS),
+    "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", saida], { onOut: tempo(58, 30, "montando o vídeo final", DTOT) });
+
+  // ---- capa, previa e medidas para a critica
+  prog(90, "medindo luz e som para a crítica");
+  const pr = probe(saida), D = pr.dur || DTOT;
+  const capa = path.join(dir, "capa.jpg");
+  await run("ffmpeg", ["-y", "-v", "error", "-ss", Math.min(1.5, D / 3).toFixed(2), "-i", saida, "-frames:v", "1", "-q:v", "3", capa]);
+  const folha = path.join(dir, "folha.jpg"), passo = Math.max(1, D / 12);
+  await run("ffmpeg", ["-y", "-v", "error", "-i", saida, "-vf", `fps=1/${passo.toFixed(2)},scale=${W >= H ? 320 : 180}:-2,tile=4x3:padding=4:color=black`, "-frames:v", "1", "-q:v", "5", folha]);
+  const analise = { dur: +D.toFixed(2), w: pr.w, h: pr.h, luz_por_seg: [], som_por_seg: [], cortes: manter.length };
+  try {
+    const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vf", "fps=1,scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 });
+    analise.luz_por_seg = [...String(o.stdout).matchAll(/YAVG=([\d.]+)/g)].map((m) => Math.round(Number(m[1])));
+  } catch { /* */ }
+  try {
+    const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vn", "-af", "aresample=16000,asetnsamples=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 });
+    analise.som_por_seg = [...String(o.stdout).matchAll(/RMS_level=(-?[\d.]+|-inf)/g)].map((m) => m[1] === "-inf" ? -90 : Math.round(Number(m[1])));
+  } catch { /* */ }
+  analise.folha_b64 = fs.readFileSync(folha).toString("base64");
+  const previa = path.join(dir, "previa.jpg"); fs.copyFileSync(capa, previa);
+  return { video: saida, capa, previa, dur: D, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size, analise };
+}
+
 function sistema() {
   let disco = null;
   try { const s = fs.statfsSync(BASE); disco = { livre_gb: +(s.bavail * s.bsize / 1e9).toFixed(1), total_gb: +(s.blocks * s.bsize / 1e9).toFixed(1) }; } catch { /* */ }
@@ -644,13 +843,19 @@ async function processar(job) {
   };
   const t0 = Date.now();
   try {
-    const r = job.receita && job.receita.tipo === "melhorar" ? await melhorar(job.receita, dir, prog) : await render(job.receita, dir, prog);
+    const tp = job.receita && job.receita.tipo;
+    const r = tp === "melhorar" ? await melhorar(job.receita, dir, prog) : tp === "audio" ? await extrairAudio(job.receita, dir, prog) : tp === "editar" ? await editar(job.receita, dir, prog) : await render(job.receita, dir, prog);
     prog(98, "enviando o video");
     const up = async (url, f, tipo) => { const b = fs.readFileSync(f); const rr = await fetch(url, { method: "PUT", headers: { "Content-Type": tipo, "x-upsert": "true" }, body: b }); if (!rr.ok) throw new Error("upload " + rr.status + " " + (await rr.text()).slice(0, 200)); };
+    if (tp === "audio") {
+      await up(job.upload_audio, r.audio, "audio/mpeg");
+      await api("worker_status", { job_id: job.id, status: "pronto", progresso: 100, etapa: "pronto", duracao: +r.dur.toFixed(2), tamanho: r.tamanho, largura: r.w, altura: r.h, segundos_render: Math.round((Date.now() - t0) / 1000) });
+      log(job.id, "audio pronto"); return;
+    }
     await up(job.upload_video, r.video, "video/mp4");
     if (job.upload_capa) await up(job.upload_capa, r.capa, "image/jpeg");
     await api("worker_status", { job_id: job.id, status: "pronto", progresso: 100, etapa: "pronto", duracao: +r.dur.toFixed(2), tamanho: r.tamanho, largura: r.w, altura: r.h,
-      previa_b64: fs.readFileSync(r.previa).toString("base64"), segundos_render: Math.round((Date.now() - t0) / 1000) });
+      previa_b64: fs.readFileSync(r.previa).toString("base64"), segundos_render: Math.round((Date.now() - t0) / 1000), ...(r.analise ? { analise: r.analise } : {}) });
     log(job.id, "pronto", Math.round((Date.now() - t0) / 1000) + "s");
   } catch (e) {
     log(job.id, "erro", e.message);
@@ -678,5 +883,5 @@ async function laco() {
 if (LOCAL) {
   const rec = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const dir = process.argv[3] || path.join(TMP, "local"); fs.mkdirSync(dir, { recursive: true });
-  (rec.tipo === "melhorar" ? melhorar(rec, dir, (p, e) => log(p + "%", e)) : render(rec, dir, (p, e) => log(p + "%", e))).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
+  (rec.tipo === "melhorar" ? melhorar(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "audio" ? extrairAudio(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "editar" ? editar(rec, dir, (p, e) => log(p + "%", e)) : render(rec, dir, (p, e) => log(p + "%", e))).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
 } else laco();
