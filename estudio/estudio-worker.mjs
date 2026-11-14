@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v5";   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
+const VERSAO = "rf-estudio-v6";   // v6: Fim do recorte (corte_fim)
+//   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
 //   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
 const BASE = process.env.RF_BASE || "/opt/rf-estudio";
 const API = process.env.RF_API || "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
@@ -454,7 +455,8 @@ async function render(rec, dir, prog) {
       if (ehVideo) {
         const vel = Math.max(0.25, Math.min(4, Number(c.velocidade) || 1));
         const ini = Math.max(0, Number(c.corte_ini) || 0);
-        const args = ["-y", "-v", "error", "-ss", String(ini), "-t", String(dur * vel + 0.5), "-i", c._arq];
+        const fimC = c.corte_fim != null && Number(c.corte_fim) > ini ? Number(c.corte_fim) : null;   // v6: respeita o Fim do recorte (se a fala for maior, segura o ultimo quadro)
+        const args = ["-y", "-v", "error", "-ss", String(ini), "-t", String(fimC ? Math.min(fimC - ini, dur * vel + 0.5) : dur * vel + 0.5), "-i", c._arq];
         vf = `[0:v]setpts=(PTS-STARTPTS)/${vel},fps=${FPS},${pre},eq=contrast=1.05:saturation=1.08,tpad=stop_mode=clone:stop_duration=${dur},trim=duration=${dur},setsar=1,format=yuv420p[v]`;
         await run("ffmpeg", [...args, "-filter_complex", vf, "-map", "[v]", "-an", ...enc, fundo]);
       } else {
