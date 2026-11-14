@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="rf-sistema" content="RFL">
+<meta name="rf-sistema-nome" content="RF Logística — envio de vídeo para o Estúdio">
+<meta name="rf-versao" content="v888">
+<meta name="rf-data" content="2026-11-14">
+<meta name="robots" content="noindex,nofollow">
+<title>RF Logística — Enviar vídeo</title>
+<style>
+  :root { --ouro: #D4A017; --preto: #000; --graf: #141414; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--preto); color: #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; }
+  main { width: 100%; max-width: 460px; padding: 22px 18px 40px; }
+  .topo { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .topo img { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--ouro); object-fit: cover; }
+  .topo b { color: var(--ouro); font-size: 18px; letter-spacing: .3px; }
+  h1 { font-size: 22px; margin: 0 0 6px; color: #fff; }
+  p { margin: 6px 0; line-height: 1.45; color: #cfcfcf; font-size: 15px; }
+  .aviso { background: #1a1405; border: 1px solid var(--ouro); border-radius: 12px; padding: 12px 14px; margin: 14px 0; color: #f3e2a8; font-size: 14.5px; }
+  .aviso b { color: var(--ouro); }
+  label.botao, button { display: block; width: 100%; text-align: center; padding: 16px; border-radius: 12px; font-size: 17px; font-weight: 800; cursor: pointer; border: 0; }
+  label.botao { background: var(--ouro); color: #000; margin-top: 14px; }
+  button { background: #000; color: var(--ouro); border: 2px solid var(--ouro); margin-top: 10px; }
+  button:disabled { opacity: .45; }
+  input[type=file] { display: none; }
+  input[type=text] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #444; background: var(--graf); color: #fff; font-size: 15px; margin-top: 10px; }
+  video { width: 100%; border-radius: 12px; margin-top: 12px; background: #111; max-height: 50vh; }
+  .barra { height: 12px; background: #222; border-radius: 6px; overflow: hidden; margin-top: 12px; display: none; }
+  .barra i { display: block; height: 100%; width: 0; background: var(--ouro); transition: width .2s; }
+  .msg { margin-top: 12px; font-weight: 700; min-height: 22px; }
+  .ok { color: var(--ouro); } .ruim { color: #f3e2a8; }
+  .rodape { margin-top: 26px; font-size: 11px; color: #666; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="topo"><img src="estudio/fotos/ravi.jpg" alt="Ravi"><b>RF Logística</b></div>
+  <h1 id="ola">Enviar vídeo</h1>
+  <p>O vídeo vai direto para o estúdio da RF, em qualidade máxima, para as nossas campanhas.</p>
+  <div class="aviso">⚠️ <b>Só grave com o caminhão PARADO.</b> Nunca filme dirigindo.<br>Vídeo curto (15 a 40 segundos), celular firme, sem dedo na frente e sem rosto de cliente.</div>
+  <label class="botao" for="arq">🎬 Escolher ou gravar vídeo</label>
+  <input id="arq" type="file" accept="video/*">
+  <video id="prev" controls playsinline style="display:none"></video>
+  <input id="leg" type="text" maxlength="60" placeholder="O que é o vídeo? (ex.: entrega em Irecê) — opcional" style="display:none">
+  <button id="env" disabled>📤 Enviar para a RF</button>
+  <div class="barra" id="barra"><i id="pct"></i></div>
+  <div class="msg" id="msg"></div>
+  <div class="rodape" id="selo">RF Sistema · RFL v888</div>
+</main>
+<script>
+const SISTEMA = { codigo: "RFL", nome: "RF Logística — envio de vídeo", versao: "v888", data: "2026-11-14" };
+console.log("[RF] " + SISTEMA.codigo + " " + SISTEMA.versao + " — " + SISTEMA.nome);
+const FN = "https://dpqgqgjhydrztouxscad.supabase.co/functions/v1/estudio";
+const K = new URLSearchParams(location.search).get("k") || "";
+const $ = (id) => document.getElementById(id);
+let meta = { duracao: 0, largura: 0, altura: 0 }, arquivo = null;
+function msg(t, ok) { const m = $("msg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "ruim"); }
+async function chamar(corpo) {
+  const r = await fetch(FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.assign({ k: K }, corpo)) });
+  return r.json().catch(() => ({ ok: false, erro: "resposta inválida" }));
+}
+(async () => {
+  if (!K) { msg("Link incompleto. Peça um novo ao Ravi no WhatsApp."); $("env").disabled = true; document.querySelector("label.botao").style.display = "none"; return; }
+  const i = await chamar({ acao: "link_info" });
+  if (!i.ok) { msg(i.erro || "Link inválido."); document.querySelector("label.botao").style.display = "none"; return; }
+  $("ola").textContent = "Olá, " + (i.nome || "motorista") + "! 👋";
+  if (i.enviados) msg(i.enviados + " vídeo(s) já enviado(s) por este link. Pode mandar mais!", true);
+})();
+$("arq").addEventListener("change", () => {
+  arquivo = $("arq").files[0] || null; if (!arquivo) return;
+  if (!/^video\//.test(arquivo.type)) { msg("Escolha um arquivo de VÍDEO."); arquivo = null; return; }
+  if (arquivo.size > 50 * 1024 * 1024) { msg("Esse vídeo passou de 50 MB. Grave um mais curto (15 a 40 segundos)."); arquivo = null; $("env").disabled = true; return; }
+  const v = $("prev"); v.src = URL.createObjectURL(arquivo); v.style.display = "block"; $("leg").style.display = "block";
+  v.onloadedmetadata = () => { meta = { duracao: Math.round(v.duration || 0), largura: v.videoWidth || 0, altura: v.videoHeight || 0 }; if (meta.duracao > 180) msg("Esse vídeo tem mais de 3 minutos. Prefira um trecho curto."); };
+  $("env").disabled = false; msg((arquivo.size / 1048576).toFixed(1).replace(".", ",") + " MB pronto para enviar.", true);
+});
+$("env").addEventListener("click", async () => {
+  if (!arquivo) return; $("env").disabled = true; msg("Preparando o envio…", true);
+  const ini = await chamar({ acao: "link_inicio", tam: arquivo.size, mime: arquivo.type });
+  if (!ini.ok) { msg(ini.erro || "Não consegui preparar o envio."); $("env").disabled = false; return; }
+  $("barra").style.display = "block";
+  const ok = await new Promise((res) => {
+    const x = new XMLHttpRequest(); x.open("PUT", ini.upload_url);
+    x.setRequestHeader("Content-Type", arquivo.type); x.setRequestHeader("x-upsert", "false");
+    x.upload.onprogress = (e) => { if (e.lengthComputable) { $("pct").style.width = Math.round(e.loaded / e.total * 100) + "%"; msg("Enviando… " + Math.round(e.loaded / e.total * 100) + "%", true); } };
+    x.onload = () => res(x.status >= 200 && x.status < 300); x.onerror = () => res(false); x.send(arquivo);
+  });
+  if (!ok) { msg("O envio caiu (sinal fraco?). Tente de novo com Wi-Fi ou sinal melhor."); $("env").disabled = false; return; }
+  const fim = await chamar({ acao: "link_fim", path: ini.path, legenda: $("leg").value, duracao: meta.duracao, largura: meta.largura, altura: meta.altura });
+  if (!fim.ok) { msg(fim.erro || "Recebi, mas não consegui registrar."); $("env").disabled = false; return; }
+  msg("✅ " + (fim.msg || "Vídeo recebido!") + " Quer mandar outro? Toque em Escolher vídeo.", true);
+  arquivo = null; $("arq").value = ""; $("prev").style.display = "none"; $("leg").value = ""; $("pct").style.width = "0";
+});
+</script>
+</body>
+</html>

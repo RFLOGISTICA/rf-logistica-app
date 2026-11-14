@@ -1,0 +1,117 @@
+// RF Logistica - RAVI VELOCIDADE (excesso de velocidade por motorista) - v1 (14/11/2026)
+// Renato (14/11/2026): 224 alertas de velocidade em 7 dias (pico 117 km/h) e ninguem recebia -- ficavam so na tela da Torre.
+// Todo dia as 18h05 da Bahia: le o rastreador do dia (todos os caminhoes, com ou sem viagem), grava rf_velocidade_dia
+// (vmax, minutos acima de 80 e de 100 km/h, km do dia, picos) e manda o RESUMO no privado do Renato e do Marcelo.
+// O aviso NA HORA (acima de 100 km/h) e da torre-monitor v65, no grupo Torre.
+// Minutos acima: soma dos intervalos entre posicoes seguidas acima do limite (cada intervalo limitado a 5 min).
+// Pico falso do GPS: ignora posicao com gps=0, acima de 140 km/h, ou isolada (vizinhas abaixo de 60).
+// Teste: {simular:true} (nao grava nem manda) · {dia:"2026-11-13"} · {enviar:false} (grava sem mandar)
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+const BA = -3 * 3600e3;
+const json = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
+const hojeBA = () => new Date(Date.now() + BA).toISOString().slice(0, 10);
+const somaDias = (d: string, n: number) => new Date(Date.parse(d + "T12:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
+const ddmm = (d: string) => d.split("-").reverse().slice(0, 2).join("/");
+const hora = (d: string) => new Date(Date.parse(d) + BA).toISOString().slice(11, 16);
+function distKm(a: number, b: number, c: number, d: number) { const R = 6371, r = Math.PI / 180, x = (c - a) * r, y = (d - b) * r; const h = Math.sin(x / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(y / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); }
+const LIM1 = 80, LIM2 = 100;
+const DESTINOS = [{ nome: "Renato", fone: "5575999717578" }, { nome: "Marcelo", fone: "5575987018067" }];
+
+async function segredos() {
+  const { data } = await sb.from("rf_segredos").select("chave,valor").or("chave.like.wa_*");
+  const o: Record<string, string> = {}; for (const x of data || []) o[x.chave] = x.valor; return o;
+}
+async function enviar(s: Record<string, string>, phone: string, message: string) {
+  if (!s.wa_url || !phone) return false;
+  // @ts-ignore Deno API
+  const client = Deno.createHttpClient({ caCerts: [s.wa_ca] });
+  try {
+    const r = await fetch(`${s.wa_url}/send-text`, { method: "POST", client, headers: { "Content-Type": "application/json", "X-RF-Token": s.wa_token }, body: JSON.stringify({ phone, message, mencoes: [] }) } as any);
+    return r.status === 200;
+  } catch (_) { return false; }
+}
+const primeiro = (n: string) => { const p = String(n || "").split(/[.\s]/)[0]; return p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : ""; };
+
+Deno.serve(async (req) => {
+  try {
+    const tok = req.headers.get("x-cron-token") || "";
+    const tk = tok ? (await sb.rpc("rastreio_cron_ok", { tok })).data : null;
+    const s = await segredos();
+    const okWa = s.wa_token && req.headers.get("x-rf-token") === s.wa_token;
+    if (!tk && !okWa) return json({ ok: false, erro: "nao autorizado" }, 401);
+    const b = await req.json().catch(() => ({}));
+    const simular = !!b.simular;
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dia || "")) ? String(b.dia) : hojeBA();
+
+    // motorista do dia: viagem do sistema que cobre o dia; senao o motorista do cadastro do veiculo
+    const [{ data: pv }, { data: pveic }] = await Promise.all([
+      sb.from("painel_dados").select("valor").eq("chave", "viagens").maybeSingle(),
+      sb.from("painel_dados").select("valor").eq("chave", "veiculos").maybeSingle(),
+    ]);
+    const viagens: any[] = Array.isArray(pv?.valor) ? pv!.valor : [];
+    const veiculos: any[] = Array.isArray(pveic?.valor) ? pveic!.valor : [];
+    const fimV = (v: any) => (v.dataFim && /^\d{4}-\d{2}-\d{2}/.test(v.dataFim)) ? String(v.dataFim).slice(0, 10) : somaDias(String(v.data).slice(0, 10), Math.max(1, Math.round(Number(v.dias) || 1)) - 1);
+    const quem = (pl: string) => {
+      const vg = viagens.filter((v) => v && String(v.placa || "").toUpperCase() === pl && /^\d{4}-\d{2}-\d{2}/.test(String(v.data || "")) && String(v.data).slice(0, 10) <= dia && (fimV(v) >= dia || (v.statusMotorista === "em_andamento" && String(v.data).slice(0, 10) >= somaDias(dia, -15))))
+        .sort((a, c) => String(c.data).localeCompare(String(a.data)))[0];
+      const ve = veiculos.find((x) => x && String(x.placa || "").toUpperCase() === pl);
+      return { motorista: String((vg && (vg.motoristaNaEpoca || vg.motoristaDesignadoNome)) || (ve && ve.motorista) || "").trim() || null, cliente: (vg && vg.cliente) || null };
+    };
+
+    const ini = new Date(Date.parse(dia + "T00:00:00-03:00")).toISOString(), fim = new Date(Date.parse(dia + "T23:59:59-03:00")).toISOString();
+    const pos: any[] = [];
+    for (let pg = 0; pg < 80; pg++) {
+      const { data: lote } = await sb.from("rastreio_posicoes").select("placa,data_pacote,lat,lng,velocidade,gps,cidade,uf,rua").gte("data_pacote", ini).lte("data_pacote", fim).not("lat", "is", null).order("placa").order("data_pacote").range(pg * 1000, pg * 1000 + 999);
+      pos.push(...(lote || [])); if (!lote || lote.length < 1000) break;
+    }
+    const porPlaca = new Map<string, any[]>();
+    for (const p of pos) { const pl = String(p.placa).toUpperCase(); if (/^TES/.test(pl)) continue; (porPlaca.get(pl) || porPlaca.set(pl, []).get(pl)!).push(p); }
+
+    const linhas: any[] = [];
+    for (const [pl, ps] of porPlaca) {
+      let vmax = 0, m80 = 0, m100 = 0, km = 0; const picos: any[] = [];
+      const vel = (i: number) => Number(ps[i]?.velocidade) || 0;
+      const valido = (i: number) => { const v = vel(i); if (ps[i].gps === 0 || v > 140) return false; if (v > LIM1 && vel(i - 1) < 60 && vel(i + 1) < 60) return false; return true; };
+      for (let i = 0; i < ps.length; i++) {
+        const p = ps[i];
+        if (i > 0) { const d = distKm(Number(ps[i - 1].lat), Number(ps[i - 1].lng), Number(p.lat), Number(p.lng)); const h = Math.max((Date.parse(p.data_pacote) - Date.parse(ps[i - 1].data_pacote)) / 3600e3, 1 / 3600); if (d >= 0.03 && d / h <= 140) km += d; }
+        if (!valido(i)) continue;
+        const v = vel(i); if (v > vmax) vmax = v;
+        if (i > 0 && valido(i - 1)) {
+          const dt = Math.min((Date.parse(p.data_pacote) - Date.parse(ps[i - 1].data_pacote)) / 60e3, 5);
+          if (v > LIM1 && vel(i - 1) > LIM1) m80 += dt;
+          if (v > LIM2 && vel(i - 1) > LIM2) m100 += dt;
+        }
+        if (v > LIM2) picos.push({ vel: v, em: p.data_pacote, local: [p.rua ? String(p.rua).split(",")[0] : "", [p.cidade, p.uf].filter(Boolean).join("/")].filter(Boolean).join(", ") });
+      }
+      if (km < 1 && vmax === 0) continue;
+      picos.sort((a, c) => c.vel - a.vel);
+      const q = quem(pl);
+      linhas.push({ dia, placa: pl, motorista: q.motorista, cliente: q.cliente, vmax, min_80: Math.round(m80), min_100: Math.round(m100), km_dia: Math.round(km), picos: picos.slice(0, 3), atualizado_em: new Date().toISOString() });
+    }
+    linhas.sort((a, c) => c.min_100 - a.min_100 || c.min_80 - a.min_80 || c.vmax - a.vmax);
+
+    const exc = linhas.filter((l) => l.min_80 >= 1 || l.vmax > LIM2);
+    let msg = `🚦 *Velocidade da frota — ${ddmm(dia)}*\n`;
+    if (!exc.length) msg += `Nenhum caminhão passou de ${LIM1} km/h hoje. 👏`;
+    else {
+      msg += `Limite de atenção ${LIM1} km/h · grave acima de ${LIM2} km/h\n\n` + exc.map((l, i) => {
+        const p = l.picos[0];
+        return `${i + 1}. *${l.placa}*${l.motorista ? " · " + primeiro(l.motorista) : ""}${l.cliente ? " · " + l.cliente : ""}\n   pico *${l.vmax} km/h*${p ? " às " + hora(p.em) + (p.local ? " (" + p.local + ")" : "") : ""}\n   ${l.min_80} min acima de ${LIM1}${l.min_100 ? " · *" + l.min_100 + " min acima de " + LIM2 + "*" : ""} · ${l.km_dia} km no dia`;
+      }).join("\n");
+      const ok = linhas.filter((l) => l.km_dia >= 20 && !(l.min_80 >= 1 || l.vmax > LIM2)).map((l) => l.placa);
+      if (ok.length) msg += `\n\n✅ Sem excesso (até 80 km/h): ${ok.join(", ")}`;
+    }
+    msg += `\n\nRanking completo no app: Jornada dos Caminhões → 🚦 Velocidade.\n🤖 _Ravi - RF Logística_`;
+
+    if (simular) return json({ ok: true, simulado: true, dia, posicoes: pos.length, linhas, msg });
+    if (linhas.length) { const { error } = await sb.from("rf_velocidade_dia").upsert(linhas, { onConflict: "dia,placa" }); if (error) return json({ ok: false, erro: error.message }); }
+    const enviados: string[] = [];
+    if (b.enviar !== false) for (const d of DESTINOS) if (await enviar(s, d.fone, msg)) enviados.push(d.nome);
+    return json({ ok: true, versao: "v1", dia, caminhoes: linhas.length, com_excesso: exc.length, enviados });
+  } catch (e) {
+    return json({ ok: false, erro: String((e as Error).message || e).slice(0, 300) });
+  }
+});
