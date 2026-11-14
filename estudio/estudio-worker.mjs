@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v7";   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
+const VERSAO = "rf-estudio-v7.1";   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
 //   // v6: Fim do recorte (corte_fim)
 //   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
 //   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
@@ -690,29 +690,31 @@ async function editar(rec, dir, prog) {
   const M = mapaTempo(manter), DUR = M.total;
   const tempo = (base, faixa, etapa, dur) => (txt) => { const m = /out_time_ms=(\d+)/.exec(txt); if (m) prog(base + Math.min(faixa, Math.round(faixa * (Number(m[1]) / 1e6) / (dur || DUR))), etapa); };
 
-  // ---- etapa A: cortes + velocidade + enquadramento + luz/cor + audio
-  const fc = [], N = manter.length;
-  const audioIn = p.audio ? "0:a" : "1:a";
-  manter.forEach((m, i) => {
-    fc.push(`[0:v]trim=start=${m.ini.toFixed(3)}:end=${m.fim.toFixed(3)},setpts=(PTS-STARTPTS)/${m.vel}[v${i}]`);
-    fc.push(`[${audioIn}]atrim=start=${m.ini.toFixed(3)}:end=${m.fim.toFixed(3)},asetpts=PTS-STARTPTS${m.vel !== 1 ? "," + atempoCadeia(m.vel) : ""}[a${i}]`);
-  });
-  fc.push(manter.map((_, i) => `[v${i}][a${i}]`).join("") + `concat=n=${N}:v=1:a=1[vc][ac]`);
+  // ---- etapa A: cortes + velocidade + enquadramento + luz/cor -- UM PEDACO POR VEZ (v7.1: trim de varios pedacos no mesmo grafo
+  //      guardava os quadros na memoria e o servico era derrubado na VPS), depois junta sem recodificar e trata o audio de uma vez
   const z = Math.max(1, Math.min(2, Number(rec.zoom) || 1));
   const L0 = rec.luz || {};
-  const vf = [`scale=w=${Math.round(W * z)}:h=${Math.round(H * z)}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`, `fps=${FPS}`];
+  const vf = [`scale=w=${Math.round(W * z)}:h=${Math.round(H * z)}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`];
   const br = Math.max(-0.25, Math.min(0.25, Number(L0.brilho) || 0)), ct = Math.max(0.7, Math.min(1.5, Number(L0.contraste) || 1)), sa = Math.max(0, Math.min(2, Number(L0.saturacao) || 1));
   if (br || ct !== 1 || sa !== 1) vf.push(`eq=brightness=${br}:contrast=${ct}:saturation=${sa}`);
   if (rec.limpar_imagem) vf.push("hqdn3d=1.5:1.2:3:2");
-  vf.push("format=yuv420p");
-  fc.push(`[vc]${vf.join(",")}[vo]`);
-  const af = rec.limpar_audio !== false ? ["highpass=f=80", "afftdn=nf=-25", "loudnorm=I=-16:TP=-1.5:LRA=11"] : ["loudnorm=I=-16:TP=-1.5:LRA=11"];
-  fc.push(`[ac]${af.join(",")},aresample=48000[ao]`);
+  const partes = [];
+  for (let i = 0; i < manter.length; i++) {
+    const m = manter[i], o = path.join(dir, "parte-" + i + ".mp4"), d = m.fim - m.ini;
+    prog(6 + Math.round(30 * i / manter.length), "cortando e ajustando (" + (i + 1) + " de " + manter.length + ")");
+    await run("ffmpeg", ["-y", "-v", "error", "-ss", m.ini.toFixed(3), "-t", d.toFixed(3), "-i", src, ...(p.audio ? [] : ["-f", "lavfi", "-t", d.toFixed(3), "-i", "anullsrc=r=48000:cl=mono"]),
+      "-map", "0:v:0", "-map", p.audio ? "0:a:0" : "1:a:0",
+      "-vf", [`setpts=(PTS-STARTPTS)/${m.vel}`, ...vf, `fps=${FPS}`, "format=yuv420p"].join(","),
+      "-af", ["asetpts=PTS-STARTPTS", ...(m.vel !== 1 ? [atempoCadeia(m.vel)] : []), "aresample=48000"].join(","), "-ac", "1",
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-g", "30", "-threads", String(THREADS), "-c:a", "pcm_s16le", o.replace(/\.mp4$/, ".mkv")]);
+    partes.push(o.replace(/\.mp4$/, ".mkv"));
+  }
+  const listaA = path.join(dir, "partes.txt"); fs.writeFileSync(listaA, partes.map((f) => "file '" + f + "'").join("\n"));
   const A = path.join(dir, "etapaA.mp4");
-  prog(6, "cortando e ajustando");
-  await run("ffmpeg", ["-y", "-v", "error", "-i", src, ...(p.audio ? [] : ["-f", "lavfi", "-t", String(p.dur), "-i", "anullsrc=r=48000:cl=mono"]),
-    "-filter_complex", fc.join(";"), "-map", "[vo]", "-map", "[ao]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-threads", String(THREADS),
-    "-c:a", "aac", "-b:a", "192k", "-progress", "pipe:1", "-nostats", A], { onOut: tempo(6, 34, "cortando e ajustando") });
+  const af = rec.limpar_audio !== false ? ["highpass=f=80", "afftdn=nf=-25", "loudnorm=I=-16:TP=-1.5:LRA=11"] : ["loudnorm=I=-16:TP=-1.5:LRA=11"];
+  prog(37, "limpando o áudio");
+  await run("ffmpeg", ["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", listaA, "-c:v", "copy", "-af", [...af, "aresample=48000"].join(","), "-ac", "1", "-c:a", "aac", "-b:a", "192k", A]);
+  for (const f of partes) { try { fs.unlinkSync(f); } catch { /* */ } }
 
   // ---- juntar outros videos (dos motoristas ou seus) antes/depois da gravacao -- mesmo tamanho, 30 q/s, audio 48 kHz
   let OFS = 0, DTOT = DUR;
