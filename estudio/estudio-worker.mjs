@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v9";   // v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
+const VERSAO = "rf-estudio-v10";   // v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
+//   // v9: v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
 //   // v8.1 / v8: v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
 //   // v7.1:   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
 //   // v6: Fim do recorte (corte_fim)
@@ -630,7 +631,19 @@ async function render(rec, dir, prog) {
   const pins = []; sel.forEach((s) => pins.push("-ss", s, "-i", saida));
   await run("ffmpeg", ["-y", "-v", "error", ...pins, "-filter_complex", sel.map((_, j) => `[${j}:v]trim=end_frame=1,scale=${tw}:-2,setsar=1[p${j}]`).join(";") + ";" + sel.map((_, j) => `[p${j}]`).join("") + `hstack=6`, "-frames:v", "1", "-q:v", "5", previa]);
   const pr = probe(saida);
-  return { video: saida, capa, previa, dur: pr.dur || TOTAL, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size };
+  // v10: analise para a critica -- 2 quadros por cena (na ordem) + luz e som por segundo
+  let analise = null;
+  try {
+    const ts = []; cenas.forEach((c, i) => { ts.push(ofs[i] + c._dur * 0.35, ofs[i] + c._dur * 0.75); });
+    const tq = ts.map((t) => Math.max(0, Math.min(TOTAL - 0.1, t))), fw = W > H ? 240 : 135, cols = W > H ? 4 : 6, rows = Math.ceil(tq.length / cols);
+    const fins = []; tq.forEach((t) => fins.push("-ss", t.toFixed(2), "-i", saida));
+    const folha = path.join(dir, "folha.jpg");
+    await run("ffmpeg", ["-y", "-v", "error", ...fins, "-filter_complex", tq.map((_, j) => `[${j}:v]trim=end_frame=1,scale=${fw}:-2,setsar=1[q${j}]`).join(";") + ";" + tq.map((_, j) => `[q${j}]`).join("") + `concat=n=${tq.length}:v=1:a=0,tile=${cols}x${rows}:padding=4:color=black`, "-frames:v", "1", "-q:v", "4", folha]);
+    analise = { dur: +(pr.dur || TOTAL).toFixed(2), cenas: cenas.map((c, i) => ({ ini: +ofs[i].toFixed(2), dur: +c._dur.toFixed(2) })), luz_por_seg: [], som_por_seg: [], folha_b64: fs.readFileSync(folha).toString("base64") };
+    try { const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vf", "fps=1,scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 }); analise.luz_por_seg = [...String(o.stdout).matchAll(/YAVG=([\d.]+)/g)].map((m) => Math.round(Number(m[1]))); } catch { /* */ }
+    try { const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vn", "-af", "aresample=16000,asetnsamples=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 }); analise.som_por_seg = [...String(o.stdout).matchAll(/RMS_level=(-?[\d.]+|-inf)/g)].map((m) => m[1] === "-inf" ? -90 : Math.round(Number(m[1]))); } catch { /* */ }
+  } catch (e) { log("analise falhou:", e.message); }
+  return { video: saida, capa, previa, dur: pr.dur || TOTAL, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size, ...(analise ? { analise } : {}) };
 }
 
 // ---------------------------------------------------------------- comunicacao com o sistema
