@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v11";   // v11 (RFL v893): tira quadro preto no comeco/fim dos videos de IA e procura preto no video pronto (revisor)
+const VERSAO = "rf-estudio-v11.1";   // v11.1: teto de 6 Mbps no video final (cenas de IA em 1080p passavam de 50 MB e o envio era recusado)
+//   // v11: v11 (RFL v893): tira quadro preto no comeco/fim dos videos de IA e procura preto no video pronto (revisor)
 //   // v10: v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
 //   // v9: v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
 //   // v8.1 / v8: v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
@@ -636,7 +637,7 @@ async function render(rec, dir, prog) {
   const scr = path.join(dir, "final.txt"); fs.writeFileSync(scr, fc);
   const saida = path.join(dir, "video.mp4");
   await run("ffmpeg", ["-y", "-v", "error", ...ins, "-filter_complex_script", scr, "-map", "[vout]", "-map", "[aout]",
-    "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p", "-r", String(FPS), "-g", String(FPS * 2), "-threads", String(THREADS),
+    "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-maxrate", "6M", "-bufsize", "12M", "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p", "-r", String(FPS), "-g", String(FPS * 2), "-threads", String(THREADS),
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-t", TOTAL.toFixed(3), "-progress", "pipe:1", "-nostats", saida],
   { onOut: (o) => { const m = /out_time_ms=(\d+)/.exec(o); if (m) prog(80 + Math.min(17, Math.round(17 * (Number(m[1]) / 1e6) / TOTAL)), "codificando o video final"); } });
   // capa e previa
