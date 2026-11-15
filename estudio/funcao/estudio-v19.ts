@@ -772,8 +772,14 @@ async function falFila(modelo: string, corpo: any) {
 }
 async function falGet(url: string) { const r = await fetch(url, { headers: { Authorization: "Key " + falKey() } }); const j: any = await r.json().catch(() => ({})); return { http: r.status, j }; }
 async function baixarPara(url: string, path: string, tipo: string) {
-  const r = await fetch(url); if (!r.ok) throw new Error("não baixei o resultado (" + r.status + ")");
-  const buf = new Uint8Array(await r.arrayBuffer()); if (buf.length > 80e6) throw new Error("arquivo grande demais");
+  let buf = new Uint8Array(0), st = 0;
+  for (let t = 0; t < 5; t++) {   // fal.media as vezes responde 500 (HTML) logo depois de gerar
+    if (t) await new Promise((ok) => setTimeout(ok, 1500 * t));
+    const r = await fetch(url); st = r.status; buf = new Uint8Array(await r.arrayBuffer());
+    if (r.ok && buf.length > 2000 && !/text\/html/i.test(r.headers.get("content-type") || "")) break;
+    buf = new Uint8Array(0);
+  }
+  if (!buf.length) throw new Error("não baixei o resultado (" + st + ")"); if (buf.length > 80e6) throw new Error("arquivo grande demais");
   const up = await sb.storage.from(BUCKET).upload(path, buf, { contentType: tipo, upsert: true }); if (up.error) throw new Error(up.error.message);
   return buf.length;
 }
@@ -800,12 +806,12 @@ async function iaPrecos(seg: number) {
 }
 async function iaTextoCena(pj: any, c: any) {   // o diretor descreve o que acontece na cena (pode mudar)
   const r = await oai("chat/completions", { model: "gpt-5.4-mini", messages: [
-    { role: "system", content: "Você é o diretor de arte do Estúdio da RF Logística (transportadora de Feira de Santana/BA; sistema Rodavia 360). Descreva em 2 ou 3 frases, em português, o que a CÂMERA mostra numa cena de vídeo vertical de animação 3D estilo cartoon de alta qualidade. Personagem: o Ravi (assistente virtual da RF), sempre o mesmo. Use caminhão baú branco, estrada da Bahia, escritório de transportadora, celular com o sistema. Cores da marca: dourado e preto. Diga ação, cenário, emoção e câmera. NUNCA escreva texto/letreiro na imagem, nem logo ou nome de outra empresa, nem placa legível. Responda só a descrição." },
+    { role: "system", content: "Você é o diretor de arte do Estúdio da RF Logística (transportadora de Feira de Santana/BA; sistema Rodavia 360). Descreva em 2 ou 3 frases, em português, o que a CÂMERA mostra numa cena de vídeo vertical de animação 3D estilo cartoon de alta qualidade. Personagem: o Ravi (assistente virtual da RF), um ROBÔ cartoon branco e dourado, sempre o mesmo (nunca uma pessoa). Use caminhão baú branco, estrada da Bahia, escritório de transportadora, celular com o sistema. Cores da marca: dourado e preto. Diga ação, cenário, emoção e câmera. NUNCA escreva texto/letreiro na imagem, nem logo ou nome de outra empresa, nem placa legível. Responda só a descrição." },
     { role: "user", content: `Vídeo: ${pj.titulo}\nCena (${c.tipo}): ${c.titulo || ""} ${c.subtitulo || ""}\nFala da cena: ${c.narracao?.texto || "(sem fala)"}` }] });
   const j = await r.json(); return String(j?.choices?.[0]?.message?.content || "").trim().slice(0, 700);
 }
 function iaPromptImagem(texto: string, personagem: string, formato: string, ajuste?: string) {
-  return (personagem === "ravi" ? "Keep the character from the reference image EXACTLY the same (same face, colors, proportions, outfit). " : "")
+  return (personagem === "ravi" ? "Main character: Ravi, the friendly white-and-gold cartoon ROBOT from the reference image (with the RF logo on his chest) -- keep him EXACTLY the same (same head, screen face, colors, proportions). He is a robot, never a human. Other people, if any, are generic cartoon people. " : "")
     + "High quality 3D animated cartoon still, cinematic lighting, vertical composition " + (formato || "9:16") + ". Scene: " + texto
     + (ajuste ? " Adjustment requested: " + ajuste : "")
     + " Brand colors gold (#D4A017) and black as accents. Absolutely no text, no letters, no logos, no readable license plates, no other company brand.";
@@ -816,7 +822,12 @@ async function vozPremium(vozId: string, texto: string, estilo: string) {
   const forte = /energ|vibrant|comercial de tv|urg/i.test(estilo || "");
   const j = await falRun("fal-ai/elevenlabs/tts/multilingual-v2", { text: texto, voice: v.voice, language_code: "pt", stability: forte ? 0.32 : 0.45, similarity_boost: 0.8, style: forte ? 0.55 : 0.3, speed: 1 });
   const url = j?.audio?.url; if (!url) throw new Error("a voz premium não devolveu o áudio");
-  const r = await fetch(url); return new Uint8Array(await r.arrayBuffer());
+  for (let t = 0; t < 5; t++) {   // o arquivo as vezes ainda nao esta pronto na fal (500 com pagina HTML): espera e tenta de novo
+    if (t) await new Promise((ok) => setTimeout(ok, 1500 * t));
+    const r = await fetch(url); const b = new Uint8Array(await r.arrayBuffer());
+    if (r.ok && b.length > 2000 && !/text\/html/i.test(r.headers.get("content-type") || "")) return b;
+  }
+  throw new Error("o áudio da voz premium não baixou");
 }
 async function iaConferir(id: string): Promise<any> {
   const { data: u } = await sb.from("estudio_ia_uso").select("*").eq("id", id).maybeSingle(); if (!u) throw new Error("animação não encontrada");
@@ -874,7 +885,7 @@ async function dirRoteiro(J: any) {
   const F = await fatos();
   const n = J.duracao <= 30 ? 5 : J.duracao <= 45 ? 6 : 8;
   const sys = `Você é o diretor de criação de comerciais curtos da RF Logística (transportadora de Feira de Santana/BA) e do sistema Rodavia 360 (gestão de frota da RF Sistemas).
-Escreva um comercial vertical PROFISSIONAL de ${J.duracao} segundos para ${J.publico || "dono de transportadora"}, em animação 3D cartoon com o personagem Ravi (assistente virtual da RF, sempre o mesmo).
+Escreva um comercial vertical PROFISSIONAL de ${J.duracao} segundos para ${J.publico || "dono de transportadora"}, em animação 3D cartoon com o personagem Ravi (assistente virtual da RF: um ROBÔ cartoon branco e dourado, sempre o mesmo; nunca uma pessoa). Pessoas de cartoon genéricas (o dono, o motorista) podem aparecer junto dele.
 Estrutura obrigatória: cena 1 = GANCHO forte nos 2 primeiros segundos (pergunta ou dor que faz parar de rolar; nunca "olá" nem "eu sou"); depois DOR concreta, VIRADA (o sistema/serviço resolve), PROVA (o que ele vê na tela) e CHAMADA final.
 Use SÓ fatos reais do JSON (nunca invente número, cliente, preço ou prazo). Nunca cite clientes da RF nem outra empresa.
 Responda APENAS JSON: {"titulo":"curto","legenda_post":"legenda do post com 2-4 hashtags","cenas":[{"fala":"narração em português do Brasil, 12 a 18 palavras, frase falada natural","visual":"o que a câmera mostra: ação do Ravi, cenário, emoção, câmera (sem texto/letreiro/logo/placa)","tela":"" }]}
@@ -919,6 +930,7 @@ async function dirImagens(J: any) {
     const custo = await brl(IA_IMG.usd * 3);
     if (!(await dirCabe(J, custo))) { await dirLog(J, "Limite do vídeo atingido nas imagens — sigo com o que já tenho."); const e2 = { ...est }; dirCenasIA(pl).forEach((x: any) => { if (e2[x.id]) e2[x.id].refazer_img = false; }); await dirSalvar(J, { cenas: e2, etapa: "escolher" }); return; }
   }
+  const novas: Record<string, string[]> = {};
   await Promise.all(alvo.map(async (c: any) => {
     const ajuste = est[c.id]?.ajuste || "";
     const refs = [GH + "fotos/ravi.jpg"]; if (/caminh|baú|bau|frota|estrada|carga/i.test(c.ia.texto)) refs.push(GH + "fotos/frota-4.jpg");
@@ -929,11 +941,12 @@ async function dirImagens(J: any) {
       const urls: string[] = (j?.images || []).map((x: any) => x.url).filter(Boolean); if (!urls.length) throw new Error("sem imagem");
       const paths: string[] = []; for (const u of urls) { const p = `estudio/ia/${pj.id}/${c.id}-${Date.now()}-${paths.length}.jpg`; await baixarPara(u, p, "image/jpeg"); paths.push(p); }
       await sb.from("estudio_ia_uso").update({ status: "feito", resultado: { paths } }).eq("id", uso!.id);
-      await iaSalvarCena(pj.id, c.id, (x) => ({ ...x, ia: { ...(x.ia || {}), imagens: paths, escolhida: 0 } }));
+      novas[c.id] = paths;   // grava tudo de uma vez no fim (em paralelo uma gravacao apagava a outra)
       est[c.id] = { ...(est[c.id] || {}), refazer_img: false, escolhida: false, tent_img: (est[c.id]?.tent_img || 0) + 1 };
     } catch (e) { await sb.from("estudio_ia_uso").update({ status: "erro", custo_brl: 0, erro: String((e as Error).message).slice(0, 300) }).eq("id", uso!.id); est[c.id] = { ...(est[c.id] || {}), tent_img: (est[c.id]?.tent_img || 0) + 1 }; if ((est[c.id].tent_img || 0) >= 3) throw new Error("a IA não gerou imagens da cena " + c.id); }
   }));
-  await dirSalvar(J, { cenas: est }); await dirLog(J, `Imagens geradas: ${alvo.length} cena(s), 3 opções cada.`);
+  if (Object.keys(novas).length) await dirSalvarPlano(pj.id, (p) => ({ ...p, cenas: (p.cenas || []).map((x: any) => novas[x.id] ? { ...x, ia: { ...(x.ia || {}), imagens: novas[x.id], escolhida: 0 } } : x) }));
+  await dirSalvar(J, { cenas: est }); await dirLog(J, `Imagens geradas: ${Object.keys(novas).length} cena(s), 3 opções cada.`);
 }
 async function dirEscolher(J: any) {
   const pj = await dirPlano(J); const pl: any = pj.plano; const est = J.cenas || {};
@@ -942,9 +955,9 @@ async function dirEscolher(J: any) {
   let refazer = 0;
   for (const c of alvo.slice(0, 4)) {
     const urls = await Promise.all(c.ia.imagens.slice(-3).map((p: string) => assinar(p, 1800)));
-    const conteudo: any[] = [{ type: "text", text: `Cena pedida: ${c.ia.texto}\nFala: ${c.narracao?.texto || ""}\nA PRIMEIRA imagem é a referência do personagem Ravi. As outras ${urls.length} são as opções (1 a ${urls.length}).` }, { type: "image_url", image_url: { url: GH + "fotos/ravi.jpg" } }, ...urls.map((u) => ({ type: "image_url", image_url: { url: u } }))];
+    const conteudo: any[] = [{ type: "text", text: `Cena pedida: ${c.ia.texto}\nFala: ${c.narracao?.texto || ""}\nA referência do Ravi vem primeiro e NÃO é opção. As opções são OPÇÃO 1 a OPÇÃO ${urls.length}; "melhor" e "notas" se referem só às opções.` }, { type: "text", text: "REFERÊNCIA DO RAVI (não é opção):" }, { type: "image_url", image_url: { url: GH + "fotos/ravi.jpg" } }, ...urls.flatMap((u, k) => [{ type: "text", text: "OPÇÃO " + (k + 1) + ":" }, { type: "image_url", image_url: { url: u } }])];
     let R: any = {};
-    try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: "Você é o diretor de arte exigente de um comercial profissional. Avalie cada opção de 0 a 10: Ravi IGUAL à referência (rosto, cores, roupa), cena pedida bem contada, emoção clara, composição vertical bonita, qualidade de cinema. Nota máxima 3 se tiver: texto/letreiro/letras legíveis, logo ou marca de outra empresa, placa legível, mãos/rosto deformados, pessoa real reconhecível. Responda APENAS JSON {\"notas\":[n,...],\"melhor\":1,\"motivo\":\"curto\",\"ajuste\":\"o que pedir se todas forem ruins (em inglês, curto)\"}" }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = { notas: [7], melhor: 1, motivo: "avaliação indisponível" }; }
+    try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: "Você é o diretor de arte exigente de um comercial profissional. O Ravi é um ROBÔ cartoon branco e dourado (a PRIMEIRA imagem é a referência dele); o logo RF no peito do Ravi é PERMITIDO e não conta como texto. Pessoas genéricas de cartoon podem aparecer junto. Avalie cada opção de 0 a 10: Ravi (robô) IGUAL à referência (cabeça, rosto de tela, cores), cena pedida bem contada, emoção clara, composição vertical bonita, qualidade de cinema. Nota máxima 3 se tiver: texto/letreiro/letras legíveis, logo ou marca de outra empresa, placa legível, mãos/rosto deformados, pessoa real reconhecível. Responda APENAS JSON {\"notas\":[n,...],\"melhor\":1,\"motivo\":\"curto\",\"ajuste\":\"o que pedir se todas forem ruins (em inglês, curto)\"}" }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = { notas: [7], melhor: 1, motivo: "avaliação indisponível" }; }
     const notas: number[] = (R.notas || []).map((x: any) => Number(x) || 0); const melhor = Math.max(1, Math.min(urls.length, Number(R.melhor) || (notas.indexOf(Math.max(...notas)) + 1)));
     const nota = notas[melhor - 1] ?? 7; const idx = c.ia.imagens.length - urls.length + melhor - 1;
     const n = (pl.cenas || []).findIndex((x: any) => x.id === c.id) + 1;
@@ -958,8 +971,12 @@ async function dirEscolher(J: any) {
 async function dirAnimar(J: any) {
   const pj = await dirPlano(J); const pl: any = pj.plano; const est = J.cenas || {};
   const alvo = dirCenasIA(pl).filter((c: any) => (c.ia.imagens || []).length && !(est[c.id] && est[c.id].uso && !est[c.id].refazer_anim));
+  // planeja antes: se o Cinema em todas nao cabe no que sobrou, anima TODAS em 768p (melhor que deixar cena parada)
+  const resto = Number(J.limite_brl) - (await dirGasto(J.projeto_id)); let qPlan = J.qualidade === "bom" ? "bom" : "cinema";
+  if (qPlan === "cinema") { let need = 0; for (const c of alvo) need += await brl(IA_ANIM.cinema.usd_s * iaDurCena(c, pl)); if (need > resto) { qPlan = "bom"; await dirLog(J, `O Cinema em todas as cenas (≈ R$ ${need.toFixed(2).replace(".", ",")}) passaria do limite: animo todas em 768p.`); } }
+  const enviadas: string[] = [];
   for (const c of alvo) {
-    let q = J.qualidade === "bom" ? "bom" : "cinema"; const seg = iaDurCena(c, pl);
+    let q = qPlan; const seg = iaDurCena(c, pl);
     let usd = IA_ANIM[q].usd_s * seg, custo = await brl(usd);
     if (!(await dirCabe(J, custo)) && q === "cinema") { q = "bom"; usd = IA_ANIM.bom.usd_s * seg; custo = await brl(usd); }
     if (!(await dirCabe(J, custo))) { await dirLog(J, "Limite do vídeo atingido: não animei todas as cenas (as que faltam ficam com a imagem parada)."); break; }
@@ -967,10 +984,10 @@ async function dirAnimar(J: any) {
     const mov = "Animate this exact image as a cinematic shot of a professional commercial. Keep the character identical. " + c.ia.texto + " Smooth natural motion, expressive face, natural hands, subtle camera move. No text on screen.";
     const f = await falFila(IA_ANIM[q].modelo, { prompt: mov, image_url: await assinar(img, 3600), duration: seg, resolution: IA_ANIM[q].res, prompt_expansion_mode: "balanced" });
     const { data: uso } = await sb.from("estudio_ia_uso").insert({ acao: "animar", modelo: IA_ANIM[q].modelo, projeto_id: pj.id, cena_id: c.id, qualidade: q, segundos: seg, custo_usd: +usd.toFixed(3), custo_brl: custo, status: "fila", status_url: f.status_url, response_url: f.response_url, resultado: { request_id: f.request_id, imagem: img }, pedido_por: J.pedido_por, pedido_nome: "Diretor IA" }).select("id").single();
-    est[c.id] = { ...(est[c.id] || {}), uso: uso!.id, refazer_anim: false, tent_anim: (est[c.id]?.tent_anim || 0) + 1 };
+    est[c.id] = { ...(est[c.id] || {}), uso: uso!.id, refazer_anim: false, tent_anim: (est[c.id]?.tent_anim || 0) + 1 }; enviadas.push(q);
   }
   await dirSalvar(J, { cenas: est, etapa: "animando" });
-  await dirLog(J, `Animando ${alvo.length} cena(s) em ${J.qualidade === "bom" ? "768p" : "Cinema 1080p"}.`);
+  if (enviadas.length) await dirLog(J, `Animando ${enviadas.length} cena(s): ${enviadas.filter((x) => x === "cinema").length} em Cinema 1080p, ${enviadas.filter((x) => x === "bom").length} em 768p.`);
 }
 async function dirAnimando(J: any) {
   const est = J.cenas || {}; let pend = 0, errs = 0;
@@ -986,6 +1003,18 @@ async function dirAnimando(J: any) {
   if (!pend) { await dirSalvar(J, { etapa: "montar" }); await dirLog(J, "Todas as cenas animadas e colocadas no vídeo."); }
 }
 async function dirMontar(J: any) {
+  // cena da IA que nao foi animada (limite) entra com a IMAGEM escolhida, com movimento de camera -- nunca fundo vazio
+  const pj0 = await dirPlano(J); const semVideo = dirCenasIA(pj0.plano).filter((c: any) => !c.midia?.ref && (c.ia.imagens || []).length);
+  if (semVideo.length) {
+    const novos: Record<string, string> = {};
+    for (const c of semVideo) {
+      const path = c.ia.imagens[c.ia.escolhida ?? 0];
+      const { data: m } = await sb.from("estudio_midias").insert({ tipo: "imagem", nome: ("🖼️ IA · " + pj0.titulo + " · imagem").slice(0, 80), path, origem: "ia", autorizada: true, tags: ["ia", "fal"], criado_por: J.pedido_por }).select("id").single();
+      if (m) novos[c.id] = m.id;
+    }
+    await dirSalvarPlano(J.projeto_id, (p) => ({ ...p, cenas: (p.cenas || []).map((x: any) => novos[x.id] ? { ...x, midia: { ref: novos[x.id] }, ajuste: "cobrir", movimento: "zoom_in" } : x) }));
+    await dirLog(J, `${semVideo.length} cena(s) sem animação entram com a imagem e movimento de câmera.`);
+  }
   const { data, error } = await sb.from("estudio_renders").insert({ projeto_id: J.projeto_id, formato: J.formato, status: "fila", pedido_por: J.pedido_por, pedido_nome: "Diretor IA" }).select("id").single();
   if (error) throw new Error(error.message);
   await dirSalvar(J, { render_id: data.id, etapa: "montando" }); await dirLog(J, "Montando o vídeo no servidor (ritmo sem silêncio, whoosh, corte na batida, legenda, logo Rodavia 360).");
@@ -1005,7 +1034,7 @@ async function dirCriticar(J: any) {
   const conteudo: any[] = [{ type: "text", text: `VÍDEO de ${Math.round(Number(rd?.duracao) || 0)} s, formato ${pj.formato}. Cenas:\n${cenas}\nSegundos com som baixo: ${baixos}.\n${an.folha_b64 ? "A folha de quadros mostra 2 quadros por cena, na ordem das cenas (da esquerda para a direita, de cima para baixo)." : "(sem folha de quadros)"}` }];
   if (an.folha_b64) conteudo.push({ type: "image_url", image_url: { url: "data:image/jpeg;base64," + an.folha_b64 } });
   let R: any = {};
-  try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: `Você é um crítico de publicidade MUITO exigente avaliando um comercial vertical do Rodavia 360 para ${J.publico || "dono de transportadora"}. Notas de 0 a 10: gancho (2 primeiros segundos param o dedo?), historia (dor, virada, prova, chamada clara), visual (qualidade de cinema, Ravi igual em todas as cenas, sem mãos/rostos deformados, sem texto ou logo estranho na imagem), ritmo (sem parada, cortes no tempo), som (voz forte e clara), chamada (termina dizendo o que fazer). Liste as cenas a REFAZER (no máximo 3, só se tiverem defeito visual claro). Responda APENAS JSON {"gancho":n,"historia":n,"visual":n,"ritmo":n,"som":n,"chamada":n,"refazer":[{"cena":n,"motivo":"curto em português","ajuste":"o que mudar na imagem, em inglês curto"}],"resumo":"1 frase"}` }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = {}; }
+  try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: `Você é um crítico de publicidade MUITO exigente avaliando um comercial vertical do Rodavia 360 para ${J.publico || "dono de transportadora"}. Notas de 0 a 10: gancho (2 primeiros segundos param o dedo?), historia (dor, virada, prova, chamada clara), visual (qualidade de cinema, Ravi igual em todas as cenas, sem mãos/rostos deformados, sem texto ou logo estranho na imagem; o Ravi é um robô branco e dourado com o logo RF no peito -- isso é certo), ritmo (sem parada, cortes no tempo), som (voz forte e clara), chamada (termina dizendo o que fazer). Liste as cenas a REFAZER (no máximo 3, só se tiverem defeito visual claro). Responda APENAS JSON {"gancho":n,"historia":n,"visual":n,"ritmo":n,"som":n,"chamada":n,"refazer":[{"cena":n,"motivo":"curto em português","ajuste":"o que mudar na imagem, em inglês curto"}],"resumo":"1 frase"}` }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = {}; }
   const P: Record<string, number> = { gancho: 2, historia: 2, visual: 2, ritmo: 1, som: 1, chamada: 1 }; let s = 0, p = 0;
   for (const [k, w] of Object.entries(P)) { s += Math.max(0, Math.min(10, Number(R[k]) || 7)) * w; p += w; }
   const nota = Math.round(s / p * 10); const crit = { nota, itens: Object.fromEntries(Object.keys(P).map((k) => [k, Number(R[k]) || null])), refazer: R.refazer || [], resumo: String(R.resumo || "").slice(0, 300), rodada: J.rodada, em: new Date().toISOString() };
