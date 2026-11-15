@@ -256,14 +256,42 @@ function validar(o: any, F: any, lib: any[], formato: string, voz: string, tipo:
 }
 
 // ---------------------------------------------------------------- narracao + legenda sincronizada
+// v19.4: o que a VOZ fala pode ser diferente do que a LEGENDA mostra (site falado por extenso; a voz gaguejava em "rodavia360.com.br")
+function falarDe(tok: string) {
+  const m = /^(.*?)([.,;:!?…]*)$/.exec(tok) || [tok, tok, ""]; let w = m[1]; const pont = m[2] || "";
+  const sites: Record<string, string> = { "rodavia360.com.br": "rodavia trezentos e sessenta ponto com ponto bê érre", "rflogistica.com.br": "érre éfe logística ponto com ponto bê érre", "rflogistica.com.br/fretes": "érre éfe logística ponto com ponto bê érre barra fretes" };
+  const k = w.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "");
+  if (sites[k]) return sites[k] + pont;
+  if (/\.com(\.br)?(\/|$)/i.test(k)) return k.replace(/\./g, " ponto ").replace(/\//g, " barra ").replace(/\bbr\b/g, "bê érre") + pont;
+  return tok;
+}
+const nchar = (x: string) => String(x || "").toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "");
+// legenda sincronizada: ancora cada palavra falada na palavra que o whisper ouviu (igual), e o que sobra e interpolado entre as ancoras
+const NUM: Record<string, string> = { "360": "trezentosesessenta", "br": "beerre", "rf": "erreefe" };
+const igual = (a: string, b: string) => { const x = nchar(a), y = nchar(b); return !!x && (x === y || NUM[x] === y || NUM[y] === x); };
+function alinharFala(tokens: string[], falas: string[], ws: any[]) {
+  if (!ws.length) return [];
+  const fw: { w: string; k: number; s?: number; e?: number }[] = []; falas.forEach((f, k) => f.split(/\s+/).filter(Boolean).forEach((w) => fw.push({ w, k })));
+  let j = 0;
+  for (const f of fw) { for (let d = 0; d < 5 && j + d < ws.length; d++) if (igual(f.w, ws[j + d].w)) { f.s = Number(ws[j + d].s); f.e = Number(ws[j + d].e); j = j + d + 1; break; } }
+  const t0 = Number(ws[0].s) || 0, t1 = Number(ws[ws.length - 1].e) || t0 + fw.length * 0.35;
+  for (let i = 0; i < fw.length; i++) {
+    if (fw[i].s != null) continue;
+    let a = i - 1; while (a >= 0 && fw[a].e == null) a--; let b = i + 1; while (b < fw.length && fw[b].s == null) b++;
+    const ta = a >= 0 ? fw[a].e! : t0, tb = b < fw.length ? fw[b].s! : t1, n = b - a - 1, pos = i - a - 1, d = Math.max(0, tb - ta) / Math.max(1, n);
+    fw[i].s = ta + pos * d; fw[i].e = ta + (pos + 1) * d;
+  }
+  return tokens.map((w, k) => { const p = fw.filter((x) => x.k === k); return { w, s: +Math.min(...p.map((x) => x.s!)).toFixed(2), e: +Math.max(...p.map((x) => x.e!)).toFixed(2) }; });
+}
 async function narrarCena(projId: string, c: any, vozId: string, estilo: string) {
   const v = VOZES[vozId] || VOZES.locutor;
   const bruto = String(c.narracao?.texto || "").replace(/[*_#`>|]/g, " ").replace(/\s+/g, " ").trim(); if (!bruto) return c;
   const texto = await corrigirTexto(bruto);
   const instr = v.base + " Português do Brasil. Ritmo de comercial: frases bem articuladas, pausas curtas nas vírgulas e pausa um pouco maior no ponto final." + HUMANO + " " + (estilo || c.narracao?.estilo || "");
+  const tokens = texto.split(/\s+/).filter(Boolean), falas = tokens.map(falarDe), fala = falas.join(" ");   // v19.4
   let audio: Uint8Array;
-  if (PREMIUM[vozId]) audio = await vozPremium(vozId, texto, estilo || c.narracao?.estilo || "");   // v18: voz premium (ElevenLabs pela fal)
-  else { const r = await oai("audio/speech", { model: "gpt-4o-mini-tts", voice: v.voice, input: texto, instructions: instr, response_format: "mp3" }); audio = new Uint8Array(await r.arrayBuffer()); }
+  if (PREMIUM[vozId]) audio = await vozPremium(vozId, fala, estilo || c.narracao?.estilo || "");   // v18: voz premium (ElevenLabs pela fal)
+  else { const r = await oai("audio/speech", { model: "gpt-4o-mini-tts", voice: v.voice, input: fala, instructions: instr, response_format: "mp3" }); audio = new Uint8Array(await r.arrayBuffer()); }
   const path = `estudio/narracao/${projId}/${c.id}-${Date.now()}.mp3`;
   const up = await sb.storage.from(BUCKET).upload(path, audio, { contentType: "audio/mpeg", upsert: true }); if (up.error) throw new Error("nao gravou o audio: " + up.error.message);
   // legenda: tempo de cada palavra (whisper-1, word timestamps) -- custo minimo na mesma conta
@@ -273,8 +301,7 @@ async function narrarCena(projId: string, c: any, vozId: string, estilo: string)
     const rt = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: "Bearer " + Deno.env.get("OPENAI_API_KEY") }, body: fd });
     const jt = await rt.json(); dur = Number(jt.duration) || 0;
     const ws = (jt.words || []).map((w: any) => ({ w: String(w.word).trim(), s: +Number(w.start).toFixed(2), e: +Number(w.end).toFixed(2) }));
-    const orig = texto.split(/\s+/);
-    palavras = alinhar(texto, ws);
+    palavras = alinharFala(tokens, falas, ws);   // v19.4: sincroniza pela posicao das letras (antes dividia por igual quando o numero de palavras nao batia e a legenda atrasava)
   } catch (_) { /* sem legenda sincronizada: divide pelo tempo */ }
   if (!palavras.length) { const orig = texto.split(/\s+/); dur = dur || orig.length / 2.4; let t = 0; const tot = orig.reduce((a, w) => a + w.length + 1, 0); palavras = orig.map((w) => { const d = dur * (w.length + 1) / tot; const p = { w, s: +t.toFixed(2), e: +(t + d).toFixed(2) }; t += d; return p; }); }
   if (!dur && palavras.length) dur = palavras[palavras.length - 1].e + 0.2;
@@ -891,7 +918,7 @@ Escreva um comercial vertical PROFISSIONAL de ${J.duracao} segundos para ${J.pub
 Estrutura obrigatória: cena 1 = GANCHO forte nos 2 primeiros segundos (pergunta ou dor que faz parar de rolar; nunca "olá" nem "eu sou"); depois DOR concreta, VIRADA (o sistema/serviço resolve), PROVA (o que ele vê na tela) e CHAMADA final.
 Use SÓ fatos reais do JSON (nunca invente número, cliente, preço ou prazo). Nunca cite clientes da RF nem outra empresa.
 Responda APENAS JSON: {"titulo":"curto","legenda_post":"legenda do post com 2-4 hashtags","cenas":[{"fala":"narração em português do Brasil, 12 a 18 palavras, frase falada natural","visual":"o que a câmera mostra: ação do Ravi, cenário, emoção, câmera (sem texto/letreiro/logo/placa)","tela":"" }]}
-Exatamente ${n} cenas. Em NO MÁXIMO 1 cena use "tela" (dashboard|frota|inicio|fracionado|torre) para mostrar a tela real do sistema no celular -- nessa cena "visual" fica vazio. A última cena é a chamada para o site rodavia360.com.br. NUNCA ponha número de telefone ou WhatsApp na fala nem na tela.`;
+Exatamente ${n} cenas. Em ATÉ 2 cenas use "tela" (dashboard|frota|inicio|fracionado|torre) para mostrar a TELA REAL do sistema -- nessa cena "visual" fica vazio. SEMPRE que a fala disser o que aparece no sistema ("na tela", "no celular você vê", "o painel mostra"), essa cena é "tela" (a tela real), nunca o Ravi segurando um celular. Nas cenas do Ravi, ele não segura celular com tela visível. A última cena é a chamada para o site rodavia360.com.br. NUNCA ponha número de telefone ou WhatsApp na fala nem na tela.`;
   const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: sys }, { role: "user", content: "PEDIDO DO RENATO: " + J.pedido + "\nFATOS REAIS: " + JSON.stringify({ servicos: F.servicos, contato: F.contato, frota_total: F.frota_total, cidades: F.cidades_atendidas_90d?.slice(0, 12), base: F.base }) }] });
   const j = await r.json(); const R = JSON.parse(j.choices[0].message.content);
   const cenas: any[] = (R.cenas || []).slice(0, 9).map((c: any, i: number) => {
