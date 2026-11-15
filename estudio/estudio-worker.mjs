@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v7.1";   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
+const VERSAO = "rf-estudio-v8";   // v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
+//   // v7.1:   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
 //   // v6: Fim do recorte (corte_fim)
 //   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
 //   // v3: mais rapido em 1 nucleo (camadas a 15 q/s, zoom 1,5x, intermediario ultrafast)
@@ -819,6 +820,62 @@ async function editar(rec, dir, prog) {
   return { video: saida, capa, previa, dur: D, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size, analise };
 }
 
+// ---------------------------------------------------------------- v8: 💡 REFERENCIA (so para estudo -- nunca vira midia da Biblioteca)
+const YTDLP = path.join(BASE, "bin", "yt-dlp");
+async function garantirYtdlp() {
+  fs.mkdirSync(path.dirname(YTDLP), { recursive: true });
+  let velho = true; try { velho = Date.now() - fs.statSync(YTDLP).mtimeMs > 7 * 864e5; } catch { /* nao existe */ }
+  if (!velho) return;
+  try {
+    const r = await fetch("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux");
+    if (!r.ok) throw new Error("http " + r.status);
+    const b = Buffer.from(await r.arrayBuffer()); if (b.length < 1e6) throw new Error("arquivo pequeno");
+    fs.writeFileSync(YTDLP + ".novo", b, { mode: 0o755 }); fs.renameSync(YTDLP + ".novo", YTDLP);
+  } catch (e) { if (!fs.existsSync(YTDLP)) throw new Error("não consegui instalar o baixador de vídeos: " + e.message); }
+}
+function msgBaixar(err) {
+  const t = String(err || "").toLowerCase();
+  if (/login|log in|private|privad|cookies|authentication|rate.?limit|429|checkpoint/.test(t)) return "A rede social não deixou baixar sem login (perfil privado ou bloqueio). Grave a tela do celular e use ⬆️ Subir gravação de tela.";
+  if (/unsupported url|no video|there is no video|not a video/.test(t)) return "Não achei vídeo nesse link. Confira se é o link do vídeo (Reel/post) e não do perfil.";
+  if (/larger than|max-filesize|too large/.test(t)) return "Vídeo grande demais para estudo (máx. 300 MB / 10 min).";
+  if (/404|not found|unavailable|removed|deleted/.test(t)) return "O vídeo não está mais disponível nesse link.";
+  return "Não consegui baixar esse vídeo. Grave a tela do celular e use ⬆️ Subir gravação de tela.";
+}
+async function referencia(rec, dir, prog) {
+  const bruto = path.join(dir, "bruto.mp4");
+  if (rec.fonte) { prog(10, "lendo a gravação de tela"); const f = await baixar(rec.fonte.url || rec.fonte, null); fs.copyFileSync(f, bruto); try { fs.rmSync(f); } catch { /* */ } }
+  else {
+    prog(5, "preparando o baixador"); await garantirYtdlp();
+    prog(12, "baixando o vídeo para estudo");
+    try {
+      await run(YTDLP, ["--no-playlist", "--no-warnings", "--no-progress", "--max-filesize", "300M", "--match-filter", "duration < 600",
+        "-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "--merge-output-format", "mp4", "--no-mtime", "--socket-timeout", "30", "--retries", "2",
+        "-o", path.join(dir, "baixado.%(ext)s"), rec.url]);
+    } catch (e) { throw new Error(msgBaixar(e.message)); }
+    const b = fs.readdirSync(dir).find((n) => n.startsWith("baixado.") && !n.endsWith(".part")); if (!b) throw new Error(msgBaixar("no video"));
+    fs.renameSync(path.join(dir, b), bruto);
+  }
+  const pr0 = probe(bruto); if (!pr0.dur || !pr0.w) throw new Error("o arquivo baixado não é um vídeo válido");
+  if (pr0.dur > 600) throw new Error("vídeo longo demais para estudo (máx. 10 min)");
+  // copia leve para assistir no app (720p, sem mexer no conteudo)
+  prog(35, "preparando para assistir");
+  const video = path.join(dir, "video.mp4");
+  const vf = pr0.w >= pr0.h ? "scale='min(1280,iw)':-2" : "scale=-2:'min(1280,ih)'";
+  await run("ffmpeg", ["-y", "-v", "error", "-i", bruto, "-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-threads", String(THREADS), ...(pr0.audio ? ["-c:a", "aac", "-b:a", "96k"] : ["-an"]), "-movflags", "+faststart", video]);
+  const pr = probe(video), D = pr.dur || pr0.dur;
+  prog(70, "separando a fala");
+  const audio = path.join(dir, "audio.mp3"); let temAudio = false;
+  if (pr0.audio) { try { await run("ffmpeg", ["-y", "-v", "error", "-i", bruto, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", audio]); temAudio = fs.statSync(audio).size > 2000; } catch { temAudio = false; } }
+  if (!temAudio) fs.writeFileSync(audio, Buffer.alloc(0));
+  prog(80, "tirando os quadros das cenas");
+  const N = 16, folha = path.join(dir, "folha.jpg");
+  await run("ffmpeg", ["-y", "-v", "error", "-i", video, "-vf", `fps=${(N / D).toFixed(4)},scale=${pr.w >= pr.h ? 320 : 200}:-2,tile=4x4:padding=4:color=black`, "-frames:v", "1", "-q:v", "4", folha]);
+  const capa = path.join(dir, "capa.jpg");
+  await run("ffmpeg", ["-y", "-v", "error", "-ss", Math.min(1.2, D / 4).toFixed(2), "-i", video, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4", capa]);
+  try { fs.rmSync(bruto); } catch { /* */ }
+  return { video, audio, folha, capa, temAudio, dur: D, w: pr.w, h: pr.h, quadros_n: N, tamanho: fs.statSync(video).size };
+}
+
 function sistema() {
   let disco = null;
   try { const s = fs.statfsSync(BASE); disco = { livre_gb: +(s.bavail * s.bsize / 1e9).toFixed(1), total_gb: +(s.blocks * s.bsize / 1e9).toFixed(1) }; } catch { /* */ }
@@ -846,9 +903,16 @@ async function processar(job) {
   const t0 = Date.now();
   try {
     const tp = job.receita && job.receita.tipo;
-    const r = tp === "melhorar" ? await melhorar(job.receita, dir, prog) : tp === "audio" ? await extrairAudio(job.receita, dir, prog) : tp === "editar" ? await editar(job.receita, dir, prog) : await render(job.receita, dir, prog);
+    const r = tp === "referencia" ? await referencia(job.receita, dir, prog) : tp === "melhorar" ? await melhorar(job.receita, dir, prog) : tp === "audio" ? await extrairAudio(job.receita, dir, prog) : tp === "editar" ? await editar(job.receita, dir, prog) : await render(job.receita, dir, prog);
     prog(98, "enviando o video");
     const up = async (url, f, tipo) => { const b = fs.readFileSync(f); const rr = await fetch(url, { method: "PUT", headers: { "Content-Type": tipo, "x-upsert": "true" }, body: b }); if (!rr.ok) throw new Error("upload " + rr.status + " " + (await rr.text()).slice(0, 200)); };
+    if (tp === "referencia") {   // v8: so para estudo
+      const u = job.upload_ref || {};
+      await up(u["video.mp4"], r.video, "video/mp4"); await up(u["folha.jpg"], r.folha, "image/jpeg"); await up(u["capa.jpg"], r.capa, "image/jpeg");
+      if (r.temAudio) await up(u["audio.mp3"], r.audio, "audio/mpeg");
+      await api("worker_status", { job_id: job.id, status: "pronto", progresso: 100, etapa: "pronto", duracao: +r.dur.toFixed(2), tamanho: r.tamanho, largura: r.w, altura: r.h, tem_audio: r.temAudio, quadros_n: r.quadros_n, segundos_render: Math.round((Date.now() - t0) / 1000) });
+      log(job.id, "referencia pronta"); return;
+    }
     if (tp === "audio") {
       await up(job.upload_audio, r.audio, "audio/mpeg");
       await api("worker_status", { job_id: job.id, status: "pronto", progresso: 100, etapa: "pronto", duracao: +r.dur.toFixed(2), tamanho: r.tamanho, largura: r.w, altura: r.h, segundos_render: Math.round((Date.now() - t0) / 1000) });
@@ -885,5 +949,5 @@ async function laco() {
 if (LOCAL) {
   const rec = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const dir = process.argv[3] || path.join(TMP, "local"); fs.mkdirSync(dir, { recursive: true });
-  (rec.tipo === "melhorar" ? melhorar(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "audio" ? extrairAudio(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "editar" ? editar(rec, dir, (p, e) => log(p + "%", e)) : render(rec, dir, (p, e) => log(p + "%", e))).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
+  (rec.tipo === "referencia" ? referencia(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "melhorar" ? melhorar(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "audio" ? extrairAudio(rec, dir, (p, e) => log(p + "%", e)) : rec.tipo === "editar" ? editar(rec, dir, (p, e) => log(p + "%", e)) : render(rec, dir, (p, e) => log(p + "%", e))).then((r) => log("OK", JSON.stringify(r))).catch((e) => { console.error(e); process.exit(1); });
 } else laco();
