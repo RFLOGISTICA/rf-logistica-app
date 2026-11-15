@@ -5,7 +5,7 @@
 // (RSA-OAEP-256 + AES-256-GCM, chave PUBLICA). A chave PRIVADA nao fica nesta maquina.
 // O Supabase NAO consegue apagar nada daqui: a retencao e local (35 dias + o dia 01 de cada mes por 12 meses).
 // Uso manual para abrir um arquivo (recuperacao):  node rf-backup.mjs abrir <chave-privada.pem> <arquivo.rfbk> <saida>
-const VERSAO = "rf-backup-v1";
+const VERSAO = "rf-backup-v1.1";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -79,7 +79,7 @@ async function rodar() {
     for (const f of plano[grupo] || []) {
       try {
         const destino = path.join(pastaDia, grupo, f.caminho.replace(/[^A-Za-z0-9._-]/g, "_") + ".rfbk");
-        if (!fs.existsSync(destino)) { const b = await baixar(f.url); gravarAtomico(destino, cifrar(b, pub)); manif[grupo].push({ caminho: f.caminho, bytes: b.length, sha256: sha(b), arquivo: path.basename(destino) }); }
+        if (grupo === "config" || !fs.existsSync(destino)) { const b = await baixar(f.url); gravarAtomico(destino, cifrar(b, pub)); manif[grupo].push({ caminho: f.caminho, bytes: b.length, sha256: sha(b), arquivo: path.basename(destino) }); }
         else manif[grupo].push({ caminho: f.caminho, arquivo: path.basename(destino), ja_tinha: true });
       } catch (e) { erros.push(grupo + " " + f.caminho + ": " + e.message); }
     }
@@ -158,6 +158,39 @@ async function rodar() {
   if (erros.length) process.exitCode = 2;
 }
 
+// ---------------------------------------------------------------- v1.1 (15/11): ENSAIO / RECUPERACAO -- envia a copia CRIPTOGRAFADA deste disco
+// para um projeto NOVO (o de recuperacao). Nada e aberto aqui: a VPS nao tem a chave privada.
+// Uso: node rf-backup.mjs enviar <url-da-funcao-receptora> <token> [dia]
+if (process.argv[2] === "enviar") {
+  const [, , , urlRec, tok, diaPedido] = process.argv;
+  const rec = async (corpo) => { const r = await fetch(urlRec, { method: "POST", headers: { "Content-Type": "application/json", "x-ensaio": tok }, body: JSON.stringify(corpo), signal: AbortSignal.timeout(120000) }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) throw new Error("receptor " + r.status + " " + (j.erro || "")); return j; };
+  (async () => {
+    const t0 = Date.now(), dias = fs.readdirSync(path.join(DADOS, "dias")).sort();
+    const dia = diaPedido || dias[dias.length - 1], pd = path.join(DADOS, "dias", dia);
+    const lista = [];
+    for (const g of ["banco", "config"]) { const d = path.join(pd, g); if (fs.existsSync(d)) for (const n of fs.readdirSync(d)) if (n.endsWith(".rfbk")) lista.push({ local: path.join(d, n), nome: `vps/${dia}/${g}/${n}` }); }
+    lista.push({ local: path.join(pd, "manifesto.json.rfbk"), nome: `vps/${dia}/manifesto.json.rfbk` });
+    for (const h of fs.readFileSync(path.join(pd, "refs.txt"), "utf8").split("\n")) if (h) lista.push({ local: path.join(DADOS, "objetos", h.slice(0, 2), h + ".rfbk"), nome: `vps/objetos/${h}.rfbk` });
+    const unicos = [...new Map(lista.map((x) => [x.nome, x])).values()];
+    await rec({ acao: "relato", etapa: "inicio", dia, arquivos: unicos.length });
+    let env = 0, bytes = 0; const erros = [];
+    for (let i = 0; i < unicos.length; i += 50) {
+      const lote = unicos.slice(i, i + 50);
+      let urls; try { urls = (await rec({ acao: "urls", nomes: lote.map((x) => x.nome) })).urls; } catch (e) { erros.push("urls: " + e.message); continue; }
+      for (let j = 0; j < lote.length; j++) {
+        try {
+          const b = fs.readFileSync(lote[j].local);
+          let ok = false;
+          for (let t = 1; t <= 3 && !ok; t++) { const up = await fetch(urls[j], { method: "PUT", headers: { "Content-Type": "application/octet-stream", "x-upsert": "true" }, body: b, signal: AbortSignal.timeout(300000) }); ok = up.ok; if (!ok && t === 3) erros.push(lote[j].nome + ": " + up.status); }
+          if (ok) { env++; bytes += b.length; }
+        } catch (e) { erros.push(lote[j].nome + ": " + e.message); }
+      }
+      if ((i / 50) % 10 === 0) await rec({ acao: "relato", etapa: "andamento", enviados: env, de: unicos.length }).catch(() => {});
+    }
+    await rec({ acao: "relato", etapa: "fim", dia, enviados: env, de: unicos.length, bytes, segundos: Math.round((Date.now() - t0) / 1000), erros: erros.slice(0, 30) });
+    console.log("ensaio enviado", env, "de", unicos.length); process.exit(0);
+  })().catch(async (e) => { try { await rec({ acao: "relato", etapa: "falhou", erro: String(e.message || e).slice(0, 300) }); } catch { /* */ } process.exit(1); });
+} else
 rodar().catch(async (e) => {
   log("FALHOU", e.message);
   try { await api("relatorio", { versao: VERSAO, status: "erro", erros: [String(e.message || e).slice(0, 300)], disco_livre_gb: discoLivreGB() }, 2); } catch { /* o vigia do servidor percebe a falta do relatorio */ }
