@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v8";   // v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
+const VERSAO = "rf-estudio-v8.1";   // v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
 //   // v7.1:   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
 //   // v6: Fim do recorte (corte_fim)
 //   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
@@ -851,7 +851,7 @@ async function referencia(rec, dir, prog) {
       await run(YTDLP, ["--no-playlist", "--no-warnings", "--no-progress", "--max-filesize", "300M", "--match-filter", "duration < 600",
         "-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "--merge-output-format", "mp4", "--no-mtime", "--socket-timeout", "30", "--retries", "2",
         "-o", path.join(dir, "baixado.%(ext)s"), rec.url]);
-    } catch (e) { throw new Error(msgBaixar(e.message)); }
+    } catch (e) { const det = String(e.message || "").split("\n").filter((l) => /ERROR/.test(l)).pop() || String(e.message || "").slice(-160); throw new Error(msgBaixar(e.message) + " [" + det.replace(/^.*ERROR:\s*/, "").slice(0, 160) + "]"); }
     const b = fs.readdirSync(dir).find((n) => n.startsWith("baixado.") && !n.endsWith(".part")); if (!b) throw new Error(msgBaixar("no video"));
     fs.renameSync(path.join(dir, b), bruto);
   }
