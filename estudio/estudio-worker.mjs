@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v8.1";   // v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
+const VERSAO = "rf-estudio-v9";   // v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
+//   // v8.1 / v8: v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
 //   // v7.1:   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
 //   // v6: Fim do recorte (corte_fim)
 //   // v5: ✨ Melhorar video (estabiliza, limpa ruido, cor, nitidez, Full HD, audio) - gratis
@@ -380,6 +381,26 @@ async function svgPng(svg, png, W, H) {
 function dataUri(f) { const ext = path.extname(f).toLowerCase(); return "data:image/" + (ext === ".jpg" || ext === ".jpeg" ? "jpeg" : "png") + ";base64," + fs.readFileSync(f).toString("base64"); }
 
 // ---------------------------------------------------------------- render
+// v9: tempo da musica (bpm e fase) -- energia + autocorrelacao, sem programa extra
+function batidas(arq, seg) {
+  try {
+    const r = spawnSync("ffmpeg", ["-v", "error", "-t", String(Math.min(240, Math.max(30, seg))), "-i", arq, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"], { maxBuffer: 256e6 });
+    const b = r.stdout; if (!b || b.length < 8000 * 4 * 8) return null;
+    const x = new Float32Array(b.buffer, b.byteOffset, Math.floor(b.length / 4)), H = 80, FPS = 8000 / H, n = Math.floor(x.length / H);
+    const e = new Float32Array(n); for (let i = 0; i < n; i++) { let s = 0; for (let j = i * H; j < i * H + H; j++) s += x[j] * x[j]; e[i] = Math.log(1e-6 + s); }
+    const o = new Float32Array(n); for (let i = 1; i < n; i++) o[i] = Math.max(0, e[i] - e[i - 1]);
+    const om = o.reduce((a, v) => a + v, 0) / n, ac = {};
+    const l0 = Math.round(FPS * 60 / 165), l1 = Math.round(FPS * 60 / 68);
+    for (let lag = l0 - 1; lag <= l1 + 1; lag++) { let s = 0; for (let i = lag; i < n; i++) s += (o[i] - om) * (o[i - lag] - om); ac[lag] = s; }
+    let best = -Infinity, L = 0;
+    for (let lag = l0; lag <= l1; lag++) { const bpm = 60 * FPS / lag, w = Math.exp(-Math.pow(Math.log2(bpm / 115), 2) / 0.5), v = ac[lag] * w; if (v > best) { best = v; L = lag; } }
+    if (!L || ac[L] <= 0) return null;
+    const a = ac[L - 1], c = ac[L + 1], den = a - 2 * ac[L] + c, Lf = L + (den < 0 ? 0.5 * (a - c) / den : 0);   // pico com fracao
+    let bp = -1, fase = 0;
+    for (let p10 = 0; p10 < Lf * 10; p10++) { const p = p10 / 10; let s = 0; for (let k = 0; p + k * Lf < n - 1; k++) s += o[Math.round(p + k * Lf)]; if (s > bp) { bp = s; fase = p; } }
+    return { periodo: Lf / FPS, fase: fase / FPS };
+  } catch { return null; }
+}
 async function render(rec, dir, prog) {
   const FMT = { "9:16": [1080, 1920], "1:1": [1080, 1080], "16:9": [1920, 1080], "4:5": [1080, 1350] };
   const [W, H] = FMT[rec.formato] || FMT["9:16"];
@@ -404,21 +425,38 @@ async function render(rec, dir, prog) {
   const marca = rec.marca && rec.marca.url ? await logoPrep(rec.marca.url, rec.marca.chave || "marca.png") : null;
   // duracoes (a narracao manda; transicao entra/sai)
   const TR = { corte: 0.04 };
+  const RT = rec.ritmo || {}, SS = !!RT.sem_silencio, RESP = Math.max(0.1, Math.min(1.2, Number(RT.respiro) || 0.3));   // v9
   cenas.forEach((c, i) => {
-    c._tin = i === 0 ? 0 : (c.transicao === "corte" ? 0.04 : Math.max(0.2, Math.min(1.2, Number(c.trans_dur) || 0.6)));
+    c._tin = i === 0 ? 0 : (c.transicao === "corte" || c.transicao === "flash" ? 0.04 : Math.max(0.15, Math.min(1.2, Number(c.trans_dur) || 0.6)));
   });
   cenas.forEach((c, i) => {
     const tout = i < cenas.length - 1 ? cenas[i + 1]._tin : 0;
     c._tout = tout;
     const vel = Math.max(0.7, Math.min(1.4, Number((c.narracao && c.narracao.velocidade) || rec.velocidade_voz || 1)));
     c._vel = vel;
-    c._atraso = c._tin + 0.25;
+    c._atraso = c._tin + (SS ? 0.06 : 0.25);
     const nd = c._narr ? c._narrDur / vel : 0;
-    const min = c._narr ? c._atraso + nd + 0.45 + tout : 0;
-    let d = Number(c.dur) || (c.tipo === "abertura" ? 2.6 : c.tipo === "encerramento" ? 4.5 : 5);
+    const min = c._narr ? c._atraso + nd + (SS ? RESP : 0.45) + tout : 0;
+    let d = (SS && c._narr) ? 0 : (Number(c.dur) || (c.tipo === "abertura" ? (SS ? 2.0 : 2.6) : c.tipo === "encerramento" ? 4.5 : 5));
     if (c.midia && c._pr && c._pr.dur && c.midia.tipo === "video" && !c.dur) d = Math.min(d, c._pr.dur / (Number(c.velocidade) || 1));
     c._dur = Math.max(d, min, c._tin + tout + 1.0);
   });
+  // v9: corte na batida da musica -- estica a cena (no maximo 1 batida) para a troca cair no tempo da trilha
+  let trilhaArq = null;
+  if (rec.trilha && rec.trilha.url) trilhaArq = await baixar(rec.trilha.url, rec.trilha.chave);
+  if (RT.batida && trilhaArq && cenas.length > 1) {
+    const est = cenas.reduce((a, c, i) => a + c._dur - (i ? c._tin : 0), 0);
+    const bt = batidas(trilhaArq, est + 15);
+    if (bt) {
+      let fim = cenas[0]._dur;
+      for (let i = 1; i < cenas.length; i++) {
+        const corte = fim - cenas[i]._tin / 2, k = Math.ceil((corte - bt.fase) / bt.periodo - 1e-6), alvo = bt.fase + k * bt.periodo, delta = alvo - corte;
+        if (delta > 0.001 && delta < bt.periodo) { cenas[i - 1]._dur += delta; fim += delta; }
+        fim = fim - cenas[i]._tin + cenas[i]._dur;
+      }
+      log("batida:", (60 / bt.periodo).toFixed(0), "bpm");
+    }
+  }
   let total = 0; const ofs = [];
   cenas.forEach((c, i) => { ofs.push(i === 0 ? 0 : total - c._tin); total = (i === 0 ? c._dur : total - c._tin + c._dur); });
   const TOTAL = total;
@@ -523,13 +561,16 @@ async function render(rec, dir, prog) {
   prog(80, "juntando cenas, narracao e trilha");
   const ins = []; let fc = "";
   clipes.forEach((c) => ins.push("-i", c));
-  let ult = "[0:v]", acum = cenas[0]._dur;
+  let ult = "[0:v]", acum = cenas[0]._dur; const cortes = [];
   const XF = { fade: "fade", dissolve: "dissolve", slideleft: "slideleft", slideright: "slideright", slideup: "slideup", wipeleft: "wipeleft", wiperight: "wiperight", circleopen: "circleopen", zoomin: "zoomin", smoothleft: "smoothleft", smoothup: "smoothup", fadeblack: "fadeblack", corte: "fade" };
   for (let i = 1; i < clipes.length; i++) {
     const c = cenas[i], d = c._tin, off = acum - d;
     fc += `${ult}[${i}:v]xfade=transition=${XF[c.transicao] || "fade"}:duration=${d.toFixed(3)}:offset=${off.toFixed(3)}[j${i}];`;
     ult = `[j${i}]`; acum = off + c._dur;
+    cortes.push({ t: off + d / 2, flash: c.transicao === "flash" });
   }
+  const fl = cortes.filter((x) => x.flash);   // v9: ✨ flash dourado na troca
+  if (fl.length) { fc += `${ult}` + fl.map((x) => `drawbox=x=0:y=0:w=iw:h=ih:color=0xD4A017@0.6:t=fill:enable='between(t,${(x.t - 0.04).toFixed(3)},${(x.t + 0.07).toFixed(3)})',drawbox=x=0:y=0:w=iw:h=ih:color=0xD4A017@0.25:t=fill:enable='between(t,${(x.t + 0.07).toFixed(3)},${(x.t + 0.16).toFixed(3)})'`).join(",") + `[fl];`; ult = "[fl]"; }
   let nIn = clipes.length;
   if (marca) {
     const mw = Math.round((W > H ? 150 : 150) * k);
@@ -545,16 +586,34 @@ async function render(rec, dir, prog) {
   cenas.forEach((c, i) => { if (c._narr) { ins.push("-i", c._narr); narr.push({ idx: nIn++, ini: ofs[i] + c._atraso, vel: c._vel }); } });
   const vozes = [];
   narr.forEach((n, j) => { const at = Math.abs(n.vel - 1) > 0.01 ? `atempo=${n.vel.toFixed(3)},` : ""; fc += `[${n.idx}:a]${at}aresample=48000,aformat=channel_layouts=stereo,adelay=${Math.round(n.ini * 1000)}|${Math.round(n.ini * 1000)},volume=${Number(rec.volume_voz || 1).toFixed(2)}[n${j}];`; vozes.push(`[n${j}]`); });
-  let trilha = null;
-  if (rec.trilha && rec.trilha.url) { trilha = await baixar(rec.trilha.url, rec.trilha.chave); ins.push("-stream_loop", "-1", "-i", trilha); }
+  const trilha = trilhaArq;
+  if (trilha) ins.push("-stream_loop", "-1", "-i", trilha);
   const ti = trilha ? nIn++ : -1;
+  // v9: som na passagem (whoosh ou batida) -- gerado aqui mesmo, sem arquivo de terceiros
+  let si = -1;
+  if ((RT.som === "whoosh" || RT.som === "batida") && cortes.length) {
+    const sf = path.join(dir, "sfx.wav");
+    const src = RT.som === "batida" ? ["-f", "lavfi", "-i", "aevalsrc='0.9*exp(-11*t)*sin(2*PI*(48+90*exp(-28*t))*t)':s=48000:d=0.45"] : ["-f", "lavfi", "-i", "anoisesrc=d=0.55:c=pink:a=0.5:r=48000"];
+    const af = RT.som === "batida" ? "volume=0.9" : "highpass=f=350,lowpass=f=6000,afade=t=in:st=0:d=0.32:curve=qsin,afade=t=out:st=0.32:d=0.23:curve=qsin,volume=0.8";
+    await run("ffmpeg", ["-y", "-v", "error", ...src, "-af", af, "-ac", "2", sf]);
+    ins.push("-i", sf); si = nIn++;
+  }
   const vol = Math.max(0, Math.min(1, Number(rec.trilha && rec.trilha.volume != null ? rec.trilha.volume : 0.30)));
   if (vozes.length) fc += `${vozes.join("")}amix=inputs=${vozes.length}:normalize=0:dropout_transition=0,apad,atrim=0:${TOTAL.toFixed(3)}[voz];`;
   if (trilha) fc += `[${ti}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${TOTAL.toFixed(3)},volume=${vol.toFixed(2)},afade=t=in:d=1.2,afade=t=out:st=${Math.max(0, TOTAL - 2.5).toFixed(2)}:d=2.5[mus];`;
-  if (vozes.length && trilha) fc += `[voz]asplit=2[voz1][sc];[mus][sc]sidechaincompress=threshold=0.025:ratio=7:attack=25:release=420:makeup=1[musd];[voz1][musd]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]`;
-  else if (vozes.length) fc += `[voz]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]`;
-  else if (trilha) fc += `[mus]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[aout]`;
-  else fc += `anullsrc=r=48000:cl=stereo,atrim=0:${TOTAL.toFixed(3)}[aout]`;
+  if (vozes.length && trilha) fc += RT.ducking === false ? `[voz][mus]amix=inputs=2:normalize=0[mixa];` : `[voz]asplit=2[voz1][sc];[mus][sc]sidechaincompress=threshold=0.025:ratio=7:attack=25:release=420:makeup=1[musd];[voz1][musd]amix=inputs=2:normalize=0[mixa];`;
+  else if (vozes.length) fc += `[voz]anull[mixa];`;
+  else if (trilha) fc += `[mus]anull[mixa];`;
+  else fc += `anullsrc=r=48000:cl=stereo,atrim=0:${TOTAL.toFixed(3)}[mixa];`;
+  let mixF = "[mixa]";
+  if (si >= 0) {
+    const off0 = RT.som === "batida" ? 0.01 : 0.3, n = cortes.length;
+    fc += `[${si}:a]aresample=48000,aformat=channel_layouts=stereo,asplit=${n}` + cortes.map((_, j) => `[sx${j}]`).join("") + ";";
+    cortes.forEach((x, j) => { const ms = Math.max(0, Math.round((x.t - off0) * 1000)); fc += `[sx${j}]adelay=${ms}|${ms}[sd${j}];`; });
+    fc += cortes.map((_, j) => `[sd${j}]`).join("") + (n > 1 ? `amix=inputs=${n}:normalize=0:dropout_transition=0,` : "anull,") + `volume=${RT.som === "batida" ? 0.5 : 0.35},apad=whole_dur=${TOTAL.toFixed(3)},atrim=0:${TOTAL.toFixed(3)}[sfx];${mixF}[sfx]amix=inputs=2:normalize=0:duration=first[mixb];`;
+    mixF = "[mixb]";
+  }
+  fc += (vozes.length || trilha) ? `${mixF}loudnorm=I=${vozes.length ? -14 : -16}:TP=-1.5:LRA=11,aresample=48000[aout]` : `${mixF}anull[aout]`;
   const scr = path.join(dir, "final.txt"); fs.writeFileSync(scr, fc);
   const saida = path.join(dir, "video.mp4");
   await run("ffmpeg", ["-y", "-v", "error", ...ins, "-filter_complex_script", scr, "-map", "[vout]", "-map", "[aout]",

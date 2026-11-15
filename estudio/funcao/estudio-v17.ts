@@ -989,6 +989,19 @@ Deno.serve(async (req) => {
       if (error) throw new Error(error.message);
       return json({ ok: true, render: data });
     }
+    // v17.1: traz para a Biblioteca um video gerado pela IA de video contratada (Higgsfield) -- so desse endereco, so master/servidor
+    if (acao === "midia_importar_url") {
+      if (!U.master) return erro("só o login master", 403);
+      const url = String(b.url || ""); if (!/^https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[A-Za-z0-9_\/.-]+\.(mp4|jpg|png)$/.test(url)) return erro("endereço não permitido");
+      const r = await fetch(url); if (!r.ok) return erro("não baixei: " + r.status);
+      const buf = new Uint8Array(await r.arrayBuffer()); if (buf.length > 60e6) return erro("arquivo grande demais");
+      const ext = url.split(".").pop()!; const path = `estudio/midias/ia-${crypto.randomUUID()}.${ext}`;
+      const up = await sb.storage.from(BUCKET).upload(path, buf, { contentType: ext === "mp4" ? "video/mp4" : "image/" + (ext === "jpg" ? "jpeg" : ext), upsert: false }); if (up.error) throw new Error(up.error.message);
+      const { data: m, error } = await sb.from("estudio_midias").insert({ tipo: ext === "mp4" ? "video" : "imagem", nome: String(b.nome || "Cena IA").slice(0, 70), path, duracao: Number(b.duracao) || null, largura: Number(b.largura) || null, altura: Number(b.altura) || null,
+        origem: "ia", autorizada: true, tags: Array.from(new Set(["ia", ...((Array.isArray(b.tags) ? b.tags : []).map(String).slice(0, 5))])), criado_por: U.uid }).select("id").single();
+      if (error) throw new Error(error.message);
+      return json({ ok: true, midia_id: m.id, path });
+    }
     // ===================== v17: 💡 referencias (so para estudo; apaga em 15 dias)
     if (acao === "ref_lista") {
       limparReferencias().catch(() => null);
