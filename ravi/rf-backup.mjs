@@ -5,7 +5,7 @@
 // (RSA-OAEP-256 + AES-256-GCM, chave PUBLICA). A chave PRIVADA nao fica nesta maquina.
 // O Supabase NAO consegue apagar nada daqui: a retencao e local (35 dias + o dia 01 de cada mes por 12 meses).
 // Uso manual para abrir um arquivo (recuperacao):  node rf-backup.mjs abrir <chave-privada.pem> <arquivo.rfbk> <saida>
-const VERSAO = "rf-backup-v1.1";
+const VERSAO = "rf-backup-v1.2";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -79,8 +79,8 @@ async function rodar() {
     for (const f of plano[grupo] || []) {
       try {
         const destino = path.join(pastaDia, grupo, f.caminho.replace(/[^A-Za-z0-9._-]/g, "_") + ".rfbk");
-        if (grupo === "config" || !fs.existsSync(destino)) { const b = await baixar(f.url); gravarAtomico(destino, cifrar(b, pub)); manif[grupo].push({ caminho: f.caminho, bytes: b.length, sha256: sha(b), arquivo: path.basename(destino) }); }
-        else manif[grupo].push({ caminho: f.caminho, arquivo: path.basename(destino), ja_tinha: true });
+        if (grupo === "config" || !fs.existsSync(destino)) { const b = await baixar(f.url); const h = sha(b); gravarAtomico(destino, cifrar(b, pub)); gravarAtomico(destino + ".sha", Buffer.from(h)); manif[grupo].push({ caminho: f.caminho, bytes: b.length, sha256: h, arquivo: path.basename(destino) }); }
+        else { let h = null; try { h = fs.readFileSync(destino + ".sha", "utf8").trim(); } catch { /* arquivo de antes da v1.2 */ } manif[grupo].push({ caminho: f.caminho, arquivo: path.basename(destino), ja_tinha: true, sha256: h || undefined }); }
       } catch (e) { erros.push(grupo + " " + f.caminho + ": " + e.message); }
     }
   }
@@ -171,7 +171,9 @@ if (process.argv[2] === "enviar") {
     for (const g of ["banco", "config"]) { const d = path.join(pd, g); if (fs.existsSync(d)) for (const n of fs.readdirSync(d)) if (n.endsWith(".rfbk")) lista.push({ local: path.join(d, n), nome: `vps/${dia}/${g}/${n}` }); }
     lista.push({ local: path.join(pd, "manifesto.json.rfbk"), nome: `vps/${dia}/manifesto.json.rfbk` });
     for (const h of fs.readFileSync(path.join(pd, "refs.txt"), "utf8").split("\n")) if (h) lista.push({ local: path.join(DADOS, "objetos", h.slice(0, 2), h + ".rfbk"), nome: `vps/objetos/${h}.rfbk` });
-    const unicos = [...new Map(lista.map((x) => [x.nome, x])).values()];
+    let unicos = [...new Map(lista.map((x) => [x.nome, x])).values()];
+    // v1.2: retomada -- pula o que o projeto de destino ja tem (objetos sao nomeados pelo hash, entao "ja tem" = igual)
+    try { const ja = new Set((await rec({ acao: "existentes" })).nomes || []); unicos = unicos.filter((x) => !ja.has(x.nome)); } catch { /* destino antigo: manda tudo */ }
     await rec({ acao: "relato", etapa: "inicio", dia, arquivos: unicos.length });
     let env = 0, bytes = 0; const erros = [];
     for (let i = 0; i < unicos.length; i += 50) {
