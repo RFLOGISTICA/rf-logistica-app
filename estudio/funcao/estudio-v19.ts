@@ -124,7 +124,7 @@ const SERVICOS = [
   "Ravi: assistente virtual da RF no WhatsApp",
   "Rodavia 360: sistema de gestão de frota da RF Sistemas (frota, viagens, abastecimento, manutenção por km, óleo e filtros, dashboard, financeiro, Torre de Controle, fracionado, documentos fiscais, campanhas)",
 ];
-const CONTATO = { site: "rflogistica.com.br", fretes: "rflogistica.com.br/fretes", whatsapp: "(75) 99971-7578", horario: "segunda a sexta, 8h às 18h" };
+const CONTATO = { site: "rflogistica.com.br", fretes: "rflogistica.com.br/fretes", horario: "segunda a sexta, 8h às 18h" };   // v19.2: Renato (15/11): nos videos NUNCA o numero dele -- so o site
 
 // ---------------------------------------------------------------- utilitarios
 async function segredo(ch: string) { const { data } = await sb.from("rf_segredos").select("valor").eq("chave", ch).maybeSingle(); return data?.valor as string | undefined; }
@@ -243,11 +243,11 @@ function validar(o: any, F: any, lib: any[], formato: string, voz: string, tipo:
         return { valor: v.slice(0, 14), rotulo: r.slice(0, 40) };
       });
     }
-    if (c.tipo === "encerramento") x.linhas = [CONTATO.site, "WhatsApp " + CONTATO.whatsapp];
+    if (c.tipo === "encerramento") x.linhas = [CONTATO.site, CONTATO.fretes];
     return x;
   }).filter((c: any) => c.tipo !== "dados" || c.itens.length);
   if (!cenas.length || cenas[0].tipo !== "abertura") cenas.unshift({ id: "c0ab", tipo: "abertura", titulo: tipo === "demo" ? "Gestão de frota inteligente" : "Transporte e distribuição", transicao: "fade" });
-  if (cenas[cenas.length - 1].tipo !== "encerramento") cenas.push({ id: "c9en", tipo: "encerramento", titulo: "Fale com a RF", linhas: [CONTATO.site, "WhatsApp " + CONTATO.whatsapp], transicao: "fadeblack" });
+  if (cenas[cenas.length - 1].tipo !== "encerramento") cenas.push({ id: "c9en", tipo: "encerramento", titulo: "Fale com a RF", linhas: [CONTATO.site, CONTATO.fretes], transicao: "fade" });
   const trilha = ["base:trilha-rota", "base:trilha-institucional", "base:trilha-tecnologia"].includes(o.trilha) ? o.trilha : (tipo === "demo" ? "base:trilha-tecnologia" : tipo === "institucional" ? "base:trilha-institucional" : "base:trilha-rota");
   return {
     titulo: String(o.titulo || "Vídeo RF").slice(0, 80), legenda: [String(o.legenda_post || "").slice(0, 1800), String(o.hashtags || "").slice(0, 300)].filter(Boolean).join("\n\n"), avisos,
@@ -559,7 +559,7 @@ function planoNosso(r: any) {
     cenas.push({ id: "r" + i + gid().slice(0, 4), ref_cena: c.id, tipo: "cartao", selo: String(c.funcao || "").toUpperCase().slice(0, 28), titulo: String(n.titulo || "").slice(0, 70), subtitulo: String(n.gravar ? "🎥 " + n.gravar : "").slice(0, 120),
       transicao: "corte", dur: d, ...(n.narracao ? { narracao: { texto: String(n.narracao).slice(0, 500) } } : {}) });
   });
-  cenas.push({ id: "c9en", tipo: "encerramento", titulo: "Rodavia 360", linhas: ["rodavia360.com.br", "WhatsApp " + CONTATO.whatsapp], transicao: "fadeblack" });
+  cenas.push({ id: "c9en", tipo: "encerramento", titulo: "Rodavia 360", linhas: ["rodavia360.com.br"], transicao: "fade" });
   return { formato: "9:16", voz: { id: "natural_m", estilo: "" }, trilha: { ref: "base:trilha-tecnologia", volume: 0.25 }, logo: "rodavia", marca: { ativo: true, pos: "sup-dir" }, legendas: true, cenas, referencia: true };
 }
 
@@ -814,7 +814,7 @@ function iaPromptImagem(texto: string, personagem: string, formato: string, ajus
   return (personagem === "ravi" ? "Main character: Ravi, the friendly white-and-gold cartoon ROBOT from the reference image (with the RF logo on his chest) -- keep him EXACTLY the same (same head, screen face, colors, proportions). He is a robot, never a human. Other people, if any, are generic cartoon people. " : "")
     + "High quality 3D animated cartoon still, cinematic lighting, vertical composition " + (formato || "9:16") + ". Scene: " + texto
     + (ajuste ? " Adjustment requested: " + ajuste : "")
-    + " Brand colors gold (#D4A017) and black as accents. Absolutely no text, no letters, no logos, no readable license plates, no other company brand.";
+    + " Brand colors gold (#D4A017) and black as accents. Absolutely no text, no letters, no readable license plates, no other company brand or logo anywhere -- including vehicle brands on trucks, cars and steering wheels (no VW, Mercedes-Benz, Volvo, Scania, Ford, Iveco, DAF badges): use plain unbranded vehicles.";
 }
 // v18: narracao premium (ElevenLabs pela fal) -- mesma legenda palavra a palavra (whisper) do caminho normal
 async function vozPremium(vozId: string, texto: string, estilo: string) {
@@ -889,7 +889,7 @@ Escreva um comercial vertical PROFISSIONAL de ${J.duracao} segundos para ${J.pub
 Estrutura obrigatória: cena 1 = GANCHO forte nos 2 primeiros segundos (pergunta ou dor que faz parar de rolar; nunca "olá" nem "eu sou"); depois DOR concreta, VIRADA (o sistema/serviço resolve), PROVA (o que ele vê na tela) e CHAMADA final.
 Use SÓ fatos reais do JSON (nunca invente número, cliente, preço ou prazo). Nunca cite clientes da RF nem outra empresa.
 Responda APENAS JSON: {"titulo":"curto","legenda_post":"legenda do post com 2-4 hashtags","cenas":[{"fala":"narração em português do Brasil, 12 a 18 palavras, frase falada natural","visual":"o que a câmera mostra: ação do Ravi, cenário, emoção, câmera (sem texto/letreiro/logo/placa)","tela":"" }]}
-Exatamente ${n} cenas. Em NO MÁXIMO 1 cena use "tela" (dashboard|frota|inicio|fracionado|torre) para mostrar a tela real do sistema no celular -- nessa cena "visual" fica vazio. A última cena é a chamada para rodavia360.com.br / WhatsApp (75) 99971-7578.`;
+Exatamente ${n} cenas. Em NO MÁXIMO 1 cena use "tela" (dashboard|frota|inicio|fracionado|torre) para mostrar a tela real do sistema no celular -- nessa cena "visual" fica vazio. A última cena é a chamada para o site rodavia360.com.br. NUNCA ponha número de telefone ou WhatsApp na fala nem na tela.`;
   const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: sys }, { role: "user", content: "PEDIDO DO RENATO: " + J.pedido + "\nFATOS REAIS: " + JSON.stringify({ servicos: F.servicos, contato: F.contato, frota_total: F.frota_total, cidades: F.cidades_atendidas_90d?.slice(0, 12), base: F.base }) }] });
   const j = await r.json(); const R = JSON.parse(j.choices[0].message.content);
   const cenas: any[] = (R.cenas || []).slice(0, 9).map((c: any, i: number) => {
@@ -899,9 +899,9 @@ Exatamente ${n} cenas. Em NO MÁXIMO 1 cena use "tela" (dashboard|frota|inicio|f
     return { ...base, tipo: "midia", ia: { diretor: true, texto: String(c.visual || "").trim(), personagem: "ravi" } };
   }).filter((c: any) => c.narracao.texto);
   if (cenas.length < 3) throw new Error("o roteiro saiu curto demais");
-  cenas.push({ id: "dfim" + gid().slice(0, 3), tipo: "encerramento", titulo: "Rodavia 360", linhas: ["rodavia360.com.br", "WhatsApp (75) 99971-7578"], dur: 3.2 });
+  cenas.push({ id: "dfim" + gid().slice(0, 3), tipo: "encerramento", titulo: "Rodavia 360", linhas: ["rodavia360.com.br"], dur: 3.2 });
   const plano = { formato: J.formato, voz: { id: "premium_locutor", estilo: FORCA.energica, velocidade: 1.08, forca: "energica" }, trilha: { ref: "base:trilha-rota", volume: 0.22 }, logo: "rodavia", marca: { ativo: true, pos: "sup-dir" }, legendas: true,
-    ritmo: { sem_silencio: true, respiro: 0.25, passagem: "manter", som: "whoosh", batida: true, ducking: true }, cenas: cenas.map((c, i) => i === 0 ? c : { ...c, transicao: i % 3 === 2 ? "flash" : "fade", trans_dur: i % 3 === 2 ? 0.04 : 0.2 }), diretor: "Diretor IA", legenda_post: String(R.legenda_post || "") };
+    ritmo: { sem_silencio: true, respiro: 0.25, passagem: "manter", som: "whoosh", batida: true, ducking: true }, cenas: cenas.map((c, i) => i === 0 ? c : { ...c, transicao: "dissolve", trans_dur: 0.35 }), diretor: "Diretor IA", legenda_post: String(R.legenda_post || "") };
   const { data: pj, error } = await sb.from("estudio_projetos").insert({ titulo: ("🎬 " + String(R.titulo || "Diretor IA")).slice(0, 80), tipo: "diretor", formato: J.formato, plano, origem: "diretor_ia", diretor: "Diretor IA", briefing: J.pedido, fatos: F, criado_por: J.pedido_por, criado_nome: J.pedido_nome }).select("id,titulo").single();
   if (error) throw new Error(error.message);
   await dirSalvar(J, { projeto_id: pj.id, etapa: "narrar" });
@@ -957,7 +957,7 @@ async function dirEscolher(J: any) {
     const urls = await Promise.all(c.ia.imagens.slice(-3).map((p: string) => assinar(p, 1800)));
     const conteudo: any[] = [{ type: "text", text: `Cena pedida: ${c.ia.texto}\nFala: ${c.narracao?.texto || ""}\nA referência do Ravi vem primeiro e NÃO é opção. As opções são OPÇÃO 1 a OPÇÃO ${urls.length}; "melhor" e "notas" se referem só às opções.` }, { type: "text", text: "REFERÊNCIA DO RAVI (não é opção):" }, { type: "image_url", image_url: { url: GH + "fotos/ravi.jpg" } }, ...urls.flatMap((u, k) => [{ type: "text", text: "OPÇÃO " + (k + 1) + ":" }, { type: "image_url", image_url: { url: u } }])];
     let R: any = {};
-    try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: "Você é o diretor de arte exigente de um comercial profissional. O Ravi é um ROBÔ cartoon branco e dourado (a PRIMEIRA imagem é a referência dele); o logo RF no peito do Ravi é PERMITIDO e não conta como texto. Pessoas genéricas de cartoon podem aparecer junto. Avalie cada opção de 0 a 10: Ravi (robô) IGUAL à referência (cabeça, rosto de tela, cores), cena pedida bem contada, emoção clara, composição vertical bonita, qualidade de cinema. Nota máxima 3 se tiver: texto/letreiro/letras legíveis, logo ou marca de outra empresa, placa legível, mãos/rosto deformados, pessoa real reconhecível. Responda APENAS JSON {\"notas\":[n,...],\"melhor\":1,\"motivo\":\"curto\",\"ajuste\":\"o que pedir se todas forem ruins (em inglês, curto)\"}" }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = { notas: [7], melhor: 1, motivo: "avaliação indisponível" }; }
+    try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: "Você é o diretor de arte exigente de um comercial profissional. O Ravi é um ROBÔ cartoon branco e dourado (a PRIMEIRA imagem é a referência dele); o logo RF no peito do Ravi é PERMITIDO e não conta como texto. Pessoas genéricas de cartoon podem aparecer junto. Avalie cada opção de 0 a 10: Ravi (robô) IGUAL à referência (cabeça, rosto de tela, cores), cena pedida bem contada, emoção clara, composição vertical bonita, qualidade de cinema. Nota máxima 3 se tiver: texto/letreiro/letras legíveis, logo ou marca de outra empresa (inclusive marca de veículo no caminhão, carro ou volante: VW, Mercedes, Volvo, Scania, Ford...), placa legível, mãos/rosto deformados, pessoa real reconhecível. Responda APENAS JSON {\"notas\":[n,...],\"melhor\":1,\"motivo\":\"curto\",\"ajuste\":\"o que pedir se todas forem ruins (em inglês, curto)\"}" }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = { notas: [7], melhor: 1, motivo: "avaliação indisponível" }; }
     const notas: number[] = (R.notas || []).map((x: any) => Number(x) || 0); const melhor = Math.max(1, Math.min(urls.length, Number(R.melhor) || (notas.indexOf(Math.max(...notas)) + 1)));
     const nota = notas[melhor - 1] ?? 7; const idx = c.ia.imagens.length - urls.length + melhor - 1;
     const n = (pl.cenas || []).findIndex((x: any) => x.id === c.id) + 1;
@@ -981,7 +981,7 @@ async function dirAnimar(J: any) {
     if (!(await dirCabe(J, custo)) && q === "cinema") { q = "bom"; usd = IA_ANIM.bom.usd_s * seg; custo = await brl(usd); }
     if (!(await dirCabe(J, custo))) { await dirLog(J, "Limite do vídeo atingido: não animei todas as cenas (as que faltam ficam com a imagem parada)."); break; }
     const img = c.ia.imagens[c.ia.escolhida ?? 0];
-    const mov = "Animate this exact image as a cinematic shot of a professional commercial. Keep the character identical. " + c.ia.texto + " Smooth natural motion, expressive face, natural hands, subtle camera move. No text on screen.";
+    const mov = "Animate this exact image as a cinematic shot of a professional commercial. Keep the character identical. " + c.ia.texto + " Smooth natural motion, expressive face, natural hands, subtle camera move. No text on screen, no vehicle brand badges. Start and end on a fully lit frame (no fade to black).";
     const f = await falFila(IA_ANIM[q].modelo, { prompt: mov, image_url: await assinar(img, 3600), duration: seg, resolution: IA_ANIM[q].res, prompt_expansion_mode: "balanced" });
     const { data: uso } = await sb.from("estudio_ia_uso").insert({ acao: "animar", modelo: IA_ANIM[q].modelo, projeto_id: pj.id, cena_id: c.id, qualidade: q, segundos: seg, custo_usd: +usd.toFixed(3), custo_brl: custo, status: "fila", status_url: f.status_url, response_url: f.response_url, resultado: { request_id: f.request_id, imagem: img }, pedido_por: J.pedido_por, pedido_nome: "Diretor IA" }).select("id").single();
     est[c.id] = { ...(est[c.id] || {}), uso: uso!.id, refazer_anim: false, tent_anim: (est[c.id]?.tent_anim || 0) + 1 }; enviadas.push(q);
@@ -1034,10 +1034,14 @@ async function dirCriticar(J: any) {
   const conteudo: any[] = [{ type: "text", text: `VÍDEO de ${Math.round(Number(rd?.duracao) || 0)} s, formato ${pj.formato}. Cenas:\n${cenas}\nSegundos com som baixo: ${baixos}.\n${an.folha_b64 ? "A folha de quadros mostra 2 quadros por cena, na ordem das cenas (da esquerda para a direita, de cima para baixo)." : "(sem folha de quadros)"}` }];
   if (an.folha_b64) conteudo.push({ type: "image_url", image_url: { url: "data:image/jpeg;base64," + an.folha_b64 } });
   let R: any = {};
-  try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: `Você é um crítico de publicidade MUITO exigente avaliando um comercial vertical do Rodavia 360 para ${J.publico || "dono de transportadora"}. Notas de 0 a 10: gancho (2 primeiros segundos param o dedo?), historia (dor, virada, prova, chamada clara), visual (qualidade de cinema, Ravi igual em todas as cenas, sem mãos/rostos deformados, sem texto ou logo estranho na imagem; o Ravi é um robô branco e dourado com o logo RF no peito -- isso é certo), ritmo (sem parada, cortes no tempo), som (voz forte e clara), chamada (termina dizendo o que fazer). Liste as cenas a REFAZER (no máximo 3, só se tiverem defeito visual claro). Responda APENAS JSON {"gancho":n,"historia":n,"visual":n,"ritmo":n,"som":n,"chamada":n,"refazer":[{"cena":n,"motivo":"curto em português","ajuste":"o que mudar na imagem, em inglês curto"}],"resumo":"1 frase"}` }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = {}; }
+  try { const r = await oai("chat/completions", { model: "gpt-5.4-mini", response_format: { type: "json_object" }, messages: [{ role: "system", content: `Você é um crítico de publicidade MUITO exigente avaliando um comercial vertical do Rodavia 360 para ${J.publico || "dono de transportadora"}. Notas de 0 a 10: gancho (2 primeiros segundos param o dedo?), historia (dor, virada, prova, chamada clara), visual (qualidade de cinema, Ravi igual em todas as cenas, sem mãos/rostos deformados, sem texto ou logo estranho na imagem, sem marca de veículo (VW, Mercedes, Volvo, Scania...) em caminhão, carro ou volante, sem telefone na tela; o Ravi é um robô branco e dourado com o logo RF no peito -- isso é certo), ritmo (sem parada, cortes no tempo), som (voz forte e clara), chamada (termina dizendo o que fazer). Liste as cenas a REFAZER (no máximo 3, só se tiverem defeito visual claro). Responda APENAS JSON {"gancho":n,"historia":n,"visual":n,"ritmo":n,"som":n,"chamada":n,"refazer":[{"cena":n,"motivo":"curto em português","ajuste":"o que mudar na imagem, em inglês curto"}],"resumo":"1 frase"}` }, { role: "user", content: conteudo }] }); const j = await r.json(); R = JSON.parse(j.choices[0].message.content); } catch (_) { R = {}; }
+  // 🛡️ revisor objetivo (medido, nao opiniao): preto na troca de cena, telefone na fala/tela, som baixo
+  const pretos: any[] = an.pretos || []; const tels = (pl.cenas || []).some((c: any) => /\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}/.test(String(c.narracao?.texto || "") + " " + (c.linhas || []).join(" ")));
+  const revisor = [{ item: "Sem tela preta na troca de cena", ok: !pretos.length, detalhe: pretos.length ? pretos.map((x: any) => x.ini + "s").join(", ") : "" }, { item: "Sem telefone na fala/tela (só o site)", ok: !tels, detalhe: "" }, { item: "Som sem buraco", ok: baixos <= 2, detalhe: baixos ? baixos + " s baixos" : "" }];
+  if (pretos.length) R.ritmo = Math.min(Number(R.ritmo) || 7, 5);
   const P: Record<string, number> = { gancho: 2, historia: 2, visual: 2, ritmo: 1, som: 1, chamada: 1 }; let s = 0, p = 0;
   for (const [k, w] of Object.entries(P)) { s += Math.max(0, Math.min(10, Number(R[k]) || 7)) * w; p += w; }
-  const nota = Math.round(s / p * 10); const crit = { nota, itens: Object.fromEntries(Object.keys(P).map((k) => [k, Number(R[k]) || null])), refazer: R.refazer || [], resumo: String(R.resumo || "").slice(0, 300), rodada: J.rodada, em: new Date().toISOString() };
+  const nota = Math.round(s / p * 10); const crit = { nota, itens: Object.fromEntries(Object.keys(P).map((k) => [k, Number(R[k]) || null])), refazer: R.refazer || [], revisor, resumo: String(R.resumo || "").slice(0, 300), rodada: J.rodada, em: new Date().toISOString() };
   await dirSalvar(J, { critica: crit }); await dirLog(J, `Crítica: nota ${nota}/100 — ${crit.resumo}`);
   const ids = (crit.refazer || []).map((x: any) => ({ c: (pl.cenas || [])[Number(x.cena) - 1], x })).filter((y: any) => y.c && y.c.ia && y.c.ia.diretor).slice(0, 3);
   const estimativa = ids.length ? (await brl(IA_IMG.usd * 3 + IA_ANIM[J.qualidade === "bom" ? "bom" : "cinema"].usd_s * 7)) * ids.length : 0;

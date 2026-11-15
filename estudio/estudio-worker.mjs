@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v10";   // v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
+const VERSAO = "rf-estudio-v11";   // v11 (RFL v893): tira quadro preto no comeco/fim dos videos de IA e procura preto no video pronto (revisor)
+//   // v10: v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
 //   // v9: v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
 //   // v8.1 / v8: v8: 💡 Referencias -- job "referencia": baixa (yt-dlp) o video de fora SO PARA ESTUDO, folha de quadros, audio e capa
 //   // v7.1:   // v7: 🎙️ Minha gravacao -- extrair audio (job "audio") e editar (job "editar": cortes, velocidade, enquadrar, luz, estabilizar, audio, telas, textos, legendas, medidas p/ critica)
@@ -382,6 +383,20 @@ async function svgPng(svg, png, W, H) {
 function dataUri(f) { const ext = path.extname(f).toLowerCase(); return "data:image/" + (ext === ".jpg" || ext === ".jpeg" ? "jpeg" : "png") + ";base64," + fs.readFileSync(f).toString("base64"); }
 
 // ---------------------------------------------------------------- render
+// v11: onde o video tem quadro preto no comeco e no fim (para cortar fora)
+function pretoBordas(arq, dur) {
+  const out = { ini: 0, fim: null };
+  try {
+    const r = spawnSync("ffmpeg", ["-v", "info", "-hide_banner", "-t", "1.5", "-i", arq, "-vf", "blackdetect=d=0.01:pix_th=0.12:pic_th=0.92", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 });
+    const m = /black_start:0(?:\.0+)?\s+black_end:([\d.]+)/.exec(String(r.stderr)); if (m) out.ini = Math.min(1.5, Number(m[1]) + 0.04);
+    if (dur > 2) {
+      const r2 = spawnSync("ffmpeg", ["-v", "info", "-hide_banner", "-ss", Math.max(0, dur - 1.5).toFixed(2), "-i", arq, "-vf", "blackdetect=d=0.01:pix_th=0.12:pic_th=0.92", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 });
+      const ms = [...String(r2.stderr).matchAll(/black_start:([\d.]+)\s+black_end:([\d.]+)/g)]; const ult = ms[ms.length - 1];
+      if (ult && Number(ult[2]) >= 1.4) out.fim = Math.max(0.5, dur - 1.5 + Number(ult[1]) - 0.02);
+    }
+  } catch { /* */ }
+  return out;
+}
 // v9: tempo da musica (bpm e fase) -- energia + autocorrelacao, sem programa extra
 function batidas(arq, seg) {
   try {
@@ -495,8 +510,11 @@ async function render(rec, dir, prog) {
       let vf;
       if (ehVideo) {
         const vel = Math.max(0.25, Math.min(4, Number(c.velocidade) || 1));
-        const ini = Math.max(0, Number(c.corte_ini) || 0);
-        const fimC = c.corte_fim != null && Number(c.corte_fim) > ini ? Number(c.corte_fim) : null;   // v6: respeita o Fim do recorte (se a fala for maior, segura o ultimo quadro)
+        let ini = Math.max(0, Number(c.corte_ini) || 0);
+        let fimC = c.corte_fim != null && Number(c.corte_fim) > ini ? Number(c.corte_fim) : null;   // v6
+        const pb = pretoBordas(c._arq, c._pr.dur || 0);   // v11: quadro preto no comeco/fim do video (IA) aparecia como "piscada" na troca de cena
+        if (pb.ini > ini) ini = pb.ini;
+        if (pb.fim != null && (fimC == null || pb.fim < fimC)) fimC = pb.fim;   // v6: respeita o Fim do recorte (se a fala for maior, segura o ultimo quadro)
         const args = ["-y", "-v", "error", "-ss", String(ini), "-t", String(fimC ? Math.min(fimC - ini, dur * vel + 0.5) : dur * vel + 0.5), "-i", c._arq];
         vf = `[0:v]setpts=(PTS-STARTPTS)/${vel},fps=${FPS},${pre},eq=contrast=1.05:saturation=1.08,tpad=stop_mode=clone:stop_duration=${dur},trim=duration=${dur},setsar=1,format=yuv420p[v]`;
         await run("ffmpeg", [...args, "-filter_complex", vf, "-map", "[v]", "-an", ...enc, fundo]);
@@ -640,6 +658,7 @@ async function render(rec, dir, prog) {
     const folha = path.join(dir, "folha.jpg");
     await run("ffmpeg", ["-y", "-v", "error", ...fins, "-filter_complex", tq.map((_, j) => `[${j}:v]trim=end_frame=1,scale=${fw}:-2,setsar=1[q${j}]`).join(";") + ";" + tq.map((_, j) => `[q${j}]`).join("") + `concat=n=${tq.length}:v=1:a=0,tile=${cols}x${rows}:padding=4:color=black`, "-frames:v", "1", "-q:v", "4", folha]);
     analise = { dur: +(pr.dur || TOTAL).toFixed(2), cenas: cenas.map((c, i) => ({ ini: +ofs[i].toFixed(2), dur: +c._dur.toFixed(2) })), luz_por_seg: [], som_por_seg: [], folha_b64: fs.readFileSync(folha).toString("base64") };
+    try { const o = spawnSync("ffmpeg", ["-v", "info", "-hide_banner", "-i", saida, "-vf", "scale=320:-2,blackdetect=d=0.02:pix_th=0.12:pic_th=0.9", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 }); analise.pretos = [...String(o.stderr).matchAll(/black_start:([\d.]+)\s+black_end:([\d.]+)/g)].map((m) => ({ ini: +Number(m[1]).toFixed(2), fim: +Number(m[2]).toFixed(2) })); } catch { /* */ }
     try { const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vf", "fps=1,scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-an", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 }); analise.luz_por_seg = [...String(o.stdout).matchAll(/YAVG=([\d.]+)/g)].map((m) => Math.round(Number(m[1]))); } catch { /* */ }
     try { const o = spawnSync("ffmpeg", ["-v", "error", "-i", saida, "-vn", "-af", "aresample=16000,asetnsamples=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 2e7 }); analise.som_por_seg = [...String(o.stdout).matchAll(/RMS_level=(-?[\d.]+|-inf)/g)].map((m) => m[1] === "-inf" ? -90 : Math.round(Number(m[1]))); } catch { /* */ }
   } catch (e) { log("analise falhou:", e.message); }
