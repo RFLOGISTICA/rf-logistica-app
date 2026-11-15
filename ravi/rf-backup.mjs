@@ -5,7 +5,7 @@
 // (RSA-OAEP-256 + AES-256-GCM, chave PUBLICA). A chave PRIVADA nao fica nesta maquina.
 // O Supabase NAO consegue apagar nada daqui: a retencao e local (35 dias + o dia 01 de cada mes por 12 meses).
 // Uso manual para abrir um arquivo (recuperacao):  node rf-backup.mjs abrir <chave-privada.pem> <arquivo.rfbk> <saida>
-const VERSAO = "rf-backup-v1.2";
+const VERSAO = "rf-backup-v1.3";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -65,6 +65,52 @@ function gravarAtomico(arq, buf, modo = 0o600) { fs.mkdirSync(path.dirname(arq),
 function discoLivreGB() { try { const o = execFileSync("df", ["-BG", "--output=avail", DADOS]).toString().split("\n")[1]; return Number(o.replace(/\D/g, "")); } catch { return null; } }
 function tamanhoDir(d) { try { return Number(execFileSync("du", ["-sb", d]).toString().split("\t")[0]); } catch { return null; } }
 
+// ---------------------------------------------------------------- Azure (v1.3)
+async function copiarAzure(sasUrl) {
+  const q = sasUrl.indexOf("?"); if (q < 0) throw new Error("SAS invalida");
+  const base = sasUrl.slice(0, q).replace(/\/+$/, ""), query = sasUrl.slice(q + 1);
+  if (!/^https:\/\/[a-z0-9]+\.blob\.core\.windows\.net\/[a-z0-9-]+$/.test(base)) throw new Error("SAS invalida");
+  const idxArq = path.join(DADOS, "azure-indice.json");
+  let feitos = new Set(); try { feitos = new Set(JSON.parse(fs.readFileSync(idxArq, "utf8"))); } catch { /* primeira vez */ }
+  const fila = [];
+  const pdias = path.join(DADOS, "dias");
+  for (const d of fs.existsSync(pdias) ? fs.readdirSync(pdias).sort() : []) {
+    const arqs = [];
+    for (const g of ["banco", "config"]) { const p = path.join(pdias, d, g); if (fs.existsSync(p)) for (const n of fs.readdirSync(p)) if (n.endsWith(".rfbk")) arqs.push(g + "/" + n); }
+    for (const n of ["manifesto.json.rfbk", "refs.txt"]) if (fs.existsSync(path.join(pdias, d, n))) arqs.push(n);
+    for (const a of arqs) {
+      fila.push({ blob: `dias/${d}/${a}`, arq: path.join(pdias, d, a) });
+      if (d.endsWith("-01")) fila.push({ blob: `mensal/${d}/${a}`, arq: path.join(pdias, d, a) });
+    }
+  }
+  const pobj = path.join(DADOS, "objetos");
+  for (const sub of fs.existsSync(pobj) ? fs.readdirSync(pobj) : []) for (const f of fs.readdirSync(path.join(pobj, sub))) if (f.endsWith(".rfbk")) fila.push({ blob: `objetos/${f}`, arq: path.join(pobj, sub, f) });
+  const pend = fila.filter((x) => !feitos.has(x.blob));
+  const r = { versao: VERSAO, na_fila: pend.length, enviados: 0, ja_existiam: 0, bytes: 0, erros: [] };
+  const t0 = Date.now();
+  let i = 0, desdeGravar = 0;
+  const salvar = () => gravarAtomico(idxArq, Buffer.from(JSON.stringify([...feitos])));
+  async function um(x) {
+    const corpo = fs.readFileSync(x.arq);
+    const url = `${base}/${x.blob.split("/").map(encodeURIComponent).join("/")}?${query}`;
+    for (let t = 1; ; t++) {
+      try {
+        const up = await fetch(url, { method: "PUT", headers: { "x-ms-blob-type": "BlockBlob", "If-None-Match": "*", "Content-Type": "application/octet-stream" }, body: corpo, signal: AbortSignal.timeout(600000) });
+        if (up.status === 201) { r.enviados++; r.bytes += corpo.length; }
+        else if (up.status === 409 || up.status === 412) r.ja_existiam++;   // ja esta la (e a trava nao deixa sobrescrever)
+        else throw new Error(up.status + " " + (await up.text()).slice(0, 120));
+        feitos.add(x.blob); if (++desdeGravar >= 100) { salvar(); desdeGravar = 0; }
+        return;
+      } catch (e) { if (t >= 3) { r.erros.push(x.blob + ": " + e.message); return; } await new Promise((ok) => setTimeout(ok, 5000 * t)); }
+    }
+  }
+  await Promise.all(Array.from({ length: 6 }, async () => { while (i < pend.length) await um(pend[i++]); }));
+  salvar();
+  r.na_nuvem = feitos.size; r.segundos = Math.round((Date.now() - t0) / 1000);
+  log("azure", JSON.stringify({ ...r, erros: r.erros.length }));
+  return r;
+}
+
 // ---------------------------------------------------------------- rodada diaria
 async function rodar() {
   const t0 = Date.now(), erros = [], rel = { versao: VERSAO };
@@ -118,6 +164,13 @@ async function rodar() {
   gravarAtomico(path.join(pastaDia, "manifesto.json.rfbk"), cifrar(Buffer.from(JSON.stringify(manif)), pub));
   gravarAtomico(path.join(pastaDia, "refs.txt"), Buffer.from(manif.objetos.map((o) => o.sha256).join("\n")));
   rel.manifesto_sha256 = sha(Buffer.from(JSON.stringify(manif)));
+
+  // 3b) v1.3 (15/11): 3a copia na AZURE (conta rfbackupexterno, conteiner rf-backup com trava de 35 dias).
+  // So sobe arquivos JA CRIPTOGRAFADOS. O token (SAS) so cria/grava/lista: nao le nem apaga. Nunca sobrescreve (If-None-Match: *).
+  if (plano.azure) {
+    try { rel.azure = await copiarAzure(plano.azure); if (rel.azure.erros.length) erros.push(...rel.azure.erros.slice(0, 5).map((e) => "azure " + e)); rel.azure.erros = rel.azure.erros.length; }
+    catch (e) { erros.push("azure: " + e.message); }
+  }
 
   // 4) teste de restauracao pedido pelo servidor: devolve os arquivos CRIPTOGRAFADOS que estao NESTE disco
   if (plano.teste && plano.teste.dia) {
