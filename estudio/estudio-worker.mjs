@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v12";   // v12 (RFL v893): versao leve 720p para assistir no app (o Full HD fica para baixar/publicar)
+const VERSAO = "rf-estudio-v13";   // v13: adesivo (selo do Rodavia 360 no peito do Ravi, seguindo o movimento) sobre o video original
+// v12:   // v12 (RFL v893): versao leve 720p para assistir no app (o Full HD fica para baixar/publicar)
 //   // v11.1: v11.1: teto de 6 Mbps no video final (cenas de IA em 1080p passavam de 50 MB e o envio era recusado)
 //   // v11: v11 (RFL v893): tira quadro preto no comeco/fim dos videos de IA e procura preto no video pronto (revisor)
 //   // v10: v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
@@ -671,7 +672,45 @@ async function render(rec, dir, prog) {
 // ---------------------------------------------------------------- ✨ Melhorar video (gratis, so FFmpeg)
 let _filtros = null;
 function temFiltro(n) { if (_filtros === null) { try { _filtros = spawnSync("ffmpeg", ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout || ""; } catch { _filtros = ""; } } return new RegExp("\\s" + n + "\\s").test(_filtros); }
+// v13: ADESIVO -- cola uma imagem (selo) no video original seguindo uma trilha (t, cx, cy, w normalizados) -- o resto da cena fica intacto
+async function adesivo(rec, dir, prog) {
+  const A = rec.adesivo || {};
+  prog(3, "baixando o video original");
+  const src = await baixar(rec.fonte && rec.fonte.url, rec.fonte && rec.fonte.chave);
+  const p = probe(src); if (!p.dur || !p.w) throw new Error("nao consegui ler o video original");
+  const capa = path.join(dir, "capa.jpg");
+  if (A.modo === "amostra") {   // copia pequena (360 px) so para estudar o movimento
+    const am = path.join(dir, "amostra.mp4");
+    prog(30, "fazendo a amostra");
+    await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-an", "-vf", "scale=360:-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", am]);
+    await run("ffmpeg", ["-y", "-v", "error", "-i", am, "-frames:v", "1", "-q:v", "4", capa]);
+    return { video: am, capa, previa: am, dur: p.dur, w: p.w, h: p.h, tamanho: fs.statSync(am).size };
+  }
+  const tr = (A.trilha || []).filter((q) => q && isFinite(q.t) && isFinite(q.cx) && isFinite(q.cy) && isFinite(q.w)); if (tr.length < 2) throw new Error("trilha do adesivo vazia");
+  const selo = await baixar(A.selo_url, "selo-" + crypto.createHash("md5").update(String(A.selo_url)).digest("hex").slice(0, 8) + ".png");
+  const sp = probe(selo); if (!sp.w) throw new Error("nao consegui ler o selo");
+  const asp = sp.h / sp.w, cmds = [];
+  for (const q of tr) {
+    const w = Math.max(8, Math.round(q.w * p.w / 2) * 2), h = Math.max(8, Math.round(w * asp / 2) * 2);
+    const x = Math.round(q.cx * p.w - w / 2), y = Math.round(q.cy * p.h - h / 2);
+    cmds.push(`${Number(q.t).toFixed(4)} scale@sz w ${w}, scale@sz h ${h}, overlay@ov x ${x}, overlay@ov y ${y};`);
+  }
+  const fcmd = path.join(dir, "trilha.cmd"); fs.writeFileSync(fcmd, cmds.join("\n") + "\n");
+  const q0 = tr[0], w0 = Math.max(8, Math.round(q0.w * p.w / 2) * 2), h0 = Math.max(8, Math.round(w0 * asp / 2) * 2);
+  const saida = path.join(dir, "adesivo.mp4");
+  prog(20, "colando o selo quadro a quadro");
+  await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-loop", "1", "-i", selo, "-filter_complex",
+    `[1:v]format=rgba,sendcmd=f=${fcmd},scale@sz=w=${w0}:h=${h0}:flags=lanczos:eval=frame[s];[0:v][s]overlay@ov=x=${Math.round(q0.cx * p.w - w0 / 2)}:y=${Math.round(q0.cy * p.h - h0 / 2)}:eval=frame:shortest=1,format=yuv420p[v]`,
+    "-map", "[v]", ...(p.audio ? ["-map", "0:a:0", "-c:a", "copy"] : []), "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-threads", String(THREADS), "-movflags", "+faststart", "-t", p.dur.toFixed(3), saida]);
+  const pr = probe(saida);
+  await run("ffmpeg", ["-y", "-v", "error", "-ss", (p.dur / 2).toFixed(2), "-i", saida, "-frames:v", "1", "-q:v", "3", capa]);
+  const previa = path.join(dir, "previa.jpg");   // 5 quadros lado a lado
+  await run("ffmpeg", ["-y", "-v", "error", "-i", saida, "-vf", `fps=${(5 / p.dur).toFixed(4)},scale=216:-2,tile=5x1`, "-frames:v", "1", "-q:v", "5", previa]);
+  return { video: saida, capa, previa, dur: pr.dur || p.dur, w: pr.w, h: pr.h, tamanho: fs.statSync(saida).size };
+}
+
 async function melhorar(rec, dir, prog) {
+  if (rec.adesivo) return adesivo(rec, dir, prog);
   const o = rec.opcoes || {};
   prog(3, "baixando o video original");
   const src = await baixar(rec.fonte && rec.fonte.url, rec.fonte && rec.fonte.chave);
