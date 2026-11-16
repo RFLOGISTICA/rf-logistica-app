@@ -9,7 +9,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
-const VERSAO = "rf-estudio-v11.1";   // v11.1: teto de 6 Mbps no video final (cenas de IA em 1080p passavam de 50 MB e o envio era recusado)
+const VERSAO = "rf-estudio-v12";   // v12 (RFL v893): versao leve 720p para assistir no app (o Full HD fica para baixar/publicar)
+//   // v11.1: v11.1: teto de 6 Mbps no video final (cenas de IA em 1080p passavam de 50 MB e o envio era recusado)
 //   // v11: v11 (RFL v893): tira quadro preto no comeco/fim dos videos de IA e procura preto no video pronto (revisor)
 //   // v10: v10 (RFL v892): folha de quadros por cena + luz/som em todo video montado (critica do 🎬 Diretor IA)
 //   // v9: v9 (RFL v891): ⚡ Ritmo e passagem -- cena do tamanho da fala, flash dourado, whoosh/batida, corte na batida da musica, ducking opcional
@@ -1012,6 +1013,14 @@ async function processar(job) {
     }
     await up(job.upload_video, r.video, "video/mp4");
     if (job.upload_capa) await up(job.upload_capa, r.capa, "image/jpeg");
+    if (job.upload_leve) {   // v12: versao leve (720p, 2,5 Mbps) so para ASSISTIR no app -- o Full HD trava no tablet enquanto carrega
+      try {
+        const leve = path.join(dir, "leve.mp4");
+        await run("ffmpeg", ["-y", "-v", "error", "-i", r.video, "-vf", "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-maxrate", "2500k", "-bufsize", "5000k", "-g", "30", "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-threads", String(THREADS), leve]);
+        await up(job.upload_leve, leve, "video/mp4");
+      } catch (e) { log(job.id, "leve falhou:", e.message); }
+    }
     await api("worker_status", { job_id: job.id, status: "pronto", progresso: 100, etapa: "pronto", duracao: +r.dur.toFixed(2), tamanho: r.tamanho, largura: r.w, altura: r.h,
       previa_b64: fs.readFileSync(r.previa).toString("base64"), segundos_render: Math.round((Date.now() - t0) / 1000), ...(r.analise ? { analise: r.analise } : {}) });
     log(job.id, "pronto", Math.round((Date.now() - t0) / 1000) + "s");

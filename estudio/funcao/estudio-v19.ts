@@ -1113,7 +1113,7 @@ async function diretorVer(J: any) {
     out.titulo = pj?.titulo; const cs = ((pj?.plano as any)?.cenas || []);
     out.cenas_vis = await Promise.all(cs.map(async (c: any, i: number) => { const im = c.ia?.imagens?.[c.ia.escolhida ?? 0]; return { n: i + 1, id: c.id, tipo: c.tipo, fala: c.narracao?.texto || "", img: im ? await assinar(im, 3600).catch(() => null) : null, animada: !!c.ia?.video_midia, nota: J.cenas?.[c.id]?.nota_img ?? null }; }));
   }
-  if (J.render_id) { const { data: r } = await sb.from("estudio_renders").select("status,progresso,video_path,capa_path,duracao").eq("id", J.render_id).maybeSingle(); out.render = r; if (r?.status === "pronto" && r.video_path) { out.video_url = await assinar(r.video_path, 3600).catch(() => null); out.capa_url = r.capa_path ? await assinar(r.capa_path, 3600).catch(() => null) : null; } }
+  if (J.render_id) { const { data: r } = await sb.from("estudio_renders").select("status,progresso,video_path,capa_path,duracao").eq("id", J.render_id).maybeSingle(); out.render = r; if (r?.status === "pronto" && r.video_path) { out.video_url = await assinar(r.video_path, 3600).catch(() => null); out.leve_url = await assinar(r.video_path.replace(/video\.mp4$/, "leve.mp4"), 3600).catch(() => null); out.capa_url = r.capa_path ? await assinar(r.capa_path, 3600).catch(() => null) : null; } }
   return out;
 }
 
@@ -1217,11 +1217,11 @@ Deno.serve(async (req) => {
           }
           const { data: pj } = await sb.from("estudio_projetos").select("plano").eq("id", job.projeto_id).maybeSingle();
           const rec = await receita(pj?.plano || job.receita || {}, job.formato);
-          const pv = `estudio/renders/${job.id}/video.mp4`, pc = `estudio/renders/${job.id}/capa.jpg`;
-          const [uv, uc] = await Promise.all([sb.storage.from(BUCKET).createSignedUploadUrl(pv, { upsert: true }), sb.storage.from(BUCKET).createSignedUploadUrl(pc, { upsert: true })]);
+          const pv = `estudio/renders/${job.id}/video.mp4`, pc = `estudio/renders/${job.id}/capa.jpg`, pl = `estudio/renders/${job.id}/leve.mp4`;
+          const [uv, uc, ul] = await Promise.all([sb.storage.from(BUCKET).createSignedUploadUrl(pv, { upsert: true }), sb.storage.from(BUCKET).createSignedUploadUrl(pc, { upsert: true }), sb.storage.from(BUCKET).createSignedUploadUrl(pl, { upsert: true })]);
           if (uv.error || uc.error) throw new Error("não criei o link de envio: " + (uv.error?.message || uc.error?.message));
           await sb.from("estudio_renders").update({ receita: rec, video_path: pv, capa_path: pc }).eq("id", job.id);
-          return json({ ok: true, job: { id: job.id, receita: rec, upload_video: uv.data.signedUrl, upload_capa: uc.data.signedUrl } });
+          return json({ ok: true, job: { id: job.id, receita: rec, upload_video: uv.data.signedUrl, upload_capa: uc.data.signedUrl, upload_leve: ul.data?.signedUrl || null } });   // v19.6: versao leve p/ assistir no app
         } catch (e) {
           await sb.from("estudio_renders").update({ status: "erro", erro: String((e as Error).message || e).slice(0, 500) }).eq("id", job.id);
           return json({ ok: true, espera: 1000 });
