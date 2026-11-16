@@ -682,7 +682,7 @@ async function adesivo(rec, dir, prog) {
   if (A.modo === "amostra") {   // copia pequena (360 px) so para estudar o movimento
     const am = path.join(dir, "amostra.mp4");
     prog(30, "fazendo a amostra");
-    await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-an", "-vf", "scale=360:-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", am]);
+    await run("ffmpeg", ["-y", "-v", "error", "-i", src, "-an", "-vf", `scale=${Math.min(1080, Number(A.largura) || 360)}:-2`, "-c:v", "libx264", "-preset", "veryfast", "-crf", String(Math.max(14, Math.min(30, Number(A.crf) || 24))), "-pix_fmt", "yuv420p", am]);
     await run("ffmpeg", ["-y", "-v", "error", "-i", am, "-frames:v", "1", "-q:v", "4", capa]);
     return { video: am, capa, previa: am, dur: p.dur, w: p.w, h: p.h, tamanho: fs.statSync(am).size };
   }
